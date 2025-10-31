@@ -8988,7 +8988,7 @@ class Agent:
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
-                for model_response_event in self.parser_model.response_stream(  # type: ignore
+                for model_response_event in self.parser_model.response_stream(
                     messages=messages_for_parser_model,
                     response_format=parser_response_format,
                     stream_model_response=False,
@@ -10242,8 +10242,8 @@ class Agent:
             "model_provider": self.model.provider if self.model else None,
             "model_name": self.model.name if self.model else None,
             "model_id": self.model.id if self.model else None,
-            "parser_model": cast(Model, self.parser_model).to_dict() if self.parser_model else None,
-            "output_model": cast(Model, self.output_model).to_dict() if self.output_model else None,
+            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
+            "output_model": self.output_model.to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
             "has_memory": self.enable_user_memories is True
             or self.enable_agentic_memory is True
