@@ -881,6 +881,7 @@ class RunSchema(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
@@ -908,6 +909,7 @@ class RunSchema(BaseModel):
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
@@ -936,6 +938,7 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
@@ -965,6 +968,7 @@ class TeamRunSchema(BaseModel):
             else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
