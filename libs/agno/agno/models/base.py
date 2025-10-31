@@ -2115,9 +2115,13 @@ class Model(ABC):
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model
 
-        # Deep copy all attributes
+        # Deep copy all attributes except client objects
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
+                continue
+            # Skip client objects
+            if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
+                setattr(new_model, k, None)
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
