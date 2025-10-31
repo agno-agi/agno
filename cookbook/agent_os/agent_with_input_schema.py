@@ -5,6 +5,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
+from agno.db.sqlite import SqliteDb
 
 
 class ResearchTopic(BaseModel):
@@ -23,6 +24,10 @@ hackernews_agent = Agent(
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
     input_schema=ResearchTopic,
+    db=SqliteDb(
+        session_table="agent_session",
+        db_file="tmp/agent.db",
+    ),
 )
 
 
@@ -34,4 +39,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="input_schema_on_agent:app", port=7777)
+    agent_os.serve(app="agent_with_input_schema:app", port=7777)

@@ -15,21 +15,21 @@ from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
-
+from agno.db.sqlite import SqliteDb
 
 class ResearchProject(BaseModel):
     """Structured research project with validation requirements."""
 
     project_name: str = Field(description="Name of the research project")
     research_topics: List[str] = Field(
-        description="List of topics to research", min_items=1
+        description="List of topics to research", min_length=1
     )
     target_audience: str = Field(description="Intended audience for the research")
     depth_level: str = Field(
         description="Research depth level", pattern="^(basic|intermediate|advanced)$"
     )
     max_sources: int = Field(
-        description="Maximum number of sources to use", ge=3, le=20, default=10
+        description="Maximum number of sources to use", default=10
     )
     include_recent_only: bool = Field(
         description="Whether to focus only on recent sources", default=True
@@ -47,6 +47,10 @@ hackernews_agent = Agent(
         "Focus on high-quality posts with good engagement",
         "Extract key insights and technical details",
     ],
+    db=SqliteDb(
+        session_table="team_session",
+        db_file="tmp/team.db",
+    ),
 )
 
 web_researcher = Agent(
