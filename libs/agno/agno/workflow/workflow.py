@@ -231,6 +231,14 @@ class Workflow:
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
 
+        # Warn if workflow history is enabled without a database
+        if self.add_workflow_history_to_steps and self.db is None:
+            log_warning(
+                "Workflow history is enabled (add_workflow_history_to_steps=True) but no database is configured. "
+                "Workflow history requires a database to persist runs across executions. "
+                "Set db=SqliteDb() or another database to enable workflow history."
+            )
+
     def set_id(self) -> None:
         if self.id is None:
             if self.name is not None:

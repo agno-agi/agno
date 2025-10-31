@@ -107,6 +107,14 @@ class Step:
         if step_id is None:
             self.step_id = str(uuid4())
 
+        # Warn if workflow history is enabled for this step
+        if self.add_workflow_history:
+            logger.warning(
+                f"Step '{self.name}' has workflow history enabled (add_workflow_history=True). "
+                "This requires the parent Workflow to have a database configured (e.g., db=SqliteDb()). "
+                "Without a database, workflow history will not persist across runs."
+            )
+
         # Set the active executor
         self._set_active_executor()
 
