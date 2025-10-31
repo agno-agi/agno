@@ -483,6 +483,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
+        run_response: Optional[RunOutput] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -517,6 +518,7 @@ class Model(ABC):
                 response_format=response_format,
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
             )
 
             # Add assistant message to messages
