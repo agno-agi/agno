@@ -24,6 +24,7 @@ knowledge = Knowledge(
     contents_db=contents_db,
 )
 
+# Add a single piece of text content
 asyncio.run(
     knowledge.add_content_async(
         name="Text Content",
@@ -32,11 +33,27 @@ asyncio.run(
     )
 )
 
-
+# Add multiple pieces of text content
 asyncio.run(
     knowledge.add_contents_async(
         name="Text Content",
         text_contents=["Cats and dogs are pets.", "Birds and fish are not pets."],
         metadata={"user_tag": "Animals"},
+    )
+)
+
+# OR
+asyncio.run(
+    knowledge.add_contents_async(
+        [
+            {
+                "text_content": "Cats and dogs are pets.",
+                "metadata": {"user_tag": "Animals"},
+            },
+            {
+                "text_content": "Birds and fish are not pets.",
+                "metadata": {"user_tag": "Animals"},
+            },
+        ],
     )
 )

@@ -22,7 +22,7 @@ def _assert_metrics(response: RunOutput):
 
 def test_basic():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -40,7 +40,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False)
+    agent = Agent(model=Gemini(id="gemini-2.0-flash"), exponential_backoff=True, markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -56,7 +56,7 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -74,7 +74,7 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -87,7 +87,7 @@ async def test_async_basic_stream():
 
 def test_exception_handling():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash-made-up-id"),
+        model=Gemini(id="gemini-2.0-flash-made-up-id"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -99,14 +99,14 @@ def test_exception_handling():
         agent.run("Share a 2 sentence horror story")
 
     assert exc.value.model_name == "Gemini"
-    assert exc.value.model_id == "gemini-1.5-flash-made-up-id"
+    assert exc.value.model_id == "gemini-2.0-flash-made-up-id"
     assert exc.value.status_code == 404
 
 
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         add_history_to_context=True,
@@ -139,7 +139,7 @@ def test_structured_output():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         output_schema=MovieScript,
@@ -162,7 +162,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         output_schema=MovieScript,
@@ -181,7 +181,7 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
+        model=Gemini(id="gemini-2.0-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
         db=SqliteDb(db_file="tmp/google/test_basic.db"),

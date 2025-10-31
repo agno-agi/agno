@@ -136,6 +136,7 @@ class Cerebras(Model):
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.

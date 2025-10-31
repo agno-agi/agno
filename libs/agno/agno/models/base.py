@@ -1,7 +1,11 @@
 import asyncio
 import collections.abc
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from hashlib import md5
+from pathlib import Path
+from time import time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
     Any,
@@ -29,7 +33,7 @@ from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEve
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -133,6 +137,11 @@ class Model(ABC):
     # The role of the assistant message.
     assistant_message_role: str = "assistant"
 
+    # Cache model responses to avoid redundant API calls during development
+    cache_response: bool = False
+    cache_ttl: Optional[int] = None
+    cache_dir: Optional[str] = None
+
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
@@ -144,6 +153,100 @@ class Model(ABC):
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
+
+    def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
+        """Generate a cache key based on model messages and core parameters."""
+        message_data = []
+        for msg in messages:
+            msg_dict = {
+                "role": msg.role,
+                "content": msg.content,
+            }
+            message_data.append(msg_dict)
+
+        # Include tools parameter in cache key
+        has_tools = bool(kwargs.get("tools"))
+
+        cache_data = {
+            "model_id": self.id,
+            "messages": message_data,
+            "has_tools": has_tools,
+            "response_format": kwargs.get("response_format"),
+            "stream": stream,
+        }
+
+        cache_str = json.dumps(cache_data, sort_keys=True)
+        return md5(cache_str.encode()).hexdigest()
+
+    def _get_model_cache_file_path(self, cache_key: str) -> Path:
+        """Get the file path for a cache key."""
+        if self.cache_dir:
+            cache_dir = Path(self.cache_dir)
+        else:
+            cache_dir = Path.home() / ".agno" / "cache" / "model_responses"
+
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / f"{cache_key}.json"
+
+    def _get_cached_model_response(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a cached response if it exists and is not expired."""
+        cache_file = self._get_model_cache_file_path(cache_key)
+
+        if not cache_file.exists():
+            return None
+
+        try:
+            with open(cache_file, "r") as f:
+                cached_data = json.load(f)
+
+            # Check TTL if set (None means no expiration)
+            if self.cache_ttl is not None:
+                if time() - cached_data["timestamp"] > self.cache_ttl:
+                    return None
+
+            return cached_data
+        except Exception:
+            return None
+
+    def _save_model_response_to_cache(self, cache_key: str, result: ModelResponse, is_streaming: bool = False) -> None:
+        """Save a model response to cache."""
+        try:
+            cache_file = self._get_model_cache_file_path(cache_key)
+
+            cache_data = {
+                "timestamp": int(time()),
+                "is_streaming": is_streaming,
+                "result": result.to_dict(),
+            }
+            with open(cache_file, "w") as f:
+                json.dump(cache_data, f)
+        except Exception:
+            pass
+
+    def _save_streaming_responses_to_cache(self, cache_key: str, responses: List[ModelResponse]) -> None:
+        """Save streaming responses to cache."""
+        cache_file = self._get_model_cache_file_path(cache_key)
+
+        cache_data = {
+            "timestamp": int(time()),
+            "is_streaming": True,
+            "streaming_responses": [r.to_dict() for r in responses],
+        }
+
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(cache_data, f)
+        except Exception:
+            pass
+
+    def _model_response_from_cache(self, cached_data: Dict[str, Any]) -> ModelResponse:
+        """Reconstruct a ModelResponse from cached data."""
+        return ModelResponse.from_dict(cached_data["result"])
+
+    def _streaming_responses_from_cache(self, cached_data: list) -> Iterator[ModelResponse]:
+        """Reconstruct streaming responses from cached data."""
+        for cached_response in cached_data:
+            yield ModelResponse.from_dict(cached_response)
 
     @abstractmethod
     def invoke(self, *args, **kwargs) -> ModelResponse:
@@ -187,12 +290,21 @@ class Model(ABC):
         """
         pass
 
+    def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
+        _tool_dicts = []
+        for tool in tools or []:
+            if isinstance(tool, Function):
+                _tool_dicts.append({"type": "function", "function": tool.to_dict()})
+            else:
+                # If a dict is passed, it is a builtin tool
+                _tool_dicts.append(tool)
+        return _tool_dicts
+
     def response(
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
@@ -200,7 +312,25 @@ class Model(ABC):
     ) -> ModelResponse:
         """
         Generate a response from the model.
+
+        Args:
+            messages: List of messages to send to the model
+            response_format: Response format to use
+            tools: List of tools to use. This includes the original Function objects and dicts for built-in tools.
+            tool_choice: Tool choice to use
+            tool_call_limit: Tool call limit
+            run_response: Run response to use
+            send_media_to_model: Whether to send media to the model
         """
+
+        # Check cache if enabled
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for model response")
+                return self._model_response_from_cache(cached_data)
 
         log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -210,6 +340,9 @@ class Model(ABC):
 
         function_call_count = 0
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         while True:
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -218,7 +351,7 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
-                tools=tools,
+                tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
             )
@@ -236,7 +369,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -334,14 +467,18 @@ class Model(ABC):
             break
 
         log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
+
+        # Save to cache if enabled
+        if self.cache_response:
+            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+
         return model_response
 
     async def aresponse(
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
@@ -350,10 +487,22 @@ class Model(ABC):
         Generate an asynchronous response from the model.
         """
 
+        # Check cache if enabled
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for model response")
+                return self._model_response_from_cache(cached_data)
+
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         model_response = ModelResponse()
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
 
@@ -365,7 +514,7 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
-                tools=tools,
+                tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
             )
 
@@ -382,7 +531,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -479,6 +628,11 @@ class Model(ABC):
             break
 
         log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
+
+        # Save to cache if enabled
+        if self.cache_response:
+            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+
         return model_response
 
     def _process_model_response(
@@ -693,8 +847,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
@@ -705,9 +858,30 @@ class Model(ABC):
         Generate a streaming response from the model.
         """
 
+        # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
+        cache_key = None
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for streaming model response")
+                # Yield cached responses
+                for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
+                    yield response
+                return
+
+            log_info("Cache miss for streaming model response")
+
+        # Track streaming responses for caching
+        streaming_responses: List[ModelResponse] = []
+
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
 
@@ -715,17 +889,21 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
-                yield from self.process_response_stream(
+                for response in self.process_response_stream(
                     messages=messages,
                     assistant_message=assistant_message,
                     stream_data=stream_data,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
-                )
+                ):
+                    if self.cache_response and isinstance(response, ModelResponse):
+                        streaming_responses.append(response)
+                    yield response
 
                 # Populate assistant message from stream data
                 if stream_data.response_content:
@@ -744,15 +922,16 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                 )
+                if self.cache_response:
+                    streaming_responses.append(model_response)
                 yield model_response
 
             # Add assistant message to messages
@@ -763,7 +942,7 @@ class Model(ABC):
             if assistant_message.tool_calls is not None:
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message=assistant_message, messages=messages, functions=_functions
                 )
                 function_call_results: List[Message] = []
 
@@ -774,6 +953,8 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                 ):
+                    if self.cache_response and isinstance(function_call_response, ModelResponse):
+                        streaming_responses.append(function_call_response)
                     yield function_call_response
 
                 # Add a function call for each successful execution
@@ -784,11 +965,15 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+                elif model_response and model_response.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **model_response.extra
+                    )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
@@ -821,6 +1006,10 @@ class Model(ABC):
             break
 
         log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
+
+        # Save streaming responses to cache if enabled
+        if self.cache_response and cache_key and streaming_responses:
+            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
     async def aprocess_response_stream(
         self,
@@ -857,8 +1046,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
@@ -869,9 +1057,30 @@ class Model(ABC):
         Generate an asynchronous streaming response from the model.
         """
 
+        # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
+        cache_key = None
+        if self.cache_response:
+            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+            cached_data = self._get_cached_model_response(cache_key)
+
+            if cached_data:
+                log_info("Cache hit for async streaming model response")
+                # Yield cached responses
+                for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
+                    yield response
+                return
+
+            log_info("Cache miss for async streaming model response")
+
+        # Track streaming responses for caching
+        streaming_responses: List[ModelResponse] = []
+
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
+
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         function_call_count = 0
 
@@ -879,18 +1088,21 @@ class Model(ABC):
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
+            model_response = ModelResponse()
             if stream_model_response:
                 # Generate response
-                async for response in self.aprocess_response_stream(
+                async for model_response in self.aprocess_response_stream(
                     messages=messages,
                     assistant_message=assistant_message,
                     stream_data=stream_data,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
-                    yield response
+                    if self.cache_response and isinstance(model_response, ModelResponse):
+                        streaming_responses.append(model_response)
+                    yield model_response
 
                 # Populate assistant message from stream data
                 if stream_data.response_content:
@@ -907,16 +1119,17 @@ class Model(ABC):
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
-                model_response = ModelResponse()
                 await self._aprocess_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 )
+                if self.cache_response:
+                    streaming_responses.append(model_response)
                 yield model_response
 
             # Add assistant message to messages
@@ -927,7 +1140,7 @@ class Model(ABC):
             if assistant_message.tool_calls is not None:
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message=assistant_message, messages=messages, functions=_functions
                 )
                 function_call_results: List[Message] = []
 
@@ -938,6 +1151,8 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                 ):
+                    if self.cache_response and isinstance(function_call_response, ModelResponse):
+                        streaming_responses.append(function_call_response)
                     yield function_call_response
 
                 # Add a function call for each successful execution
@@ -948,11 +1163,15 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+                elif model_response and model_response.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
@@ -985,6 +1204,10 @@ class Model(ABC):
             break
 
         log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
+
+        # Save streaming responses to cache if enabled
+        if self.cache_response and cache_key and streaming_responses:
+            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
     def _populate_stream_data_and_assistant_message(
         self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
@@ -1139,12 +1362,14 @@ class Model(ABC):
         images = None
         videos = None
         audios = None
+        files = None
 
         if success and function_execution_result:
             # With unified classes, no conversion needed - use directly
             images = function_execution_result.images
             videos = function_execution_result.videos
             audios = function_execution_result.audios
+            files = function_execution_result.files
 
         return Message(
             role=self.tool_message_role,
@@ -1157,6 +1382,7 @@ class Model(ABC):
             images=images,
             videos=videos,
             audio=audios,
+            files=files,
             **kwargs,  # type: ignore
         )
 
@@ -1226,18 +1452,18 @@ class Model(ABC):
                             # Capture output
                             function_call_output += item.content or ""
 
-                        if function_call.function.show_result:
+                        if function_call.function.show_result and item.content is not None:
                             yield ModelResponse(content=item.content)
 
-                        if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
+                    if isinstance(item, CustomEvent):
+                        function_call_output += str(item)
 
                     # Yield the event itself to bubble it up
                     yield item
 
                 else:
                     function_call_output += str(item)
-                    if function_call.function.show_result:
+                    if function_call.function.show_result and item is not None:
                         yield ModelResponse(content=str(item))
         else:
             from agno.tools.function import ToolResult
@@ -1259,7 +1485,7 @@ class Model(ABC):
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
-            if function_call.function.show_result:
+            if function_call.function.show_result and function_call_output is not None:
                 yield ModelResponse(content=function_call_output)
 
         # Create and yield function call result
@@ -1408,6 +1634,7 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+        result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
 
         try:
             if (
@@ -1573,53 +1800,34 @@ class Model(ABC):
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
 
-        # Process results
-        for result in results:
-            # If result is an exception, skip processing it
-            if isinstance(result, BaseException):
-                log_error(f"Error during function call: {result}")
-                raise result
+        # Separate async generators from other results for concurrent processing
+        async_generator_results: List[Any] = []
+        non_async_generator_results: List[Any] = []
 
-            # Unpack result
+        for result in results:
+            if isinstance(result, BaseException):
+                non_async_generator_results.append(result)
+                continue
+
             function_call_success, function_call_timer, function_call, function_execution_result = result
 
-            updated_session_state = function_execution_result.updated_session_state
+            # Check if this result contains an async generator
+            if isinstance(function_call.result, (AsyncGeneratorType, AsyncIterator)):
+                async_generator_results.append(result)
+            else:
+                non_async_generator_results.append(result)
 
-            # Handle AgentRunException
-            if isinstance(function_call_success, AgentRunException):
-                a_exc = function_call_success
-                # Update additional messages from function call
-                _handle_agent_exception(a_exc, additional_input)
-                # Set function call success to False if an exception occurred
-                function_call_success = False
+        # Process async generators with real-time event streaming using asyncio.Queue
+        async_generator_outputs: Dict[int, Tuple[Any, str, Optional[BaseException]]] = {}
+        event_queue: asyncio.Queue = asyncio.Queue()
+        active_generators_count: int = len(async_generator_results)
 
-            # Process function call output
-            function_call_output: str = ""
-            if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
-                for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
-                    ):
-                        # We only capture content events
-                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                            if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
-                            else:
-                                # Capture output
-                                function_call_output += item.content or ""
+        # Create background tasks for each async generator
+        async def process_async_generator(result, generator_id):
+            function_call_success, function_call_timer, function_call, function_execution_result = result
+            function_call_output = ""
 
-                            if function_call.function.show_result:
-                                yield ModelResponse(content=item.content)
-                                continue
-
-                        # Yield the event itself to bubble it up
-                        yield item
-                    else:
-                        function_call_output += str(item)
-                        if function_call.function.show_result:
-                            yield ModelResponse(content=str(item))
-            elif isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+            try:
                 async for item in function_call.result:
                     # This function yields agent/team run events
                     if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
@@ -1633,20 +1841,124 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if function_call.function.show_result:
-                                yield ModelResponse(content=item.content)
+                            if function_call.function.show_result and item.content is not None:
+                                await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
-                            if isinstance(item, CustomEvent):
-                                function_call_output += str(item)
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
 
-                        # Yield the event itself to bubble it up
-                        yield item
+                        # Put the event into the queue to be yielded
+                        await event_queue.put(item)
 
                     # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
-                        if function_call.function.show_result:
+                        if function_call.function.show_result and item is not None:
+                            await event_queue.put(ModelResponse(content=str(item)))
+
+                # Store the final output for this generator
+                async_generator_outputs[generator_id] = (result, function_call_output, None)
+
+            except Exception as e:
+                # Store the exception
+                async_generator_outputs[generator_id] = (result, "", e)
+
+            # Signal that this generator is done
+            await event_queue.put(("GENERATOR_DONE", generator_id))
+
+        # Start all async generator tasks
+        generator_tasks = []
+        for i, result in enumerate(async_generator_results):
+            task = asyncio.create_task(process_async_generator(result, i))
+            generator_tasks.append(task)
+
+        # Stream events from the queue as they arrive
+        completed_generators_count = 0
+        while completed_generators_count < active_generators_count:
+            try:
+                event = await event_queue.get()
+
+                # Check if this is a completion signal
+                if isinstance(event, tuple) and event[0] == "GENERATOR_DONE":
+                    completed_generators_count += 1
+                    continue
+
+                # Yield the actual event
+                yield event
+
+            except Exception as e:
+                log_error(f"Error processing async generator event: {e}")
+                break
+
+        # Now process all results (non-async generators and completed async generators)
+        for i, original_result in enumerate(results):
+            # If result is an exception, skip processing it
+            if isinstance(original_result, BaseException):
+                log_error(f"Error during function call: {original_result}")
+                raise original_result
+
+            # Unpack result
+            function_call_success, function_call_timer, function_call, function_execution_result = original_result
+
+            # Check if this was an async generator that was already processed
+            async_function_call_output = None
+            if isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+                # Find the corresponding processed result
+                async_gen_index = 0
+                for j, result in enumerate(results[: i + 1]):
+                    if not isinstance(result, BaseException):
+                        _, _, fc, _ = result
+                        if isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+                            if j == i:  # This is our async generator
+                                if async_gen_index in async_generator_outputs:
+                                    _, async_function_call_output, error = async_generator_outputs[async_gen_index]
+                                    if error:
+                                        log_error(f"Error in async generator: {error}")
+                                        raise error
+                                break
+                            async_gen_index += 1
+
+            updated_session_state = function_execution_result.updated_session_state
+
+            # Handle AgentRunException
+            if isinstance(function_call_success, AgentRunException):
+                a_exc = function_call_success
+                # Update additional messages from function call
+                _handle_agent_exception(a_exc, additional_input)
+                # Set function call success to False if an exception occurred
+                function_call_success = False
+
+            # Process function call output
+            function_call_output: str = ""
+
+            # Check if this was an async generator that was already processed
+            if async_function_call_output is not None:
+                function_call_output = async_function_call_output
+                # Events from async generators were already yielded in real-time above
+            elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+                for item in function_call.result:
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunOutputEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
+
+                            if function_call.function.show_result and item.content is not None:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             else:
                 from agno.tools.function import ToolResult
@@ -1666,7 +1978,7 @@ class Model(ABC):
                 else:
                     function_call_output = str(function_call.result)
 
-                if function_call.function.show_result:
+                if function_call.function.show_result and function_call_output is not None:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
@@ -1721,7 +2033,7 @@ class Model(ABC):
             model_response.tool_calls = []
 
         function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-            assistant_message, messages, functions
+            assistant_message=assistant_message, messages=messages, functions=functions
         )
         return function_calls_to_run
 

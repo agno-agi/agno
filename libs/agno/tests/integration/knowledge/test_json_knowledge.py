@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.knowledge import Knowledge
 from agno.db.json.json_db import JsonDb
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.chroma import ChromaDb
 
 

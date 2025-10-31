@@ -24,7 +24,7 @@ from agno.tools.yfinance import YFinanceTools
 
 finance_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[ReasoningTools(add_instructions=True), YFinanceTools(enable_all=True)],
+    tools=[ReasoningTools(add_instructions=True), YFinanceTools()],
     instructions=dedent("""\
         You are a seasoned Wall Street analyst with deep expertise in market analysis! 📊
 
@@ -60,7 +60,7 @@ finance_agent = Agent(
     """),
     add_datetime_to_context=True,
     markdown=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 # Example usage with detailed market analysis request

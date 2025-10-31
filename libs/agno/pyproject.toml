@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.0.10"
+version = "2.2.5"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -33,6 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
+  "h11>=0.16.0",
   "httpx",
   "packaging",
   "pydantic-settings",
@@ -48,7 +49,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
-os = ["fastapi", "uvicorn"]
+os = ["fastapi", "uvicorn", "PyJWT"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -56,7 +57,8 @@ integration-tests = [
     "ddgs",
     "yfinance",
     "sqlalchemy",
-    "Pillow"
+    "Pillow",
+    "fastmcp"
 ]
 
 # Dependencies for Telemetry
@@ -99,6 +101,7 @@ evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+tavily = ["tavily-python"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -127,6 +130,7 @@ neo4j = ["neo4j"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
+async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -152,6 +156,7 @@ upstash = ["upstash-vector"]
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
@@ -159,6 +164,9 @@ chonkie = ["chonkie[st]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
+
+# Dependencies for A2A integration
+a2a = ["a2a-sdk"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -186,7 +194,6 @@ models = [
   "agno[azure]",
   "agno[cerebras]",
   "agno[cohere]",
-  "agno[infinity]",
   "agno[google]",
   "agno[groq]",
   "agno[ibm]",
@@ -211,6 +218,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
@@ -244,6 +252,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[async_postgres]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
@@ -272,6 +281,7 @@ vectordbs = [
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[pptx]",
   "agno[text]",
   "agno[csv]",
   "agno[markdown]",
@@ -336,6 +346,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "a2a.*",
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
@@ -393,6 +404,7 @@ module = [
   "imghdr.*",
   "infinity_client.*",
   "jira.*",
+  "jwt.*",
   "kubernetes.*",
   "lancedb.*",
   "langchain_core.*",

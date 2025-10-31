@@ -35,6 +35,7 @@ class BaseRunOutputEvent:
                 "reasoning_steps",
                 "references",
                 "additional_input",
+                "session_summary",
                 "metrics",
             ]
         }
@@ -113,23 +114,15 @@ class BaseRunOutputEvent:
         if hasattr(self, "metrics") and self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
 
+        if hasattr(self, "session_summary") and self.session_summary is not None:
+            _dict["session_summary"] = self.session_summary.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
-        from datetime import date, datetime, time
-        from enum import Enum
 
-        def json_serializer(obj):
-            # Datetime like
-            if isinstance(obj, (datetime, date, time)):
-                return obj.isoformat()
-            # Enums
-            if isinstance(obj, Enum):
-                v = obj.value
-                return v if isinstance(v, (str, int, float, bool, type(None))) else obj.name
-            # Fallback to string
-            return str(obj)
+        from agno.utils.serialize import json_serializer
 
         try:
             _dict = self.to_dict()
@@ -184,7 +177,19 @@ class BaseRunOutputEvent:
         if metrics:
             data["metrics"] = Metrics(**metrics)
 
-        return cls(**data)
+        session_summary = data.pop("session_summary", None)
+        if session_summary:
+            from agno.session.summary import SessionSummary
+
+            data["session_summary"] = SessionSummary.from_dict(session_summary)
+
+        # Filter data to only include fields that are actually defined in the target class
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
+        return cls(**filtered_data)
 
     @property
     def is_paused(self):

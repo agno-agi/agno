@@ -45,6 +45,11 @@ class OllamaEmbedder(Embedder):
     ollama_client: Optional[OllamaClient] = None
     async_client: Optional[AsyncOllamaClient] = None
 
+    def __post_init__(self):
+        if self.enable_batch:
+            logger.warning("OllamaEmbedder does not support batch embeddings, setting enable_batch to False")
+            self.enable_batch = False
+
     @property
     def client(self) -> OllamaClient:
         if self.ollama_client:
@@ -80,6 +85,10 @@ class OllamaEmbedder(Embedder):
         if self.options is not None:
             kwargs["options"] = self.options
 
+        # Add dimensions parameter for models that support it
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
+
         response = self.client.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
             embeddings = response["embeddings"]
@@ -111,6 +120,10 @@ class OllamaEmbedder(Embedder):
         kwargs: Dict[str, Any] = {}
         if self.options is not None:
             kwargs["options"] = self.options
+
+        # Add dimensions parameter for models that support it
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
 
         response = await self.aclient.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:

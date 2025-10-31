@@ -1,9 +1,20 @@
+from typing import List
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from pydantic import BaseModel
+
+
+class SupportTicketClassification(BaseModel):
+    category: str
+    priority: str
+    tags: List[str]
+    summary: str
+
 
 triage_agent = Agent(
     name="Ticket Classifier",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-mini"),
     instructions="""
     You are a customer support ticket classifier. Your job is to analyze customer queries and extract key information.
     
@@ -19,12 +30,12 @@ triage_agent = Agent(
     Tags: [tag1, tag2, tag3]
     Summary: [brief summary]
     """,
-    markdown=True,
+    output_schema=SupportTicketClassification,
 )
 
 support_agent = Agent(
     name="Solution Developer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5-mini"),
     instructions="""
     You are a solution developer for customer support. Your job is to create clear, 
     step-by-step solutions for customer issues.

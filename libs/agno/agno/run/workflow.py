@@ -6,10 +6,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
-from agno.run.agent import RunOutput
+from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.team import TeamRunOutput
-from agno.utils.log import log_error
+from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -95,20 +100,6 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
 
         return _dict
 
-    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
-        import json
-
-        try:
-            _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
-            raise
-
-        if indent is None:
-            return json.dumps(_dict, separators=separators)
-        else:
-            return json.dumps(_dict, indent=indent, separators=separators)
-
     @property
     def is_cancelled(self):
         return False
@@ -154,6 +145,11 @@ class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.workflow_error.value
     error: Optional[str] = None
+
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -398,6 +394,11 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.custom_event.value
 
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
@@ -452,10 +453,15 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
 
 def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEvent:
     event_type = data.get("event", "")
-    cls = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
-    if not cls:
+    if event_type in {e.value for e in RunEvent}:
+        return run_output_event_from_dict(data)  # type: ignore
+    elif event_type in {e.value for e in TeamRunEvent}:
+        return team_run_output_event_from_dict(data)  # type: ignore
+    else:
+        event_class = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not event_class:
         raise ValueError(f"Unknown workflow event type: {event_type}")
-    return cls.from_dict(data)  # type: ignore
+    return event_class.from_dict(data)  # type: ignore
 
 
 @dataclass
@@ -600,17 +606,10 @@ class WorkflowRunOutput:
 
         metadata = data.pop("metadata", None)
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
-
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
-
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         events_data = data.pop("events", [])
         final_events = []
@@ -633,6 +632,12 @@ class WorkflowRunOutput:
 
         input_data = data.pop("input", None)
 
+        # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             step_results=parsed_step_results,
             metadata=metadata,
@@ -644,7 +649,7 @@ class WorkflowRunOutput:
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
             input=input_data,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

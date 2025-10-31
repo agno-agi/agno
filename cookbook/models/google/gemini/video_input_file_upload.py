@@ -15,7 +15,7 @@ agent = Agent(
 
 # Please download a sample video file to test this Agent
 # Run: `wget https://storage.googleapis.com/generativeai-downloads/images/GreatRedSpot.mp4` to download a sample video
-video_path = Path(__file__).parent.joinpath("samplevideo.mp4")
+video_path = Path(__file__).parent.joinpath("GreatRedSpot.mp4")
 video_file = None
 remote_file_name = f"files/{video_path.stem.lower().replace('_', '')}"
 try:

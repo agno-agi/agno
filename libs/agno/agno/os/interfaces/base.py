@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter
 
@@ -11,10 +11,12 @@ from agno.workflow.workflow import Workflow
 class BaseInterface(ABC):
     type: str
     version: str = "1.0"
-    router_prefix: str = ""
     agent: Optional[Agent] = None
     team: Optional[Team] = None
     workflow: Optional[Workflow] = None
+
+    prefix: str
+    tags: List[str]
 
     router: APIRouter
 

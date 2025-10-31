@@ -25,6 +25,8 @@ class LanceDb(VectorDb):
 
     Args:
         uri: The URI of the LanceDB database.
+        name: Name of the vector database.
+        description: Description of the vector database.
         connection: The LanceDB connection to use.
         table: The LanceDB table instance to use.
         async_connection: The LanceDB async connection to use.
@@ -44,6 +46,9 @@ class LanceDb(VectorDb):
     def __init__(
         self,
         uri: lancedb.URI = "/tmp/lancedb",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         connection: Optional[lancedb.LanceDBConnection] = None,
         table: Optional[lancedb.db.LanceTable] = None,
         async_connection: Optional[lancedb.AsyncConnection] = None,
@@ -59,6 +64,17 @@ class LanceDb(VectorDb):
         on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
         fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
     ):
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            table_identifier = table_name or "default_table"
+            seed = f"{uri}#{table_identifier}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -354,9 +370,44 @@ class LanceDb(VectorDb):
         log_debug(f"Inserting {len(documents)} documents")
         data = []
 
-        # Prepare documents for insertion.
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             if await self.async_doc_exists(document):
@@ -1013,3 +1064,7 @@ class LanceDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

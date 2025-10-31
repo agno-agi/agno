@@ -20,7 +20,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools(search=True)],
+    tools=[DuckDuckGoTools(enable_search=True)],
     instructions=[
         "You are a financial data specialist. Provide concise and accurate data.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",
@@ -33,7 +33,7 @@ finance_agent = Agent(
 
 team_leader = Team(
     name="Reasoning Finance Team Leader",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-4-sonnet"),
     members=[
         web_agent,
         finance_agent,
@@ -53,7 +53,7 @@ def run_team(task: str):
     team_leader.print_response(
         task,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         show_full_reasoning=True,
     )
 

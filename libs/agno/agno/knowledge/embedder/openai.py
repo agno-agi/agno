@@ -140,66 +140,24 @@ class OpenAIEmbedder(Embedder):
             logger.warning(e)
             return [], None
 
-    def get_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
+    async def async_get_embeddings_batch_and_usage(
+        self, texts: List[str]
+    ) -> Tuple[List[List[float]], List[Optional[Dict]]]:
         """
-        Get embeddings for multiple texts in batches.
+        Get embeddings and usage for multiple texts in batches (async version).
 
         Args:
             texts: List of text strings to embed
-            batch_size: Number of texts to process in each API call (max ~2048)
 
         Returns:
-            List of embedding vectors
+            Tuple of (List of embedding vectors, List of usage dictionaries)
         """
         all_embeddings = []
+        all_usage = []
+        logger.info(f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size} (async)")
 
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i : i + batch_size]
-
-            req: Dict[str, Any] = {
-                "input": batch_texts,
-                "model": self.id,
-                "encoding_format": self.encoding_format,
-            }
-            if self.user is not None:
-                req["user"] = self.user
-            if self.id.startswith("text-embedding-3"):
-                req["dimensions"] = self.dimensions
-            if self.request_params:
-                req.update(self.request_params)
-
-            try:
-                response: CreateEmbeddingResponse = self.client.embeddings.create(**req)
-                batch_embeddings = [data.embedding for data in response.data]
-                all_embeddings.extend(batch_embeddings)
-            except Exception as e:
-                logger.warning(f"Error in batch embedding: {e}")
-                # Fallback to individual calls for this batch
-                for text in batch_texts:
-                    try:
-                        embedding = self.get_embedding(text)
-                        all_embeddings.append(embedding)
-                    except Exception as e2:
-                        logger.warning(f"Error in individual embedding fallback: {e2}")
-                        all_embeddings.append([])
-
-        return all_embeddings
-
-    async def async_get_embeddings_batch(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
-        """
-        Get embeddings for multiple texts in batches (async version).
-
-        Args:
-            texts: List of text strings to embed
-            batch_size: Number of texts to process in each API call (max ~2048)
-
-        Returns:
-            List of embedding vectors
-        """
-        all_embeddings = []
-
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i : i + batch_size]
+        for i in range(0, len(texts), self.batch_size):
+            batch_texts = texts[i : i + self.batch_size]
 
             req: Dict[str, Any] = {
                 "input": batch_texts,
@@ -217,15 +175,21 @@ class OpenAIEmbedder(Embedder):
                 response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
                 batch_embeddings = [data.embedding for data in response.data]
                 all_embeddings.extend(batch_embeddings)
+
+                # For each embedding in the batch, add the same usage information
+                usage_dict = response.usage.model_dump() if response.usage else None
+                all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
                 logger.warning(f"Error in async batch embedding: {e}")
-                # Fallback to individual async calls for this batch
+                # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
-                        embedding = await self.async_get_embedding(text)
+                        embedding, usage = await self.async_get_embedding_and_usage(text)
                         all_embeddings.append(embedding)
+                        all_usage.append(usage)
                     except Exception as e2:
                         logger.warning(f"Error in individual async embedding fallback: {e2}")
                         all_embeddings.append([])
+                        all_usage.append(None)
 
-        return all_embeddings
+        return all_embeddings, all_usage

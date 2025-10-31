@@ -33,7 +33,7 @@ async def custom_execution_function(
     # Run the Hackernews agent to gather research content
     research_content = ""
     async for response in hackernews_agent.arun(
-        execution_input.input, stream=True, stream_intermediate_steps=True
+        execution_input.input, stream=True, stream_events=True
     ):
         if hasattr(response, "content") and response.content:
             research_content += str(response.content)
@@ -57,7 +57,7 @@ async def custom_execution_function(
     """
 
     async for response in content_planner.arun(
-        planning_prompt, stream=True, stream_intermediate_steps=True
+        planning_prompt, stream=True, stream_events=True
     ):
         yield response
 
@@ -77,6 +77,6 @@ if __name__ == "__main__":
         content_creation_workflow.aprint_response(
             input="AI trends in 2024",
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
     )

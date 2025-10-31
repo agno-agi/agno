@@ -6,13 +6,18 @@ from uuid import uuid4
 from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
     apply_pagination,
+    apply_pagination_to_records,
     apply_sorting,
+    apply_sorting_to_records,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -39,6 +44,7 @@ class FirestoreDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
+        culture_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -52,6 +58,7 @@ class FirestoreDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
+            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -68,6 +75,7 @@ class FirestoreDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
+            culture_table=culture_collection,
         )
 
         _client: Optional[Client] = db_client
@@ -145,6 +153,17 @@ class FirestoreDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
+
+        if table_type == "culture":
+            if not hasattr(self, "culture_collection"):
+                if self.culture_table_name is None:
+                    raise ValueError("Culture collection was not provided on initialization")
+                self.culture_collection = self._get_or_create_collection(
+                    collection_name=self.culture_table_name,
+                    collection_type="culture",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.culture_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -261,8 +280,6 @@ class FirestoreDb(BaseDb):
 
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if session_type is not None:
-                query = query.where(filter=FieldFilter("session_type", "==", session_type.value))
 
             docs = query.stream()
             result = None
@@ -558,7 +575,7 @@ class FirestoreDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -596,11 +613,12 @@ class FirestoreDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -610,28 +628,41 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
 
-            deleted_count = 0
-            for doc in docs:
-                doc.reference.delete()
-                deleted_count += 1
-
-            success = deleted_count > 0
-            if success:
-                log_debug(f"Successfully deleted user memory id: {memory_id}")
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                for doc in docs:
+                    data = doc.to_dict()
+                    if data.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                        return
+                    doc.reference.delete()
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                    return
             else:
-                log_debug(f"No user memory found with id: {memory_id}")
+                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                deleted_count = 0
+                for doc in docs:
+                    doc.reference.delete()
+                    deleted_count += 1
+
+                success = deleted_count > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If there is an error deleting the memories.
@@ -641,11 +672,21 @@ class FirestoreDb(BaseDb):
             batch = self.db_client.batch()
             deleted_count = 0
 
-            for memory_id in memory_ids:
-                docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
-                for doc in docs:
-                    batch.delete(doc.reference)
-                    deleted_count += 1
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                for memory_id in memory_ids:
+                    docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                    for doc in docs:
+                        data = doc.to_dict()
+                        if data.get("user_id") == user_id:
+                            batch.delete(doc.reference)
+                            deleted_count += 1
+            else:
+                for memory_id in memory_ids:
+                    docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
+                    for doc in docs:
+                        batch.delete(doc.reference)
+                        deleted_count += 1
 
             batch.commit()
 
@@ -687,12 +728,15 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception getting all memory topics: {e}")
             raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             Optional[UserMemory]:
@@ -711,7 +755,14 @@ class FirestoreDb(BaseDb):
                 result = doc.to_dict()
                 break
 
-            if result is None or not deserialize:
+            if result is None:
+                return None
+
+            # Filter by user_id if provided
+            if user_id and result.get("user_id") != user_id:
+                return None
+
+            if not deserialize:
                 return result
 
             return UserMemory.from_dict(result)
@@ -818,23 +869,26 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            docs = collection_ref.where(filter=FieldFilter("user_id", "!=", None)).stream()
+
+            query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
+
+            docs = query.stream()
 
             user_stats = {}
             for doc in docs:
                 data = doc.to_dict()
-                user_id = data.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            "user_id": user_id,
+                current_user_id = data.get("user_id")
+                if current_user_id:
+                    if current_user_id not in user_stats:
+                        user_stats[current_user_id] = {
+                            "user_id": current_user_id,
                             "total_memories": 0,
                             "last_memory_updated_at": 0,
                         }
-                    user_stats[user_id]["total_memories"] += 1
+                    user_stats[current_user_id]["total_memories"] += 1
                     updated_at = data.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[current_user_id]["last_memory_updated_at"]:
+                        user_stats[current_user_id]["last_memory_updated_at"] = updated_at
 
             # Convert to list and sort
             formatted_results = list(user_stats.values())
@@ -902,7 +956,7 @@ class FirestoreDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -969,6 +1023,213 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception deleting all memories: {e}")
+            raise e
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+
+            # Get all documents in the collection
+            docs = collection_ref.stream()
+
+            # Delete all documents in batches
+            batch = self.db_client.batch()
+            batch_count = 0
+
+            for doc in docs:
+                batch.delete(doc.reference)
+                batch_count += 1
+
+                # Firestore batch has a limit of 500 operations
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    batch_count = 0
+
+            # Commit remaining operations
+            if batch_count > 0:
+                batch.commit()
+
+        except Exception as e:
+            log_error(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+
+            for doc in docs:
+                doc.reference.delete()
+                log_debug(f"Deleted cultural knowledge with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).limit(1).stream()
+
+            for doc in docs:
+                result = doc.to_dict()
+                if not deserialize:
+                    return result
+                return deserialize_cultural_knowledge_from_db(result)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+
+            # Build query with filters
+            query = collection_ref
+            if agent_id is not None:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+            if team_id is not None:
+                query = query.where(filter=FieldFilter("team_id", "==", team_id))
+
+            # Get all matching documents
+            docs = query.stream()
+            results = [doc.to_dict() for doc in docs]
+
+            # Apply name filter (Firestore doesn't support regex in queries)
+            if name is not None:
+                results = [r for r in results if name.lower() in r.get("name", "").lower()]
+
+            total_count = len(results)
+
+            # Apply sorting and pagination to in-memory results
+            sorted_results = apply_sorting_to_records(records=results, sort_by=sort_by, sort_order=sort_order)
+            paginated_results = apply_pagination_to_records(records=sorted_results, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_results, total_count
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_results]
+
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in Firestore.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture", create_collection_if_not_found=True)
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the update document with serialized content
+            update_doc = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Find and update or create new document
+            docs = collection_ref.where(filter=FieldFilter("id", "==", cultural_knowledge.id)).limit(1).stream()
+
+            doc_found = False
+            for doc in docs:
+                doc.reference.set(update_doc)
+                doc_found = True
+                break
+
+            if not doc_found:
+                collection_ref.add(update_doc)
+
+            if not deserialize:
+                return update_doc
+
+            return deserialize_cultural_knowledge_from_db(update_doc)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
     # -- Metrics methods --
@@ -1351,6 +1612,9 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return None
+
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
 
             eval_run_raw = None
@@ -1491,6 +1755,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return None
 
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
             doc_ref = next((doc.reference for doc in docs), None)

@@ -26,7 +26,9 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.add_contents_async(urls=["https://docs.agno.com/introduction/agents.md"])
+    knowledge.add_contents_async(
+        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+    )
 )
 
 agent = Agent(
@@ -49,5 +51,5 @@ if __name__ == "__main__":
         "What are Agents?",
         stream=True,
         show_full_reasoning=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

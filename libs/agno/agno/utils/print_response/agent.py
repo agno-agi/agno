@@ -33,6 +33,7 @@ def print_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
@@ -78,6 +79,11 @@ def print_response_stream(
         if render:
             live_log.update(Group(*panels))
 
+        input_content = get_text_from_message(input)
+
+        # Consider both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
         for response_event in agent.run(
             input=input,
             session_id=session_id,
@@ -88,7 +94,7 @@ def print_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -105,6 +111,10 @@ def print_response_stream(
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
+
+                if response_event.event == RunEvent.pre_hook_completed:  # type: ignore
+                    if response_event.run_input is not None:  # type: ignore
+                        input_content = get_text_from_message(response_event.run_input.input_content)  # type: ignore
 
                 if (
                     response_event.event == RunEvent.tool_call_started  # type: ignore
@@ -157,9 +167,8 @@ def print_response_stream(
             panels = [status]
             if show_message:
                 # Convert message to a panel
-                message_content = get_text_from_message(input)
                 message_panel = create_panel(
-                    content=Text(message_content, style="green"),
+                    content=Text(input_content, style="green"),
                     title="Message",
                     border_style="cyan",
                 )
@@ -216,6 +225,7 @@ async def aprint_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
@@ -261,6 +271,9 @@ async def aprint_response_stream(
         if render:
             live_log.update(Group(*panels))
 
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
         result = agent.arun(
             input=input,
             session_id=session_id,
@@ -271,7 +284,7 @@ async def aprint_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=stream_events,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -281,6 +294,8 @@ async def aprint_response_stream(
             metadata=metadata,
             **kwargs,
         )
+
+        input_content = get_text_from_message(input)
 
         async for resp in result:  # type: ignore
             if isinstance(resp, tuple(get_args(RunOutputEvent))):
@@ -296,6 +311,10 @@ async def aprint_response_stream(
                     and resp.tool is not None
                 ):
                     accumulated_tool_calls.append(resp.tool)
+
+                if resp.event == RunEvent.pre_hook_completed:  # type: ignore
+                    if resp.run_input is not None:  # type: ignore
+                        input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
 
                 if resp.event == RunEvent.run_content:  # type: ignore
                     if isinstance(resp.content, str):
@@ -338,12 +357,11 @@ async def aprint_response_stream(
 
             panels = [status]
 
-            if input and show_message:
+            if input_content and show_message:
                 render = True
                 # Convert message to a panel
-                message_content = get_text_from_message(input)
                 message_panel = create_panel(
-                    content=Text(message_content, style="green"),
+                    content=Text(input_content, style="green"),
                     title="Message",
                     border_style="cyan",
                 )
@@ -487,7 +505,6 @@ def print_response(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -533,7 +550,6 @@ def print_response(
             videos=videos,
             files=files,
             stream=False,
-            stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -544,6 +560,20 @@ def print_response(
             **kwargs,
         )
         response_timer.stop()
+
+        if run_response.input is not None and run_response.input.input_content != input:
+            # Input was modified during the run
+            panels = [status]
+            if show_message:
+                # Convert message to a panel
+                message_content = get_text_from_message(run_response.input.input_content)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
+                )
+                panels.append(message_panel)  # type: ignore
+                live_log.update(Group(*panels))
 
         additional_panels = build_panels(
             run_response=run_response,
@@ -591,7 +621,6 @@ async def aprint_response(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -637,7 +666,6 @@ async def aprint_response(
             videos=videos,
             files=files,
             stream=False,
-            stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -648,6 +676,20 @@ async def aprint_response(
             **kwargs,
         )
         response_timer.stop()
+
+        if run_response.input is not None and run_response.input.input_content != input:
+            # Input was modified during the run
+            panels = [status]
+            if show_message:
+                # Convert message to a panel
+                message_content = get_text_from_message(run_response.input.input_content)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
+                )
+                panels.append(message_panel)  # type: ignore
+                live_log.update(Group(*panels))
 
         additional_panels = build_panels(
             run_response=run_response,

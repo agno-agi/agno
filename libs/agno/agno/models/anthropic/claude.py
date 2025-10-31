@@ -59,12 +59,23 @@ class Claude(Model):
     For more information, see: https://docs.anthropic.com/en/api/messages
     """
 
-    id: str = "claude-3-5-sonnet-20241022"
+    # Models that DO NOT support extended thinking
+    # All future models are assumed to support thinking
+    # Based on official Anthropic documentation: https://docs.claude.com/en/docs/about-claude/models/overview
+    NON_THINKING_MODELS = {
+        # Claude Haiku 3 family (does not support thinking)
+        "claude-3-haiku-20240307",
+        # Claude Haiku 3.5 family (does not support thinking)
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-haiku-latest",
+    }
+
+    id: str = "claude-sonnet-4-5-20250929"
     name: str = "Claude"
     provider: str = "Anthropic"
 
     # Request parameters
-    max_tokens: Optional[int] = 4096
+    max_tokens: Optional[int] = 8192
     thinking: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
@@ -75,14 +86,30 @@ class Claude(Model):
     request_params: Optional[Dict[str, Any]] = None
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
+    # Skills configuration
+    skills: Optional[List[Dict[str, str]]] = (
+        None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+    )
+    betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
+
     # Client parameters
     api_key: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
+    timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
+
+    def __post_init__(self):
+        """Validate model configuration after initialization"""
+        # Validate thinking support immediately at model creation
+        if self.thinking:
+            self._validate_thinking_support()
+        # Set up skills configuration if skills are enabled
+        if self.skills:
+            self._setup_skills_configuration()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -93,6 +120,8 @@ class Claude(Model):
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+        if self.timeout is not None:
+            client_params["timeout"] = self.timeout
 
         # Add additional client parameters
         if self.client_params is not None:
@@ -123,10 +152,50 @@ class Claude(Model):
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
+    def _validate_thinking_support(self) -> None:
+        """
+        Validate that the current model supports extended thinking.
+
+        Raises:
+            ValueError: If thinking is enabled but the model doesn't support it
+        """
+        if self.thinking and self.id in self.NON_THINKING_MODELS:
+            non_thinking_models = "\n  - ".join(sorted(self.NON_THINKING_MODELS))
+            raise ValueError(
+                f"Model '{self.id}' does not support extended thinking.\n\n"
+                f"The following models do NOT support thinking:\n  - {non_thinking_models}\n\n"
+                f"All other Claude models support extended thinking by default.\n"
+                f"For more information, see: https://docs.anthropic.com/en/docs/about-claude/models/overview"
+            )
+
+    def _setup_skills_configuration(self) -> None:
+        """
+        Set up configuration for Claude Agent Skills.
+        Automatically configures betas array with required values.
+
+        Skills enable document creation capabilities (PowerPoint, Excel, Word, PDF).
+        For more information, see: https://docs.claude.com/en/docs/agents-and-tools/agent-skills/quickstart
+        """
+        # Required betas for skills
+        required_betas = ["code-execution-2025-08-25", "skills-2025-10-02"]
+
+        # Initialize or merge betas
+        if self.betas is None:
+            self.betas = required_betas
+        else:
+            # Add required betas if not present
+            for beta in required_betas:
+                if beta not in self.betas:
+                    self.betas.append(beta)
+
     def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
         """
+        # Validate thinking support if thinking is enabled
+        if self.thinking:
+            self._validate_thinking_support()
+
         _request_params: Dict[str, Any] = {}
         if self.max_tokens:
             _request_params["max_tokens"] = self.max_tokens
@@ -144,6 +213,9 @@ class Claude(Model):
             _request_params["mcp_servers"] = [
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
+        if self.skills:
+            _request_params["betas"] = self.betas
+            _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
 
@@ -173,6 +245,15 @@ class Claude(Model):
             else:
                 request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
+        # Add code execution tool if skills are enabled
+        if self.skills:
+            code_execution_tool = {"type": "code_execution_20250825", "name": "code_execution"}
+            if tools:
+                # Add code_execution to existing tools, code execution is needed for generating and processing files
+                tools = tools + [code_execution_tool]
+            else:
+                tools = [code_execution_tool]
+
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
 
@@ -199,12 +280,12 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.skills is not None:
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.get_request_params(),
+                    **request_kwargs,
                 )
             else:
                 assistant_message.metrics.start_timer()
@@ -266,7 +347,7 @@ class Claude(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.skills is not None:
                 assistant_message.metrics.start_timer()
                 with self.get_client().beta.messages.stream(
                     model=self.id,
@@ -321,12 +402,12 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.skills is not None:
                 assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.get_request_params(),
+                    **request_kwargs,
                 )
             else:
                 assistant_message.metrics.start_timer()
@@ -385,7 +466,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self.mcp_servers is not None or self.skills is not None:
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
@@ -502,6 +583,22 @@ class Claude(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        # Extract file IDs if skills are enabled
+        if self.skills and response.content:
+            file_ids: List[str] = []
+            for block in response.content:
+                if block.type == "bash_code_execution_tool_result":
+                    if hasattr(block, "content") and hasattr(block.content, "content"):
+                        if isinstance(block.content.content, list):
+                            for output_block in block.content.content:
+                                if hasattr(output_block, "file_id"):
+                                    file_ids.append(output_block.file_id)
+
+            if file_ids:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["file_ids"] = file_ids
+
         return model_response
 
     def _parse_provider_response_delta(
@@ -616,7 +713,7 @@ class Claude(Model):
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
-            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use}
+            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use.model_dump()}
         if isinstance(response_usage, Usage):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}
