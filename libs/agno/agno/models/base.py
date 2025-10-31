@@ -2119,7 +2119,7 @@ class Model(ABC):
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
                 continue
-            # Skip client objects 
+            # Skip client objects
             if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
                 setattr(new_model, k, None)
                 continue
