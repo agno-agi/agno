@@ -3636,7 +3636,7 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
-                if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
+                elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
                         f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
                         "but no database is configured in the Workflow. "
