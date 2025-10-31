@@ -235,8 +235,7 @@ class Workflow:
         if self.add_workflow_history_to_steps and self.db is None:
             log_warning(
                 "Workflow history is enabled (add_workflow_history_to_steps=True) but no database is configured. "
-                "Workflow history requires a database to persist runs across executions. "
-                "Set db=SqliteDb() or another database to enable workflow history."
+                "History won't be persisted. Add a database to persist runs across executions. "
             )
 
     def set_id(self) -> None:
