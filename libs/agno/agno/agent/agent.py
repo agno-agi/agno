@@ -270,7 +270,7 @@ class Agent:
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
-    reasoning_model: Optional[Union[Model, str]] = None
+    reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
@@ -351,11 +351,11 @@ class Agent:
     # Provide a response model to get the response as a Pydantic model
     output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
-    parser_model: Optional[Union[Model, str]] = None
+    parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
     # Provide an output model to structure the response from the main model
-    output_model: Optional[Union[Model, str]] = None
+    output_model: Optional[Model] = None
     # Provide a prompt for the output model
     output_model_prompt: Optional[str] = None
     # If True, the response from the Model is converted into the output_schema
@@ -513,7 +513,7 @@ class Agent:
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
     ):
-        self.model = model
+        self.model = model  # type: ignore[assignment]
         self.name = name
         self.id = id
         self.introduction = introduction
@@ -579,7 +579,7 @@ class Agent:
         self.post_hooks = post_hooks
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -610,12 +610,12 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
-        self.parser_model = parser_model
+        self.parser_model = parser_model  # type: ignore[assignment]
         self.parser_model_prompt = parser_model_prompt
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.parse_response = parse_response
-        self.output_model = output_model
+        self.output_model = output_model  # type: ignore[assignment]
         self.output_model_prompt = output_model_prompt
 
         self.structured_outputs = structured_outputs
@@ -8333,7 +8333,7 @@ class Agent:
         use_default_reasoning = False
 
         # Get the reasoning model
-        reasoning_model: Optional[Model] = self.reasoning_model
+        reasoning_model = cast(Optional[Model], self.reasoning_model)
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
@@ -8626,7 +8626,7 @@ class Agent:
         use_default_reasoning = False
 
         # Get the reasoning model
-        reasoning_model: Optional[Model] = self.reasoning_model
+        reasoning_model = cast(Optional[Model], self.reasoning_model)
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
@@ -8933,7 +8933,7 @@ class Agent:
         if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
-            parser_model_response: ModelResponse = self.parser_model.response(
+            parser_model_response: ModelResponse = cast(Model, self.parser_model).response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
             )
@@ -8956,7 +8956,7 @@ class Agent:
         if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
-            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+            parser_model_response: ModelResponse = await cast(Model, self.parser_model).aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
             )
@@ -8988,7 +8988,7 @@ class Agent:
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
-                for model_response_event in self.parser_model.response_stream(
+                for model_response_event in cast(Model, self.parser_model).response_stream(
                     messages=messages_for_parser_model,
                     response_format=parser_response_format,
                     stream_model_response=False,
@@ -9043,7 +9043,7 @@ class Agent:
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
-                model_response_stream = self.parser_model.aresponse_stream(
+                model_response_stream = cast(Model, self.parser_model).aresponse_stream(
                     messages=messages_for_parser_model,
                     response_format=parser_response_format,
                     stream_model_response=False,
@@ -9086,7 +9086,9 @@ class Agent:
             return
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
-        output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
+        output_model_response: ModelResponse = cast(Model, self.output_model).response(
+            messages=messages_for_output_model
+        )
         model_response.content = output_model_response.content
 
     def _generate_response_with_output_model_stream(
@@ -9117,7 +9119,7 @@ class Agent:
 
         model_response = ModelResponse(content="")
 
-        for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
+        for model_response_event in cast(Model, self.output_model).response_stream(messages=messages_for_output_model):
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -9147,7 +9149,9 @@ class Agent:
             return
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
-        output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
+        output_model_response: ModelResponse = await cast(Model, self.output_model).aresponse(
+            messages=messages_for_output_model
+        )
         model_response.content = output_model_response.content
 
     async def _agenerate_response_with_output_model_stream(
@@ -9178,7 +9182,7 @@ class Agent:
 
         model_response = ModelResponse(content="")
 
-        model_response_stream = self.output_model.aresponse_stream(messages=messages_for_output_model)
+        model_response_stream = cast(Model, self.output_model).aresponse_stream(messages=messages_for_output_model)
 
         async for model_response_event in model_response_stream:
             for event in self._handle_model_response_chunk(
@@ -10242,8 +10246,8 @@ class Agent:
             "model_provider": self.model.provider if self.model else None,
             "model_name": self.model.name if self.model else None,
             "model_id": self.model.id if self.model else None,
-            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
-            "output_model": self.output_model.to_dict() if self.output_model else None,
+            "parser_model": cast(Model, self.parser_model).to_dict() if self.parser_model else None,
+            "output_model": cast(Model, self.output_model).to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
             "has_memory": self.enable_user_memories is True
             or self.enable_agentic_memory is True
