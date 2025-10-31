@@ -2789,6 +2789,12 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
+                if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
+                    log_warning(
+                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True but "
+                        "the Workflow has no database configured. Workflow history will not persist. "
+                        "Add db=SqliteDb() or another database to the Workflow."
+                    )
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
