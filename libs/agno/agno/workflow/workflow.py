@@ -977,7 +977,7 @@ class Workflow:
         from agno.run.agent import RunOutput
         from agno.run.team import TeamRunOutput
 
-        if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+        if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
         if self.store_events:
             # Check if this event type should be skipped
