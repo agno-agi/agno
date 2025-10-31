@@ -2040,7 +2040,7 @@ class Agent:
 
         # 3. Resolve dependencies
         if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_context.dependencies)
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 4. Execute pre-hooks
         run_input = cast(RunInput, run_response.input)
@@ -3405,7 +3405,7 @@ class Agent:
 
         # 2. Resolve dependencies
         if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_context.dependencies)
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 3. Update metadata and session state
         self._update_metadata(session=agent_session)
@@ -3607,7 +3607,7 @@ class Agent:
 
         # 1. Resolve dependencies
         if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_context.dependencies)
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 2. Read existing session from db
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -5609,7 +5609,7 @@ class Agent:
         # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
         if not isinstance(run_context.dependencies, dict):
-            log_warning("Dependencies is not a dict")
+            log_warning("Run dependencies are not a dict")
             return
 
         for key, value in run_context.dependencies.items():
@@ -5644,7 +5644,7 @@ class Agent:
 
         log_debug("Resolving context (async)")
         if not isinstance(run_context.dependencies, dict):
-            log_warning("Context is not a dict")
+            log_warning("Run dependencies are not a dict")
             return
 
         for key, value in run_context.dependencies.items():
@@ -5655,7 +5655,7 @@ class Agent:
                 sig = signature(value)
 
                 # Build kwargs for the function
-                kwargs = {}
+                kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
                     kwargs["agent"] = self
                 if "run_context" in sig.parameters:
