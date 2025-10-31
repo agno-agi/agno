@@ -719,6 +719,11 @@ class Milvus(VectorDb):
                 )
             )
 
+        # Apply reranker if available
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+            search_results = search_results[:limit]
+
         log_info(f"Found {len(search_results)} documents")
         return search_results
 

@@ -31,6 +31,9 @@ class WorkflowRunEvent(str, Enum):
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
 
+    workflow_agent_started = "WorkflowAgentStarted"
+    workflow_agent_completed = "WorkflowAgentCompleted"
+
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_error = "StepError"
@@ -124,6 +127,21 @@ class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution starts"""
 
     event: str = WorkflowRunEvent.workflow_started.value
+
+
+@dataclass
+class WorkflowAgentStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent starts (before deciding to run workflow or answer directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_started.value
+
+
+@dataclass
+class WorkflowAgentCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent completes (after running workflow or answering directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_completed.value
+    content: Optional[Any] = None
 
 
 @dataclass
@@ -403,6 +421,8 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
+    WorkflowAgentStartedEvent,
+    WorkflowAgentCompletedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
     WorkflowCancelledEvent,
@@ -428,6 +448,8 @@ WorkflowRunOutputEvent = Union[
 # Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
+    WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
+    WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
     WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
@@ -491,6 +513,10 @@ class WorkflowRunOutput:
     # Store agent/team responses separately with parent_run_id references
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
 
+    # Workflow agent run - stores the full agent RunOutput when workflow agent is used
+    # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
+    workflow_agent_run: Optional[RunOutput] = None
+
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
 
@@ -522,6 +548,7 @@ class WorkflowRunOutput:
                 "step_executor_runs",
                 "events",
                 "metrics",
+                "workflow_agent_run",
             ]
         }
 
@@ -556,6 +583,9 @@ class WorkflowRunOutput:
 
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
+
+        if self.workflow_agent_run is not None:
+            _dict["workflow_agent_run"] = self.workflow_agent_run.to_dict()
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
@@ -604,6 +634,14 @@ class WorkflowRunOutput:
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
+        workflow_agent_run_data = data.pop("workflow_agent_run", None)
+        workflow_agent_run = None
+        if workflow_agent_run_data:
+            if isinstance(workflow_agent_run_data, dict):
+                workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
+            elif isinstance(workflow_agent_run_data, RunOutput):
+                workflow_agent_run = workflow_agent_run_data
+
         metadata = data.pop("metadata", None)
 
         images = reconstruct_images(data.pop("images", []))
@@ -640,6 +678,7 @@ class WorkflowRunOutput:
 
         return cls(
             step_results=parsed_step_results,
+            workflow_agent_run=workflow_agent_run,
             metadata=metadata,
             images=images,
             videos=videos,
