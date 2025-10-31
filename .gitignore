@@ -76,3 +76,4 @@ agno_json_data/
 
 # ignore pyrightconfig.json
 pyrightconfig.json
+.python-version
