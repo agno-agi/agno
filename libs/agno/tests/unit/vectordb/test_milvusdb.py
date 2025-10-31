@@ -450,12 +450,13 @@ def test_delete_methods_error_handling(milvus_db, mock_milvus_client):
     assert milvus_db.delete_by_metadata({"type": "test"}) is False
     assert milvus_db.delete_by_content_id("test_content_id") is False
 
+
 def test_search_with_reranker(milvus_db, mock_milvus_client):
     """Test Milvus search with reranker applied"""
     with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 768):
         # Mock search results from Milvus
-        mock_result1 = {"id": "id1", "entity": {"name": "doc_a", "content": "Content A", "vector": [0.1]*768}}
-        mock_result2 = {"id": "id2", "entity": {"name": "doc_b", "content": "Content B", "vector": [0.2]*768}}
+        mock_result1 = {"id": "id1", "entity": {"name": "doc_a", "content": "Content A", "vector": [0.1] * 768}}
+        mock_result2 = {"id": "id2", "entity": {"name": "doc_b", "content": "Content B", "vector": [0.2] * 768}}
         mock_milvus_client.search.return_value = [[mock_result1, mock_result2]]
 
         # Mock reranker that reverses results

@@ -2514,7 +2514,7 @@ class Workflow:
 
         if self.agent and isinstance(self.agent, WorkflowAgent):
             add_history = self.agent.add_workflow_history
-            num_runs = self.agent.num_history_runs or 5  
+            num_runs = self.agent.num_history_runs or 5
 
         if add_history:
             history_context = (
@@ -3638,7 +3638,7 @@ class Workflow:
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
-                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
+                        f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )
