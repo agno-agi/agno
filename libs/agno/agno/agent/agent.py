@@ -1062,9 +1062,9 @@ class Agent:
                 post_hook_iterator = self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
+                    run_context=run_context,
                     session=session,
                     user_id=user_id,
-                    run_context=run_context,
                     debug_mode=debug_mode,
                     **kwargs,
                 )
@@ -1580,7 +1580,7 @@ class Agent:
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # When filters are passed manually
-        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
+        if self.knowledge_filters or knowledge_filters:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Use stream override value when necessary
@@ -3875,9 +3875,9 @@ class Agent:
         # Prepare all possible arguments once
         all_args = {
             "run_input": run_input,
+            "run_context": run_context,
             "agent": self,
             "session": session,
-            "run_context": run_context,
             "session_state": run_context.session_state,
             "dependencies": run_context.dependencies,
             "metadata": run_context.metadata,
