@@ -110,6 +110,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+notion = ["notion-client"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
 reportlab = ["reportlab"]
@@ -233,6 +234,7 @@ tools = [
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
@@ -412,6 +414,7 @@ module = [
   "mem0.*",
   "memori.*",
   "mcp.*",
+  "notion_client.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
