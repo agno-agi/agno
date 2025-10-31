@@ -974,6 +974,11 @@ class Workflow:
         websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
+        from agno.run.agent import RunOutput
+        from agno.run.team import TeamRunOutput
+
+        if isinstance(event, (RunOutput, TeamRunOutput)):
+            return event
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:
