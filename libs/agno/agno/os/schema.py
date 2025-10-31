@@ -13,8 +13,10 @@ from agno.os.utils import (
     extract_input_media,
     format_team_tools,
     format_tools,
+    get_agent_input_schema_dict,
     get_run_input,
     get_session_name,
+    get_team_input_schema_dict,
     get_workflow_input_schema_dict,
 )
 from agno.run.agent import RunOutput
@@ -166,21 +168,25 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the agent")
-    name: Optional[str] = Field(None, description="Name of the agent")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    model: Optional[ModelResponse] = Field(None, description="Model configuration")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
-    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
-    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
-    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
-    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
-    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
-    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
-    extra_messages: Optional[Dict[str, Any]] = Field(None, description="Extra message configurations")
-    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
-    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: Optional[str] = None
+    name: Optional[str] = None
+    db_id: Optional[str] = None
+    model: Optional[ModelResponse] = None
+    tools: Optional[Dict[str, Any]] = None
+    sessions: Optional[Dict[str, Any]] = None
+    knowledge: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    default_tools: Optional[Dict[str, Any]] = None
+    system_message: Optional[Dict[str, Any]] = None
+    extra_messages: Optional[Dict[str, Any]] = None
+    response_settings: Optional[Dict[str, Any]] = None
+    streaming: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
+
+    class Config:
+        exclude_none = True
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
@@ -375,6 +381,7 @@ class AgentResponse(BaseModel):
             "stream_events": agent.stream_events,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
+
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -391,28 +398,28 @@ class AgentResponse(BaseModel):
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             metadata=agent.metadata,
+            input_schema=get_agent_input_schema_dict(agent),
         )
 
 
 class TeamResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the team")
-    name: Optional[str] = Field(None, description="Name of the team")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    description: Optional[str] = Field(None, description="Description of the team")
-    model: Optional[ModelResponse] = Field(None, description="Model configuration")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
-    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
-    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
-    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
-    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
-    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
-    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
-    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
-    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(
-        None, description="List of team members (agents or teams)"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: Optional[str] = None
+    name: Optional[str] = None
+    db_id: Optional[str] = None
+    description: Optional[str] = None
+    model: Optional[ModelResponse] = None
+    tools: Optional[Dict[str, Any]] = None
+    sessions: Optional[Dict[str, Any]] = None
+    knowledge: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    default_tools: Optional[Dict[str, Any]] = None
+    system_message: Optional[Dict[str, Any]] = None
+    response_settings: Optional[Dict[str, Any]] = None
+    streaming: Optional[Dict[str, Any]] = None
+    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
     @classmethod
     async def from_team(cls, team: Team) -> "TeamResponse":
@@ -621,6 +628,7 @@ class TeamResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=members if members else None,
             metadata=team.metadata,
+            input_schema=get_team_input_schema_dict(team),
         )
 
 
