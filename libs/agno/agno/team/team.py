@@ -1607,6 +1607,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1618,6 +1619,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -1946,6 +1948,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2453,6 +2456,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2464,6 +2468,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -2785,6 +2790,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2944,6 +2950,12 @@ class Team:
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
 
+        # Update session_state with changes from model response
+        if model_response.updated_session_state is not None and run_response.session_state is not None:
+            from agno.utils.merge_dict import merge_dictionaries
+
+            merge_dictionaries(run_response.session_state, model_response.updated_session_state)
+
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
 
@@ -2968,6 +2980,7 @@ class Team:
         tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -2999,6 +3012,7 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_events=stream_events,
                 parse_structured_output=self.should_parse_structured_output,
+                session_state=session_state,
             )
 
         # 3. Update TeamRunOutput
@@ -3050,6 +3064,7 @@ class Team:
         tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -3082,6 +3097,7 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_events=stream_events,
                 parse_structured_output=self.should_parse_structured_output,
+                session_state=session_state,
             ):
                 yield event
 
@@ -3136,6 +3152,7 @@ class Team:
         reasoning_state: Optional[Dict[str, Any]] = None,
         stream_events: bool = False,
         parse_structured_output: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
@@ -3313,10 +3330,15 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
-                if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    merge_dictionaries(
-                        session.session_data["session_state"], model_response_event.updated_session_state
-                    )
+                if model_response_event.updated_session_state is not None:
+                    # Update the session_state variable that TeamRunOutput references
+                    if session_state is not None:
+                        merge_dictionaries(session_state, model_response_event.updated_session_state)
+                    # Also update the DB session object
+                    if session.session_data is not None:
+                        merge_dictionaries(
+                            session.session_data["session_state"], model_response_event.updated_session_state
+                        )
 
                 if model_response_event.images is not None:
                     for image in model_response_event.images:
