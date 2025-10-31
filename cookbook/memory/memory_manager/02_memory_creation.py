@@ -12,7 +12,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 memory_db = PostgresDb(db_url=db_url)
 
-memory = MemoryManager(model="openai:gpt-4o", db=memory_db)
+memory = MemoryManager(model=OpenAIChat(id="gpt-4o"), db=memory_db)
 
 john_doe_id = "john_doe@example.com"
 memory.add_user_memory(
