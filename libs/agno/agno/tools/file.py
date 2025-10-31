@@ -97,7 +97,9 @@ class FileTools(Toolkit):
             log_error(f"Error reading file: {e}")
             return f"Error reading file: {e}"
 
-    def replace_file_chunk(self, file_name: str, start_line: int, end_line: int, chunk: str, encoding: str = "utf-8") -> str:
+    def replace_file_chunk(
+        self, file_name: str, start_line: int, end_line: int, chunk: str, encoding: str = "utf-8"
+    ) -> str:
         """Reads the contents of the file, replaces lines
         between start_line and end_line with chunk and writes the file
 
@@ -119,7 +121,9 @@ class FileTools(Toolkit):
             lines = contents.split(self.line_separator)
             start = lines[0:start_line]
             end = lines[end_line + 1 :]
-            return self.save_file(file_name=file_name, contents=self.line_separator.join(start + [chunk] + end), encoding=encoding)
+            return self.save_file(
+                file_name=file_name, contents=self.line_separator.join(start + [chunk] + end), encoding=encoding
+            )
         except Exception as e:
             log_error(f"Error patching file: {e}")
             return f"Error patching file: {e}"
@@ -220,7 +224,8 @@ class FileTools(Toolkit):
                     "files": file_paths,
                 }
             else:
-                file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
+                # Use as_posix() to ensure forward slashes in paths for cross-platform compatibility
+                file_paths = [file_path.relative_to(self.base_dir).as_posix() for file_path in matching_files]
 
                 result = {
                     "pattern": pattern,
