@@ -382,7 +382,6 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-
         if hasattr(event, "workflow_id"):
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
@@ -404,6 +403,7 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
@@ -425,8 +425,11 @@ class Step:
         # Create session_state copy once to avoid duplication
         session_state_copy = copy(session_state) if session_state is not None else {}
 
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
         # Emit StepStartedEvent
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
@@ -548,7 +551,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -588,7 +591,7 @@ class Step:
                 yield final_response
 
                 # Emit StepCompletedEvent
-                if stream_intermediate_steps and workflow_run_response:
+                if stream_events and workflow_run_response:
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
                         workflow_name=workflow_run_response.workflow_name or "",
@@ -809,6 +812,7 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
@@ -831,7 +835,10 @@ class Step:
         # Create session_state copy once to avoid duplication
         session_state_copy = copy(session_state) if session_state is not None else {}
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Emit StepStartedEvent
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -978,7 +985,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -1015,7 +1022,7 @@ class Step:
                 final_response = self._process_step_output(final_response)
                 yield final_response
 
-                if stream_intermediate_steps and workflow_run_response:
+                if stream_events and workflow_run_response:
                     # Emit StepCompletedEvent
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",

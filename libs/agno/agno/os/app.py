@@ -13,6 +13,7 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
@@ -98,6 +99,7 @@ class AgentOS:
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
+        knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -122,6 +124,7 @@ class AgentOS:
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
+            knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
@@ -133,8 +136,8 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        if not agents and not workflows and not teams:
-            raise ValueError("Either agents, teams or workflows must be provided.")
+        if not agents and not workflows and not teams and not knowledge:
+            raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
@@ -143,7 +146,7 @@ class AgentOS:
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
-
+        self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
 
         self._app_set = False
@@ -184,54 +187,96 @@ class AgentOS:
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
 
-        if self.agents:
-            for agent in self.agents:
-                # Track all MCP tools to later handle their connection
-                if agent.tools:
-                    for tool in agent.tools:
-                        # Checking if the tool is a MCPTools or MultiMCPTools instance
-                        type_name = type(tool).__name__
-                        if type_name in ("MCPTools", "MultiMCPTools"):
-                            if tool not in self.mcp_tools:
-                                self.mcp_tools.append(tool)
-
-                agent.initialize_agent()
-
-                # Required for the built-in routes to work
-                agent.store_events = True
-
-        if self.teams:
-            for team in self.teams:
-                # Track all MCP tools recursively
-                collect_mcp_tools_from_team(team, self.mcp_tools)
-
-                team.initialize_team()
-
-                for member in team.members:
-                    if isinstance(member, Agent):
-                        member.team_id = None
-                        member.initialize_agent()
-                    elif isinstance(member, Team):
-                        member.initialize_team()
-
-                # Required for the built-in routes to work
-                team.store_events = True
-
-        if self.workflows:
-            for workflow in self.workflows:
-                # Track MCP tools recursively in workflow members
-                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
-
-                if not workflow.id:
-                    workflow.id = generate_id_from_name(workflow.name)
-
-                # Required for the built-in routes to work
-                workflow.store_events = True
+        self._initialize_agents()
+        self._initialize_teams()
+        self._initialize_workflows()
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+
+    def _add_agent_os_to_lifespan_function(self, lifespan):
+        """
+        Inspect a lifespan function and wrap it to pass agent_os if it accepts it.
+
+        Returns:
+            A wrapped lifespan that passes agent_os if the lifespan function expects it.
+        """
+        # Getting the actual function inside the lifespan
+        lifespan_function = lifespan
+        if hasattr(lifespan, "__wrapped__"):
+            lifespan_function = lifespan.__wrapped__
+
+        try:
+            from inspect import signature
+
+            # Inspecting the lifespan function signature to find its parameters
+            sig = signature(lifespan_function)
+            params = list(sig.parameters.keys())
+
+            # If the lifespan function expects the 'agent_os' parameter, add it
+            if "agent_os" in params:
+                return partial(lifespan, agent_os=self)
+            else:
+                return lifespan
+
+        except (ValueError, TypeError):
+            return lifespan
+
+    def resync(self, app: FastAPI) -> None:
+        """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
+        self._initialize_agents()
+        self._initialize_teams()
+        self._initialize_workflows()
+        self._auto_discover_databases()
+        self._auto_discover_knowledge_instances()
+        self._reprovision_routers(app=app)
+
+    def _reprovision_routers(self, app: FastAPI) -> None:
+        """Re-provision all routes for the AgentOS."""
+        updated_routers = [
+            get_session_router(dbs=self.dbs),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_metrics_router(dbs=self.dbs),
+            get_knowledge_router(knowledge_instances=self.knowledge_instances),
+        ]
+
+        # Clear all previously existing routes
+        app.router.routes = []
+
+        # Add the updated routes
+        for router in updated_routers:
+            self._add_router(app, router)
+
+        # Add the built-in routes
+        self._add_built_in_routes(app=app)
+
+    def _add_built_in_routes(self, app: FastAPI) -> None:
+        """Add all AgentOSbuilt-in routes to the given app."""
+        self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_websocket_router(self, settings=self.settings))
+        self._add_router(app, get_health_router())
+        self._add_router(app, get_home_router(self))
+
+        # Add A2A interface if relevant
+        has_a2a_interface = False
+        for interface in self.interfaces:
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+                has_a2a_interface = True
+            interface_router = interface.get_router()
+            self._add_router(app, interface_router)
+        if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(a2a_interface)
+            self._add_router(app, a2a_interface.get_router())
+
+        # Add the home router if MCP server is not enabled
+        if not self.enable_mcp_server:
+            self._add_router(app, get_home_router(self))
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -262,6 +307,63 @@ class AgentOS:
             lifespan=app_lifespan,
         )
 
+    def _initialize_agents(self) -> None:
+        """Initialize and configure all agents for AgentOS usage."""
+        if not self.agents:
+            return
+
+        for agent in self.agents:
+            # Track all MCP tools to later handle their connection
+            if agent.tools:
+                for tool in agent.tools:
+                    # Checking if the tool is a MCPTools or MultiMCPTools instance
+                    type_name = type(tool).__name__
+                    if type_name in ("MCPTools", "MultiMCPTools"):
+                        if tool not in self.mcp_tools:
+                            self.mcp_tools.append(tool)
+
+            agent.initialize_agent()
+
+            # Required for the built-in routes to work
+            agent.store_events = True
+
+    def _initialize_teams(self) -> None:
+        """Initialize and configure all teams for AgentOS usage."""
+        if not self.teams:
+            return
+
+        for team in self.teams:
+            # Track all MCP tools recursively
+            collect_mcp_tools_from_team(team, self.mcp_tools)
+
+            team.initialize_team()
+
+            for member in team.members:
+                if isinstance(member, Agent):
+                    member.team_id = None
+                    member.initialize_agent()
+                elif isinstance(member, Team):
+                    member.initialize_team()
+
+            # Required for the built-in routes to work
+            team.store_events = True
+
+    def _initialize_workflows(self) -> None:
+        """Initialize and configure all workflows for AgentOS usage."""
+        if not self.workflows:
+            return
+
+        if self.workflows:
+            for workflow in self.workflows:
+                # Track MCP tools recursively in workflow members
+                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
+                if not workflow.id:
+                    workflow.id = generate_id_from_name(workflow.name)
+
+                # Required for the built-in routes to work
+                workflow.store_events = True
+
     def get_app(self) -> FastAPI:
         if self.base_app:
             fastapi_app = self.base_app
@@ -285,7 +387,9 @@ class AgentOS:
                 lifespans.append(self._mcp_app.lifespan)
 
             if self.lifespan:
-                lifespans.append(self.lifespan)
+                # Wrap the user lifespan with agent_os parameter
+                wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
+                lifespans.append(wrapped_lifespan)
 
             # Combine lifespans and set them in the app
             if lifespans:
@@ -301,40 +405,29 @@ class AgentOS:
 
                 final_lifespan = self._mcp_app.lifespan  # type: ignore
                 if self.lifespan is not None:
+                    # Wrap the user lifespan with agent_os parameter
+                    wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
+
                     # Combine both lifespans
                     @asynccontextmanager
                     async def combined_lifespan(app: FastAPI):
                         # Run both lifespans
-                        async with self.lifespan(app):  # type: ignore
+                        async with wrapped_lifespan(app):  # type: ignore
                             async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
-                    final_lifespan = combined_lifespan
+                    final_lifespan = combined_lifespan  # type: ignore
 
                 fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
-                fastapi_app = self._make_app(lifespan=self.lifespan)
+                # Wrap the user lifespan with agent_os parameter
+                wrapped_user_lifespan = None
+                if self.lifespan is not None:
+                    wrapped_user_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
 
-        # Add routes
-        self._add_router(fastapi_app, get_base_router(self, settings=self.settings))
-        self._add_router(fastapi_app, get_websocket_router(self, settings=self.settings))
-        self._add_router(fastapi_app, get_health_router())
-        self._add_router(fastapi_app, get_home_router(self))
+                fastapi_app = self._make_app(lifespan=wrapped_user_lifespan)
 
-        has_a2a_interface = False
-        for interface in self.interfaces:
-            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
-                has_a2a_interface = True
-            interface_router = interface.get_router()
-            self._add_router(fastapi_app, interface_router)
-
-        # Add A2A interface if requested and not provided in self.interfaces
-        if self.a2a_interface and not has_a2a_interface:
-            from agno.os.interfaces.a2a import A2A
-
-            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
-            self.interfaces.append(a2a_interface)
-            self._add_router(fastapi_app, a2a_interface.get_router())
+        self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
@@ -480,6 +573,10 @@ class AgentOS:
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
+        for knowledge_base in self.knowledge or []:
+            if knowledge_base.contents_db:
+                self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
+
         for interface in self.interfaces or []:
             if interface.agent and interface.agent.db:
                 self._register_db_with_validation(dbs, interface.agent.db)
@@ -534,14 +631,29 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        knowledge_instances = []
+        seen_ids = set()
+        knowledge_instances: List[Knowledge] = []
+
+        def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
+            """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
+            # Use database ID if available, otherwise use object ID as fallback
+            if not knowledge.contents_db:
+                return
+            if knowledge.contents_db.id in seen_ids:
+                return
+            seen_ids.add(knowledge.contents_db.id)
+            knowledge_instances.append(knowledge)
+
         for agent in self.agents or []:
             if agent.knowledge:
-                knowledge_instances.append(agent.knowledge)
+                _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
             if team.knowledge:
-                knowledge_instances.append(team.knowledge)
+                _add_knowledge_if_not_duplicate(team.knowledge)
+
+        for knowledge_base in self.knowledge or []:
+            _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
 

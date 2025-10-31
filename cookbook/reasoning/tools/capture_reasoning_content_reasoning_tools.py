@@ -59,7 +59,7 @@ final_response = None
 for event in streaming_agent_alt.run(
     "What is the value of 3! (factorial)?",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 ):
     # The final event in the stream should be a RunOutput object
     if hasattr(event, "reasoning_content"):

@@ -429,8 +429,13 @@ class Ollama(Model):
         """
         metrics = Metrics()
 
-        metrics.input_tokens = response.get("prompt_eval_count", 0)
-        metrics.output_tokens = response.get("eval_count", 0)
+        # Safely handle None values from Ollama Cloud responses
+        input_tokens = response.get("prompt_eval_count")
+        output_tokens = response.get("eval_count")
+
+        # Default to 0 if None
+        metrics.input_tokens = input_tokens if input_tokens is not None else 0
+        metrics.output_tokens = output_tokens if output_tokens is not None else 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics

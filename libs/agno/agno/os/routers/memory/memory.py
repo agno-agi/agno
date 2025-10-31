@@ -251,8 +251,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                 deserialize=False,
             )
 
+        memories = [UserMemorySchema.from_dict(user_memory) for user_memory in user_memories]  # type: ignore
         return PaginatedResponse(
-            data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],  # type: ignore
+            data=[memory for memory in memories if memory is not None],
             meta=PaginationInfo(
                 page=page,
                 limit=limit,

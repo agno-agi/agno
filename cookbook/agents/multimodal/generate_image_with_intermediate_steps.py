@@ -21,7 +21,7 @@ image_agent = Agent(
 run_stream: Iterator[RunOutputEvent] = image_agent.run(
     "Create an image of a yellow siamese cat",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 for chunk in run_stream:
     pprint(dataclass_to_dict(chunk, exclude={"messages"}))
