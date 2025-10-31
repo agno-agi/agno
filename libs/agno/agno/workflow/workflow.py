@@ -30,7 +30,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
-from agno.run.base import RunStatus
+from agno.run.base import RunContext, RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -1211,7 +1211,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: RunContext,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
@@ -1278,7 +1278,7 @@ class Workflow:
                         session_id=session.session_id,
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
-                        session_state=session_state,
+                        run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
@@ -1372,7 +1372,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: RunContext,
         stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
@@ -1463,7 +1463,7 @@ class Workflow:
                         stream_events=stream_events,
                         stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
-                        session_state=session_state,
+                        run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
                         workflow_session=session,
@@ -2514,7 +2514,7 @@ class Workflow:
 
         if self.agent and isinstance(self.agent, WorkflowAgent):
             add_history = self.agent.add_workflow_history
-            num_runs = self.agent.num_history_runs or 5  
+            num_runs = self.agent.num_history_runs or 5
 
         if add_history:
             history_context = (
@@ -2539,7 +2539,7 @@ class Workflow:
         user_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
-        session_state: Optional[Dict[str, Any]],
+        run_context: RunContext,
         stream: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
@@ -2552,7 +2552,7 @@ class Workflow:
             user_input: The user's input
             session: The workflow session
             execution_input: The execution input
-            session_state: The session state
+            run_context: The run context
             stream: Whether to stream the response
             stream_intermediate_steps: Whether to stream intermediate steps
 
@@ -2564,7 +2564,7 @@ class Workflow:
                 agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
-                session_state=session_state,
+                run_context=run_context,
                 stream=stream,
                 **kwargs,
             )
@@ -2573,7 +2573,7 @@ class Workflow:
                 agent_input=user_input,
                 session=session,
                 execution_input=execution_input,
-                session_state=session_state,
+                run_context=run_context,
                 stream=stream,
             )
 
@@ -2582,7 +2582,7 @@ class Workflow:
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
-        session_state: Optional[Dict[str, Any]],
+        run_context: RunContext,
         stream: bool = False,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
@@ -2601,10 +2601,10 @@ class Workflow:
         from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 
         # Initialize agent with stream_intermediate_steps=True so tool yields events
-        self._initialize_workflow_agent(session, execution_input, session_state, stream=stream)
+        self._initialize_workflow_agent(session, execution_input, run_context.session_state, stream=stream)
 
         # Build dependencies with workflow context
-        dependencies = self._get_workflow_agent_dependencies(session)
+        run_context.dependencies = self._get_workflow_agent_dependencies(session)
 
         # Run agent with streaming - workflow events will bubble up from the tool
         agent_response: Optional[RunOutput] = None
@@ -2642,7 +2642,7 @@ class Workflow:
             stream_intermediate_steps=True,
             yield_run_response=True,
             session_id=session.session_id,
-            dependencies=dependencies,  # Pass context dynamically per-run
+            dependencies=run_context.dependencies,  # Pass context dynamically per-run
         ):  # type: ignore
             if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
                 yield event  # type: ignore[misc]
@@ -2746,7 +2746,7 @@ class Workflow:
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
-        session_state: Optional[Dict[str, Any]],
+        run_context: RunContext,
         stream: bool = False,
     ) -> WorkflowRunOutput:
         """
@@ -2759,7 +2759,7 @@ class Workflow:
         """
 
         # Initialize the agent
-        self._initialize_workflow_agent(session, execution_input, session_state, stream=stream)
+        self._initialize_workflow_agent(session, execution_input, run_context.session_state, stream=stream)
 
         # Build dependencies with workflow context
         dependencies = self._get_workflow_agent_dependencies(session)
@@ -3361,6 +3361,14 @@ class Workflow:
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+        )
+
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
         # Use simple defaults
@@ -3399,7 +3407,7 @@ class Workflow:
                 user_input=input,  # type: ignore
                 session=workflow_session,
                 execution_input=inputs,
-                session_state=session_state,
+                run_context=run_context,
                 stream=stream,
                 **kwargs,
             )
@@ -3420,7 +3428,7 @@ class Workflow:
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
                 stream_events=stream_events,
-                session_state=session_state,
+                run_context=run_context,
                 **kwargs,
             )
         else:
@@ -3428,7 +3436,7 @@ class Workflow:
                 session=workflow_session,
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
-                session_state=session_state,
+                run_context=run_context,
                 **kwargs,
             )
 
@@ -3638,7 +3646,7 @@ class Workflow:
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
-                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
+                        f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )

@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
+from agno.run.base import RunContext
 
 
 def chat_agent_factory(shared_db, session_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None):
@@ -107,10 +108,13 @@ def test_agent_session_state_switch_session_id(shared_db):
 
 def test_agent_with_state_on_agent(shared_db):
     # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
@@ -132,10 +136,13 @@ def test_agent_with_state_on_agent(shared_db):
 
 def test_agent_with_state_on_agent_stream(shared_db):
     # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
@@ -167,10 +174,13 @@ def test_agent_with_state_on_agent_stream(shared_db):
 
 def test_agent_with_state_on_run(shared_db):
     # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
@@ -197,10 +207,13 @@ def test_agent_with_state_on_run(shared_db):
 
 def test_agent_with_state_on_run_stream(shared_db):
     # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
@@ -233,10 +246,13 @@ def test_agent_with_state_on_run_stream(shared_db):
 
 async def test_agent_with_state_on_run_async(shared_db):
     # Define a tool that increments our counter and returns the new value
-    async def add_item(session_state: Dict[str, Any], item: str) -> str:
+    async def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
@@ -263,10 +279,13 @@ async def test_agent_with_state_on_run_async(shared_db):
 
 async def test_agent_with_state_on_run_stream_async(shared_db):
     # Define a tool that increments our counter and returns the new value
-    async def add_item(session_state: Dict[str, Any], item: str) -> str:
+    async def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
