@@ -127,19 +127,17 @@ Guidelines:
             # Create a new run ID for this execution
             run_id = str(uuid4())
 
-            # Create workflow run response
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
-                input=query,
+                input=execution_input.input,  # Use original user input
                 session_id=session_from_db.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
                 created_at=int(datetime.now().timestamp()),
             )
 
-            # Update the execution input with the agent's refined query
             workflow_execution_input = WorkflowExecutionInput(
-                input=query,
+                input=query,  # Agent's refined query for execution
                 additional_data=execution_input.additional_data,
                 audio=execution_input.audio,
                 images=execution_input.images,
@@ -244,10 +242,9 @@ Guidelines:
             # Create a new run ID for this execution
             run_id = str(uuid4())
 
-            # Create workflow run response
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
-                input=query,
+                input=execution_input.input,  # Use original user input
                 session_id=session_from_db.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
@@ -255,7 +252,7 @@ Guidelines:
             )
 
             workflow_execution_input = WorkflowExecutionInput(
-                input=query,
+                input=query,  # Agent's refined query for execution
                 additional_data=execution_input.additional_data,
                 audio=execution_input.audio,
                 images=execution_input.images,
