@@ -78,7 +78,7 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        self.model = model
+        self.model = model  # type: ignore[assignment] 
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
