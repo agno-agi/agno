@@ -13,9 +13,9 @@ from agno.os.utils import (
     extract_input_media,
     format_team_tools,
     format_tools,
+    get_agent_input_schema_dict,
     get_run_input,
     get_session_name,
-    get_agent_input_schema_dict,
     get_team_input_schema_dict,
     get_workflow_input_schema_dict,
 )
@@ -184,7 +184,6 @@ class AgentResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
-
 
     class Config:
         exclude_none = True

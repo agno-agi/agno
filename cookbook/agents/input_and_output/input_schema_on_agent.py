@@ -2,9 +2,10 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
-from agno.os import AgentOS
+
 
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
@@ -25,34 +26,22 @@ hackernews_agent = Agent(
 )
 
 
-agent_os = AgentOS(
-    id="agentos-demo",
-    agents=[hackernews_agent],
+# Pass a dict that matches the input schema
+hackernews_agent.print_response(
+    input={
+        "topic": "AI",
+        "focus_areas": ["AI", "Machine Learning"],
+        "target_audience": "Developers",
+        "sources_required": "5",
+    }
 )
-app = agent_os.get_app()
-
-
-if __name__ == "__main__":
-    agent_os.serve(app="input_schema_on_agent:app", port=7777)
-
-
-
-# # Pass a dict that matches the input schema
-# hackernews_agent.print_response(
-#     input={
-#         "topic": "AI",
-#         "focus_areas": ["AI", "Machine Learning"],
-#         "target_audience": "Developers",
-#         "sources_required": "5",
-#     }
-# )
 
 # Pass a pydantic model that matches the input schema
-# hackernews_agent.print_response(
-#     input=ResearchTopic(
-#         topic="AI",
-#         focus_areas=["AI", "Machine Learning"],
-#         target_audience="Developers",
-#         sources_required=5,
-#     )
-# )
+hackernews_agent.print_response(
+    input=ResearchTopic(
+        topic="AI",
+        focus_areas=["AI", "Machine Learning"],
+        target_audience="Developers",
+        sources_required=5,
+    )
+)

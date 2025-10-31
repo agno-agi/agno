@@ -1,11 +1,11 @@
-
 from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
-from agno.os import AgentOS
+
 
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
