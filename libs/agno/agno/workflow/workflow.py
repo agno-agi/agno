@@ -976,6 +976,7 @@ class Workflow:
         """Handle workflow events for storage - similar to Team._handle_event"""
         from agno.run.agent import RunOutput
         from agno.run.team import TeamRunOutput
+
         if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
             return None
         if self.store_events:
@@ -2518,7 +2519,7 @@ class Workflow:
 
         if self.agent and isinstance(self.agent, WorkflowAgent):
             add_history = self.agent.add_workflow_history
-            num_runs = self.agent.num_history_runs or 5  
+            num_runs = self.agent.num_history_runs or 5
 
         if add_history:
             history_context = (
@@ -3642,7 +3643,7 @@ class Workflow:
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
-                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
+                        f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )
