@@ -120,7 +120,7 @@ def prepare_notion_input(step_input: StepInput) -> StepOutput:
         import json
         try:
             classification = ClassificationResult(**json.loads(previous_output))
-        except:
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
             classification = ClassificationResult(
                 query=str(step_input.input),
                 tag="general-blogs",
