@@ -32,6 +32,8 @@ from agno.os.schema import (
     NotFoundResponse,
     TeamResponse,
     TeamSummaryResponse,
+    TraceDetail,
+    TraceSummary,
     UnauthenticatedResponse,
     ValidationErrorResponse,
     WorkflowResponse,
@@ -1717,5 +1719,224 @@ def get_base_router(
             raise HTTPException(status_code=500, detail="Failed to cancel run")
 
         return JSONResponse(content={}, status_code=200)
+
+    # -- Trace routes ---
+    @router.get(
+        "/traces",
+        response_model=List[TraceSummary],
+        response_model_exclude_none=True,
+        tags=["Traces"],
+        operation_id="get_traces",
+        summary="List Traces",
+        description=(
+            "Retrieve a list of execution traces with optional filtering.\n\n"
+            "**Traces provide observability into:**\n"
+            "- Agent execution flows\n"
+            "- Model invocations and token usage\n"
+            "- Tool calls and their results\n"
+            "- Errors and performance bottlenecks\n\n"
+            "**Filtering Options:**\n"
+            "- By run, session, user, or agent ID\n"
+            "- By status (OK, ERROR)\n"
+            "- By time range\n\n"
+            "**Response Format:**\n"
+            "Returns summary information for each trace. Use GET `/traces/{trace_id}` for detailed hierarchy."
+        ),
+        responses={
+            200: {
+                "description": "List of traces retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "trace_id": "a1b2c3d4",
+                                "name": "Stock_Price_Agent.run",
+                                "status": "OK",
+                                "duration": "1.2s",
+                                "start_time": 1234567890000000,
+                                "total_spans": 4,
+                                "error_count": 0,
+                                "run_id": "run123",
+                                "session_id": "session456",
+                                "user_id": "user789",
+                                "agent_id": "agent_stock",
+                                "created_at": 1234567890,
+                            }
+                        ]
+                    }
+                },
+            }
+        },
+    )
+    async def get_traces(
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: int = 100,
+    ):
+        """Get list of traces with optional filters"""
+        # Get the first database that has trace support
+        db = None
+        for database in os.dbs.values():
+            if hasattr(database, "get_traces"):
+                db = database
+                break
+
+        if db is None:
+            raise HTTPException(status_code=500, detail="No database configured with trace support")
+
+        try:
+            traces = db.get_traces(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                status=status,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+            )
+
+            return [TraceSummary.from_trace(trace) for trace in traces]
+
+        except Exception as e:
+            log_error(f"Error retrieving traces: {e}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
+
+    @router.get(
+        "/traces/{trace_id}",
+        response_model=TraceDetail,
+        response_model_exclude_none=True,
+        tags=["Traces"],
+        operation_id="get_trace",
+        summary="Get Trace Detail",
+        description=(
+            "Retrieve detailed trace information with hierarchical span tree.\n\n"
+            "**Returns:**\n"
+            "- Trace metadata (ID, status, duration, context)\n"
+            "- Hierarchical tree of all spans\n"
+            "- Each span includes timing, status, and type-specific metadata\n\n"
+            "**Span Hierarchy:**\n"
+            "The `tree` field contains root spans, each with potential `children`.\n"
+            "This recursive structure represents the execution flow:\n"
+            "```\n"
+            "Agent.run (root)\n"
+            "  ├─ LLM.invoke\n"
+            "  ├─ Tool.execute\n"
+            "  │   └─ LLM.invoke (nested)\n"
+            "  └─ LLM.invoke\n"
+            "```\n\n"
+            "**Span Types:**\n"
+            "- `AGENT`: Agent execution with input/output\n"
+            "- `LLM`: Model invocations with tokens and prompts\n"
+            "- `TOOL`: Tool calls with parameters and results"
+        ),
+        responses={
+            200: {
+                "description": "Trace detail retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "trace_id": "a1b2c3d4",
+                            "name": "Stock_Price_Agent.run",
+                            "status": "OK",
+                            "duration": "1.2s",
+                            "start_time": 1234567890000000,
+                            "end_time": 1234567891200000,
+                            "total_spans": 4,
+                            "error_count": 0,
+                            "input": "What is Tesla stock price?",
+                            "output": "The current price of Tesla (TSLA) is $245.67.",
+                            "run_id": "run123",
+                            "session_id": "session456",
+                            "user_id": "user789",
+                            "agent_id": "stock_agent",
+                            "created_at": 1234567890,
+                            "tree": [
+                                {
+                                    "id": "span1",
+                                    "name": "Stock_Price_Agent.run",
+                                    "type": "AGENT",
+                                    "duration": "1.2s",
+                                    "start_time": 1234567890000000,
+                                    "end_time": 1234567891200000,
+                                    "status": "OK",
+                                    "metadata": {
+                                        "total_input_tokens": 165,
+                                        "total_output_tokens": 64,
+                                    },
+                                    "spans": [
+                                        {
+                                            "id": "span2",
+                                            "name": "gpt-4o-mini.invoke",
+                                            "type": "LLM",
+                                            "duration": "800ms",
+                                            "start_time": 1234567890100000,
+                                            "end_time": 1234567890900000,
+                                            "status": "OK",
+                                            "metadata": {
+                                                "model": "gpt-4o-mini",
+                                                "input_tokens": 120,
+                                                "output_tokens": 45,
+                                            },
+                                            "spans": None,
+                                        },
+                                        {
+                                            "id": "span3",
+                                            "name": "get_stock_price",
+                                            "type": "TOOL",
+                                            "duration": "300ms",
+                                            "start_time": 1234567890950000,
+                                            "end_time": 1234567891250000,
+                                            "status": "OK",
+                                            "metadata": {
+                                                "tool_name": "get_stock_price",
+                                                "parameters": {"symbol": "TSLA"},
+                                            },
+                                            "spans": None,
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Trace not found", "model": NotFoundResponse},
+        },
+    )
+    async def get_trace(trace_id: str):
+        """Get detailed trace with hierarchical span tree"""
+        # Get the first database that has trace support
+        db = None
+        for database in os.dbs.values():
+            if hasattr(database, "get_trace") and hasattr(database, "get_spans"):
+                db = database
+                break
+
+        if db is None:
+            raise HTTPException(status_code=500, detail="No database configured with trace support")
+
+        try:
+            # Get trace
+            trace = db.get_trace(trace_id)
+            if trace is None:
+                raise HTTPException(status_code=404, detail="Trace not found")
+
+            # Get all spans for this trace
+            spans = db.get_spans(trace_id=trace_id)
+
+            # Build hierarchical response
+            return TraceDetail.from_trace_and_spans(trace, spans)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_error(f"Error retrieving trace {trace_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
 
     return router

@@ -22,13 +22,13 @@ class Trace:
     duration_ms: int
     total_spans: int
     error_count: int
-    
+
     # Context from root span
     run_id: Optional[str]
     session_id: Optional[str]
     user_id: Optional[str]
     agent_id: Optional[str]
-    
+
     created_at: int
 
     def to_dict(self) -> Dict[str, Any]:
@@ -176,19 +176,19 @@ class Span:
 def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     """
     Create a Trace object from a list of Span objects with the same trace_id.
-    
+
     Args:
         spans: List of Span objects belonging to the same trace
-        
+
     Returns:
         Trace object with aggregated information, or None if spans list is empty
     """
     if not spans:
         return None
-    
+
     # Find root span (no parent)
     root_span = next((s for s in spans if not s.parent_span_id), spans[0])
-    
+
     # Calculate aggregated metrics
     trace_id = spans[0].trace_id
     start_time_ns = min(s.start_time_ns for s in spans)
@@ -196,35 +196,21 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     duration_ms = int((end_time_ns - start_time_ns) / 1_000_000)
     total_spans = len(spans)
     error_count = sum(1 for s in spans if s.status_code == "ERROR")
-    
+
     # Determine overall status (ERROR if any span errored, OK otherwise)
     status = "ERROR" if error_count > 0 else "OK"
-    
+
     # Extract context from root span's attributes
     attrs = root_span.attributes
-    run_id = (
-        attrs.get("run_id")
-        or attrs.get("agno.run.id")
-    )
-    
-    session_id = (
-        attrs.get("session_id")
-        or attrs.get("agno.session.id")
-        or attrs.get("session.id")
-    )
-    
-    user_id = (
-        attrs.get("user_id")
-        or attrs.get("agno.user.id")
-        or attrs.get("user.id")
-    )
-    
+    run_id = attrs.get("run_id") or attrs.get("agno.run.id")
+
+    session_id = attrs.get("session_id") or attrs.get("agno.session.id") or attrs.get("session.id")
+
+    user_id = attrs.get("user_id") or attrs.get("agno.user.id") or attrs.get("user.id")
+
     # Try to extract agent_id from the span name or attributes
-    agent_id = (
-        attrs.get("agent_id")
-        or attrs.get("agno.agent.id")
-    )
-    
+    agent_id = attrs.get("agent_id") or attrs.get("agno.agent.id")
+
     return Trace(
         trace_id=trace_id,
         name=root_span.name,

@@ -752,7 +752,7 @@ class AsyncBaseDb(ABC):
             List[Span]: List of matching spans.
         """
         raise NotImplementedError
-        
+
     # --- Cultural Notions ---
     @abstractmethod
     async def clear_cultural_knowledge(self) -> None:

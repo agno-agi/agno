@@ -91,10 +91,10 @@ class DatabaseSpanExporter(SpanExporter):
                 trace = create_trace_from_spans(spans)
                 if trace:
                     self.db.create_trace(trace)
-                
+
                 # Create span records
                 self.db.create_spans_batch(spans)
-                
+
         except Exception as e:
             logger.error(f"Failed to export sync traces: {e}", exc_info=True)
             raise
@@ -125,10 +125,10 @@ class DatabaseSpanExporter(SpanExporter):
                 trace = create_trace_from_spans(spans)
                 if trace:
                     await self.db.create_trace(trace)
-                
+
                 # Create span records
                 await self.db.create_spans_batch(spans)
-                
+
         except Exception as e:
             logger.error(f"Failed to do async export: {e}", exc_info=True)
             raise

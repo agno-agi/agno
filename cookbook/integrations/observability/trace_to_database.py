@@ -10,13 +10,13 @@ This example shows:
 Requirements:
     pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
-from opentelemetry import trace as trace_api
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from agno.tracing import setup_tracing
+from opentelemetry import trace as trace_api
 
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")
@@ -40,7 +40,7 @@ agent.print_response("What is the current price of Tesla?")
 
 # Force flush traces to database
 tracer_provider = trace_api.get_tracer_provider()
-if hasattr(tracer_provider, 'force_flush'):
+if hasattr(tracer_provider, "force_flush"):
     tracer_provider.force_flush(timeout_millis=5000)
 
 # Query traces and spans from database
@@ -51,12 +51,14 @@ print("=" * 60)
 try:
     # Get all traces
     traces = db.get_traces(limit=10)
-    
+
     if not traces:
-        print("\n❌ No traces found. Make sure openinference-instrumentation-agno is installed.")
+        print(
+            "\n❌ No traces found. Make sure openinference-instrumentation-agno is installed."
+        )
     else:
         print(f"\n📊 Found {len(traces)} trace(s)")
-        
+
         for trace in traces:
             print(f"\n🔍 Trace ID: {trace.trace_id[:16]}...")
             print(f"   Name: {trace.name}")
@@ -71,21 +73,25 @@ try:
                 print(f"   Run ID: {trace.run_id[:16]}...")
             if trace.session_id:
                 print(f"   Session ID: {trace.session_id[:16]}...")
-            
+
             # Get all spans for this trace
             spans = db.get_spans(trace_id=trace.trace_id)
             print(f"\n   All spans in this trace ({len(spans)} spans):")
-            
+
             for span in sorted(spans, key=lambda s: s.start_time_ns):
                 indent = "  " if span.parent_span_id else ""
-                duration = f"{span.duration_ms}ms" if span.duration_ms < 1000 else f"{span.duration_ms/1000:.1f}s"
+                duration = (
+                    f"{span.duration_ms}ms"
+                    if span.duration_ms < 1000
+                    else f"{span.duration_ms / 1000:.1f}s"
+                )
                 print(f"      {indent}- {span.name} ({duration}) [{span.status_code}]")
-                
+
                 # Show span kind and key attributes
                 span_kind = span.attributes.get("openinference.span.kind")
                 if span_kind:
                     print(f"        {indent}  Kind: {span_kind}")
-                
+
                 # Show detailed attributes based on span kind
                 if span_kind == "AGENT":
                     # Agent-specific attributes
@@ -97,7 +103,7 @@ try:
                         output_val = span.attributes["output.value"]
                         if len(str(output_val)) < 80:
                             print(f"        {indent}  Output: {output_val}")
-                
+
                 elif span_kind == "TOOL":
                     # Tool-specific attributes
                     tool_name = span.attributes.get("tool.name")
@@ -109,33 +115,47 @@ try:
                     output = span.attributes.get("output.value")
                     if output:
                         output_str = str(output)[:100]
-                        print(f"        {indent}  Output: {output_str}{'...' if len(str(output)) > 100 else ''}")
-                
+                        print(
+                            f"        {indent}  Output: {output_str}{'...' if len(str(output)) > 100 else ''}"
+                        )
+
                 elif span_kind == "LLM":
                     # LLM-specific attributes
-                    model_name = span.attributes.get("llm.model_name") or span.attributes.get("gen_ai.request.model")
+                    model_name = span.attributes.get(
+                        "llm.model_name"
+                    ) or span.attributes.get("gen_ai.request.model")
                     if model_name:
                         print(f"        {indent}  Model: {model_name}")
-                    
+
                     # Token usage
-                    input_tokens = span.attributes.get("llm.token_count.prompt") or span.attributes.get("gen_ai.usage.prompt_tokens")
-                    output_tokens = span.attributes.get("llm.token_count.completion") or span.attributes.get("gen_ai.usage.completion_tokens")
+                    input_tokens = span.attributes.get(
+                        "llm.token_count.prompt"
+                    ) or span.attributes.get("gen_ai.usage.prompt_tokens")
+                    output_tokens = span.attributes.get(
+                        "llm.token_count.completion"
+                    ) or span.attributes.get("gen_ai.usage.completion_tokens")
                     if input_tokens or output_tokens:
-                        print(f"        {indent}  Tokens: {input_tokens or 0} in, {output_tokens or 0} out")
-                    
+                        print(
+                            f"        {indent}  Tokens: {input_tokens or 0} in, {output_tokens or 0} out"
+                        )
+
                     # Show input/output messages (first few)
                     input_messages = span.attributes.get("llm.input_messages")
-                    if input_messages and isinstance(input_messages, list) and len(input_messages) > 0:
+                    if (
+                        input_messages
+                        and isinstance(input_messages, list)
+                        and len(input_messages) > 0
+                    ):
                         last_msg = input_messages[-1]
                         if isinstance(last_msg, dict) and "message.content" in last_msg:
                             content = last_msg["message.content"]
                             if len(str(content)) < 80:
                                 print(f"        {indent}  Prompt: {content}")
-                
+
                 # Show any error messages
                 if span.status_code == "ERROR" and span.status_message:
                     print(f"        {indent}  ❌ Error: {span.status_message}")
-                
+
                 # Show important generic attributes (excluding the ones we already showed)
                 important_attrs = {
                     "session.id": "Session",
@@ -150,16 +170,29 @@ try:
                         if len(str(val)) > 16:
                             val = f"{str(val)[:16]}..."
                         print(f"        {indent}  {label}: {val}")
-                
+
                 # Show all other attributes (for debugging - can be commented out)
                 shown_keys = {
-                    "openinference.span.kind", "input.value", "output.value", 
-                    "tool.name", "tool.parameters", "llm.model_name", "gen_ai.request.model",
-                    "llm.token_count.prompt", "llm.token_count.completion", 
-                    "gen_ai.usage.prompt_tokens", "gen_ai.usage.completion_tokens",
-                    "llm.input_messages", "session.id", "user.id", "agno.agent.id", "agno.run.id"
+                    "openinference.span.kind",
+                    "input.value",
+                    "output.value",
+                    "tool.name",
+                    "tool.parameters",
+                    "llm.model_name",
+                    "gen_ai.request.model",
+                    "llm.token_count.prompt",
+                    "llm.token_count.completion",
+                    "gen_ai.usage.prompt_tokens",
+                    "gen_ai.usage.completion_tokens",
+                    "llm.input_messages",
+                    "session.id",
+                    "user.id",
+                    "agno.agent.id",
+                    "agno.run.id",
                 }
-                other_attrs = {k: v for k, v in span.attributes.items() if k not in shown_keys}
+                other_attrs = {
+                    k: v for k, v in span.attributes.items() if k not in shown_keys
+                }
                 if other_attrs:
                     print(f"        {indent}  Other attributes ({len(other_attrs)}):")
                     for key, value in list(other_attrs.items())[:8]:  # Show first 8
@@ -167,14 +200,17 @@ try:
                         if len(value_str) > 60:
                             value_str = value_str[:60] + "..."
                         print(f"        {indent}    • {key}: {value_str}")
-        
+
         print("\n" + "=" * 60)
         print("\n📈 Summary:")
         print(f"   • Traces: {len(traces)}")
-        print(f"   • Total Spans: {sum(len(db.get_spans(trace_id=t.trace_id)) for t in traces)}")
+        print(
+            f"   • Total Spans: {sum(len(db.get_spans(trace_id=t.trace_id)) for t in traces)}"
+        )
         print(f"   • Errors: {sum(t.error_count for t in traces)}")
-        
+
 except Exception as e:
     print(f"\n❌ Error querying traces: {e}")
     import traceback
+
     traceback.print_exc()

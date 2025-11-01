@@ -10,4 +10,3 @@ from agno.tracing.exporter import DatabaseSpanExporter
 from agno.tracing.setup import setup_tracing
 
 __all__ = ["DatabaseSpanExporter", "setup_tracing"]
-

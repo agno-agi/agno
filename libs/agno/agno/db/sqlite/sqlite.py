@@ -239,7 +239,7 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
-        
+
         elif table_type == "traces":
             self.trace_table = self._get_or_create_table(
                 table_name=self.trace_table_name,
@@ -2003,53 +2003,53 @@ class SqliteDb(BaseDb):
         Args:
             trace: The Trace object to store (one per trace_id).
         """
-        try:            
+        try:
             table = self._get_table(table_type="traces", create_table_if_not_found=True)
             if table is None:
                 return
 
             with self.Session() as sess, sess.begin():
                 # First, check if trace exists and get current total_spans
-                existing = sess.execute(
-                    table.select().where(table.c.trace_id == trace.trace_id)
-                ).fetchone()
-                
+                existing = sess.execute(table.select().where(table.c.trace_id == trace.trace_id)).fetchone()
+
                 if existing:
                     # Update with incremental values
                     current_total = existing.total_spans
                     current_errors = existing.error_count
-                    
+
                     # Build update values - preserve non-null context fields
                     update_values = {
-                        'total_spans': current_total + trace.total_spans,
-                        'error_count': current_errors + trace.error_count,
-                        'end_time_ns': trace.end_time_ns,
-                        'duration_ms': trace.duration_ms,
-                        'status': trace.status,
-                        # Update name only if new name looks like a root span (contains ".run")
-                        'name': trace.name if ".run" in trace.name else existing.name,
+                        "total_spans": current_total + trace.total_spans,
+                        "error_count": current_errors + trace.error_count,
+                        "end_time_ns": trace.end_time_ns,
+                        "duration_ms": trace.duration_ms,
+                        "status": trace.status,
+                        # Update name only if new name looks like a root span (contains ".run" or ".arun")
+                        "name": trace.name if (".run" in trace.name or ".arun" in trace.name) else existing.name,
                     }
-                    
+
                     # Update context fields ONLY if new value is not None (preserve non-null values)
                     if trace.run_id is not None:
-                        update_values['run_id'] = trace.run_id
+                        update_values["run_id"] = trace.run_id
                     if trace.session_id is not None:
-                        update_values['session_id'] = trace.session_id
+                        update_values["session_id"] = trace.session_id
                     if trace.user_id is not None:
-                        update_values['user_id'] = trace.user_id
+                        update_values["user_id"] = trace.user_id
                     if trace.agent_id is not None:
-                        update_values['agent_id'] = trace.agent_id
-                    
-                    log_debug(f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                              f"session_id={update_values.get('session_id', 'unchanged')}, "
-                              f"user_id={update_values.get('user_id', 'unchanged')}, "
-                              f"agent_id={update_values.get('agent_id', 'unchanged')}")
-                    
+                        update_values["agent_id"] = trace.agent_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}"
+                    )
+
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                 else:
                     # Insert new trace
                     stmt = sqlite.insert(table).values(trace.to_dict())
-                
+
                 sess.execute(stmt)
 
         except Exception as e:
@@ -2112,7 +2112,9 @@ class SqliteDb(BaseDb):
         try:
             from agno.tracing.schemas import Trace
 
-            log_debug(f"🔍 get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}")
+            log_debug(
+                f"🔍 get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}"
+            )
 
             table = self._get_table(table_type="traces")
             if table is None:
@@ -2126,8 +2128,10 @@ class SqliteDb(BaseDb):
                 log_debug(f"📊 Total traces in DB: {len(all_results)}")
                 for row in all_results[:3]:  # Show first 3
                     row_dict = dict(row._mapping)
-                    log_debug(f"  Trace: id={row_dict['trace_id'][:16]}..., session_id={row_dict.get('session_id')}, name={row_dict['name']}")
-                
+                    log_debug(
+                        f"  Trace: id={row_dict['trace_id'][:16]}..., session_id={row_dict.get('session_id')}, name={row_dict['name']}"
+                    )
+
                 # Now apply filters
                 stmt = table.select()
 

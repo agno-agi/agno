@@ -106,4 +106,3 @@ def setup_tracing(
     except Exception as e:
         logger.error(f"Failed to set up tracing: {e}", exc_info=True)
         raise
-
