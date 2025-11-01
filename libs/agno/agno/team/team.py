@@ -2204,6 +2204,7 @@ class Team:
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
+                run_response=run_response,
             )  # type: ignore
 
             # Check for cancellation after model call
@@ -3087,6 +3088,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
+            run_response=run_response,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(

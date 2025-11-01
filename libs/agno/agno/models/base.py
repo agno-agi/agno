@@ -31,7 +31,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutputEvent
+from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -483,6 +483,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -517,6 +518,7 @@ class Model(ABC):
                 response_format=response_format,
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
             )
 
             # Add assistant message to messages
@@ -697,7 +699,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -1020,7 +1022,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -1051,7 +1053,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """

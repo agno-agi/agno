@@ -36,7 +36,9 @@ class Requesty(OpenAILike):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
-        params = super().get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice)
+        params = super().get_request_params(
+            response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+        )
 
         if "extra_body" not in params:
             params["extra_body"] = {}
