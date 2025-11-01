@@ -379,6 +379,7 @@ class BaseDb(ABC):
         Returns:
             List[Span]: List of matching spans.
         """
+        raise NotImplementedError
 
     # --- Cultural Knowledge ---
     @abstractmethod

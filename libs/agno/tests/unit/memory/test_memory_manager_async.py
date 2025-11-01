@@ -129,6 +129,44 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def upsert_cultural_knowledge(self, *args, **kwargs):
         raise NotImplementedError
 
+    # --- Traces ---
+    async def create_trace(self, trace) -> None:
+        raise NotImplementedError
+
+    async def get_trace(self, trace_id: str):
+        raise NotImplementedError
+
+    async def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = 100,
+    ) -> List:
+        raise NotImplementedError
+
+    # --- Spans ---
+    async def create_span(self, span) -> None:
+        raise NotImplementedError
+
+    async def create_spans_batch(self, spans: List) -> None:
+        raise NotImplementedError
+
+    async def get_span(self, span_id: str):
+        raise NotImplementedError
+
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        raise NotImplementedError
+
 
 @pytest.mark.asyncio
 async def test_acreate_user_memories_with_async_db():
