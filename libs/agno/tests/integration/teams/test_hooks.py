@@ -136,6 +136,7 @@ class MockTestModel(Model):
         self._mock_response.updated_session_state = None
         # Set event to assistant_response by default (matches ModelResponse default)
         from agno.models.response import ModelResponseEvent
+
         self._mock_response.event = ModelResponseEvent.assistant_response.value
 
         # Create Mock objects for response methods
@@ -205,7 +206,8 @@ def create_test_team(pre_hooks=None, post_hooks=None, model_response_content=Non
 
     # Create a test model that inherits from Model
     mock_model = MockTestModel(
-        model_id="test-team-model", model_response_content=model_response_content or "Test team response from mock model"
+        model_id="test-team-model",
+        model_response_content=model_response_content or "Test team response from mock model",
     )
 
     return Team(
