@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import tracemalloc
-from time import time
 from typing import List, Tuple
 
 import pytest
