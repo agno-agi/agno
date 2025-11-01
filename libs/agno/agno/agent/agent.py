@@ -281,6 +281,8 @@ class Agent:
     # Add a tool that allows the Model to search the knowledge base (aka Agentic RAG)
     # Added only if knowledge is provided.
     search_knowledge: bool = True
+    # Call limit for search_knowledge tool per run. None means no limit.
+    search_knowledge_call_limit: Optional[int] = None
     # Add a tool that allows the Agent to update Knowledge.
     update_knowledge: bool = False
     # Add a tool that allows the Model to get the tool call history.
@@ -467,6 +469,7 @@ class Agent:
         reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
+        search_knowledge_call_limit: Optional[int] = None,
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         send_media_to_model: bool = True,
@@ -586,6 +589,7 @@ class Agent:
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
+        self.search_knowledge_call_limit = search_knowledge_call_limit
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
         self.send_media_to_model = send_media_to_model
@@ -1045,6 +1049,7 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                per_tool_call_limits=self._build_per_tool_call_limits(_tools) if _tools else None,
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
@@ -1896,6 +1901,7 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                per_tool_call_limits=self._build_per_tool_call_limits(_tools) if _tools else None,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
             )
@@ -2946,6 +2952,7 @@ class Agent:
                 tools=tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                per_tool_call_limits=self._build_per_tool_call_limits(tools) if tools else None,
             )
 
             # Check for cancellation after model processing
@@ -3497,6 +3504,7 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                per_tool_call_limits=self._build_per_tool_call_limits(_tools) if _tools else None,
             )
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4712,6 +4720,7 @@ class Agent:
             tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            per_tool_call_limits=self._build_per_tool_call_limits(tools) if tools else None,
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -4792,6 +4801,7 @@ class Agent:
             tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            per_tool_call_limits=self._build_per_tool_call_limits(tools) if tools else None,
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -5576,6 +5586,15 @@ class Agent:
                     func._videos = joint_videos
 
         return _functions
+
+    def _build_per_tool_call_limits(self, tools: List[Union[Function, dict]]) -> Dict[str, int]:
+        tool_limits: Dict[str, int] = {}
+
+        for tool in tools:
+            if isinstance(tool, Function) and tool.call_limit is not None:
+                tool_limits[tool.name] = tool.call_limit
+
+        return tool_limits
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
@@ -9456,7 +9475,10 @@ class Agent:
         else:
             search_knowledge_base_function = search_knowledge_base  # type: ignore
 
-        return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
+        search_func = Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
+        if self.search_knowledge_call_limit is not None:
+            search_func.call_limit = self.search_knowledge_call_limit
+        return search_func
 
     def _search_knowledge_base_with_agentic_filters_function(
         self,
@@ -9539,10 +9561,13 @@ class Agent:
         else:
             search_knowledge_base_function = search_knowledge_base  # type: ignore
 
-        return Function.from_callable(
+        search_func = Function.from_callable(
             search_knowledge_base_function,
             name="search_knowledge_base_with_agentic_filters",
         )
+        if self.search_knowledge_call_limit is not None:
+            search_func.call_limit = self.search_knowledge_call_limit
+        return search_func
 
     def add_to_knowledge(self, query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
