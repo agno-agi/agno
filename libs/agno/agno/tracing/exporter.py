@@ -6,8 +6,8 @@ import asyncio
 from collections import defaultdict
 from typing import Dict, List, Sequence, Union
 
-from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace import ReadableSpan  # type: ignore
+from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult  # type: ignore
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.tracing.schemas import Span, create_trace_from_spans
@@ -67,8 +67,8 @@ class DatabaseSpanExporter(SpanExporter):
 
             # Group spans by trace_id
             spans_by_trace: Dict[str, List[Span]] = defaultdict(list)
-            for span in converted_spans:
-                spans_by_trace[span.trace_id].append(span)
+            for converted_span in converted_spans:
+                spans_by_trace[converted_span.trace_id].append(converted_span)
 
             # Handle async DB
             if isinstance(self.db, AsyncBaseDb):
@@ -124,10 +124,14 @@ class DatabaseSpanExporter(SpanExporter):
                 # Create trace record (aggregate of all spans)
                 trace = create_trace_from_spans(spans)
                 if trace:
-                    await self.db.create_trace(trace)
+                    create_trace_result = self.db.create_trace(trace)
+                    if create_trace_result is not None:
+                        await create_trace_result
 
                 # Create span records
-                await self.db.create_spans_batch(spans)
+                create_spans_result = self.db.create_spans_batch(spans)
+                if create_spans_result is not None:
+                    await create_spans_result
 
         except Exception as e:
             logger.error(f"Failed to do async export: {e}", exc_info=True)

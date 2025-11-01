@@ -9,10 +9,10 @@ from agno.tracing.exporter import DatabaseSpanExporter
 from agno.utils.log import logger
 
 try:
-    from openinference.instrumentation.agno import AgnoInstrumentor
-    from opentelemetry import trace as trace_api
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+    from openinference.instrumentation.agno import AgnoInstrumentor  # type: ignore
+    from opentelemetry import trace as trace_api  # type: ignore
+    from opentelemetry.sdk.trace import TracerProvider  # type: ignore
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanProcessor  # type: ignore
 
     OPENTELEMETRY_AVAILABLE = True
 except ImportError:
@@ -79,6 +79,7 @@ def setup_tracing(
         exporter = DatabaseSpanExporter(db=db)
 
         # Configure span processor
+        processor: SpanProcessor
         if use_batch_processor:
             processor = BatchSpanProcessor(
                 exporter,

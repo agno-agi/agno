@@ -6,8 +6,8 @@ from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional
 
-from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.trace import SpanKind, StatusCode
+from opentelemetry.sdk.trace import ReadableSpan  # type: ignore
+from opentelemetry.trace import SpanKind, StatusCode  # type: ignore
 
 
 @dataclass
@@ -134,7 +134,7 @@ class Span:
         duration_ms = int((end_time_ns - start_time_ns) / 1_000_000)
 
         # Convert attributes to dictionary
-        attributes = {}
+        attributes: Dict[str, Any] = {}
         if otel_span.attributes:
             for key, value in otel_span.attributes.items():
                 # Convert attribute values to JSON-serializable types

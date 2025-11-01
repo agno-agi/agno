@@ -1790,7 +1790,9 @@ def get_base_router(
             raise HTTPException(status_code=500, detail="No database configured with trace support")
 
         try:
-            traces = db.get_traces(
+            import inspect
+
+            traces_result = db.get_traces(
                 run_id=run_id,
                 session_id=session_id,
                 user_id=user_id,
@@ -1800,6 +1802,11 @@ def get_base_router(
                 end_time=end_time,
                 limit=limit,
             )
+
+            if inspect.iscoroutine(traces_result):
+                traces = await traces_result
+            else:
+                traces = traces_result
 
             return [TraceSummary.from_trace(trace) for trace in traces]
 
@@ -1922,13 +1929,24 @@ def get_base_router(
             raise HTTPException(status_code=500, detail="No database configured with trace support")
 
         try:
+            import inspect
+
             # Get trace
-            trace = db.get_trace(trace_id)
+            trace_result = db.get_trace(trace_id)
+            if inspect.iscoroutine(trace_result):
+                trace = await trace_result
+            else:
+                trace = trace_result
+
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
 
             # Get all spans for this trace
-            spans = db.get_spans(trace_id=trace_id)
+            spans_result = db.get_spans(trace_id=trace_id)
+            if inspect.iscoroutine(spans_result):
+                spans = await spans_result
+            else:
+                spans = spans_result
 
             # Build hierarchical response
             return TraceDetail.from_trace_and_spans(trace, spans)

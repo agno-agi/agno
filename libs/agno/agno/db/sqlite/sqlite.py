@@ -2046,11 +2046,11 @@ class SqliteDb(BaseDb):
                     )
 
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    sess.execute(stmt)
                 else:
                     # Insert new trace
                     stmt = sqlite.insert(table).values(trace.to_dict())
-
-                sess.execute(stmt)
+                    sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Error creating trace: {e}")
