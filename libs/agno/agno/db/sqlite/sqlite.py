@@ -27,7 +27,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text
+    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -48,6 +48,8 @@ class SqliteDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        trace_table: Optional[str] = None,
+        span_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -69,6 +71,7 @@ class SqliteDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            trace_table (Optional[str]): Name of the table to store trace spans.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -86,6 +89,8 @@ class SqliteDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            trace_table=trace_table,
+            span_table=span_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -234,6 +239,22 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
+
+        elif table_type == "traces":
+            self.trace_table = self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.trace_table
+
+        elif table_type == "spans":
+            self.span_table = self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.span_table
 
         elif table_type == "culture":
             self.culture_table = self._get_or_create_table(
@@ -1973,6 +1994,289 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
             raise e
+
+    # -- Trace methods --
+
+    def create_trace(self, trace) -> None:
+        """Create a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                # First, check if trace exists and get current total_spans
+                existing = sess.execute(table.select().where(table.c.trace_id == trace.trace_id)).fetchone()
+
+                if existing:
+                    # Update with incremental values
+                    current_total = existing.total_spans
+                    current_errors = existing.error_count
+
+                    # Build update values - preserve non-null context fields
+                    update_values = {
+                        "total_spans": current_total + trace.total_spans,
+                        "error_count": current_errors + trace.error_count,
+                        "end_time_ns": trace.end_time_ns,
+                        "duration_ms": trace.duration_ms,
+                        "status": trace.status,
+                        # Update name only if new name looks like a root span (contains ".run" or ".arun")
+                        "name": trace.name if (".run" in trace.name or ".arun" in trace.name) else existing.name,
+                    }
+
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values["run_id"] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values["session_id"] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values["user_id"] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values["agent_id"] = trace.agent_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}"
+                    )
+
+                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    sess.execute(stmt)
+                else:
+                    # Insert new trace
+                    stmt = sqlite.insert(table).values(trace.to_dict())
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_trace(self, trace_id: str):
+        """Get a single trace by its trace_id.
+
+        Args:
+            trace_id: The unique trace identifier.
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = table.select().where(table.c.trace_id == trace_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Trace.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        limit: Optional[int] = 100,
+    ) -> List:
+        """Get traces matching the provided filters.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this timestamp (nanoseconds).
+            end_time: Filter traces ending before this timestamp (nanoseconds).
+            limit: Maximum number of traces to return.
+
+        Returns:
+            List[Trace]: List of matching traces.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            log_debug(
+                f"🔍 get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("❌ Traces table not found")
+                return []
+
+            with self.Session() as sess:
+                # First, get ALL traces to see what we have
+                all_stmt = table.select()
+                all_results = sess.execute(all_stmt).fetchall()
+                log_debug(f"📊 Total traces in DB: {len(all_results)}")
+                for row in all_results[:3]:  # Show first 3
+                    row_dict = dict(row._mapping)
+                    log_debug(
+                        f"  Trace: id={row_dict['trace_id'][:16]}..., session_id={row_dict.get('session_id')}, name={row_dict['name']}"
+                    )
+
+                # Now apply filters
+                stmt = table.select()
+
+                # Apply filters
+                if run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    log_debug(f"  Filtering by session_id={session_id}")
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if status:
+                    stmt = stmt.where(table.c.status == status)
+                if start_time:
+                    stmt = stmt.where(table.c.start_time_ns >= start_time)
+                if end_time:
+                    stmt = stmt.where(table.c.end_time_ns <= end_time)
+
+                # Order by start time (most recent first) and apply limit
+                stmt = stmt.order_by(table.c.start_time_ns.desc()).limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                log_debug(f"✅ Filtered query returned {len(results)} traces")
+                return [Trace.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return []
+
+    # -- Span methods --
+
+    def create_span(self, span) -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(span.to_dict())
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def create_spans_batch(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                # Use INSERT OR IGNORE to avoid duplicate spans
+                for span in spans:
+                    stmt = sqlite.insert(table).values(span.to_dict())
+                    stmt = stmt.on_conflict_do_nothing(index_elements=["span_id"])
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = table.select().where(table.c.span_id == span_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = table.select()
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                # Order by start time and apply limit
+                stmt = stmt.order_by(table.c.start_time_ns).limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []
 
     # -- Migrations --
 
