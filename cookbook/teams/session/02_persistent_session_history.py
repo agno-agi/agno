@@ -20,7 +20,11 @@ team = Team(
     members=[agent],
     db=db,
     add_history_to_context=True,
-    num_history_runs=2,
+    num_history_runs=3,
 )
 
 team.print_response("Tell me a new interesting fact about space")
+
+team.print_response("Tell me a new interesting fact about oceans")
+
+team.print_response("What have we been talking about?")

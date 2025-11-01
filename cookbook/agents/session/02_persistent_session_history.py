@@ -20,6 +20,5 @@ agent = Agent(
 )
 
 agent.print_response("Tell me a new interesting fact about space")
-agent.print_response("Tell me a new interesting fact about oceans")
 
-agent.print_response("What have we been talking about?")
+agent.print_response("What was my first message?")
