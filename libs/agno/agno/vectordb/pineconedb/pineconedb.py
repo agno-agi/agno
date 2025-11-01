@@ -474,7 +474,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Any] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:
@@ -492,6 +492,9 @@ class PineconeDb(VectorDb):
             List[Document]: The list of matching documents.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
+            filters = None
         dense_embedding = self.embedder.get_embedding(query)
 
         if self.use_hybrid_search:
@@ -540,7 +543,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Any] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:

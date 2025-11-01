@@ -92,14 +92,16 @@ class LightRag(VectorDb):
         """Async upsert documents into the vector database"""
         pass
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
         return result if result is not None else []
 
     async def async_search(
-        self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: Optional[int] = None, filters: Optional[Any] = None
     ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
+        if filters is not None:
+            log_warning("Filters are not supported in LightRAG. No filters will be applied.")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(

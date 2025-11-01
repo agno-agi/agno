@@ -21,7 +21,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
@@ -392,7 +392,7 @@ class Weaviate(VectorDb):
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
         return
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
@@ -404,6 +404,9 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
@@ -414,9 +417,7 @@ class Weaviate(VectorDb):
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
 
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Perform a search based on the configured search type asynchronously.
 
@@ -428,6 +429,9 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.vector:
             return await self.async_vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:

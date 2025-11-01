@@ -13,7 +13,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -518,6 +518,10 @@ class LanceDb(VectorDb):
 
         results = None
 
+        if isinstance(filters, list):
+            log_warning("Filter Expressions are not yet supported in LanceDB. No filters will be applied.")
+            filters = None
+
         if self.search_type == SearchType.vector:
             results = self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
@@ -558,9 +562,7 @@ class LanceDb(VectorDb):
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Asynchronously search for documents matching the query.
 
@@ -577,6 +579,10 @@ class LanceDb(VectorDb):
             self.table = self.connection.open_table(name=self.table_name)
 
         results = None
+
+        if isinstance(filters, list):
+            log_warning("Filter Expressions are not yet supported in LanceDB. No filters will be applied.")
+            filters = None
 
         if self.search_type == SearchType.vector:
             results = self.vector_search(query, limit)

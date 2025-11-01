@@ -528,7 +528,7 @@ class Qdrant(VectorDb):
         log_debug("Redirecting the async request to async_insert")
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Search for documents in the collection.
 
@@ -537,28 +537,35 @@ class Qdrant(VectorDb):
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
+
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
+            filters = None
+
         filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
-            results = self._run_vector_search_sync(query, limit, filters)
+            results = self._run_vector_search_sync(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = self._run_keyword_search_sync(query, limit, filters)
+            results = self._run_keyword_search_sync(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = self._run_hybrid_search_sync(query, limit, filters)
+            results = self._run_hybrid_search_sync(query, limit, filters)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
         return self._build_search_results(results, query)
 
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
+            filters = None
+
         filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
-            results = await self._run_vector_search_async(query, limit, filters)
+            results = await self._run_vector_search_async(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = await self._run_keyword_search_async(query, limit, filters)
+            results = await self._run_keyword_search_async(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = await self._run_hybrid_search_async(query, limit, filters)
+            results = await self._run_hybrid_search_async(query, limit, filters)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 

@@ -72,13 +72,11 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         raise NotImplementedError
 
     @abstractmethod

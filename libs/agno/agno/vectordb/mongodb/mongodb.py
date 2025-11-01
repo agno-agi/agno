@@ -585,9 +585,12 @@ class MongoDb(VectorDb):
         return True
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
+        self, query: str, limit: int = 5, filters: Optional[Any] = None, min_score: float = 0.0
     ) -> List[Document]:
         """Search for documents using vector similarity."""
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit=limit, filters=filters)
 
@@ -1152,10 +1155,11 @@ class MongoDb(VectorDb):
             except Exception as e:
                 logger.error(f"Error upserting document '{document.name}' asynchronously: {e}")
 
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """Search for documents asynchronously."""
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")

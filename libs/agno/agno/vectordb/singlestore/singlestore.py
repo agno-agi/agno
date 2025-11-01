@@ -17,7 +17,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -282,7 +282,7 @@ class SingleStore(VectorDb):
             sess.commit()
             log_debug(f"Committed {counter} documents")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Search for documents based on a query and optional filters.
 
@@ -294,6 +294,8 @@ class SingleStore(VectorDb):
         Returns:
             List[Document]: List of documents that match the query.
         """
+        if filters is not None:
+            log_warning("Filters are not supported in SingleStore. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")

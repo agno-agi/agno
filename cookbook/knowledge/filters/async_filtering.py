@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # Query for Jordan Mitchell's experience and skills
     asyncio.run(
         agent.aprint_response(
-            "Tell me about Jordan Mitchell's experience and skills",
+            "Tell me about the candidate's experience and skills",
             knowledge_filters={"user_id": "jordan_mitchell"},
             markdown=True,
         )

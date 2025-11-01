@@ -6,14 +6,15 @@ from typing import Any, Dict, List, Optional, Union, cast
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import update
+    from sqlalchemy import and_, not_, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table
+    from sqlalchemy.sql.elements import ColumnElement
     from sqlalchemy.sql.expression import bindparam, desc, func, select, text
-    from sqlalchemy.types import DateTime, String
+    from sqlalchemy.types import DateTime, Integer, String
 
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`")
@@ -680,7 +681,7 @@ class PgVector(VectorDb):
             logger.error(f"Error updating metadata for document {content_id}: {e}")
             raise
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
@@ -708,14 +709,35 @@ class PgVector(VectorDb):
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _dsl_to_sqlalchemy(self, filter_expr, table) -> ColumnElement[bool]:
+        op = filter_expr["op"]
+
+        if op == "EQ":
+            return table.c.meta_data[filter_expr["key"]].astext == str(filter_expr["value"])
+        elif op == "IN":
+            # Postgres JSONB array containment
+            return table.c.meta_data[filter_expr["key"]].astext.in_([str(v) for v in filter_expr["values"]])
+        elif op == "GT":
+            return table.c.meta_data[filter_expr["key"]].astext.cast(Integer) > filter_expr["value"]
+        elif op == "LT":
+            return table.c.meta_data[filter_expr["key"]].astext.cast(Integer) < filter_expr["value"]
+        elif op == "NOT":
+            return not_(self._dsl_to_sqlalchemy(filter_expr["condition"], table))
+        elif op == "AND":
+            return and_(*[self._dsl_to_sqlalchemy(cond, table) for cond in filter_expr["conditions"]])
+        elif op == "OR":
+            return or_(*[self._dsl_to_sqlalchemy(cond, table) for cond in filter_expr["conditions"]])
+        else:
+            raise ValueError(f"Unknown filter operator: {op}")
+
+    def vector_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Perform a vector similarity search.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Any]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -742,7 +764,18 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # If it's a dict (legacy), keep old behavior
+                if isinstance(filters, dict):
+                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                else:
+                    log_debug("Using Filters DSL")
+                    # Assume it's a list of DSL expressions
+                    # Convert each DSL expression to SQLAlchemy and AND them together
+                    sqlalchemy_conditions = [
+                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
+                        for f in filters
+                    ]
+                    stmt = stmt.where(and_(*sqlalchemy_conditions))
 
             # Order the results based on the distance metric
             if self.distance == Distance.l2:
@@ -815,7 +848,7 @@ class PgVector(VectorDb):
         processed_words = [word + "*" for word in words]
         return " ".join(processed_words)
 
-    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Perform a keyword search on the 'content' column.
 
@@ -898,7 +931,7 @@ class PgVector(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Any] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector similarity and full-text search.
