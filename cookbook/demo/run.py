@@ -38,6 +38,7 @@ agent_os = AgentOS(
         finance_team,
     ],
     config=config_path,
+    auto_create_tables=True,
 )
 app = agent_os.get_app()
 

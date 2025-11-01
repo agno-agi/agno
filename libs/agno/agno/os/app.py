@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -109,6 +109,7 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        auto_create_tables: bool = True,
         os_id: Optional[str] = None,  # Deprecated
         enable_mcp: bool = False,  # Deprecated
         fastapi_app: Optional[FastAPI] = None,  # Deprecated
@@ -148,7 +149,7 @@ class AgentOS:
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-
+        self.auto_create_tables = auto_create_tables
         self._app_set = False
 
         if base_app:
@@ -551,11 +552,14 @@ class AgentOS:
         }
 
     def _auto_discover_databases(self) -> None:
-        """Auto-discover the databases used by all contextual agents, teams and workflows."""
+        """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
+
         from agno.db.base import AsyncBaseDb, BaseDb
 
-        dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
-        knowledge_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}  # Track databases specifically used for knowledge
+        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
+        knowledge_dbs: Dict[
+            str, List[Union[BaseDb, AsyncBaseDb]]
+        ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
@@ -586,49 +590,101 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: Union[BaseDb, AsyncBaseDb]) -> None:
+        # Initialize/scaffold all discovered databases
+        if self.auto_create_tables:
+            self._initialize_databases()
+
+    def _initialize_databases(self) -> None:
+        """Initialize/scaffold all discovered databases by ensuring their tables are created."""
+        import asyncio
+
+        from agno.db.base import AsyncBaseDb, BaseDb
+        from agno.utils.log import log_debug, log_info, log_warning
+
+        all_dbs: List[Union[BaseDb, AsyncBaseDb]] = []
+
+        # Collect all database instances
+        for db_list in self.dbs.values():
+            all_dbs.extend(db_list)
+        for db_list in self.knowledge_dbs.values():
+            all_dbs.extend(db_list)
+
+        # Remove duplicates by object identity (same physical instance)
+        # Multiple instances can have the same db.id but different table configurations
+        seen_instances: set = set()
+        unique_dbs: List[Union[BaseDb, AsyncBaseDb]] = []
+        for db in all_dbs:
+            db_instance_id = id(db)  # Python's built-in id() for object identity
+            if db_instance_id not in seen_instances:
+                seen_instances.add(db_instance_id)
+                unique_dbs.append(db)
+
+        # Separate sync and async databases
+        sync_dbs = [(db.id, db) for db in unique_dbs if not isinstance(db, AsyncBaseDb)]
+        async_dbs = [(db.id, db) for db in unique_dbs if isinstance(db, AsyncBaseDb)]
+
+        log_info(f"Initializing {len(unique_dbs)} database instance(s) ({len(sync_dbs)} sync, {len(async_dbs)} async)...")
+
+        # Initialize sync databases
+        for db_id, db in sync_dbs:
+            try:
+                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                    db._create_all_tables()
+                else:
+                    log_debug(f"No table initialization needed for {db.__class__.__name__}")
+
+            except Exception as e:
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db_id}): {e}")
+
+        # Initialize async databases using unified interface
+        if async_dbs:
+            asyncio.run(self._initialize_async_dbs(async_dbs))
+
+    async def _initialize_async_dbs(self, async_dbs: List[Tuple[str, Any]]) -> None:
+        """Initialize all async databases."""
+        import inspect
+
+        from agno.utils.log import log_debug, log_info, log_warning
+
+        for db_id, db in async_dbs:
+            try:
+                log_debug(f"Initializing async {db.__class__.__name__} (id: {db_id})")
+
+                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                    method = getattr(db, "_create_all_tables")
+
+                    # Check if it's an async method
+                    if inspect.iscoroutinefunction(method):
+                        await db._create_all_tables()
+                    else:
+                        # If not async, call it synchronously
+                        db._create_all_tables()
+                else:
+                    log_debug(f"No table initialization needed for async {db.__class__.__name__}")
+
+            except Exception as e:
+                log_warning(f"Failed to initialize async database {db.__class__.__name__} (id: {db_id}): {e}")
+
+    def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
+        """Get the table names for a database"""
+        table_names = {
+            "session_table_name": db.session_table_name,
+            "memory_table_name": db.memory_table_name,
+            "metrics_table_name": db.metrics_table_name,
+            "evals_table_name": db.eval_table_name,
+            "knowledge_table_name": db.knowledge_table_name,
+        }
+        return {k: v for k, v in table_names.items() if v is not None}
+
+    def _register_db_with_validation(
+        self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: Union[BaseDb, AsyncBaseDb]
+    ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
-            existing_db = registered_dbs[db.id]
-            if not self._are_db_instances_compatible(existing_db, db):
-                raise ValueError(
-                    f"Database ID conflict detected: Two different database instances have the same ID '{db.id}'. "
-                    f"Database instances with the same ID must point to the same database with identical configuration."
-                )
-        registered_dbs[db.id] = db
-
-    def _are_db_instances_compatible(self, db1: Union[BaseDb, AsyncBaseDb], db2: Union[BaseDb, AsyncBaseDb]) -> bool:
-        """
-        Return True if the two given database objects are compatible
-        Two database objects are compatible if they point to the same database with identical configuration.
-        """
-        # If they're the same object reference, they're compatible
-        if db1 is db2:
-            return True
-
-        if type(db1) is not type(db2):
-            return False
-
-        if hasattr(db1, "db_url") and hasattr(db2, "db_url"):
-            if db1.db_url != db2.db_url:  # type: ignore
-                return False
-
-        if hasattr(db1, "db_file") and hasattr(db2, "db_file"):
-            if db1.db_file != db2.db_file:  # type: ignore
-                return False
-
-        # If table names are different, they're not compatible
-        if (
-            db1.session_table_name != db2.session_table_name
-            or db1.memory_table_name != db2.memory_table_name
-            or db1.metrics_table_name != db2.metrics_table_name
-            or db1.eval_table_name != db2.eval_table_name
-            or db1.knowledge_table_name != db2.knowledge_table_name
-        ):
-            return False
-
-        return True
-
+            registered_dbs[db.id].append(db)
+        else:
+            registered_dbs[db.id] = [db]
+   
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
         seen_ids = set()
@@ -664,13 +720,15 @@ class AgentOS:
             session_config.dbs = []
 
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
-
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.session_table_name for db in dbs))
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=SessionDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -684,12 +742,15 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.memory_table_name for db in dbs))
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MemoryDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -723,12 +784,15 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.metrics_table_name for db in dbs))
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MetricsDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -742,12 +806,15 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.eval_table_name for db in dbs))
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=EvalsDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 

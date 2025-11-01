@@ -4,7 +4,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.exa import ExaTools
-from db import db
+from db import demo_db
 
 research_agent = Agent(
     name="Research Agent",
@@ -31,5 +31,5 @@ research_agent = Agent(
     add_datetime_to_context=True,
     enable_agentic_memory=True,
     markdown=True,
-    db=db,
+    db=demo_db,
 )

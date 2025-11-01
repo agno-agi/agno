@@ -112,27 +112,8 @@ class DynamoDb(BaseDb):
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
 
-    def _create_tables(self):
-        tables_to_create = [
-            (self.session_table_name, "sessions"),
-            (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
-            (self.eval_table_name, "evals"),
-            (self.knowledge_table_name, "knowledge_sources"),
-        ]
-
-        for table_name, table_type in tables_to_create:
-            if table_name:
-                try:
-                    schema = get_table_schema_definition(table_type)
-                    schema["TableName"] = table_name
-                    create_table_if_not_exists(self.client, table_name, schema)
-
-                except Exception as e:
-                    log_error(f"Failed to create table {table_name}: {e}")
-
-    def _table_exists(self, table_name: str) -> bool:
-        """Check if a DynamoDB table with the given name exists.
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a DynamoDB table exists.
 
         Args:
             table_name: The name of the table to check
@@ -145,9 +126,23 @@ class DynamoDb(BaseDb):
             return True
         except self.client.exceptions.ResourceNotFoundException:
             return False
-        except Exception as e:
-            log_error(f"Error checking if table {table_name} exists: {e}")
-            return False
+
+    def _create_all_tables(self):
+        """Create all configured DynamoDB tables if they don't exist."""
+        tables_to_create = [
+            ("sessions", self.session_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("culture", self.culture_table_name),
+        ]
+
+        for table_type, table_name in tables_to_create:
+            if not self.table_exists(table_name):
+                schema = get_table_schema_definition(table_type)
+                schema["TableName"] = table_name
+                create_table_if_not_exists(self.client, table_name, schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
@@ -180,7 +175,7 @@ class DynamoDb(BaseDb):
             raise ValueError(f"Unknown table type: {table_type}")
 
         # Check if table exists, create if it doesn't
-        if not self._table_exists(table_name) and create_table_if_not_found:
+        if not self.table_exists(table_name) and create_table_if_not_found:
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
