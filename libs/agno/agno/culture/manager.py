@@ -8,6 +8,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.utils import get_model
 from agno.tools.function import Function
 from agno.utils.log import (
     log_debug,
@@ -55,7 +56,7 @@ class CultureManager:
 
     def __init__(
         self,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         system_message: Optional[str] = None,
         culture_capture_instructions: Optional[str] = None,
@@ -66,9 +67,7 @@ class CultureManager:
         clear_knowledge: bool = True,
         debug_mode: bool = False,
     ):
-        self.model = model
-        if self.model is not None and isinstance(self.model, str):
-            raise ValueError("Model must be a Model object, not a string")
+        self.model = get_model(model)
         self.db = db
         self.system_message = system_message
         self.culture_capture_instructions = culture_capture_instructions

@@ -81,6 +81,10 @@ class OpenAIChat(Model):
     http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
+    # OpenAI clients
+    client: Optional[OpenAIClient] = None
+    async_client: Optional[AsyncOpenAIClient] = None
+
     # The role to map the message role to.
     default_role_map = {
         "system": "developer",
@@ -123,13 +127,18 @@ class OpenAIChat(Model):
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
+        if self.client and not self.client.is_closed():
+            return self.client
+
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client.")
-        return OpenAIClient(**client_params)
+                log_debug("http_client is not an instance of httpx.Client.")
+
+        self.client = OpenAIClient(**client_params)
+        return self.client
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
@@ -138,22 +147,21 @@ class OpenAIChat(Model):
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
+        if self.async_client and not self.async_client.is_closed():
+            return self.async_client
+
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
-                # Create a new async HTTP client with custom limits
-                client_params["http_client"] = httpx.AsyncClient(
-                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-                )
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
+            client_params["http_client"] = self.http_client
         else:
+            if self.http_client:
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
             )
-        return AsyncOpenAIClient(**client_params)
+        self.async_client = AsyncOpenAIClient(**client_params)
+        return self.async_client
 
     def get_request_params(
         self,

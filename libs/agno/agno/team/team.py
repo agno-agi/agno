@@ -45,6 +45,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
@@ -437,7 +438,7 @@ class Team:
         self,
         members: List[Union[Agent, "Team"]],
         id: Optional[str] = None,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         role: Optional[str] = None,
         respond_directly: bool = False,
@@ -498,9 +499,9 @@ class Team:
         post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
-        parser_model: Optional[Model] = None,
+        parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
-        output_model: Optional[Model] = None,
+        output_model: Optional[Union[Model, str]] = None,
         output_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -514,7 +515,7 @@ class Team:
         add_session_summary_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
-        reasoning_model: Optional[Model] = None,
+        reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
@@ -535,7 +536,7 @@ class Team:
     ):
         self.members = members
 
-        self.model = model
+        self.model = model  # type: ignore[assignment]
 
         self.name = name
         self.id = id
@@ -618,9 +619,9 @@ class Team:
 
         self.input_schema = input_schema
         self.output_schema = output_schema
-        self.parser_model = parser_model
+        self.parser_model = parser_model  # type: ignore[assignment]
         self.parser_model_prompt = parser_model_prompt
-        self.output_model = output_model
+        self.output_model = output_model  # type: ignore[assignment]
         self.output_model_prompt = output_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
@@ -637,7 +638,7 @@ class Team:
         self.metadata = metadata
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -693,6 +694,8 @@ class Team:
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
+
+        self._resolve_models()
 
     @property
     def background_executor(self) -> Any:
@@ -901,6 +904,17 @@ class Team:
     def _has_async_db(self) -> bool:
         """Return True if the db the team is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
+
+    def _resolve_models(self) -> None:
+        """Resolve model strings to Model instances."""
+        if self.model is not None:
+            self.model = get_model(self.model)
+        if self.reasoning_model is not None:
+            self.reasoning_model = get_model(self.reasoning_model)
+        if self.parser_model is not None:
+            self.parser_model = get_model(self.parser_model)
+        if self.output_model is not None:
+            self.output_model = get_model(self.output_model)
 
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
@@ -1593,6 +1607,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1604,6 +1619,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -1932,6 +1948,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2439,6 +2456,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2450,6 +2468,7 @@ class Team:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -2771,6 +2790,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            session_state=session_state,
             input=run_input,
         )
 
@@ -2930,6 +2950,12 @@ class Team:
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
 
+        # Update session_state with changes from model response
+        if model_response.updated_session_state is not None and run_response.session_state is not None:
+            from agno.utils.merge_dict import merge_dictionaries
+
+            merge_dictionaries(run_response.session_state, model_response.updated_session_state)
+
         # Build a list of messages that should be added to the RunOutput
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
 
@@ -2954,6 +2980,7 @@ class Team:
         tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -2985,6 +3012,7 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_events=stream_events,
                 parse_structured_output=self.should_parse_structured_output,
+                session_state=session_state,
             )
 
         # 3. Update TeamRunOutput
@@ -3036,6 +3064,7 @@ class Team:
         tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         self.model = cast(Model, self.model)
 
@@ -3068,6 +3097,7 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_events=stream_events,
                 parse_structured_output=self.should_parse_structured_output,
+                session_state=session_state,
             ):
                 yield event
 
@@ -3122,6 +3152,7 @@ class Team:
         reasoning_state: Optional[Dict[str, Any]] = None,
         stream_events: bool = False,
         parse_structured_output: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunOutputEvent))
@@ -3299,10 +3330,15 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
-                if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    merge_dictionaries(
-                        session.session_data["session_state"], model_response_event.updated_session_state
-                    )
+                if model_response_event.updated_session_state is not None:
+                    # Update the session_state variable that TeamRunOutput references
+                    if session_state is not None:
+                        merge_dictionaries(session_state, model_response_event.updated_session_state)
+                    # Also update the DB session object
+                    if session.session_data is not None:
+                        merge_dictionaries(
+                            session.session_data["session_state"], model_response_event.updated_session_state
+                        )
 
                 if model_response_event.images is not None:
                     for image in model_response_event.images:
@@ -3468,7 +3504,7 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
-            log_debug("Creating user memories.")
+            log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
                 message=user_message_str,
                 user_id=user_id,
@@ -3484,7 +3520,7 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
-            log_debug("Creating user memories.")
+            log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
                 message=user_message_str,
                 user_id=user_id,
@@ -4498,7 +4534,7 @@ class Team:
                         store_events=self.store_events,
                     )
             else:
-                log_warning(
+                log_info(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True
@@ -4779,7 +4815,7 @@ class Team:
                         store_events=self.store_events,
                     )
             else:
-                log_warning(
+                log_info(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True

@@ -11,6 +11,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.utils import get_model
 from agno.tools.function import Function
 from agno.utils.log import (
     log_debug,
@@ -66,7 +67,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         system_message: Optional[str] = None,
         memory_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
@@ -77,9 +78,7 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        self.model = model
-        if self.model is not None and isinstance(self.model, str):
-            raise ValueError("Model must be a Model object, not a string")
+        self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
@@ -89,6 +88,12 @@ class MemoryManager:
         self.add_memories = add_memories
         self.clear_memories = clear_memories
         self.debug_mode = debug_mode
+
+        self._get_models()
+
+    def _get_models(self) -> None:
+        if self.model is not None:
+            self.model = get_model(self.model)
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -843,7 +848,7 @@ class MemoryManager:
                 team_id=team_id,
                 enable_add_memory=add_memories,
                 enable_update_memory=update_memories,
-                enable_delete_memory=False,
+                enable_delete_memory=True,
                 enable_clear_memory=False,
             ),
         )
@@ -854,7 +859,7 @@ class MemoryManager:
                 existing_memories=existing_memories,
                 enable_update_memory=update_memories,
                 enable_add_memory=add_memories,
-                enable_delete_memory=False,
+                enable_delete_memory=True,
                 enable_clear_memory=False,
             ),
             *messages,
@@ -906,7 +911,7 @@ class MemoryManager:
                     team_id=team_id,
                     enable_add_memory=add_memories,
                     enable_update_memory=update_memories,
-                    enable_delete_memory=False,
+                    enable_delete_memory=True,
                     enable_clear_memory=False,
                 ),
             )
@@ -920,7 +925,7 @@ class MemoryManager:
                     team_id=team_id,
                     enable_add_memory=add_memories,
                     enable_update_memory=update_memories,
-                    enable_delete_memory=False,
+                    enable_delete_memory=True,
                     enable_clear_memory=False,
                 ),
             )
@@ -931,7 +936,7 @@ class MemoryManager:
                 existing_memories=existing_memories,
                 enable_update_memory=update_memories,
                 enable_add_memory=add_memories,
-                enable_delete_memory=False,
+                enable_delete_memory=True,
                 enable_clear_memory=False,
             ),
             *messages,
