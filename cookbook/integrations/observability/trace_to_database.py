@@ -10,11 +10,12 @@ This example shows:
 Requirements:
     pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
+from rich.pretty import pprint
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
 from opentelemetry import trace as trace_api
 
@@ -25,10 +26,10 @@ db = SqliteDb(db_file="tmp/traces.db")
 setup_tracing(db=db)
 
 agent = Agent(
-    name="Stock Price Agent",
+    name="HackerNews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[YFinanceTools()],
-    instructions="You are a stock price agent. Answer questions concisely.",
+    tools=[HackerNewsTools()],
+    instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,
 )
 
@@ -36,7 +37,8 @@ agent = Agent(
 print("=" * 60)
 print("Running agent with automatic tracing...")
 print("=" * 60)
-agent.print_response("What is the current price of Tesla?")
+response = agent.run("What is the latest news on AI?")
+pprint(response)
 
 # Force flush traces to database
 tracer_provider = trace_api.get_tracer_provider()
@@ -50,7 +52,7 @@ print("=" * 60)
 
 try:
     # Get all traces
-    traces = db.get_traces(limit=10)
+    traces = db.get_traces(limit=10, run_id=response.run_id)
 
     if not traces:
         print(
