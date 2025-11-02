@@ -675,7 +675,13 @@ class Milvus(VectorDb):
         """
         return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
         """
         Search for documents matching the query.
 
@@ -683,25 +689,36 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Additional search parameters to pass to Milvus.
+                Supported parameters include:
+                - radius (float): For range search, defines the outer boundary
+                - range_filter (float): For range search, defines the inner boundary
 
         Returns:
             List[Document]: List of matching documents
         """
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            return self.hybrid_search(query, limit, filters, search_params)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []
 
-        results = self.client.search(
-            collection_name=self.collection,
-            data=[query_embedding],
-            filter=self._build_expr(filters),
-            output_fields=["*"],
-            limit=limit,
-        )
+        # Build search parameters
+        search_kwargs = {
+            "collection_name": self.collection,
+            "data": [query_embedding],
+            "filter": self._build_expr(filters),
+            "output_fields": ["*"],
+            "limit": limit,
+        }
+
+        # Add search_params if provided (e.g., radius, range_filter)
+        if search_params:
+            search_kwargs["search_params"] = search_params
+
+        results = self.client.search(**search_kwargs)
 
         # Build search results
         search_results: List[Document] = []
@@ -723,23 +740,49 @@ class Milvus(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
+        """
+        Search for documents matching the query asynchronously.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Additional search parameters to pass to Milvus.
+                Supported parameters include:
+                - radius (float): For range search, defines the outer boundary
+                - range_filter (float): For range search, defines the inner boundary
+
+        Returns:
+            List[Document]: List of matching documents
+        """
         if self.search_type == SearchType.hybrid:
-            return await self.async_hybrid_search(query, limit, filters)
+            return await self.async_hybrid_search(query, limit, filters, search_params)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []
 
-        results = await self.async_client.search(
-            collection_name=self.collection,
-            data=[query_embedding],
-            filter=self._build_expr(filters),
-            output_fields=["*"],
-            limit=limit,
-        )
+        # Build search parameters
+        search_kwargs = {
+            "collection_name": self.collection,
+            "data": [query_embedding],
+            "filter": self._build_expr(filters),
+            "output_fields": ["*"],
+            "limit": limit,
+        }
+
+        # Add search_params if provided (e.g., radius, range_filter)
+        if search_params:
+            search_kwargs["search_params"] = search_params
+
+        results = await self.async_client.search(**search_kwargs)
 
         # Build search results
         search_results: List[Document] = []
@@ -760,7 +803,13 @@ class Milvus(VectorDb):
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
-    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def hybrid_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
         """
         Perform a hybrid search combining dense and sparse vector similarity.
 
@@ -768,6 +817,10 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Additional search parameters to pass to Milvus.
+                Supported parameters include:
+                - radius (float): For range search, defines the outer boundary
+                - range_filter (float): For range search, defines the inner boundary
 
         Returns:
             List[Document]: List of matching documents
@@ -789,7 +842,7 @@ class Milvus(VectorDb):
         try:
             # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
 
-            # Create search request for dense vectors
+            # Base search parameters for dense vectors
             dense_search_param = {
                 "data": [dense_vector],
                 "anns_field": "dense_vector",
@@ -798,13 +851,21 @@ class Milvus(VectorDb):
                 * 2,  # Fetch more candidates for better reranking quality - each vector search returns 2x results which are then merged and reranked
             }
 
-            # Create search request for sparse vectors
+            # Add search_params if provided (e.g., radius, range_filter)
+            if search_params:
+                dense_search_param["param"]["params"].update(search_params)
+
+            # Base search parameters for sparse vectors
             sparse_search_param = {
                 "data": [sparse_vector],
                 "anns_field": "sparse_vector",
                 "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
                 "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
+
+            # Add search_params to sparse search as well
+            if search_params:
+                sparse_search_param["param"]["params"].update(search_params)
 
             # Create search requests
             dense_request = AnnSearchRequest(**dense_search_param)
@@ -852,7 +913,11 @@ class Milvus(VectorDb):
             return []
 
     async def async_hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
         Perform an asynchronous hybrid search combining dense and sparse vector similarity.
@@ -861,6 +926,10 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Additional search parameters to pass to Milvus.
+                Supported parameters include:
+                - radius (float): For range search, defines the outer boundary
+                - range_filter (float): For range search, defines the inner boundary
 
         Returns:
             List[Document]: List of matching documents
@@ -878,7 +947,7 @@ class Milvus(VectorDb):
         try:
             # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
 
-            # Create search request for dense vectors
+            # Base search parameters for dense vectors
             dense_search_param = {
                 "data": [dense_vector],
                 "anns_field": "dense_vector",
@@ -887,13 +956,21 @@ class Milvus(VectorDb):
                 * 2,  # Fetch more candidates for better reranking quality - each vector search returns 2x results which are then merged and reranked
             }
 
-            # Create search request for sparse vectors
+            # Add search_params if provided (e.g., radius, range_filter)
+            if search_params:
+                dense_search_param["param"]["params"].update(search_params)
+
+            # Base search parameters for sparse vectors
             sparse_search_param = {
                 "data": [sparse_vector],
                 "anns_field": "sparse_vector",
                 "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
                 "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
+
+            # Add search_params to sparse search as well
+            if search_params:
+                sparse_search_param["param"]["params"].update(search_params)
 
             # Create search requests
             dense_request = AnnSearchRequest(**dense_search_param)
