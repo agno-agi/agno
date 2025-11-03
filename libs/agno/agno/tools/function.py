@@ -440,7 +440,7 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
         pydantic_version = Version(version("pydantic"))
 
@@ -457,6 +457,10 @@ class Function(BaseModel):
 
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
+            return func
+        # Don't wrap functions with session_state parameter
+        # session_state needs to be passed by reference, not copied by pydantic's validation
+        elif "session_state" in signature(func).parameters:
             return func
         # Wrap the callable with validate_call
         else:
