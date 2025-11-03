@@ -465,7 +465,7 @@ class AgentOS:
                 import traceback
 
                 log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
-                
+
                 return JSONResponse(
                     status_code=getattr(exc, "status_code", 500),
                     content={"detail": str(exc)},

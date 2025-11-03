@@ -1,5 +1,7 @@
 """Integration tests for exception handling in AgentOS."""
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +9,6 @@ from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
-import logging
 
 @pytest.fixture
 def test_agent(shared_db):
@@ -18,6 +19,7 @@ def test_agent(shared_db):
         model=OpenAIChat(id="gpt-4o"),
         db=shared_db,
     )
+
 
 @pytest.fixture
 def test_agent_bad_model(shared_db):
@@ -91,7 +93,7 @@ def test_error_response_format(test_os_client):
     """Test that error responses follow consistent format."""
     response = test_os_client.get("/nonexistent-route")
     assert response.status_code == 404
-    
+
     response_json = response.json()
     assert "detail" in response_json
     assert isinstance(response_json["detail"], str)
@@ -99,7 +101,7 @@ def test_error_response_format(test_os_client):
 
 def test_http_exception_logging(test_os_client, caplog):
     """Test that HTTP exceptions are properly logged."""
-    
+
     with caplog.at_level(logging.WARNING):
         response = test_os_client.get("/nonexistent-route")
         assert response.status_code == 404
@@ -109,27 +111,28 @@ def test_internal_server_error_response_format(test_os_client, test_agent_bad_mo
     """Test that 500 errors return generic message without exposing internals."""
     with caplog.at_level(logging.ERROR):
         response = test_os_client.post(
-            f"/agents/{test_agent_bad_model.id}/runs", 
+            f"/agents/{test_agent_bad_model.id}/runs",
             data={"message": "Hello, world!"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-    
+
     assert response.status_code == 404
     response_json = response.json()
     assert "detail" in response_json
     assert isinstance(response_json["detail"], str)
 
+
 def test_concurrent_error_handling(test_os_client):
     """Test that multiple concurrent errors don't interfere with each other."""
     import concurrent.futures
-    
+
     def make_failing_request():
         return test_os_client.get("/nonexistent-route")
-    
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(make_failing_request) for _ in range(10)]
         responses = [f.result() for f in concurrent.futures.as_completed(futures)]
-    
+
     # All should return 404
     for response in responses:
         assert response.status_code == 404
@@ -139,28 +142,28 @@ def test_concurrent_error_handling(test_os_client):
 def test_exception_handler_with_custom_base_app(shared_db):
     """Test exception handling works with custom base FastAPI app."""
     from fastapi import FastAPI
-    
+
     base_app = FastAPI()
-    
+
     @base_app.get("/custom")
     async def custom_route():
         return {"status": "ok"}
-    
+
     test_agent = Agent(
         name="test-agent",
         id="test-agent-id",
         model=OpenAIChat(id="gpt-4o"),
         db=shared_db,
     )
-    
+
     agent_os = AgentOS(agents=[test_agent], base_app=base_app)
     app = agent_os.get_app()
     client = TestClient(app, raise_server_exceptions=False)
-    
+
     # Test custom route works
     response = client.get("/custom")
     assert response.status_code == 200
-    
+
     # Test that exception handling still works for non-existent routes
     response = client.get("/nonexistent")
     assert response.status_code == 404
@@ -174,4 +177,3 @@ def test_exception_with_status_code_attribute(test_os_client):
     assert response.status_code == 404
     response_json = response.json()
     assert "detail" in response_json
-
