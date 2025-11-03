@@ -34,4 +34,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="basic_agent_tracing:app", reload=True)
+    agent_os.serve(app="01_basic_agent_tracing:app", reload=True)

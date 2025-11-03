@@ -1074,7 +1074,9 @@ class TraceNode(BaseModel):
     status: str = Field(..., description="Status code (OK, ERROR)")
     spans: Optional[List["TraceNode"]] = Field(None, description="Child spans in the trace hierarchy")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional span attributes and data")
-    extra_data: Optional[Dict[str, Any]] = Field(None, description="Flexible field for custom attributes and additional data")
+    extra_data: Optional[Dict[str, Any]] = Field(
+        None, description="Flexible field for custom attributes and additional data"
+    )
 
     @classmethod
     def from_span(cls, span: Any, spans: Optional[List["TraceNode"]] = None) -> "TraceNode":
@@ -1306,7 +1308,7 @@ class TraceDetail(BaseModel):
                     status=span.status_code,
                     spans=children_nodes,
                     metadata=root_metadata if root_metadata else None,
-                    extra_data=None, 
+                    extra_data=None,
                 )
             else:
                 return TraceNode.from_span(span, spans=children_nodes)
