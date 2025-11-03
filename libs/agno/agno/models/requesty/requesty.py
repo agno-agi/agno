@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agno.models.openai.like import OpenAILike
 from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 
 
 @dataclass
@@ -34,7 +35,7 @@ class Requesty(OpenAILike):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Dict[str, Any]:
         params = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
