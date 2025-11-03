@@ -17,7 +17,7 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
 
 # Initialize PostgresDB
 if os.path.exists("tmp/knowledge_contents.db"):
-    os.remove("tmp/knowledge_contents.db")  
+    os.remove("tmp/knowledge_contents.db")
 
 contents_db = AsyncSqliteDb(
     db_file="tmp/knowledge_contents.db",

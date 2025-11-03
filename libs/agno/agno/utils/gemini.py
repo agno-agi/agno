@@ -252,7 +252,9 @@ def convert_schema(
                         converted_schema.nullable = True
                     properties[key] = converted_schema
                 else:
-                    properties[key] = Schema(title=prop_def.get("title", None), description=prop_def.get("description", None))
+                    properties[key] = Schema(
+                        title=prop_def.get("title", None), description=prop_def.get("description", None)
+                    )
 
             required = schema_dict.get("required", [])
 
@@ -407,7 +409,7 @@ def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[To
             name = func_info.get("name")
             description = func_info.get("description", "")
             parameters_dict = func_info.get("parameters", {})
-            
+
             parameters_schema = convert_schema(parameters_dict)
             # Create a FunctionDeclaration instance
             function_decl = FunctionDeclaration(

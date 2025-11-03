@@ -575,9 +575,9 @@ class LanceDb(VectorDb):
         # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
-            
+
         results = None
-        
+
         if self.search_type == SearchType.vector:
             results = self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
