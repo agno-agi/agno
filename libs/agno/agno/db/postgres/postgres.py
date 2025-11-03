@@ -2308,7 +2308,7 @@ class PostgresDb(BaseDb):
         """
         raise NotImplementedError
 
-    def create_spans_batch(self, spans: List) -> None:
+    def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
 
         Args:

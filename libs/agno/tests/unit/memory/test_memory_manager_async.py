@@ -153,7 +153,7 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def create_span(self, span) -> None:
         raise NotImplementedError
 
-    async def create_spans_batch(self, spans: List) -> None:
+    async def create_spans(self, spans: List) -> None:
         raise NotImplementedError
 
     async def get_span(self, span_id: str):

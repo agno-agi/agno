@@ -2217,9 +2217,8 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating span: {e}")
-            # Don't raise - tracing should not break the main application flow
 
-    def create_spans_batch(self, spans: List) -> None:
+    def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
 
         Args:
@@ -2242,7 +2241,6 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating spans batch: {e}")
-            # Don't raise - tracing should not break the main application flow
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.

@@ -11,7 +11,7 @@ Requirements:
     pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
 
-import time # noqa
+import time  # noqa
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb

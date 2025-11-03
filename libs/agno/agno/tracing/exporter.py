@@ -93,7 +93,7 @@ class DatabaseSpanExporter(SpanExporter):
                     self.db.create_trace(trace)
 
                 # Create span records
-                self.db.create_spans_batch(spans)
+                self.db.create_spans(spans)
 
         except Exception as e:
             logger.error(f"Failed to export sync traces: {e}", exc_info=True)
@@ -129,7 +129,7 @@ class DatabaseSpanExporter(SpanExporter):
                         await create_trace_result
 
                 # Create span records
-                create_spans_result = self.db.create_spans_batch(spans)
+                create_spans_result = self.db.create_spans(spans)
                 if create_spans_result is not None:
                     await create_spans_result
 
