@@ -974,6 +974,11 @@ class Workflow:
         websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
+        from agno.run.agent import RunOutput
+        from agno.run.team import TeamRunOutput
+
+        if isinstance(event, (RunOutput, TeamRunOutput)):
+            return event
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:
@@ -2514,7 +2519,7 @@ class Workflow:
 
         if self.agent and isinstance(self.agent, WorkflowAgent):
             add_history = self.agent.add_workflow_history
-            num_runs = self.agent.num_history_runs or 5  
+            num_runs = self.agent.num_history_runs or 5
 
         if add_history:
             history_context = (
@@ -3636,9 +3641,9 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
-                if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
+                elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
-                        f"Step '{step.name or f'step_{i+1}'}' has add_workflow_history=True "
+                        f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )
