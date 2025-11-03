@@ -186,8 +186,7 @@ class AgentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
 
-    class Config:
-        exclude_none = True
+    model_config = ConfigDict(exclude_none=True)
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
