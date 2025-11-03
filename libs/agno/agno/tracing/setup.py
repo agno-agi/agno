@@ -25,7 +25,7 @@ except ImportError:
 
 def setup_tracing(
     db: Union[BaseDb, AsyncBaseDb],
-    use_batch_processor: bool = True,
+    use_batch_processor: bool = False,
     max_queue_size: int = 2048,
     max_export_batch_size: int = 512,
     schedule_delay_millis: int = 5000,
@@ -93,7 +93,7 @@ def setup_tracing(
             )
         else:
             processor = SimpleSpanProcessor(exporter)
-            logger.info("Tracing configured with SimpleSpanProcessor (immediate export)")
+            logger.info("Tracing configured with SimpleSpanProcessor")
 
         tracer_provider.add_span_processor(processor)
 

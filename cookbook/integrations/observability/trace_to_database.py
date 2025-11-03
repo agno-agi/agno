@@ -11,13 +11,14 @@ Requirements:
     pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
 
+import time # noqa
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
 from agno.utils.pprint import pprint_run_response
-from opentelemetry import trace as trace_api
 
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")
@@ -40,15 +41,13 @@ print("=" * 60)
 response = agent.run("What is the latest news on AI?")
 pprint_run_response(response)
 
-# Force flush traces to database
-tracer_provider = trace_api.get_tracer_provider()
-if hasattr(tracer_provider, "force_flush"):
-    tracer_provider.force_flush(timeout_millis=5000)
-
 # Query traces and spans from database
 print("\n" + "=" * 60)
 print("Traces and Spans in Database:")
 print("=" * 60)
+
+## If using BatchSpanProcessor, we need to wait for the traces to be flushed to the database before querying
+# time.sleep(5) # Uncomment this if using BatchSpanProcessor
 
 try:
     # Get the trace for this run
@@ -59,7 +58,7 @@ try:
             "\n❌ No trace found. Make sure openinference-instrumentation-agno is installed."
         )
     else:
-        print("\n📊 Found trace for run")
+        print(f"\n📊 Found trace for run")
 
         print(f"\n🔍 Trace ID: {trace.trace_id[:16]}...")
         print(f"   Name: {trace.name}")
