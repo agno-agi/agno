@@ -1,6 +1,8 @@
 import asyncio
+import os
 
 from agno.agent import Agent
+from agno.db.sqlite import AsyncSqliteDb
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
@@ -13,10 +15,18 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.DOCX
 )
 
+# Initialize PostgresDB
+if os.path.exists("tmp/knowledge_contents.db"):
+    os.remove("tmp/knowledge_contents.db")  
+
+contents_db = AsyncSqliteDb(
+    db_file="tmp/knowledge_contents.db",
+)
+
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
 vector_db = LanceDb(
-    table_name="recipes",
+    table_name="CVs",
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
 
@@ -28,6 +38,7 @@ vector_db = LanceDb(
 knowledge = Knowledge(
     name="Async Filtering",
     vector_db=vector_db,
+    contents_db=contents_db,
 )
 
 asyncio.run(
@@ -86,7 +97,6 @@ asyncio.run(
 agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
 if __name__ == "__main__":
