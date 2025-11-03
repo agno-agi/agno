@@ -129,12 +129,12 @@ class WorkflowSession:
         context_parts = ["<workflow_history_context>"]
 
         for i, (input_str, response_str) in enumerate(history_data, 1):
-            context_parts.append(f"[run-{i}]")
+            context_parts.append(f"[Workflow Run-{i}]")
 
             if input_str:
-                context_parts.append(f"input: {input_str}")
+                context_parts.append(f"User input: {input_str}")
             if response_str:
-                context_parts.append(f"response: {response_str}")
+                context_parts.append(f"Workflow output: {response_str}")
 
             context_parts.append("")  # Empty line between runs
 
@@ -154,6 +154,7 @@ class WorkflowSession:
                     runs_data.append(run.to_dict())
                 except Exception as e:
                     raise ValueError(f"Serialization failed: {str(e)}")
+
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,

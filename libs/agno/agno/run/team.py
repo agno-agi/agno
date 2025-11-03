@@ -66,12 +66,39 @@ class TeamRunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
+
+            # Handle input_content provided as a list of Message objects
             elif (
                 isinstance(self.input_content, list)
                 and self.input_content
                 and isinstance(self.input_content[0], Message)
             ):
                 result["input_content"] = [m.to_dict() for m in self.input_content]
+
+            # Handle input_content provided as a list of dicts
+            elif (
+                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
+            ):
+                for content in self.input_content:
+                    # Handle media input
+                    if isinstance(content, dict):
+                        if content.get("images"):
+                            content["images"] = [
+                                img.to_dict() if isinstance(img, Image) else img for img in content["images"]
+                            ]
+                        if content.get("videos"):
+                            content["videos"] = [
+                                vid.to_dict() if isinstance(vid, Video) else vid for vid in content["videos"]
+                            ]
+                        if content.get("audios"):
+                            content["audios"] = [
+                                aud.to_dict() if isinstance(aud, Audio) else aud for aud in content["audios"]
+                            ]
+                        if content.get("files"):
+                            content["files"] = [
+                                file.to_dict() if isinstance(file, File) else file for file in content["files"]
+                            ]
+                result["input_content"] = self.input_content
             else:
                 result["input_content"] = self.input_content
 
@@ -234,6 +261,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -473,6 +501,7 @@ class TeamRunOutput:
     citations: Optional[Citations] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -664,6 +693,12 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             messages=messages,
             metrics=metrics,
@@ -681,7 +716,7 @@ class TeamRunOutput:
             citations=citations,
             tools=tools,
             events=events,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

@@ -356,10 +356,10 @@ def attach_routes(
             ):
                 default_model = deepcopy(agent.model)
                 if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     agent.model = model
 
             team = None
@@ -378,10 +378,10 @@ def attach_routes(
             ):
                 default_model = deepcopy(team.model)
                 if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     team.model = model
 
             agent = None

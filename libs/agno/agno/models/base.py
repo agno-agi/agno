@@ -32,6 +32,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecutio
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
@@ -290,12 +291,21 @@ class Model(ABC):
         """
         pass
 
+    def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
+        _tool_dicts = []
+        for tool in tools or []:
+            if isinstance(tool, Function):
+                _tool_dicts.append({"type": "function", "function": tool.to_dict()})
+            else:
+                # If a dict is passed, it is a builtin tool
+                _tool_dicts.append(tool)
+        return _tool_dicts
+
     def response(
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         run_response: Optional[RunOutput] = None,
@@ -303,6 +313,15 @@ class Model(ABC):
     ) -> ModelResponse:
         """
         Generate a response from the model.
+
+        Args:
+            messages: List of messages to send to the model
+            response_format: Response format to use
+            tools: List of tools to use. This includes the original Function objects and dicts for built-in tools.
+            tool_choice: Tool choice to use
+            tool_call_limit: Tool call limit
+            run_response: Run response to use
+            send_media_to_model: Whether to send media to the model
         """
 
         # Check cache if enabled
@@ -322,6 +341,9 @@ class Model(ABC):
 
         function_call_count = 0
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         while True:
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -330,7 +352,7 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
-                tools=tools,
+                tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
             )
@@ -348,7 +370,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -457,8 +479,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         send_media_to_model: bool = True,
@@ -481,6 +502,9 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         function_call_count = 0
 
         while True:
@@ -491,7 +515,7 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
-                tools=tools,
+                tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
             )
 
@@ -508,7 +532,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -824,8 +848,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
@@ -858,6 +881,9 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         function_call_count = 0
 
         while True:
@@ -872,7 +898,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     stream_data=stream_data,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
@@ -902,7 +928,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                 )
                 if self.cache_response:
@@ -917,7 +943,7 @@ class Model(ABC):
             if assistant_message.tool_calls is not None:
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message=assistant_message, messages=messages, functions=_functions
                 )
                 function_call_results: List[Message] = []
 
@@ -948,7 +974,7 @@ class Model(ABC):
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
@@ -1021,8 +1047,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        functions: Optional[Dict[str, Function]] = None,
+        tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
@@ -1055,6 +1080,9 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        _tool_dicts = self._format_tools(tools) if tools is not None else []
+        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
         function_call_count = 0
 
         while True:
@@ -1069,7 +1097,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     stream_data=stream_data,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 ):
@@ -1097,7 +1125,7 @@ class Model(ABC):
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
-                    tools=tools,
+                    tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
                 )
@@ -1113,7 +1141,7 @@ class Model(ABC):
             if assistant_message.tool_calls is not None:
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message=assistant_message, messages=messages, functions=_functions
                 )
                 function_call_results: List[Message] = []
 
@@ -1144,7 +1172,7 @@ class Model(ABC):
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 # Handle function call media
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
                         messages=messages,
                         function_call_results=function_call_results,
@@ -1335,12 +1363,14 @@ class Model(ABC):
         images = None
         videos = None
         audios = None
+        files = None
 
         if success and function_execution_result:
             # With unified classes, no conversion needed - use directly
             images = function_execution_result.images
             videos = function_execution_result.videos
             audios = function_execution_result.audios
+            files = function_execution_result.files
 
         return Message(
             role=self.tool_message_role,
@@ -1353,6 +1383,7 @@ class Model(ABC):
             images=images,
             videos=videos,
             audio=audios,
+            files=files,
             **kwargs,  # type: ignore
         )
 
@@ -1410,11 +1441,13 @@ class Model(ABC):
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_execution_result.result:
-                # This function yields agent/team run events
-                if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                    item, tuple(get_args(TeamRunOutputEvent))
+                # This function yields agent/team/workflow run events
+                if (
+                    isinstance(item, tuple(get_args(RunOutputEvent)))
+                    or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
+                    or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
                 ):
-                    # We only capture content events
+                    # We only capture content events for output accumulation
                     if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                         if item.content is not None and isinstance(item.content, BaseModel):
                             function_call_output += item.content.model_dump_json()
@@ -1422,18 +1455,28 @@ class Model(ABC):
                             # Capture output
                             function_call_output += item.content or ""
 
-                        if function_call.function.show_result:
+                        if function_call.function.show_result and item.content is not None:
                             yield ModelResponse(content=item.content)
 
                     if isinstance(item, CustomEvent):
                         function_call_output += str(item)
+
+                    # For WorkflowCompletedEvent, extract content for final output
+                    from agno.run.workflow import WorkflowCompletedEvent
+
+                    if isinstance(item, WorkflowCompletedEvent):
+                        if item.content is not None:
+                            if isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                function_call_output += str(item.content)
 
                     # Yield the event itself to bubble it up
                     yield item
 
                 else:
                     function_call_output += str(item)
-                    if function_call.function.show_result:
+                    if function_call.function.show_result and item is not None:
                         yield ModelResponse(content=str(item))
         else:
             from agno.tools.function import ToolResult
@@ -1455,7 +1498,7 @@ class Model(ABC):
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
-            if function_call.function.show_result:
+            if function_call.function.show_result and function_call_output is not None:
                 yield ModelResponse(content=function_call_output)
 
         # Create and yield function call result
@@ -1604,6 +1647,7 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+        result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
 
         try:
             if (
@@ -1798,9 +1842,12 @@ class Model(ABC):
 
             try:
                 async for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
@@ -1810,12 +1857,22 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if function_call.function.show_result:
+                            if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+
+                            # For WorkflowCompletedEvent, extract content for final output
+                            from agno.run.workflow import WorkflowCompletedEvent
+
+                            if isinstance(item, WorkflowCompletedEvent):
+                                if item.content is not None:
+                                    if isinstance(item.content, BaseModel):
+                                        function_call_output += item.content.model_dump_json()
+                                    else:
+                                        function_call_output += str(item.content)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
@@ -1823,7 +1880,7 @@ class Model(ABC):
                     # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
-                        if function_call.function.show_result:
+                        if function_call.function.show_result and item is not None:
                             await event_queue.put(ModelResponse(content=str(item)))
 
                 # Store the final output for this generator
@@ -1907,9 +1964,12 @@ class Model(ABC):
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
                 for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
@@ -1919,7 +1979,7 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if function_call.function.show_result:
+                            if function_call.function.show_result and item.content is not None:
                                 yield ModelResponse(content=item.content)
                                 continue
 
@@ -1927,7 +1987,7 @@ class Model(ABC):
                         yield item
                     else:
                         function_call_output += str(item)
-                        if function_call.function.show_result:
+                        if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             else:
                 from agno.tools.function import ToolResult
@@ -1947,7 +2007,7 @@ class Model(ABC):
                 else:
                     function_call_output = str(function_call.result)
 
-                if function_call.function.show_result:
+                if function_call.function.show_result and function_call_output is not None:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
@@ -2002,7 +2062,7 @@ class Model(ABC):
             model_response.tool_calls = []
 
         function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-            assistant_message, messages, functions
+            assistant_message=assistant_message, messages=messages, functions=functions
         )
         return function_calls_to_run
 
@@ -2084,9 +2144,13 @@ class Model(ABC):
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model
 
-        # Deep copy all attributes
+        # Deep copy all attributes except client objects
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
+                continue
+            # Skip client objects
+            if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
+                setattr(new_model, k, None)
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
