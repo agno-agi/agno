@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.tools.exa import ExaTools
 from agno.workflow import WorkflowAgent

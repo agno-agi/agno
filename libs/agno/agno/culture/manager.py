@@ -134,9 +134,10 @@ class CultureManager:
         if not self.db:
             return None
 
-        self.db = cast(AsyncBaseDb, self.db)
-
-        return await self.db.get_all_cultural_knowledge(name=name)
+        if isinstance(self.db, AsyncBaseDb):
+            return await self.db.get_all_cultural_knowledge(name=name)
+        else:
+            return self.db.get_all_cultural_knowledge(name=name)
 
     def add_cultural_knowledge(
         self,
@@ -230,7 +231,11 @@ class CultureManager:
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
-        knowledge = self.get_all_knowledge()
+        if isinstance(self.db, AsyncBaseDb):
+            knowledge = await self.aget_all_knowledge()
+        else:
+            knowledge = self.get_all_knowledge()
+
         if knowledge is None:
             knowledge = []
 
