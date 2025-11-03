@@ -1823,9 +1823,11 @@ def get_base_router(
             )
 
             if inspect.iscoroutine(traces_result):
-                traces, total_count = await traces_result
+                result = await traces_result
             else:
-                traces, total_count = traces_result
+                result = traces_result
+            
+            traces, total_count = result
 
             end_time_ms = time_module.time() * 1000
             search_time_ms = round(end_time_ms - start_time_ms, 2)
