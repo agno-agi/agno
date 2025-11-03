@@ -2090,7 +2090,6 @@ class SqliteDb(BaseDb):
             with self.Session() as sess:
                 stmt = table.select()
 
-                # Apply filters (trace_id takes precedence)
                 if trace_id:
                     stmt = stmt.where(table.c.trace_id == trace_id)
                 elif run_id:
