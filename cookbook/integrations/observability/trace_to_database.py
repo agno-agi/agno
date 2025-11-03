@@ -58,7 +58,7 @@ try:
             "\n❌ No trace found. Make sure openinference-instrumentation-agno is installed."
         )
     else:
-        print(f"\n📊 Found trace for run")
+        print("\n📊 Found trace for run")
 
         print(f"\n🔍 Trace ID: {trace.trace_id[:16]}...")
         print(f"   Name: {trace.name}")
