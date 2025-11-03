@@ -201,3 +201,14 @@ async def test_async_tool_use_with_structured_output_stream():
     # Verify key findings have content
     for finding in final_content.key_findings:
         assert isinstance(finding, str) and len(finding.strip()) > 0
+
+
+def test_structured_response_strict_false():
+    """Test structured response with strict=False (guided mode)"""
+    guided_output_agent = Agent(
+        model=OpenAIResponses(id="gpt-4o", strict=False),
+        description="You write movie scripts.",
+        output_schema=MovieScript,
+    )
+    response = guided_output_agent.run("Create a short action movie")
+    assert response.content is not None
