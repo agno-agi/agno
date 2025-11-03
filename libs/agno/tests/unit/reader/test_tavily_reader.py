@@ -268,7 +268,7 @@ def test_extract_with_custom_name():
 
         # Verify custom name was used
         assert documents[0].name == "Custom Name"
-        assert documents[0].id == "https://example.com_1"
+        assert documents[0].id == "https://example.com"
 
 
 @pytest.mark.asyncio
