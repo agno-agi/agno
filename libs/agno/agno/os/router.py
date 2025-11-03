@@ -1804,10 +1804,6 @@ def get_base_router(
         # Get database using db_id or default to first available
         db = get_db(os.dbs, db_id)
 
-        # Verify the database has trace support
-        if not hasattr(db, "get_traces"):
-            raise HTTPException(status_code=500, detail="Selected database does not support traces")
-
         try:
             start_time_ms = time_module.time() * 1000
 
@@ -1961,9 +1957,6 @@ def get_base_router(
 
             # If span_id is provided, return just that span
             if span_id:
-                if not hasattr(db, "get_span"):
-                    raise HTTPException(status_code=500, detail="Selected database does not support span retrieval")
-
                 span_result = db.get_span(span_id)
                 if inspect.iscoroutine(span_result):
                     span = await span_result
