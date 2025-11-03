@@ -1856,105 +1856,25 @@ def get_base_router(
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
 
     @router.get(
-        "/trace",
-        response_model=TraceNode,
-        response_model_exclude_none=True,
-        tags=["Traces"],
-        operation_id="get_span",
-        summary="Get Span Detail",
-        description=(
-            "Retrieve detailed information for a specific span by its ID.\n\n"
-            "**Returns:**\n"
-            "- Span metadata (ID, name, type, timing)\n"
-            "- Status and error information\n"
-            "- Type-specific attributes (model, tokens, tool params, etc.)\n\n"
-            "**Span Types:**\n"
-            "- `AGENT`: Agent execution with input/output\n"
-            "- `LLM`: Model invocations with tokens and prompts\n"
-            "- `TOOL`: Tool calls with parameters and results\n\n"
-            "**Use Case:**\n"
-            "Use this endpoint to fetch details for a specific span when you already know its ID "
-            "(e.g., from clicking on a span in the trace tree visualization)."
-        ),
-        responses={
-            200: {
-                "description": "Span detail retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "id": "span2",
-                            "name": "gpt-4o-mini.invoke",
-                            "type": "LLM",
-                            "duration": "800ms",
-                            "start_time": 1234567890100000,
-                            "end_time": 1234567890900000,
-                            "status": "OK",
-                            "metadata": {
-                                "model": "gpt-4o-mini",
-                                "input_tokens": 120,
-                                "output_tokens": 45,
-                                "output": "The current price of Tesla is $245.67",
-                            },
-                            "spans": None,
-                        }
-                    }
-                },
-            },
-            404: {"description": "Span not found", "model": NotFoundResponse},
-            400: {"description": "span_id query parameter is required", "model": BadRequestResponse},
-        },
-    )
-    async def get_span(
-        span_id: Optional[str] = Query(default=None, description="Span ID to retrieve"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query span from"),
-    ):
-        """Get detailed information for a specific span"""
-        if not span_id:
-            raise HTTPException(status_code=400, detail="span_id query parameter is required")
-        
-        # Get database using db_id or default to first available
-        db = get_db(os.dbs, db_id)
-
-        # Verify the database has trace support
-        if not hasattr(db, "get_span"):
-            raise HTTPException(status_code=500, detail="Selected database does not support traces")
-
-        try:
-            import inspect
-
-            # Get span
-            span_result = db.get_span(span_id)
-            if inspect.iscoroutine(span_result):
-                span = await span_result
-            else:
-                span = span_result
-
-            if span is None:
-                raise HTTPException(status_code=404, detail="Span not found")
-
-            # Convert to TraceNode (without children since we're fetching a single span)
-            return TraceNode.from_span(span, spans=None)
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            log_error(f"Error retrieving span {span_id}: {e}")
-            raise HTTPException(status_code=500, detail=f"Error retrieving span: {str(e)}")
-
-    @router.get(
         "/traces/{trace_id}",
-        response_model=TraceDetail,
+        response_model=Union[TraceDetail, TraceNode],
         response_model_exclude_none=True,
         tags=["Traces"],
         operation_id="get_trace",
-        summary="Get Trace Detail",
+        summary="Get Trace or Span Detail",
         description=(
-            "Retrieve detailed trace information with hierarchical span tree.\n\n"
-            "**Returns:**\n"
+            "Retrieve detailed trace information with hierarchical span tree, or a specific span within the trace.\n\n"
+            "**Without span_id parameter:**\n"
+            "Returns the full trace with hierarchical span tree:\n"
             "- Trace metadata (ID, status, duration, context)\n"
             "- Hierarchical tree of all spans\n"
             "- Each span includes timing, status, and type-specific metadata\n\n"
-            "**Span Hierarchy:**\n"
+            "**With span_id parameter:**\n"
+            "Returns details for a specific span within the trace:\n"
+            "- Span metadata (ID, name, type, timing)\n"
+            "- Status and error information\n"
+            "- Type-specific attributes (model, tokens, tool params, etc.)\n\n"
+            "**Span Hierarchy (full trace):**\n"
             "The `tree` field contains root spans, each with potential `children`.\n"
             "This recursive structure represents the execution flow:\n"
             "```\n"
@@ -1971,83 +1891,64 @@ def get_base_router(
         ),
         responses={
             200: {
-                "description": "Trace detail retrieved successfully",
+                "description": "Trace or span detail retrieved successfully",
                 "content": {
                     "application/json": {
-                        "example": {
-                            "trace_id": "a1b2c3d4",
-                            "name": "Stock_Price_Agent.run",
-                            "status": "OK",
-                            "duration": "1.2s",
-                            "start_time": 1234567890000000,
-                            "end_time": 1234567891200000,
-                            "total_spans": 4,
-                            "error_count": 0,
-                            "input": "What is Tesla stock price?",
-                            "output": "The current price of Tesla (TSLA) is $245.67.",
-                            "run_id": "run123",
-                            "session_id": "session456",
-                            "user_id": "user789",
-                            "agent_id": "stock_agent",
-                            "created_at": 1234567890,
-                            "tree": [
-                                {
-                                    "id": "span1",
+                        "examples": {
+                            "full_trace": {
+                                "summary": "Full trace with hierarchy (no span_id)",
+                                "value": {
+                                    "trace_id": "a1b2c3d4",
                                     "name": "Stock_Price_Agent.run",
-                                    "type": "AGENT",
+                                    "status": "OK",
                                     "duration": "1.2s",
                                     "start_time": 1234567890000000,
                                     "end_time": 1234567891200000,
-                                    "status": "OK",
-                                    "metadata": {
-                                        "total_input_tokens": 165,
-                                        "total_output_tokens": 64,
-                                    },
-                                    "spans": [
+                                    "total_spans": 4,
+                                    "error_count": 0,
+                                    "input": "What is Tesla stock price?",
+                                    "output": "The current price of Tesla (TSLA) is $245.67.",
+                                    "run_id": "run123",
+                                    "session_id": "session456",
+                                    "user_id": "user789",
+                                    "agent_id": "stock_agent",
+                                    "created_at": 1234567890,
+                                    "tree": [
                                         {
-                                            "id": "span2",
-                                            "name": "gpt-4o-mini.invoke",
-                                            "type": "LLM",
-                                            "duration": "800ms",
-                                            "start_time": 1234567890100000,
-                                            "end_time": 1234567890900000,
+                                            "id": "span1",
+                                            "name": "Stock_Price_Agent.run",
+                                            "type": "AGENT",
+                                            "duration": "1.2s",
                                             "status": "OK",
-                                            "metadata": {
-                                                "model": "gpt-4o-mini",
-                                                "input_tokens": 120,
-                                                "output_tokens": 45,
-                                            },
-                                            "spans": None,
-                                        },
-                                        {
-                                            "id": "span3",
-                                            "name": "get_stock_price",
-                                            "type": "TOOL",
-                                            "duration": "300ms",
-                                            "start_time": 1234567890950000,
-                                            "end_time": 1234567891250000,
-                                            "status": "OK",
-                                            "metadata": {
-                                                "tool_name": "get_stock_price",
-                                                "parameters": {"symbol": "TSLA"},
-                                            },
-                                            "spans": None,
-                                        },
+                                            "spans": [],
+                                        }
                                     ],
-                                }
-                            ],
+                                },
+                            },
+                            "single_span": {
+                                "summary": "Single span detail (with span_id)",
+                                "value": {
+                                    "id": "span2",
+                                    "name": "gpt-4o-mini.invoke",
+                                    "type": "LLM",
+                                    "duration": "800ms",
+                                    "status": "OK",
+                                    "metadata": {"model": "gpt-4o-mini", "input_tokens": 120},
+                                },
+                            },
                         }
                     }
                 },
             },
-            404: {"description": "Trace not found", "model": NotFoundResponse},
+            404: {"description": "Trace or span not found", "model": NotFoundResponse},
         },
     )
     async def get_trace(
         trace_id: str,
+        span_id: Optional[str] = Query(default=None, description="Optional: Span ID to retrieve specific span"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
-        """Get detailed trace with hierarchical span tree"""
+        """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
         # Get database using db_id or default to first available
         db = get_db(os.dbs, db_id)
 
@@ -2058,6 +1959,28 @@ def get_base_router(
         try:
             import inspect
 
+            # If span_id is provided, return just that span
+            if span_id:
+                if not hasattr(db, "get_span"):
+                    raise HTTPException(status_code=500, detail="Selected database does not support span retrieval")
+
+                span_result = db.get_span(span_id)
+                if inspect.iscoroutine(span_result):
+                    span = await span_result
+                else:
+                    span = span_result
+
+                if span is None:
+                    raise HTTPException(status_code=404, detail="Span not found")
+
+                # Verify the span belongs to the requested trace
+                if span.trace_id != trace_id:
+                    raise HTTPException(status_code=404, detail=f"Span {span_id} does not belong to trace {trace_id}")
+
+                # Convert to TraceNode (without children since we're fetching a single span)
+                return TraceNode.from_span(span, spans=None)
+
+            # Otherwise, return full trace with hierarchy
             # Get trace
             trace_result = db.get_trace(trace_id)
             if inspect.iscoroutine(trace_result):
