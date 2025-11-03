@@ -9539,7 +9539,7 @@ class Agent:
 
         return Function.from_callable(
             search_knowledge_base_function,
-            name="search_knowledge_base_with_agentic_filters",
+            name="search_knowledge_base",
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
