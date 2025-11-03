@@ -36,6 +36,7 @@ from agno.os.schema import (
     TeamResponse,
     TeamSummaryResponse,
     TraceDetail,
+    TraceNode,
     TraceSummary,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -1852,6 +1853,88 @@ def get_base_router(
         except Exception as e:
             log_error(f"Error retrieving traces: {e}")
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
+
+    @router.get(
+        "/traces/span/{span_id}",
+        response_model=TraceNode,
+        response_model_exclude_none=True,
+        tags=["Traces"],
+        operation_id="get_span",
+        summary="Get Span Detail",
+        description=(
+            "Retrieve detailed information for a specific span by its ID.\n\n"
+            "**Returns:**\n"
+            "- Span metadata (ID, name, type, timing)\n"
+            "- Status and error information\n"
+            "- Type-specific attributes (model, tokens, tool params, etc.)\n\n"
+            "**Span Types:**\n"
+            "- `AGENT`: Agent execution with input/output\n"
+            "- `LLM`: Model invocations with tokens and prompts\n"
+            "- `TOOL`: Tool calls with parameters and results\n\n"
+            "**Use Case:**\n"
+            "Use this endpoint to fetch details for a specific span when you already know its ID "
+            "(e.g., from clicking on a span in the trace tree visualization)."
+        ),
+        responses={
+            200: {
+                "description": "Span detail retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "span2",
+                            "name": "gpt-4o-mini.invoke",
+                            "type": "LLM",
+                            "duration": "800ms",
+                            "start_time": 1234567890100000,
+                            "end_time": 1234567890900000,
+                            "status": "OK",
+                            "metadata": {
+                                "model": "gpt-4o-mini",
+                                "input_tokens": 120,
+                                "output_tokens": 45,
+                                "output": "The current price of Tesla is $245.67",
+                            },
+                            "spans": None,
+                        }
+                    }
+                },
+            },
+            404: {"description": "Span not found", "model": NotFoundResponse},
+        },
+    )
+    async def get_span(
+        span_id: str,
+        db_id: Optional[str] = Query(default=None, description="Database ID to query span from"),
+    ):
+        """Get detailed information for a specific span"""
+        # Get database using db_id or default to first available
+        db = get_db(os.dbs, db_id)
+        
+        # Verify the database has trace support
+        if not hasattr(db, "get_span"):
+            raise HTTPException(status_code=500, detail="Selected database does not support traces")
+
+        try:
+            import inspect
+
+            # Get span
+            span_result = db.get_span(span_id)
+            if inspect.iscoroutine(span_result):
+                span = await span_result
+            else:
+                span = span_result
+
+            if span is None:
+                raise HTTPException(status_code=404, detail="Span not found")
+
+            # Convert to TraceNode (without children since we're fetching a single span)
+            return TraceNode.from_span(span, spans=None)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_error(f"Error retrieving span {span_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving span: {str(e)}")
 
     @router.get(
         "/traces/{trace_id}",
