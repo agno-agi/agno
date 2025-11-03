@@ -1856,7 +1856,7 @@ def get_base_router(
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
 
     @router.get(
-        "/traces/span/{span_id}",
+        "/trace",
         response_model=TraceNode,
         response_model_exclude_none=True,
         tags=["Traces"],
@@ -1901,13 +1901,17 @@ def get_base_router(
                 },
             },
             404: {"description": "Span not found", "model": NotFoundResponse},
+            400: {"description": "span_id query parameter is required", "model": BadRequestResponse},
         },
     )
     async def get_span(
-        span_id: str,
+        span_id: Optional[str] = Query(default=None, description="Span ID to retrieve"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query span from"),
     ):
         """Get detailed information for a specific span"""
+        if not span_id:
+            raise HTTPException(status_code=400, detail="span_id query parameter is required")
+        
         # Get database using db_id or default to first available
         db = get_db(os.dbs, db_id)
 
