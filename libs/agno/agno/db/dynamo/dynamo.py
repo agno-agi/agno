@@ -2075,8 +2075,9 @@ class DynamoDb(BaseDb):
         status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-        limit: Optional[int] = 100,
-    ) -> List:
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
         Args:
@@ -2087,10 +2088,11 @@ class DynamoDb(BaseDb):
             status: Filter by status (OK, ERROR, UNSET).
             start_time: Filter traces starting after this timestamp (nanoseconds).
             end_time: Filter traces ending before this timestamp (nanoseconds).
-            limit: Maximum number of traces to return.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
 
         Returns:
-            List[Trace]: List of matching traces.
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
         """
         raise NotImplementedError
 

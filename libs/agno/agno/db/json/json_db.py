@@ -1352,8 +1352,9 @@ class JsonDb(BaseDb):
         status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-        limit: Optional[int] = 100,
-    ) -> List:
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
         Args:

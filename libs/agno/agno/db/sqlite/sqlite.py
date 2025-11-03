@@ -2092,9 +2092,10 @@ class SqliteDb(BaseDb):
         status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-        limit: Optional[int] = 100,
-    ) -> List:
-        """Get traces matching the provided filters.
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
 
         Args:
             run_id: Filter by run ID.
@@ -2104,64 +2105,67 @@ class SqliteDb(BaseDb):
             status: Filter by status (OK, ERROR, UNSET).
             start_time: Filter traces starting after this timestamp (nanoseconds).
             end_time: Filter traces ending before this timestamp (nanoseconds).
-            limit: Maximum number of traces to return.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
 
         Returns:
-            List[Trace]: List of matching traces.
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
         """
         try:
+            from sqlalchemy import func
+
             from agno.tracing.schemas import Trace
 
             log_debug(
-                f"🔍 get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}"
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
             )
 
             table = self._get_table(table_type="traces")
             if table is None:
-                log_debug("❌ Traces table not found")
-                return []
+                log_debug(" Traces table not found")
+                return [], 0
 
             with self.Session() as sess:
-                # First, get ALL traces to see what we have
-                all_stmt = table.select()
-                all_results = sess.execute(all_stmt).fetchall()
-                log_debug(f"📊 Total traces in DB: {len(all_results)}")
-                for row in all_results[:3]:  # Show first 3
-                    row_dict = dict(row._mapping)
-                    log_debug(
-                        f"  Trace: id={row_dict['trace_id'][:16]}..., session_id={row_dict.get('session_id')}, name={row_dict['name']}"
-                    )
-
-                # Now apply filters
-                stmt = table.select()
+                # Build base query with filters
+                base_stmt = table.select()
 
                 # Apply filters
                 if run_id:
-                    stmt = stmt.where(table.c.run_id == run_id)
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"  Filtering by session_id={session_id}")
-                    stmt = stmt.where(table.c.session_id == session_id)
+                    log_debug(f"Filtering by session_id={session_id}")
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
                 if status:
-                    stmt = stmt.where(table.c.status == status)
+                    base_stmt = base_stmt.where(table.c.status == status)
                 if start_time:
-                    stmt = stmt.where(table.c.start_time_ns >= start_time)
+                    base_stmt = base_stmt.where(table.c.start_time_ns >= start_time)
                 if end_time:
-                    stmt = stmt.where(table.c.end_time_ns <= end_time)
+                    base_stmt = base_stmt.where(table.c.end_time_ns <= end_time)
 
-                # Order by start time (most recent first) and apply limit
-                stmt = stmt.order_by(table.c.start_time_ns.desc()).limit(limit)
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching traces: {total_count}")
 
-                results = sess.execute(stmt).fetchall()
-                log_debug(f"✅ Filtered query returned {len(results)} traces")
-                return [Trace.from_dict(dict(row._mapping)) for row in results]
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = (
+                    base_stmt.order_by(table.c.start_time_ns.desc()).limit(limit).offset(offset)
+                )
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+                
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
 
         except Exception as e:
             log_error(f"Error getting traces: {e}")
-            return []
+            return [], 0
 
     # -- Span methods --
 

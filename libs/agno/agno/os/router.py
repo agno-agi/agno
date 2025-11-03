@@ -9,6 +9,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -30,6 +31,8 @@ from agno.os.schema import (
     InternalServerErrorResponse,
     Model,
     NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
     TeamResponse,
     TeamSummaryResponse,
     TraceDetail,
@@ -42,6 +45,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
+    get_db,
     get_team_by_id,
     get_workflow_by_id,
     process_audio,
@@ -1723,13 +1727,13 @@ def get_base_router(
     # -- Trace routes ---
     @router.get(
         "/traces",
-        response_model=List[TraceSummary],
+        response_model=PaginatedResponse[TraceSummary],
         response_model_exclude_none=True,
         tags=["Traces"],
         operation_id="get_traces",
         summary="List Traces",
         description=(
-            "Retrieve a list of execution traces with optional filtering.\n\n"
+            "Retrieve a paginated list of execution traces with optional filtering.\n\n"
             "**Traces provide observability into:**\n"
             "- Agent execution flows\n"
             "- Model invocations and token usage\n"
@@ -1739,6 +1743,9 @@ def get_base_router(
             "- By run, session, user, or agent ID\n"
             "- By status (OK, ERROR)\n"
             "- By time range\n\n"
+            "**Pagination:**\n"
+            "- Use `page` (1-indexed) and `limit` parameters\n"
+            "- Response includes pagination metadata (total_pages, total_count, etc.)\n\n"
             "**Response Format:**\n"
             "Returns summary information for each trace. Use GET `/traces/{trace_id}` for detailed hierarchy."
         ),
@@ -1747,22 +1754,30 @@ def get_base_router(
                 "description": "List of traces retrieved successfully",
                 "content": {
                     "application/json": {
-                        "example": [
-                            {
-                                "trace_id": "a1b2c3d4",
-                                "name": "Stock_Price_Agent.run",
-                                "status": "OK",
-                                "duration": "1.2s",
-                                "start_time": 1234567890000000,
-                                "total_spans": 4,
-                                "error_count": 0,
-                                "run_id": "run123",
-                                "session_id": "session456",
-                                "user_id": "user789",
-                                "agent_id": "agent_stock",
-                                "created_at": 1234567890,
-                            }
-                        ]
+                        "example": {
+                            "data": [
+                                {
+                                    "trace_id": "a1b2c3d4",
+                                    "name": "Stock_Price_Agent.run",
+                                    "status": "OK",
+                                    "duration": "1.2s",
+                                    "start_time": 1234567890000000,
+                                    "total_spans": 4,
+                                    "error_count": 0,
+                                    "run_id": "run123",
+                                    "session_id": "session456",
+                                    "user_id": "user789",
+                                    "agent_id": "agent_stock",
+                                    "created_at": 1234567890,
+                                }
+                            ],
+                            "meta": {
+                                "page": 1,
+                                "limit": 20,
+                                "total_pages": 5,
+                                "total_count": 95,
+                            },
+                        }
                     }
                 },
             }
@@ -1776,22 +1791,25 @@ def get_base_router(
         status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-        limit: int = 100,
+        page: int = 1,
+        limit: int = 20,
+        db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
-        """Get list of traces with optional filters"""
-        # Get the first database that has trace support
-        db = None
-        for database in os.dbs.values():
-            if hasattr(database, "get_traces"):
-                db = database
-                break
+        """Get list of traces with optional filters and pagination"""
+        import inspect
+        import time as time_module
 
-        if db is None:
-            raise HTTPException(status_code=500, detail="No database configured with trace support")
+        # Get database using db_id or default to first available
+        db = get_db(os.dbs, db_id)
+        
+        # Verify the database has trace support
+        if not hasattr(db, "get_traces"):
+            raise HTTPException(status_code=500, detail="Selected database does not support traces")
 
         try:
-            import inspect
+            start_time_ms = time_module.time() * 1000
 
+            # Get traces and total count in a single call
             traces_result = db.get_traces(
                 run_id=run_id,
                 session_id=session_id,
@@ -1801,14 +1819,33 @@ def get_base_router(
                 start_time=start_time,
                 end_time=end_time,
                 limit=limit,
+                page=page,
             )
 
             if inspect.iscoroutine(traces_result):
-                traces = await traces_result
+                traces, total_count = await traces_result
             else:
-                traces = traces_result
+                traces, total_count = traces_result
 
-            return [TraceSummary.from_trace(trace) for trace in traces]
+            end_time_ms = time_module.time() * 1000
+            search_time_ms = round(end_time_ms - start_time_ms, 2)
+
+            # Calculate total pages
+            total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+            # Build response
+            trace_summaries = [TraceSummary.from_trace(trace) for trace in traces]
+
+            return PaginatedResponse(
+                data=trace_summaries,
+                meta=PaginationInfo(
+                    page=page,
+                    limit=limit,
+                    total_pages=total_pages,
+                    total_count=total_count,
+                    search_time_ms=search_time_ms,
+                ),
+            )
 
         except Exception as e:
             log_error(f"Error retrieving traces: {e}")
@@ -1916,17 +1953,17 @@ def get_base_router(
             404: {"description": "Trace not found", "model": NotFoundResponse},
         },
     )
-    async def get_trace(trace_id: str):
+    async def get_trace(
+        trace_id: str,
+        db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
+    ):
         """Get detailed trace with hierarchical span tree"""
-        # Get the first database that has trace support
-        db = None
-        for database in os.dbs.values():
-            if hasattr(database, "get_trace") and hasattr(database, "get_spans"):
-                db = database
-                break
-
-        if db is None:
-            raise HTTPException(status_code=500, detail="No database configured with trace support")
+        # Get database using db_id or default to first available
+        db = get_db(os.dbs, db_id)
+        
+        # Verify the database has trace support
+        if not hasattr(db, "get_trace") or not hasattr(db, "get_spans"):
+            raise HTTPException(status_code=500, detail="Selected database does not support traces")
 
         try:
             import inspect
