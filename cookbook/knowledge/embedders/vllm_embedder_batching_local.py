@@ -1,10 +1,10 @@
 import asyncio
-import os
 
 from agno.db.json import JsonDb
 from agno.knowledge.embedder.vllm import VLLMEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
+
 
 def main():
     embedder = VLLMEmbedder(
@@ -53,7 +53,6 @@ def main():
             path="cookbook/knowledge/testing_resources/cv_1.pdf",
         )
     )
-
 
     query = "What are the candidate's skills?"
     results = knowledge.search(query=query)

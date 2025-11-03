@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 from agno.db.json import JsonDb
 from agno.knowledge.embedder.vllm import VLLMEmbedder
@@ -8,7 +7,6 @@ from agno.vectordb.pgvector import PgVector
 
 
 def main():
-
     embedder = VLLMEmbedder(
         id="sentence-transformers/all-MiniLM-L6-v2",
         dimensions=384,

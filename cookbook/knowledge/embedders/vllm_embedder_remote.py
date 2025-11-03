@@ -1,13 +1,12 @@
 import asyncio
-import os
 
 from agno.db.json import JsonDb
 from agno.knowledge.embedder.vllm import VLLMEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-def main():
 
+def main():
     # Step 1: Create a remote VLLMEmbedder
     embedder = VLLMEmbedder(
         id="sentence-transformers/all-MiniLM-L6-v2",

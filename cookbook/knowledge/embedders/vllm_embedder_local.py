@@ -1,11 +1,12 @@
 import asyncio
+
 from agno.db.json import JsonDb
 from agno.knowledge.embedder.vllm import VLLMEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-def main():
 
+def main():
     # Step 1: Create a local VLLMEmbedder
     embedder = VLLMEmbedder(
         id="sentence-transformers/all-MiniLM-L6-v2",
@@ -57,6 +58,7 @@ def main():
     print(f"   Results found: {len(results)}")
     for i, result in enumerate(results, 1):
         print(f"   Result {i}: {result.content[:100]}...")
+
 
 if __name__ == "__main__":
     main()
