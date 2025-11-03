@@ -16,8 +16,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
-from opentelemetry import trace as trace_api
 from agno.utils.pprint import pprint_run_response
+from opentelemetry import trace as trace_api
 
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")

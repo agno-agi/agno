@@ -2153,13 +2153,11 @@ class SqliteDb(BaseDb):
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = (
-                    base_stmt.order_by(table.c.start_time_ns.desc()).limit(limit).offset(offset)
-                )
+                paginated_stmt = base_stmt.order_by(table.c.start_time_ns.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
                 log_debug(f"Returning page {page} with {len(results)} traces")
-                
+
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
 

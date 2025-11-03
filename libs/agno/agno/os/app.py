@@ -27,6 +27,8 @@ from agno.os.config import (
     MetricsDomainConfig,
     SessionConfig,
     SessionDomainConfig,
+    TracesConfig,
+    TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
@@ -752,6 +754,25 @@ class AgentOS:
                 )
 
         return evals_config
+
+    def _get_traces_config(self) -> TracesConfig:
+        traces_config = self.config.traces if self.config and self.config.traces else TracesConfig()
+
+        if traces_config.dbs is None:
+            traces_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in traces_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                traces_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=TracesDomainConfig(display_name=db_id),
+                    )
+                )
+
+        return traces_config
 
     def serve(
         self,

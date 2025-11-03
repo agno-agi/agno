@@ -36,6 +36,12 @@ class MemoryDomainConfig(BaseModel):
     display_name: Optional[str] = None
 
 
+class TracesDomainConfig(BaseModel):
+    """Configuration for the Traces domain of the AgentOS"""
+
+    display_name: Optional[str] = None
+
+
 DomainConfigType = TypeVar("DomainConfigType")
 
 
@@ -76,6 +82,12 @@ class MetricsConfig(MetricsDomainConfig):
     dbs: Optional[List[DatabaseConfig[MetricsDomainConfig]]] = None
 
 
+class TracesConfig(TracesDomainConfig):
+    """Configuration for the Traces domain of the AgentOS"""
+
+    dbs: Optional[List[DatabaseConfig[TracesDomainConfig]]] = None
+
+
 class ChatConfig(BaseModel):
     """Configuration for the Chat page of the AgentOS"""
 
@@ -101,3 +113,4 @@ class AgentOSConfig(BaseModel):
     memory: Optional[MemoryConfig] = None
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
+    traces: Optional[TracesConfig] = None

@@ -666,6 +666,7 @@ def get_base_router(
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
+            traces=os._get_traces_config(),
             agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
             teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
@@ -1802,7 +1803,7 @@ def get_base_router(
 
         # Get database using db_id or default to first available
         db = get_db(os.dbs, db_id)
-        
+
         # Verify the database has trace support
         if not hasattr(db, "get_traces"):
             raise HTTPException(status_code=500, detail="Selected database does not support traces")
@@ -1827,7 +1828,7 @@ def get_base_router(
                 result = await traces_result
             else:
                 result = traces_result
-            
+
             traces, total_count = result
 
             end_time_ms = time_module.time() * 1000
@@ -1909,7 +1910,7 @@ def get_base_router(
         """Get detailed information for a specific span"""
         # Get database using db_id or default to first available
         db = get_db(os.dbs, db_id)
-        
+
         # Verify the database has trace support
         if not hasattr(db, "get_span"):
             raise HTTPException(status_code=500, detail="Selected database does not support traces")
@@ -2045,7 +2046,7 @@ def get_base_router(
         """Get detailed trace with hierarchical span tree"""
         # Get database using db_id or default to first available
         db = get_db(os.dbs, db_id)
-        
+
         # Verify the database has trace support
         if not hasattr(db, "get_trace") or not hasattr(db, "get_spans"):
             raise HTTPException(status_code=500, detail="Selected database does not support traces")
