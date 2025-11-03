@@ -137,7 +137,6 @@ class CultureManager:
         if isinstance(self.db, AsyncBaseDb):
             return await self.db.get_all_cultural_knowledge(name=name)
         else:
-            # If it's a sync DB, call the sync method (safe to call from async context)
             return self.db.get_all_cultural_knowledge(name=name)
 
     def add_cultural_knowledge(
