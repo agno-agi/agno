@@ -1,3 +1,4 @@
+import httpx
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
@@ -5,7 +6,6 @@ from typing import Any, Dict, Optional
 from agno.models.openai.like import OpenAILike
 from agno.utils.http import get_default_async_client
 from agno.utils.log import log_debug
-import httpx
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
