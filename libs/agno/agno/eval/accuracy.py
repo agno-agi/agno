@@ -218,7 +218,7 @@ class AccuracyEval:
         return Agent(
             model=model,
             description=f"""\
-You are an expert judge tasked with comparing the quality of an AI Agent’s output to a user-provided expected output. You must assume the expected_output is correct - even if you personally disagree.
+You are an expert judge tasked with comparing the quality of an AI Agent's output to a user-provided expected output. Your response will be in JSON format with accuracy_score and accuracy_reason fields.
 
 ## Evaluation Inputs
 - agent_input: The original task or query given to the Agent.
@@ -246,7 +246,7 @@ You are an expert judge tasked with comparing the quality of an AI Agent’s out
    7-8: Mostly accurate and complete, with minor issues
    9-10: Highly accurate and complete, matching the expected answer and given guidelines closely.
 {additional_guidelines}{additional_context}
-Remember: You must only compare the agent_output to the expected_output. The expected_output is correct as it was provided by the user.
+Remember: You must only compare the agent_output to the expected_output. The expected_output is correct as it was provided by the user. Return your analysis as JSON with accuracy_score and accuracy_reason fields.
 """,
             output_schema=AccuracyAgentResponse,
             structured_outputs=True,
