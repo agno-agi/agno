@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import logger
@@ -12,12 +12,10 @@ try:
 except ImportError:
     raise ImportError("`vllm` not installed. Please install using `pip install vllm`.")
 
-try:
+if TYPE_CHECKING:
     from openai import AsyncOpenAI
     from openai import OpenAI as OpenAIClient
     from openai.types.create_embedding_response import CreateEmbeddingResponse
-except ImportError:
-    raise ImportError("`openai` not installed. Please install using `pip install openai`.")
 
 
 @dataclass
@@ -49,8 +47,8 @@ class VLLMEmbedder(Embedder):
     base_url: Optional[str] = None
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
-    remote_client: Optional[OpenAIClient] = None  # OpenAI-compatible client for vLLM server
-    async_remote_client: Optional[AsyncOpenAI] = None  # Async OpenAI-compatible client for vLLM server
+    remote_client: Optional["OpenAIClient"] = None  # OpenAI-compatible client for vLLM server
+    async_remote_client: Optional["AsyncOpenAI"] = None  # Async OpenAI-compatible client for vLLM server
 
     @property
     def is_remote(self) -> bool:
@@ -72,10 +70,17 @@ class VLLMEmbedder(Embedder):
         self.vllm_client = LLM(**_vllm_params)
         return self.vllm_client
 
-    def _get_remote_client(self) -> OpenAIClient:
+    def _get_remote_client(self) -> "OpenAIClient":
         """Get OpenAI-compatible client for remote vLLM server."""
         if self.remote_client:
             return self.remote_client
+
+        try:
+            from openai import OpenAI as OpenAIClient
+        except ImportError:
+            raise ImportError(
+                "`openai` package required for remote vLLM mode. "
+            )
 
         _client_params: Dict[str, Any] = {
             "api_key": self.api_key or "EMPTY",  # VLLM can run without API key
@@ -86,10 +91,17 @@ class VLLMEmbedder(Embedder):
         self.remote_client = OpenAIClient(**_client_params)
         return self.remote_client
 
-    def _get_async_remote_client(self) -> AsyncOpenAI:
+    def _get_async_remote_client(self) -> "AsyncOpenAI":
         """Get async OpenAI-compatible client for remote vLLM server."""
         if self.async_remote_client:
             return self.async_remote_client
+
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            raise ImportError(
+                "`openai` package required for remote vLLM mode. "
+            )
 
         _client_params: Dict[str, Any] = {
             "api_key": self.api_key or "EMPTY",
@@ -109,7 +121,7 @@ class VLLMEmbedder(Embedder):
             logger.warning(f"Error creating local embedding: {e}")
             return None
 
-    def _create_embedding_remote(self, text: str) -> CreateEmbeddingResponse:
+    def _create_embedding_remote(self, text: str) -> "CreateEmbeddingResponse":
         """Create embedding using remote vLLM server."""
         _request_params: Dict[str, Any] = {
             "input": text,
@@ -123,7 +135,7 @@ class VLLMEmbedder(Embedder):
         try:
             if self.is_remote:
                 # Remote mode: OpenAI-compatible API
-                response: CreateEmbeddingResponse = self._create_embedding_remote(text=text)
+                response: "CreateEmbeddingResponse" = self._create_embedding_remote(text=text)
                 return response.data[0].embedding
             else:
                 # Local mode: Direct VLLM
@@ -141,7 +153,7 @@ class VLLMEmbedder(Embedder):
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         if self.is_remote:
             try:
-                response: CreateEmbeddingResponse = self._create_embedding_remote(text=text)
+                response: "CreateEmbeddingResponse" = self._create_embedding_remote(text=text)
                 embedding = response.data[0].embedding
                 usage = response.usage
                 if usage:
@@ -166,7 +178,7 @@ class VLLMEmbedder(Embedder):
                 }
                 if self.request_params:
                     req.update(self.request_params)
-                response: CreateEmbeddingResponse = await self._get_async_remote_client().embeddings.create(**req)
+                response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
                 return response.data[0].embedding
             except Exception as e:
                 logger.warning(f"Error in async remote embedding: {e}")
@@ -186,7 +198,7 @@ class VLLMEmbedder(Embedder):
                 }
                 if self.request_params:
                     req.update(self.request_params)
-                response: CreateEmbeddingResponse = await self._get_async_remote_client().embeddings.create(**req)
+                response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
                 embedding = response.data[0].embedding
                 usage = response.usage
                 return embedding, usage.model_dump() if usage else None
@@ -230,7 +242,7 @@ class VLLMEmbedder(Embedder):
                     }
                     if self.request_params:
                         req.update(self.request_params)
-                    response: CreateEmbeddingResponse = await self._get_async_remote_client().embeddings.create(**req)
+                    response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
                     batch_embeddings = [data.embedding for data in response.data]
                     all_embeddings.extend(batch_embeddings)
 
