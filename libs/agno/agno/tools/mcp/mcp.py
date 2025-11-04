@@ -283,7 +283,7 @@ class MCPTools(Toolkit):
 
             # Get tool name prefix if available
             tool_name_prefix = ""
-            if self.tool_name_prefix is not None: 
+            if self.tool_name_prefix is not None:
                 tool_name_prefix = self.tool_name_prefix + "_"
 
             # Register the tools with the toolkit
