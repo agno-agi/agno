@@ -52,7 +52,7 @@ class MessageData:
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
-    
+
     response_metrics: Optional[Metrics] = None
 
     # Data from the provider that we might need on subsequent messages
@@ -1182,7 +1182,9 @@ class Model(ABC):
         if self.cache_response and cache_key and streaming_responses:
             self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
-    def _populate_assistant_message_from_stream_data(self, assistant_message: Message, stream_data: MessageData) -> None:
+    def _populate_assistant_message_from_stream_data(
+        self, assistant_message: Message, stream_data: MessageData
+    ) -> None:
         """
         Populate an assistant message with the stream data.
         """
@@ -1211,7 +1213,6 @@ class Model(ABC):
         if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
             assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
-
     def _populate_stream_data(
         self, stream_data: MessageData, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
@@ -1225,7 +1226,7 @@ class Model(ABC):
             if stream_data.response_metrics is None:
                 stream_data.response_metrics = Metrics()
             stream_data.response_metrics += model_response_delta.response_usage
-            
+
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
