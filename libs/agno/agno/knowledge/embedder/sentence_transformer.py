@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import logger
@@ -24,7 +24,7 @@ class SentenceTransformerEmbedder(Embedder):
     sentence_transformer_client: Optional[SentenceTransformer] = None
     prompt: Optional[str] = None
     normalize_embeddings: bool = False
-    _lock: Optional[object] = None  # asyncio.Lock for thread-safe async operations
+    _lock: Any = None  # asyncio.Lock for thread-safe async operations
 
     def __post_init__(self):
         """Initialize the async lock after dataclass initialization."""
