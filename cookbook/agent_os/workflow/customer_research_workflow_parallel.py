@@ -1,12 +1,13 @@
 import json
 from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Union
+from typing import AsyncIterator, List, Union
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.run.base import RunContext
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -233,16 +234,19 @@ task_recommender_agent = Agent(
 
 
 def set_session_state_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> StepOutput:
     """
     Initialize session state for customer research workflow
     """
     customer_query = step_input.input
 
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Initialize comprehensive session state structure
-    if "customer_research" not in session_state:
-        session_state["customer_research"] = {
+    if "customer_research" not in run_context.session_state:
+        run_context.session_state["customer_research"] = {
             "workflow_id": f"research_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             "customer_query": str(customer_query),
             "research_phases": {
@@ -260,7 +264,7 @@ def set_session_state_step(
         }
 
     # Set workflow configuration
-    session_state["workflow_config"] = {
+    run_context.session_state["workflow_config"] = {
         "research_depth": "comprehensive",
         "focus_areas": ["customer_profile", "business_goals", "web_intelligence"],
         "output_format": "detailed_report",
@@ -268,26 +272,28 @@ def set_session_state_step(
     }
 
     # Set research preferences
-    session_state["research_preferences"] = {
+    run_context.session_state["research_preferences"] = {
         "analysis_style": "data_driven",
         "recommendation_type": "actionable_tasks",
         "reporting_level": "executive_summary",
     }
 
-    session_state["customer_research"]["research_metadata"]["total_research_steps"] += 1
+    run_context.session_state["customer_research"]["research_metadata"][
+        "total_research_steps"
+    ] += 1
 
     return StepOutput(
         content=f"""
         ## Customer Research Session Initialized
 
         **Research Query:** {customer_query}
-        **Workflow ID:** {session_state["customer_research"]["workflow_id"]}
-        **Research Phases:** {len(session_state["customer_research"]["research_phases"])} phases planned
+        **Workflow ID:** {run_context.session_state["customer_research"]["workflow_id"]}
+        **Research Phases:** {len(run_context.session_state["customer_research"]["research_phases"])} phases planned
 
         **Session Configuration:**
-        - Research Depth: {session_state["workflow_config"]["research_depth"]}
-        - Focus Areas: {", ".join(session_state["workflow_config"]["focus_areas"])}
-        - Analysis Style: {session_state["research_preferences"]["analysis_style"]}
+        - Research Depth: {run_context.session_state["workflow_config"]["research_depth"]}
+        - Focus Areas: {", ".join(run_context.session_state["workflow_config"]["focus_areas"])}
+        - Analysis Style: {run_context.session_state["research_preferences"]["analysis_style"]}
 
         Session state has been initialized and is ready for comprehensive customer research.
         """.strip()
@@ -295,7 +301,7 @@ def set_session_state_step(
 
 
 async def customer_profile_research_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Conduct customer profile research with session state tracking
@@ -303,16 +309,19 @@ async def customer_profile_research_step(
     customer_query = step_input.input
     previous_content = step_input.previous_step_content
 
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Update session state
-    session_state["customer_research"]["research_phases"]["profile"]["status"] = (
-        "in_progress"
-    )
+    run_context.session_state["customer_research"]["research_phases"]["profile"][
+        "status"
+    ] = "in_progress"
 
     research_prompt = f"""
     CUSTOMER PROFILE RESEARCH REQUEST:
 
     Research Query: {customer_query}
-    Session Context: {session_state["customer_research"]["workflow_id"]}
+    Session Context: {run_context.session_state["customer_research"]["workflow_id"]}
     Previous Context: {previous_content[:300] if previous_content else "Initial research"}
 
     RESEARCH OBJECTIVES:
@@ -344,36 +353,41 @@ async def customer_profile_research_step(
             "success": True,
         }
 
-        session_state["customer_research"]["research_phases"]["profile"][
+        run_context.session_state["customer_research"]["research_phases"]["profile"][
             "findings"
         ].append(findings)
-        session_state["customer_research"]["research_phases"]["profile"]["status"] = (
-            "completed"
-        )
-        session_state["customer_research"]["research_metadata"]["completed_steps"] += 1
+        run_context.session_state["customer_research"]["research_phases"]["profile"][
+            "status"
+        ] = "completed"
+        run_context.session_state["customer_research"]["research_metadata"][
+            "completed_steps"
+        ] += 1
 
         # Return the structured Pydantic data directly
         yield StepOutput(content=research_result.content, success=True)
 
     except Exception as e:
-        session_state["customer_research"]["research_phases"]["profile"]["status"] = (
-            "failed"
-        )
+        run_context.session_state["customer_research"]["research_phases"]["profile"][
+            "status"
+        ] = "failed"
         yield StepOutput(
             content=f"Customer profile research failed: {str(e)}", success=False
         )
 
 
 async def customer_biz_goals_research_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Conduct business goals research with session state tracking
     """
     customer_query = step_input.input
 
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Update session state
-    session_state["customer_research"]["research_phases"]["business_goals"][
+    run_context.session_state["customer_research"]["research_phases"]["business_goals"][
         "status"
     ] = "in_progress"
 
@@ -381,8 +395,8 @@ async def customer_biz_goals_research_step(
     CUSTOMER BUSINESS GOALS RESEARCH REQUEST:
 
     Research Query: {customer_query}
-    Session Context: {session_state["customer_research"]["workflow_id"]}
-    Research Depth: {session_state["workflow_config"]["research_depth"]}
+    Session Context: {run_context.session_state["customer_research"]["workflow_id"]}
+    Research Depth: {run_context.session_state["workflow_config"]["research_depth"]}
 
     RESEARCH OBJECTIVES:
     1. Identify customer's primary business objectives and KPIs
@@ -413,45 +427,50 @@ async def customer_biz_goals_research_step(
             "success": True,
         }
 
-        session_state["customer_research"]["research_phases"]["business_goals"][
-            "findings"
-        ].append(findings)
-        session_state["customer_research"]["research_phases"]["business_goals"][
-            "status"
-        ] = "completed"
-        session_state["customer_research"]["research_metadata"]["completed_steps"] += 1
+        run_context.session_state["customer_research"]["research_phases"][
+            "business_goals"
+        ]["findings"].append(findings)
+        run_context.session_state["customer_research"]["research_phases"][
+            "business_goals"
+        ]["status"] = "completed"
+        run_context.session_state["customer_research"]["research_metadata"][
+            "completed_steps"
+        ] += 1
 
         # Return the structured Pydantic data directly
         yield StepOutput(content=research_result.content, success=True)
 
     except Exception as e:
-        session_state["customer_research"]["research_phases"]["business_goals"][
-            "status"
-        ] = "failed"
+        run_context.session_state["customer_research"]["research_phases"][
+            "business_goals"
+        ]["status"] = "failed"
         yield StepOutput(
             content=f"Business goals research failed: {str(e)}", success=False
         )
 
 
 async def web_intelligence_research_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Conduct web intelligence research with session state tracking
     """
     customer_query = step_input.input
 
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Update session state
-    session_state["customer_research"]["research_phases"]["web_intelligence"][
-        "status"
-    ] = "in_progress"
+    run_context.session_state["customer_research"]["research_phases"][
+        "web_intelligence"
+    ]["status"] = "in_progress"
 
     research_prompt = f"""
     WEB INTELLIGENCE RESEARCH REQUEST:
 
     Research Query: {customer_query}
-    Session Context: {session_state["customer_research"]["workflow_id"]}
-    Analysis Style: {session_state["research_preferences"]["analysis_style"]}
+    Session Context: {run_context.session_state["customer_research"]["workflow_id"]}
+    Analysis Style: {run_context.session_state["research_preferences"]["analysis_style"]}
 
     RESEARCH OBJECTIVES:
     1. Analyze customer's digital presence and online footprint
@@ -482,36 +501,41 @@ async def web_intelligence_research_step(
             "success": True,
         }
 
-        session_state["customer_research"]["research_phases"]["web_intelligence"][
-            "findings"
-        ].append(findings)
-        session_state["customer_research"]["research_phases"]["web_intelligence"][
-            "status"
-        ] = "completed"
-        session_state["customer_research"]["research_metadata"]["completed_steps"] += 1
+        run_context.session_state["customer_research"]["research_phases"][
+            "web_intelligence"
+        ]["findings"].append(findings)
+        run_context.session_state["customer_research"]["research_phases"][
+            "web_intelligence"
+        ]["status"] = "completed"
+        run_context.session_state["customer_research"]["research_metadata"][
+            "completed_steps"
+        ] += 1
 
         # Return the structured Pydantic data directly
         yield StepOutput(content=research_result.content, success=True)
 
     except Exception as e:
-        session_state["customer_research"]["research_phases"]["web_intelligence"][
-            "status"
-        ] = "failed"
+        run_context.session_state["customer_research"]["research_phases"][
+            "web_intelligence"
+        ]["status"] = "failed"
         yield StepOutput(
             content=f"Web intelligence research failed: {str(e)}", success=False
         )
 
 
 async def customer_report_consolidation_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Consolidate all research findings into comprehensive customer report
     """
     customer_query = step_input.input
 
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Gather all research findings from session state
-    research_data = session_state["customer_research"]
+    research_data = run_context.session_state["customer_research"]
 
     # Compile research findings with structured data
     all_findings = []
@@ -589,7 +613,7 @@ async def customer_report_consolidation_step(
             "total_findings_consolidated": len(all_findings),
         }
 
-        session_state["customer_research"]["consolidated_insights"].append(
+        run_context.session_state["customer_research"]["consolidated_insights"].append(
             consolidated_insight
         )
 
@@ -603,16 +627,19 @@ async def customer_report_consolidation_step(
 
 
 async def task_recommender_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Generate actionable task recommendations based on consolidated research
     """
     customer_query = step_input.input
 
-    research_data = session_state["customer_research"]
-    workflow_config = session_state["workflow_config"]
-    research_prefs = session_state["research_preferences"]
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    research_data = run_context.session_state["customer_research"]
+    workflow_config = run_context.session_state["workflow_config"]
+    research_prefs = run_context.session_state["research_preferences"]
 
     # Get latest consolidated insights
     latest_insights = (
@@ -673,17 +700,17 @@ async def task_recommender_step(
             "recommendation_type": research_prefs["recommendation_type"],
         }
 
-        session_state["customer_research"]["recommendations"].append(
+        run_context.session_state["customer_research"]["recommendations"].append(
             recommendation_data
         )
 
         # Final session state update
-        session_state["customer_research"]["research_metadata"]["completed_at"] = (
-            datetime.now().isoformat()
-        )
-        session_state["customer_research"]["research_metadata"]["final_status"] = (
-            "completed_successfully"
-        )
+        run_context.session_state["customer_research"]["research_metadata"][
+            "completed_at"
+        ] = datetime.now().isoformat()
+        run_context.session_state["customer_research"]["research_metadata"][
+            "final_status"
+        ] = "completed_successfully"
 
         # Return the structured Pydantic data directly
         yield StepOutput(content=recommendation_result.content, success=True)
@@ -753,7 +780,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="test:app", reload=True)
+    agent_os.serve(app="customer_research_workflow_parallel:app", reload=True)
 
 # # Example usage
 # async def main():
