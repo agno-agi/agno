@@ -1072,6 +1072,8 @@ class TraceNode(BaseModel):
     start_time: int = Field(..., description="Start time in nanoseconds")
     end_time: int = Field(..., description="End time in nanoseconds")
     status: str = Field(..., description="Status code (OK, ERROR)")
+    input: Optional[str] = Field(None, description="Input to the span")
+    output: Optional[str] = Field(None, description="Output from the span")
     spans: Optional[List["TraceNode"]] = Field(None, description="Child spans in the trace hierarchy")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional span attributes and data")
     extra_data: Optional[Dict[str, Any]] = Field(
@@ -1091,14 +1093,14 @@ class TraceNode(BaseModel):
         # Extract span kind from attributes
         span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
+        # Extract input/output at root level (for all span types)
+        input_val = span.attributes.get("input.value")
+        output_val = span.attributes.get("output.value")
+
         # Build metadata with key attributes based on span kind
         metadata: Dict[str, Any] = {}
 
         if span_kind == "AGENT":
-            if input_val := span.attributes.get("input.value"):
-                metadata["input"] = input_val
-            if output_val := span.attributes.get("output.value"):
-                metadata["output"] = output_val
             if run_id := span.attributes.get("agno.run.id"):
                 metadata["run_id"] = run_id
 
@@ -1109,16 +1111,12 @@ class TraceNode(BaseModel):
                 metadata["input_tokens"] = input_tokens
             if output_tokens := span.attributes.get("llm.token_count.completion"):
                 metadata["output_tokens"] = output_tokens
-            if output_val := span.attributes.get("output.value"):
-                metadata["output"] = output_val
 
         elif span_kind == "TOOL":
             if tool_name := span.attributes.get("tool.name"):
                 metadata["tool_name"] = tool_name
             if tool_params := span.attributes.get("tool.parameters"):
                 metadata["parameters"] = tool_params
-            if output_val := span.attributes.get("output.value"):
-                metadata["output"] = output_val
 
         # Add error information if present
         if span.status_code == "ERROR" and span.status_message:
@@ -1138,6 +1136,8 @@ class TraceNode(BaseModel):
             start_time=span.start_time_ns,
             end_time=span.end_time_ns,
             status=span.status_code,
+            input=input_val,
+            output=output_val,
             spans=spans,
             metadata=metadata if metadata else None,
             extra_data=None,
@@ -1154,6 +1154,7 @@ class TraceSummary(BaseModel):
     start_time: int = Field(..., description="Trace start time in nanoseconds")
     total_spans: int = Field(..., description="Total number of spans in this trace")
     error_count: int = Field(..., description="Number of spans with errors")
+    input: Optional[str] = Field(None, description="Input to the agent")
     run_id: Optional[str] = Field(None, description="Associated run ID")
     session_id: Optional[str] = Field(None, description="Associated session ID")
     user_id: Optional[str] = Field(None, description="Associated user ID")
@@ -1161,8 +1162,7 @@ class TraceSummary(BaseModel):
     created_at: int = Field(..., description="Unix timestamp when trace was created")
 
     @classmethod
-    def from_trace(cls, trace: Any) -> "TraceSummary":
-        """Create TraceSummary from a Trace object"""
+    def from_trace(cls, trace: Any, input: Optional[str] = None) -> "TraceSummary":
         # Format duration
         duration_ms = trace.duration_ms
         if duration_ms < 1000:
@@ -1178,6 +1178,7 @@ class TraceSummary(BaseModel):
             start_time=trace.start_time_ns,
             total_spans=trace.total_spans,
             error_count=trace.error_count,
+            input=input,
             run_id=trace.run_id,
             session_id=trace.session_id,
             user_id=trace.user_id,
@@ -1309,6 +1310,8 @@ class TraceDetail(BaseModel):
                 duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
+                # Skip input/output for root span (already at top level of TraceDetail)
+
                 return TraceNode(
                     id=span.span_id,
                     name=span.name,
@@ -1317,6 +1320,8 @@ class TraceDetail(BaseModel):
                     start_time=span.start_time_ns,
                     end_time=span.end_time_ns,
                     status=span.status_code,
+                    input=None,  # Skip for root span (already at TraceDetail level)
+                    output=None,  # Skip for root span (already at TraceDetail level)
                     spans=children_nodes,
                     metadata=root_metadata if root_metadata else None,
                     extra_data=None,

@@ -1767,6 +1767,7 @@ def get_base_router(
                                     "start_time": 1234567890000000,
                                     "total_spans": 4,
                                     "error_count": 0,
+                                    "input": "What is the stock price of NVDA?",
                                     "run_id": "run123",
                                     "session_id": "session456",
                                     "user_id": "user789",
@@ -1834,8 +1835,23 @@ def get_base_router(
             # Calculate total pages
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
+            trace_inputs = {}
+            for trace in traces:
+                spans_result = db.get_spans(trace_id=trace.trace_id)
+                if inspect.iscoroutine(spans_result):
+                    spans = await spans_result
+                else:
+                    spans = spans_result
+
+                # Find root span and extract input
+                root_span = next((s for s in spans if not s.parent_span_id), None)
+                if root_span and hasattr(root_span, "attributes"):
+                    trace_inputs[trace.trace_id] = root_span.attributes.get("input.value")
+
             # Build response
-            trace_summaries = [TraceSummary.from_trace(trace) for trace in traces]
+            trace_summaries = [
+                TraceSummary.from_trace(trace, input=trace_inputs.get(trace.trace_id)) for trace in traces
+            ]
 
             return PaginatedResponse(
                 data=trace_summaries,
