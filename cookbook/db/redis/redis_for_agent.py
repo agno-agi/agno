@@ -33,8 +33,3 @@ agent.print_response("What is their national anthem called?")
 print("\nVerifying db contents...")
 all_sessions = db.get_sessions(session_type=SessionType.AGENT)
 print(f"Total sessions in Redis: {len(all_sessions)}")
-
-if all_sessions:
-    print("\nSession details:")
-    session = all_sessions[0]
-    print(f"The stored session: {session}")
