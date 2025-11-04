@@ -1945,6 +1945,7 @@ class Team:
         run_response = TeamRunOutput(
             run_id=run_id,
             session_id=session_id,
+            user_id=user_id,
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
@@ -2204,6 +2205,7 @@ class Team:
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
+                run_response=run_response,
             )  # type: ignore
 
             # Check for cancellation after model call
@@ -2786,6 +2788,7 @@ class Team:
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
+            user_id=user_id,
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
@@ -3087,6 +3090,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
+            run_response=run_response,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(

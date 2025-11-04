@@ -1898,6 +1898,7 @@ class Agent:
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
+                run_response=run_response,
             )
 
             # Check for cancellation after model call
