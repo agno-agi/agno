@@ -55,7 +55,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import RunContext, RunStatus
+from agno.run import RunContext, RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )

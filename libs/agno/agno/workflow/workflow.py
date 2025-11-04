@@ -30,7 +30,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
-from agno.run.base import RunContext, RunStatus
+from agno.run import RunContext, RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )

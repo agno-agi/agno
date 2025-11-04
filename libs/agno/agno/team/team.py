@@ -48,7 +48,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
-from agno.run.base import RunContext, RunStatus
+from agno.run import RunContext, RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )

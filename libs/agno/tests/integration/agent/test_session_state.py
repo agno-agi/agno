@@ -5,7 +5,7 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 def test_session_state_precedence_all_three_layers(shared_db):

@@ -10,7 +10,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunOutput
-from agno.run.base import RunContext
+from agno.run import RunContext
 from pydantic import BaseModel, Field
 
 
