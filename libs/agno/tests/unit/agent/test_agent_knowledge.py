@@ -3,19 +3,27 @@ import pytest
 from agno.agent import Agent
 
 
+# Create a mock knowledge object
+class MockKnowledge:
+    def __init__(self):
+        self.max_results = 5
+        self.vector_db = None
+
+    def validate_filters(self, filters):
+        return filters or {}, []
+
+    async def async_validate_filters(self, filters):
+        return filters or {}, []
+
+    async def async_search(self, query, num_documents, filters):
+        # Verify that num_documents is correctly set to default value
+        assert num_documents == 5
+        return []
+
+
 @pytest.mark.asyncio
 async def test_agent_aget_relevant_docs_from_knowledge_with_none_num_documents():
     """Test that aget_relevant_docs_from_knowledge handles num_documents=None correctly with retriever."""
-
-    # Create a mock knowledge object
-    class MockKnowledge:
-        def __init__(self):
-            self.max_results = 5
-            self.vector_db = None
-            self.max_results = 5
-
-        def validate_filters(self, filters):
-            return filters or {}, []
 
     # Create a mock retriever function
     def mock_retriever(agent, query, num_documents, **kwargs):
@@ -39,18 +47,9 @@ async def test_agent_aget_relevant_docs_from_knowledge_with_none_num_documents()
 async def test_agent_aget_relevant_docs_from_knowledge_with_specific_num_documents():
     """Test that aget_relevant_docs_from_knowledge handles specific num_documents correctly with retriever."""
 
-    # Create a mock knowledge object
-    class MockKnowledge:
-        def __init__(self):
-            self.max_results = 5
-            self.vector_db = None
-
-        def validate_filters(self, filters):
-            return filters or {}, []
-
     # Create a mock retriever function
     def mock_retriever(agent, query, num_documents, **kwargs):
-        # Verify that num_documents is correctly passed
+        # Verify that num_documents is correctly set to knowledge.num_documents
         assert num_documents == 10
         return [{"content": "test document"}]
 
@@ -70,21 +69,6 @@ async def test_agent_aget_relevant_docs_from_knowledge_with_specific_num_documen
 async def test_agent_aget_relevant_docs_from_knowledge_without_retriever():
     """Test that aget_relevant_docs_from_knowledge works correctly without retriever."""
 
-    # Create a mock knowledge object
-    class MockKnowledge:
-        def __init__(self):
-            self.max_results = 5
-            self.vector_db = None
-            self.max_results = 5
-
-        def validate_filters(self, filters):
-            return filters or {}, []
-
-        async def async_search(self, query, num_documents, filters):
-            # Verify that num_documents is correctly set to default value
-            assert num_documents == 5
-            return []
-
     # Create Agent instance
     agent = Agent()
     agent.knowledge = MockKnowledge()  # type: ignore
@@ -99,16 +83,6 @@ async def test_agent_aget_relevant_docs_from_knowledge_without_retriever():
 
 def test_agent_get_relevant_docs_from_knowledge_with_none_num_documents():
     """Test that get_relevant_docs_from_knowledge handles num_documents=None correctly with retriever."""
-
-    # Create a mock knowledge object
-    class MockKnowledge:
-        def __init__(self):
-            self.max_results = 5
-            self.vector_db = None
-            self.max_results = 5
-
-        def validate_filters(self, filters):
-            return filters or {}, []
 
     # Create a mock retriever function
     def mock_retriever(agent, query, num_documents, **kwargs):
