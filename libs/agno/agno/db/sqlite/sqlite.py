@@ -34,7 +34,7 @@ try:
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
-    from sqlalchemy.schema import Index, UniqueConstraint
+    from sqlalchemy.schema import ForeignKey, Index, UniqueConstraint
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -158,11 +158,13 @@ class SqliteDb(BaseDb):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
 
+                # Handle foreign key constraint
+                if "foreign_key" in col_config:
+                    column_args.append(ForeignKey(col_config["foreign_key"]))
+
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
-            # Create the table object
-            table_metadata = MetaData()
-            table = Table(table_name, table_metadata, *columns)
+            table = Table(table_name, self.metadata, *columns)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -253,6 +255,10 @@ class SqliteDb(BaseDb):
             return self.traces_table
 
         elif table_type == "spans":
+            # Ensure traces table exists first (spans has FK to traces)
+            if create_table_if_not_found:
+                self._get_table(table_type="traces", create_table_if_not_found=True)
+
             self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
                 table_type="spans",
