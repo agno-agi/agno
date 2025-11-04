@@ -20,7 +20,7 @@ agent = Agent(
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,
     db=db,
-    enable_tracing=True,
+    tracing=True,
 )
 
 # Setup our AgentOS app

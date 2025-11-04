@@ -435,10 +435,10 @@ class Team:
     telemetry: bool = True
 
     # --- Tracing ---
-    # enable_tracing=True automatically sets up OpenTelemetry tracing for this team
+    # tracing=True automatically sets up OpenTelemetry tracing for this team
     # Requires: a database (db) to store traces, and OpenTelemetry packages installed
     # When enabled, all team runs, member runs, model calls, and tool executions are automatically traced
-    enable_tracing: bool = False
+    tracing: bool = False
 
     def __init__(
         self,
@@ -539,7 +539,7 @@ class Team:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         telemetry: bool = True,
-        enable_tracing: bool = False,
+        tracing: bool = False,
     ):
         self.members = members
 
@@ -675,7 +675,7 @@ class Team:
         self.exponential_backoff = exponential_backoff
 
         self.telemetry = telemetry
-        self.enable_tracing = enable_tracing
+        self.tracing = tracing
 
         # TODO: Remove these
         # Images generated during this session
@@ -706,14 +706,14 @@ class Team:
         self._resolve_models()
 
         # Set up tracing if enabled
-        if self.enable_tracing:
+        if self.tracing:
             self._setup_tracing()
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this team."""
         if self.db is None:
             log_warning(
-                "enable_tracing=True but no database provided. "
+                "tracing=True but no database provided. "
                 "Tracing requires a database. Provide 'db' parameter to enable tracing."
             )
             return
@@ -725,7 +725,7 @@ class Team:
             log_debug(f"Tracing enabled for team: {self.name or self.id}")
         except ImportError:
             log_warning(
-                "enable_tracing=True but OpenTelemetry packages not installed. "
+                "tracing=True but OpenTelemetry packages not installed. "
                 "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
             )
         except Exception as e:

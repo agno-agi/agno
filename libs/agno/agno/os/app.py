@@ -111,7 +111,7 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
-        enable_tracing: bool = False,
+        tracing: bool = False,
         os_id: Optional[str] = None,  # Deprecated
         enable_mcp: bool = False,  # Deprecated
         fastapi_app: Optional[FastAPI] = None,  # Deprecated
@@ -137,7 +137,7 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
-            enable_tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
+            tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -183,7 +183,7 @@ class AgentOS:
         self.description = description
 
         self.telemetry = telemetry
-        self.enable_tracing = enable_tracing
+        self.tracing = tracing
 
         self.enable_mcp_server = enable_mcp or enable_mcp_server
         self.lifespan = lifespan
@@ -328,8 +328,8 @@ class AgentOS:
                             self.mcp_tools.append(tool)
 
             # Enable tracing if AgentOS has tracing enabled
-            if self.enable_tracing and not agent.enable_tracing:
-                agent.enable_tracing = True
+            if self.tracing and not agent.tracing:
+                agent.tracing = True
                 agent._setup_tracing()
 
             agent.initialize_agent()
@@ -347,8 +347,8 @@ class AgentOS:
             collect_mcp_tools_from_team(team, self.mcp_tools)
 
             # Enable tracing if AgentOS has tracing enabled
-            if self.enable_tracing and not team.enable_tracing:
-                team.enable_tracing = True
+            if self.tracing and not team.tracing:
+                team.tracing = True
                 team._setup_tracing()
 
             team.initialize_team()

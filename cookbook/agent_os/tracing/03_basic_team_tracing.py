@@ -8,7 +8,7 @@ from agno.tools.hackernews import HackerNewsTools
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")
 
-# Create agents - no need to set enable_tracing on each one!
+# Create agents - no need to set tracing on each one!
 agent = Agent(
     name="HackerNews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -25,14 +25,14 @@ team = Team(
     db=db,
 )
 
-# Setup AgentOS with enable_tracing=True
+# Setup AgentOS with tracing=True
 # This automatically enables tracing for ALL agents and teams!
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     teams=[team],
-    enable_tracing=True,
+    tracing=True,
 )
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="test:app", reload=True)
+    agent_os.serve(app="03_basic_team_tracing:app", reload=True)
