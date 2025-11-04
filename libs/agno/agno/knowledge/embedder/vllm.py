@@ -78,9 +78,7 @@ class VLLMEmbedder(Embedder):
         try:
             from openai import OpenAI as OpenAIClient
         except ImportError:
-            raise ImportError(
-                "`openai` package required for remote vLLM mode. "
-            )
+            raise ImportError("`openai` package required for remote vLLM mode. ")
 
         _client_params: Dict[str, Any] = {
             "api_key": self.api_key or "EMPTY",  # VLLM can run without API key
@@ -99,9 +97,7 @@ class VLLMEmbedder(Embedder):
         try:
             from openai import AsyncOpenAI
         except ImportError:
-            raise ImportError(
-                "`openai` package required for remote vLLM mode. "
-            )
+            raise ImportError("`openai` package required for remote vLLM mode. ")
 
         _client_params: Dict[str, Any] = {
             "api_key": self.api_key or "EMPTY",
