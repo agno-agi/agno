@@ -9567,7 +9567,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters, validate_filters=True)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9602,7 +9604,9 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters, validate_filters=True)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
