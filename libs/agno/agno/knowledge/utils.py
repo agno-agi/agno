@@ -132,16 +132,17 @@ def get_chunker_info(chunker_key: str) -> Dict:
             # Check class __init__ signature for chunk_size and overlap parameters
             metadata = {}
             import inspect
+
             try:
                 sig = inspect.signature(chunker_class.__init__)
                 param_names = set(sig.parameters.keys())
-                
+
                 # If class has chunk_size or max_chunk_size parameter, set default chunk_size
-                if 'chunk_size' in param_names or 'max_chunk_size' in param_names:
+                if "chunk_size" in param_names or "max_chunk_size" in param_names:
                     metadata["chunk_size"] = 5000
-                    
+
                 # If class has overlap parameter, set default overlap
-                if 'overlap' in param_names:
+                if "overlap" in param_names:
                     metadata["chunk_overlap"] = 0
             except Exception:
                 # If we can't inspect, skip metadata

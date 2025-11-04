@@ -80,7 +80,9 @@ class ChunkingStrategyFactory:
         return strategy_map[strategy_type](chunk_size=chunk_size, overlap=overlap, **kwargs)
 
     @classmethod
-    def _create_agentic_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_agentic_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.agentic import AgenticChunking
 
         # AgenticChunking accepts max_chunk_size (not chunk_size) and no overlap
@@ -90,7 +92,9 @@ class ChunkingStrategyFactory:
         return AgenticChunking(**kwargs)
 
     @classmethod
-    def _create_document_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_document_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.document import DocumentChunking
 
         # DocumentChunking accepts both chunk_size and overlap
@@ -101,7 +105,9 @@ class ChunkingStrategyFactory:
         return DocumentChunking(**kwargs)
 
     @classmethod
-    def _create_recursive_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_recursive_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.recursive import RecursiveChunking
 
         # RecursiveChunking accepts both chunk_size and overlap
@@ -112,7 +118,9 @@ class ChunkingStrategyFactory:
         return RecursiveChunking(**kwargs)
 
     @classmethod
-    def _create_semantic_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_semantic_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.semantic import SemanticChunking
 
         # SemanticChunking accepts chunk_size but not overlap
@@ -122,7 +130,9 @@ class ChunkingStrategyFactory:
         return SemanticChunking(**kwargs)
 
     @classmethod
-    def _create_fixed_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_fixed_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.fixed import FixedSizeChunking
 
         # FixedSizeChunking accepts both chunk_size and overlap
@@ -133,14 +143,18 @@ class ChunkingStrategyFactory:
         return FixedSizeChunking(**kwargs)
 
     @classmethod
-    def _create_row_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_row_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.row import RowChunking
 
         # RowChunking doesn't accept chunk_size or overlap, only skip_header and clean_rows
         return RowChunking(**kwargs)
 
     @classmethod
-    def _create_markdown_chunking(cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs) -> ChunkingStrategy:
+    def _create_markdown_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.markdown import MarkdownChunking
 
         # MarkdownChunking accepts both chunk_size and overlap

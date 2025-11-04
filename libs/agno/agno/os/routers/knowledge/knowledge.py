@@ -803,9 +803,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "key": "AgenticChunker",
                                     "name": "AgenticChunker",
                                     "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
-                                    "metadata": {
-                                        "chunk_size": 5000
-                                    },
+                                    "metadata": {"chunk_size": 5000},
                                 },
                                 "DocumentChunker": {
                                     "key": "DocumentChunker",
@@ -853,9 +851,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "key": "SemanticChunker",
                                     "name": "SemanticChunker",
                                     "description": "Chunking strategy that splits text into semantic chunks using chonkie",
-                                    "metadata": {
-                                        "chunk_size": 5000
-                                    },
+                                    "metadata": {"chunk_size": 5000},
                                 },
                             },
                             "vector_dbs": [
