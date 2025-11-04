@@ -403,11 +403,35 @@ class LanceDb(VectorDb):
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    # Check for exceptions in results and retry sequentially if needed
+                    for idx, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            logger.warning(
+                                f"Async embedding failed for document '{documents[idx].name}': {result}. Retrying sequentially."
+                            )
+                            try:
+                                await documents[idx].async_embed(embedder=self.embedder)
+                            except Exception as retry_error:
+                                logger.error(
+                                    f"Sequential retry also failed for document '{documents[idx].name}': {retry_error}"
+                                )
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            # Check for exceptions in results and retry sequentially if needed
+            for idx, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        f"Async embedding failed for document '{documents[idx].name}': {result}. Retrying sequentially."
+                    )
+                    try:
+                        await documents[idx].async_embed(embedder=self.embedder)
+                    except Exception as retry_error:
+                        logger.error(
+                            f"Sequential retry also failed for document '{documents[idx].name}': {retry_error}"
+                        )
 
         for document in documents:
             if await self.async_doc_exists(document):
