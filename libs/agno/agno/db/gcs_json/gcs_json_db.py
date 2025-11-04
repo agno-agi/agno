@@ -1346,18 +1346,12 @@ class GcsJsonDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.

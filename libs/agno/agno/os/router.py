@@ -1943,6 +1943,7 @@ def get_base_router(
     async def get_trace(
         trace_id: str,
         span_id: Optional[str] = Query(default=None, description="Optional: Span ID to retrieve specific span"),
+        run_id: Optional[str] = Query(default=None, description="Optional: Run ID to retrieve trace for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
@@ -1976,7 +1977,7 @@ def get_base_router(
 
             # Otherwise, return full trace with hierarchy
             # Get trace
-            trace_result = db.get_trace(trace_id)
+            trace_result = db.get_trace(trace_id=trace_id, run_id=run_id)
             if inspect.iscoroutine(trace_result):
                 trace = await trace_result
             else:
