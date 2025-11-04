@@ -10216,7 +10216,7 @@ class Agent:
                 session.session_data = {"session_state": run_context.session_state}
 
         # Save session to memory
-        self.save_session(session=session)
+        await self.asave_session(session=session)
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
         """
