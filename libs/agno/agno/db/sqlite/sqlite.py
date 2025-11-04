@@ -71,7 +71,7 @@ class SqliteDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
-            traces_table (Optional[str]): Name of the table to store trace spans.
+            traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             id (Optional[str]): ID of the database.
 
