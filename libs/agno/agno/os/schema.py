@@ -20,6 +20,7 @@ from agno.os.utils import (
     get_workflow_input_schema_dict,
 )
 from agno.run.agent import RunOutput
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
@@ -250,9 +251,12 @@ class AgentResponse(BaseModel):
             "stream_intermediate_steps": False,
         }
 
+        session_id = str(uuid4())
+        run_id = str(uuid4())
         agent_tools = await agent.aget_tools(
-            session=AgentSession(session_id=str(uuid4()), session_data={}),
-            run_response=RunOutput(run_id=str(uuid4())),
+            session=AgentSession(session_id=session_id, session_data={}),
+            run_response=RunOutput(run_id=run_id, session_id=session_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, user_id=agent.user_id),
             check_mcp_tools=False,
         )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
