@@ -844,31 +844,8 @@ class Model(ABC):
             ):
                 yield model_response_delta
 
-            # Populate assistant message from stream data after the stream ends
-            if stream_data.response_role is not None:
-                assistant_message.role = stream_data.response_role
-            if stream_data.response_metrics is not None:
-                assistant_message.metrics = stream_data.response_metrics
-            if stream_data.response_content:
-                assistant_message.content = stream_data.response_content
-            if stream_data.response_reasoning_content:
-                assistant_message.reasoning_content = stream_data.response_reasoning_content
-            if stream_data.response_redacted_reasoning_content:
-                assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
-            if stream_data.response_provider_data:
-                assistant_message.provider_data = stream_data.response_provider_data
-            if stream_data.response_citations:
-                assistant_message.citations = stream_data.response_citations
-            if stream_data.response_audio:
-                assistant_message.audio_output = stream_data.response_audio
-            if stream_data.response_image:
-                assistant_message.image_output = stream_data.response_image
-            if stream_data.response_video:
-                assistant_message.video_output = stream_data.response_video
-            if stream_data.response_file:
-                assistant_message.file_output = stream_data.response_file
-            if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+        # Populate assistant message from stream data after the stream ends
+        self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
     def response_stream(
         self,
@@ -1049,31 +1026,8 @@ class Model(ABC):
             ):
                 yield model_response_delta
 
-            # Populate assistant message from stream data after the stream ends
-            if stream_data.role is not None:
-                assistant_message.role = stream_data.role
-            if stream_data.response_metrics is not None:
-                assistant_message.metrics = stream_data.response_metrics
-            if stream_data.response_content:
-                assistant_message.content = stream_data.response_content
-            if stream_data.response_reasoning_content:
-                assistant_message.reasoning_content = stream_data.response_reasoning_content
-            if stream_data.response_redacted_reasoning_content:
-                assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
-            if stream_data.response_provider_data:
-                assistant_message.provider_data = stream_data.response_provider_data
-            if stream_data.response_citations:
-                assistant_message.citations = stream_data.response_citations
-            if stream_data.response_audio:
-                assistant_message.audio_output = stream_data.response_audio
-            if stream_data.response_image:
-                assistant_message.image_output = stream_data.response_image
-            if stream_data.response_video:
-                assistant_message.video_output = stream_data.response_video
-            if stream_data.response_file:
-                assistant_message.file_output = stream_data.response_file
-            if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+        # Populate assistant message from stream data after the stream ends
+        self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
     async def aresponse_stream(
         self,
@@ -1227,6 +1181,36 @@ class Model(ABC):
         # Save streaming responses to cache if enabled
         if self.cache_response and cache_key and streaming_responses:
             self._save_streaming_responses_to_cache(cache_key, streaming_responses)
+
+    def _populate_assistant_message_from_stream_data(self, assistant_message: Message, stream_data: MessageData) -> None:
+        """
+        Populate an assistant message with the stream data.
+        """
+        if stream_data.response_role is not None:
+            assistant_message.role = stream_data.response_role
+        if stream_data.response_metrics is not None:
+            assistant_message.metrics = stream_data.response_metrics
+        if stream_data.response_content:
+            assistant_message.content = stream_data.response_content
+        if stream_data.response_reasoning_content:
+            assistant_message.reasoning_content = stream_data.response_reasoning_content
+        if stream_data.response_redacted_reasoning_content:
+            assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
+        if stream_data.response_provider_data:
+            assistant_message.provider_data = stream_data.response_provider_data
+        if stream_data.response_citations:
+            assistant_message.citations = stream_data.response_citations
+        if stream_data.response_audio:
+            assistant_message.audio_output = stream_data.response_audio
+        if stream_data.response_image:
+            assistant_message.image_output = stream_data.response_image
+        if stream_data.response_video:
+            assistant_message.video_output = stream_data.response_video
+        if stream_data.response_file:
+            assistant_message.file_output = stream_data.response_file
+        if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
+            assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+
 
     def _populate_stream_data(
         self, stream_data: MessageData, model_response_delta: ModelResponse
