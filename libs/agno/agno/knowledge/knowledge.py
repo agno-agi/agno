@@ -1466,6 +1466,9 @@ class Knowledge:
         return self.valid_metadata_filters
 
     def _validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if not filters:
+            return {}, []
+
         valid_filters: Dict[str, Any] = {}
         invalid_keys = []
 
@@ -1491,18 +1494,12 @@ class Knowledge:
             self.valid_metadata_filters = set()
         self.valid_metadata_filters.update(self._get_filters_from_db())
 
-        if not filters:
-            return {}, []
-
         return self._validate_filters(filters)
 
     async def async_validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
         self.valid_metadata_filters.update(await self._aget_filters_from_db())
-
-        if not filters:
-            return {}, []
 
         return self._validate_filters(filters)
 
