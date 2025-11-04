@@ -6,6 +6,7 @@ from textwrap import dedent
 from agno.os import AgentOS
 from agno_knowledge_agent import agno_knowledge_agent
 from agno_mcp_agent import agno_mcp_agent
+from competitive_brief import competitive_brief
 from finance_agent import finance_agent
 from finance_team import finance_team
 from memory_agent import memory_manager
@@ -36,6 +37,9 @@ agent_os = AgentOS(
     ],
     teams=[
         finance_team,
+    ],
+    workflows=[
+        competitive_brief,
     ],
     config=config_path,
 )

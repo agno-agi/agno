@@ -187,10 +187,14 @@ class Knowledge:
         paths: Optional[List[str]] = None,
         urls: Optional[List[str]] = None,
         metadata: Optional[Dict[str, str]] = None,
+        topics: Optional[List[str]] = None,
+        text_contents: Optional[List[str]] = None,
+        reader: Optional[Reader] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = False,
+        remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
     def add_contents(self, *args, **kwargs) -> None:
@@ -208,10 +212,14 @@ class Knowledge:
             paths: Optional list of file paths to load content from
             urls: Optional list of URLs to load content from
             metadata: Optional metadata dictionary to apply to all content
+            topics: Optional list of topics to add
+            text_contents: Optional list of text content strings to add
+            reader: Optional reader to use for processing content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
+            remote_content: Optional remote content (S3, GCS, etc.) to add
         """
         asyncio.run(self.add_contents_async(*args, **kwargs))
 

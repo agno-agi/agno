@@ -14,6 +14,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
@@ -168,7 +169,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -355,7 +356,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API and parse the response.
@@ -435,7 +436,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -514,7 +515,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
@@ -590,7 +591,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
