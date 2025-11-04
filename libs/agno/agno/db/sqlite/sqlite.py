@@ -2359,14 +2359,12 @@ class SqliteDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         parent_span_id: Optional[str] = None,
-        limit: Optional[int] = 1000,
     ) -> List:
         """Get spans matching the provided filters.
 
         Args:
             trace_id: Filter by trace ID.
             parent_span_id: Filter by parent span ID.
-            limit: Maximum number of spans to return.
 
         Returns:
             List[Span]: List of matching spans.
@@ -2386,9 +2384,6 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.trace_id == trace_id)
                 if parent_span_id:
                     stmt = stmt.where(table.c.parent_span_id == parent_span_id)
-
-                # Order by start time and apply limit
-                stmt = stmt.order_by(table.c.start_time_ns).limit(limit)
 
                 results = sess.execute(stmt).fetchall()
                 return [Span.from_dict(dict(row._mapping)) for row in results]
