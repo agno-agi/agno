@@ -47,13 +47,24 @@ def test_basic(openai_responses_model):
     _assert_metrics(response)
 
 
-def test_basic_stream(openai_responses_model):
+def test_basic_stream(openai_responses_model, shared_db):
     """Test basic streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=openai_responses_model, markdown=True, telemetry=False)
+    agent = Agent(model=openai_responses_model, db=shared_db, markdown=True, telemetry=False)
 
     run_stream = agent.run("Say 'hi'", stream=True)
     for chunk in run_stream:
         assert chunk.content is not None or chunk.model_provider_data is not None
+
+    run_output = agent.get_last_run_output()
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 @pytest.mark.asyncio
@@ -71,12 +82,23 @@ async def test_async_basic(openai_responses_model):
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream(openai_responses_model):
+async def test_async_basic_stream(openai_responses_model, shared_db):
     """Test basic async streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=openai_responses_model, markdown=True, telemetry=False)
+    agent = Agent(model=openai_responses_model, db=shared_db, markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None or response.model_provider_data is not None
+
+    run_output = agent.get_last_run_output()
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 def test_exception_handling():
