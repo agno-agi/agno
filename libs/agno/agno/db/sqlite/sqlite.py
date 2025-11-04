@@ -2198,6 +2198,88 @@ class SqliteDb(BaseDb):
             log_error(f"Error getting traces: {e}")
             return [], 0
 
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+        """
+        try:
+            from sqlalchemy import func
+
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            with self.Session() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(table.c.session_id, table.c.user_id, table.c.agent_id)
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching sessions: {total_count}")
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} session stats")
+
+                # Convert to list of dicts
+                stats_list = [
+                    {
+                        "session_id": row.session_id,
+                        "user_id": row.user_id,
+                        "agent_id": row.agent_id,
+                        "total_traces": row.total_traces,
+                        "first_trace_at": row.first_trace_at,
+                        "last_trace_at": row.last_trace_at,
+                    }
+                    for row in results
+                ]
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
     # -- Span methods --
 
     def create_span(self, span) -> None:

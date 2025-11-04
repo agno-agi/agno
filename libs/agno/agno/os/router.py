@@ -37,6 +37,7 @@ from agno.os.schema import (
     TeamSummaryResponse,
     TraceDetail,
     TraceNode,
+    TraceSessionStats,
     TraceSummary,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -1999,5 +2000,126 @@ def get_base_router(
         except Exception as e:
             log_error(f"Error retrieving trace {trace_id}: {e}")
             raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
+
+    @router.get(
+        "/trace_session_stats",
+        response_model=PaginatedResponse[TraceSessionStats],
+        response_model_exclude_none=True,
+        tags=["Traces"],
+        operation_id="get_trace_stats",
+        summary="Get Trace Statistics by Session",
+        description=(
+            "Retrieve aggregated trace statistics grouped by session ID with pagination.\n\n"
+            "**Provides insights into:**\n"
+            "- Total traces per session\n"
+            "- First and last trace timestamps per session\n"
+            "- Associated user and agent information\n\n"
+            "**Filtering Options:**\n"
+            "- By user ID\n"
+            "- By agent ID\n\n"
+            "**Use Cases:**\n"
+            "- Monitor session-level activity\n"
+            "- Track conversation flows\n"
+            "- Identify high-activity sessions\n"
+            "- Analyze user engagement patterns"
+        ),
+        responses={
+            200: {
+                "description": "Trace statistics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "data": [
+                                {
+                                    "session_id": "37029bc6-1794-4ba8-a629-1efedc53dcad",
+                                    "user_id": "kaustubh@agno.com",
+                                    "agent_id": "hackernews-agent",
+                                    "total_traces": 5,
+                                    "first_trace_at": 1762156516,
+                                    "last_trace_at": 1762156890,
+                                }
+                            ],
+                            "meta": {
+                                "page": 1,
+                                "limit": 20,
+                                "total_pages": 3,
+                                "total_count": 45,
+                            },
+                        }
+                    }
+                },
+            },
+            500: {"description": "Failed to retrieve statistics", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_trace_stats(
+        user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
+        agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
+        page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
+        limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
+    ):
+        """Get trace statistics grouped by session"""
+        # Get database using db_id or default to first available
+        db = get_db(os.dbs, db_id)
+
+        # Verify the database has trace support
+        if not hasattr(db, "get_trace_stats"):
+            raise HTTPException(status_code=500, detail="Selected database does not support trace statistics")
+
+        try:
+            import inspect
+            import time as time_module
+
+            start_time_ms = time_module.time() * 1000
+
+            # Get trace stats
+            stats_result = db.get_trace_stats(
+                user_id=user_id,
+                agent_id=agent_id,
+                limit=limit,
+                page=page,
+            )
+
+            if inspect.iscoroutine(stats_result):
+                result = await stats_result
+            else:
+                result = stats_result
+
+            stats_list, total_count = result
+
+            end_time_ms = time_module.time() * 1000
+            search_time_ms = round(end_time_ms - start_time_ms, 2)
+
+            # Calculate total pages
+            total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+            # Convert stats to response models
+            stats_response = [
+                TraceSessionStats(
+                    session_id=stat["session_id"],
+                    user_id=stat.get("user_id"),
+                    agent_id=stat.get("agent_id"),
+                    total_traces=stat["total_traces"],
+                    first_trace_at=stat["first_trace_at"],
+                    last_trace_at=stat["last_trace_at"],
+                )
+                for stat in stats_list
+            ]
+
+            return PaginatedResponse(
+                data=stats_response,
+                meta=PaginationInfo(
+                    page=page,
+                    limit=limit,
+                    total_pages=total_pages,
+                    total_count=total_count,
+                    search_time_ms=search_time_ms,
+                ),
+            )
+
+        except Exception as e:
+            log_error(f"Error retrieving trace statistics: {e}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
 
     return router

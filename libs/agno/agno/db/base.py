@@ -348,6 +348,29 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        raise NotImplementedError
+
     # --- Spans ---
     @abstractmethod
     def create_span(self, span) -> None:
@@ -735,6 +758,29 @@ class AsyncBaseDb(ABC):
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, total_traces,
+                first_trace_at, last_trace_at.
         """
         raise NotImplementedError
 
