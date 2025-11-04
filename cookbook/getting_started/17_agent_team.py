@@ -52,7 +52,6 @@ finance_agent = Agent(
         ExaTools(
             include_domains=["trendlyne.com"],
             text=False,
-            highlights=False,
             show_results=True,
         )
     ],
