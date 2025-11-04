@@ -100,11 +100,12 @@ agent = Agent(
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
     debug_mode=True,
+    markdown=True,
 )
 
 asyncio.run(
     agent.aprint_response(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
-        markdown=True,
+        stream=True,
     )
 )
