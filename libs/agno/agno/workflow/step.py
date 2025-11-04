@@ -11,6 +11,7 @@ from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
 from agno.run.agent import RunOutput
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
@@ -210,6 +211,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -224,7 +226,11 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
-        session_state_copy = copy(session_state) if session_state is not None else {}
+
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = copy(run_context.session_state)
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -407,6 +413,7 @@ class Step:
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -422,8 +429,12 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
+
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = copy(run_context.session_state)
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         stream_events = stream_events or stream_intermediate_steps
