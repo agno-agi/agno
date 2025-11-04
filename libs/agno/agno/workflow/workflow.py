@@ -2375,6 +2375,13 @@ class Workflow:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+        )
+
         self._prepare_steps()
 
         # Create workflow run response with PENDING status
@@ -2409,7 +2416,7 @@ class Workflow:
                         session_id=session_id,
                         user_id=user_id,
                         execution_input=inputs,
-                        session_state=session_state,
+                        run_context=run_context,
                         stream=True,
                         websocket_handler=websocket_handler,
                         **kwargs,
@@ -2437,7 +2444,7 @@ class Workflow:
                         execution_input=inputs,
                         workflow_run_response=workflow_run_response,
                         stream_events=stream_events,
-                        session_state=session_state,
+                        run_context=run_context,
                         websocket_handler=websocket_handler,
                         **kwargs,
                     ):
@@ -2899,6 +2906,7 @@ class Workflow:
     def _aexecute_workflow_agent(
         self,
         user_input: Union[str, Dict[str, Any], List[Any], BaseModel],
+        run_context: RunContext,
         session_id: str,
         user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
@@ -2924,11 +2932,15 @@ class Workflow:
         Returns:
             Coroutine[WorkflowRunOutput] if stream=False, AsyncIterator[WorkflowRunOutputEvent] if stream=True
         """
+
+        # Consider both run_context.session_state and session_state (deprecated)
+        run_context.session_state = run_context.session_state or session_state
+
         if stream:
 
             async def _stream():
                 session, session_state_loaded = await self._aload_session_for_workflow_agent(
-                    session_id, user_id, session_state
+                    session_id, user_id, run_context.session_state
                 )
                 async for event in self._arun_workflow_agent_stream(
                     agent_input=user_input,
@@ -2946,7 +2958,7 @@ class Workflow:
 
             async def _execute():
                 session, session_state_loaded = await self._aload_session_for_workflow_agent(
-                    session_id, user_id, session_state
+                    session_id, user_id, run_context.session_state
                 )
                 return await self._arun_workflow_agent(
                     agent_input=user_input,

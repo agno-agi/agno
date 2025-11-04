@@ -7,16 +7,22 @@ from agno.models.openai.chat import OpenAIChat
 from agno.run.base import RunContext
 
 
-def add_item(session_state: Dict[str, Any], item: str) -> str:
+def add_item(run_context: RunContext, item: str) -> str:
     """Add an item to the shopping list (sync version)."""
-    session_state["shopping_list"].append(item)
-    return f"The shopping list is now {session_state['shopping_list']}"
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    run_context.session_state["shopping_list"].append(item)
+    return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
 
-async def async_add_item(session_state: Dict[str, Any], item: str) -> str:
+async def async_add_item(run_context: RunContext, item: str) -> str:
     """Add an item to the shopping list (async version)."""
-    session_state["shopping_list"].append(item)
-    return f"The shopping list is now {session_state['shopping_list']}"
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    run_context.session_state["shopping_list"].append(item)
+    return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
 
 def chat_agent_factory(shared_db, session_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None):
