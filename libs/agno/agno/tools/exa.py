@@ -84,22 +84,24 @@ class ExaTools(Toolkit):
 
         self.text: bool = text
         self.text_length_limit: int = text_length_limit
-        
+
         if highlights:
             import warnings
+
             warnings.warn(
                 "The 'highlights' parameter is deprecated since it was removed in the Exa API. It will be removed from Agno in a future release.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
         if use_autoprompt:
             import warnings
+
             warnings.warn(
                 "The 'use_autoprompt' parameter is deprecated since it was removed in the Exa API. It will be removed from Agno in a future release.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
-        
+
         self.summary: bool = summary
         self.num_results: Optional[int] = num_results
         self.livecrawl: str = livecrawl
