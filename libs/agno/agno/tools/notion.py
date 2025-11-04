@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -73,16 +73,19 @@ class NotionTools(Toolkit):
             log_debug(f"Creating Notion page with title: {title}, tag: {tag}")
 
             # Create the page in the database
-            new_page = self.client.pages.create(
-                parent={"database_id": self.database_id},
-                properties={"Name": {"title": [{"text": {"content": title}}]}, "Tag": {"select": {"name": tag}}},
-                children=[
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": content}}]},
-                    }
-                ],
+            new_page = cast(
+                Dict[str, Any],
+                self.client.pages.create(
+                    parent={"database_id": self.database_id},
+                    properties={"Name": {"title": [{"text": {"content": title}}]}, "Tag": {"select": {"name": tag}}},
+                    children=[
+                        {
+                            "object": "block",
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"type": "text", "text": {"content": content}}]},
+                        }
+                    ],
+                ),
             )
 
             result = {"success": True, "page_id": new_page["id"], "url": new_page["url"], "title": title, "tag": tag}
