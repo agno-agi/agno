@@ -9,7 +9,6 @@ except ImportError:
 
 from agno.models.meta.llama import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.http import get_default_async_client
 from agno.utils.models.llama import format_message
 
 
