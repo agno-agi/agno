@@ -3076,7 +3076,7 @@ class Agent:
                 tools=tools,
                 response_format=response_format,
                 stream_events=stream_events,
-                session_state=session_state,
+                session_state=run_context.session_state,
             ):
                 yield event
 
