@@ -328,6 +328,7 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
+                            session=workflow_session,
                             **kwargs,
                         )
 
