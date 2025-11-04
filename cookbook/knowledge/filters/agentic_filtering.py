@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.utils.media import (
@@ -13,8 +13,7 @@ downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
+# Initialize PgVector
 vector_db = PgVector(
     table_name="recipes",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -27,9 +26,8 @@ knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
-    contents_db=PostgresDb(
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        knowledge_table="knowledge_contents",
+    contents_db=SqliteDb(
+        db_file="tmp/knowledge_contents.db",
     ),
 )
 

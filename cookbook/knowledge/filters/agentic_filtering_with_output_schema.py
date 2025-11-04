@@ -1,4 +1,5 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.utils.media import (
@@ -36,6 +37,9 @@ knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
+    contents_db=SqliteDb(
+        db_file="tmp/knowledge_contents.db",
+    ),
 )
 
 # Load all documents into the vector database
@@ -90,7 +94,6 @@ agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
-    debug_mode=True,
     output_schema=CSVDataOutput,
 )
 
