@@ -420,7 +420,6 @@ def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[To
 
             function_declarations.append(function_decl)
     if function_declarations:
-        print(f"Function declarations: {function_declarations[0].parameters.properties['filters']}")
         return Tool(function_declarations=function_declarations)
     else:
         return None

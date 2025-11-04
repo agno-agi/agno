@@ -15,11 +15,16 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.DOCX
 )
 
-# Cleanup Sqlite database if it already exists
+# Clean up old databases
 if os.path.exists("tmp/knowledge_contents.db"):
     os.remove("tmp/knowledge_contents.db")
+if os.path.exists("tmp/lancedb") and os.path.isdir("tmp/lancedb"):
+    from shutil import rmtree
 
-contents_db = AsyncSqliteDb(
+    rmtree(path="tmp/lancedb", ignore_errors=True)
+
+
+db = AsyncSqliteDb(
     db_file="tmp/knowledge_contents.db",
 )
 
@@ -38,7 +43,7 @@ vector_db = LanceDb(
 knowledge = Knowledge(
     name="Async Filtering",
     vector_db=vector_db,
-    contents_db=contents_db,
+    contents_db=db,
 )
 
 asyncio.run(
@@ -95,6 +100,7 @@ asyncio.run(
 # Option 1: Filters on the Agent
 # Initialize the Agent with the knowledge base and filters
 agent = Agent(
+    db=db,
     knowledge=knowledge,
     search_knowledge=True,
 )
