@@ -221,6 +221,9 @@ class RunContentEvent(BaseAgentRunEvent):
 
     event: str = RunEvent.run_content.value
     content: Optional[Any] = None
+    workflow_agent: bool = (
+        False  # Used by consumers of the events to distinguish between workflow agent and regular agent
+    )
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     model_provider_data: Optional[Dict[str, Any]] = None
@@ -263,6 +266,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -527,6 +531,7 @@ class RunOutput:
     references: Optional[List[MessageReferences]] = None
 
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 

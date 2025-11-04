@@ -33,6 +33,7 @@ async def run_accuracy_eval(
         additional_context=eval_run_input.additional_context,
         num_iterations=eval_run_input.num_iterations or 1,
         name=eval_run_input.name,
+        model=default_model,
     )
 
     result = accuracy_eval.run(print_results=False, print_summary=False)
