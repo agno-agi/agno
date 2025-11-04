@@ -263,9 +263,9 @@ class Agent:
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
-    pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -458,8 +458,8 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
-        post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -782,7 +782,6 @@ class Agent:
             self.add_culture_to_context = (
                 self.enable_agentic_culture or self.update_cultural_knowledge or self.culture_manager is not None
             )
-
     def _set_memory_manager(self) -> None:
         if self.db is None:
             log_warning("Database not provided. Memories will not be stored.")
@@ -4213,7 +4212,6 @@ class Agent:
         yield pause_event  # type: ignore
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
     async def _ahandle_agent_run_paused(
         self,
         run_response: RunOutput,
@@ -5650,7 +5648,6 @@ class Agent:
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
-
     def _resolve_run_dependencies(self, run_context: RunContext) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
@@ -6440,7 +6437,6 @@ class Agent:
         if self.db is None:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
-
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
         """Get messages for a session
 

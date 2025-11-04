@@ -336,9 +336,9 @@ class Team:
 
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
-    pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -495,8 +495,8 @@ class Team:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
-        post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Union[Model, str]] = None,
@@ -986,7 +986,7 @@ class Team:
 
     def _execute_pre_hooks(
         self,
-        hooks: Optional[List[Callable[..., Any]]],
+        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
@@ -1051,7 +1051,7 @@ class Team:
 
     async def _aexecute_pre_hooks(
         self,
-        hooks: Optional[List[Callable[..., Any]]],
+        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
@@ -1122,7 +1122,7 @@ class Team:
 
     def _execute_post_hooks(
         self,
-        hooks: Optional[List[Callable[..., Any]]],
+        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
         run_output: TeamRunOutput,
         session: TeamSession,
         run_context: RunContext,
@@ -1182,7 +1182,7 @@ class Team:
 
     async def _aexecute_post_hooks(
         self,
-        hooks: Optional[List[Callable[..., Any]]],
+        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
         run_output: TeamRunOutput,
         session: TeamSession,
         run_context: RunContext,
@@ -8815,3 +8815,4 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+
