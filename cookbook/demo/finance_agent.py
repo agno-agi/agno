@@ -2,8 +2,8 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 from db import db
 
 finance_agent = Agent(
