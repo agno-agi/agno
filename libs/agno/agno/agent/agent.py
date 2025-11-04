@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.context.manager import ContextManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -440,6 +441,8 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        compress_context: bool = False,
+        context_manager: Optional[Any] = None,  # TYPE_CHECKING: "ContextManager"
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -542,6 +545,10 @@ class Agent:
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_to_context = add_session_summary_to_context
+
+        # Context compression settings
+        self.compress_context = compress_context
+        self.context_manager = context_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -813,6 +820,16 @@ class Agent:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
+    def _set_context_manager(self) -> None:
+        if self.compress_context and self.context_manager is None:
+            log_info("Setting default context manager")
+            self.context_manager = ContextManager(model=self.model)
+
+        if self.context_manager is not None:
+            if self.context_manager.model is None:
+                log_info(f"Setting context manager model to the agent model : {self.model.id}")
+                self.context_manager.model = self.model
+
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -842,6 +859,9 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
+        if self.compress_context or self.context_manager is not None:
+            log_info("Setting context manager")
+            self._set_context_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -1031,6 +1051,10 @@ class Agent:
 
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
+
+            if self.compress_context and self.context_manager:
+                self.model.context_manager = self.context_manager
+
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1875,6 +1899,10 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 9. Generate a response from the Model (includes running function calls)
+            # Pass context manager to model for mid-run compression
+            if self.compress_context and self.context_manager:
+                self.model.context_manager = self.context_manager
+
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -4719,6 +4747,10 @@ class Agent:
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
+        # Pass context manager to model for mid-run compression
+        if self.compress_context and self.context_manager:
+            self.model.context_manager = self.context_manager
+
         reasoning_state = {
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
@@ -4809,6 +4841,10 @@ class Agent:
         if self.should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
+
+        # Pass context manager to model for mid-run compression
+        if self.compress_context and self.context_manager:
+            self.model.context_manager = self.context_manager
 
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,

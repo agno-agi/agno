@@ -145,6 +145,9 @@ class Model(ABC):
     cache_ttl: Optional[int] = None
     cache_dir: Optional[str] = None
 
+    # Context compression manager (set by Agent for mid-run compression)
+    context_manager: Optional[Any] = None  # TYPE_CHECKING: "ContextManager"
+
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
@@ -436,6 +439,13 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
+                # Compress tool results if needed (mid-run compression)
+                if self.context_manager and self.context_manager.should_compress(messages):
+                    messages[:] = self.context_manager.compress_tool_results(
+                        messages=messages,
+                        keep_last_n=self.context_manager.tool_compression_threshold,
+                    )
+
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
                     self._handle_function_call_media(
@@ -598,6 +608,14 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
+
+                # Compress tool results if needed (mid-run compression)
+                if self.context_manager and self.context_manager.should_compress(messages):
+                    log_debug("Compressing tool results mid-run")
+                    messages[:] = await self.context_manager.acompress_tool_results(
+                        messages=messages,
+                        keep_last_n=self.context_manager.tool_compression_threshold,
+                    )
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -959,6 +977,13 @@ class Model(ABC):
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+
+                # Compress tool results if needed (mid-run compression)
+                if self.context_manager and self.context_manager.should_compress(messages):
+                    messages[:] = self.context_manager.compress_tool_results(
+                        messages=messages,
+                        keep_last_n=self.context_manager.tool_compression_threshold,
+                    )
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
