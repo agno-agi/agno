@@ -44,7 +44,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
             input=messages,
             session_id=run_input.thread_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             user_id=user_id,
             session_state=run_input.state,
         )
@@ -81,7 +81,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
             input=messages,
             session_id=input.thread_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_steps=True,
             user_id=user_id,
             session_state=input.state,
         )
@@ -103,7 +103,10 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
 
     encoder = EventEncoder()
 
-    @router.post("/agui")
+    @router.post(
+        "/agui",
+        name="run_agent",
+    )
     async def run_agent_agui(run_input: RunAgentInput):
         async def event_generator():
             if agent:

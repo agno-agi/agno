@@ -61,7 +61,7 @@ team = Team(
 stream_generator = team.run(
     "Give me a stock report for NVDA",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 # Consume the streaming events and get the final response

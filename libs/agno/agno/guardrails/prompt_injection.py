@@ -32,6 +32,7 @@ class PromptInjectionGuardrail(BaseGuardrail):
             "ignore safeguards",
             "admin override",
             "root access",
+            "forget everything",
         ]
 
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
