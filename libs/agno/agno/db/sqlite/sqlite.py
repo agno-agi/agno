@@ -2313,10 +2313,8 @@ class SqliteDb(BaseDb):
                 return
 
             with self.Session() as sess, sess.begin():
-                # Use INSERT OR IGNORE to avoid duplicate spans
                 for span in spans:
                     stmt = sqlite.insert(table).values(span.to_dict())
-                    stmt = stmt.on_conflict_do_nothing(index_elements=["span_id"])
                     sess.execute(stmt)
 
         except Exception as e:
