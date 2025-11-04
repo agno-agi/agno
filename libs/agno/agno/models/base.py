@@ -1220,7 +1220,7 @@ class Model(ABC):
 
         should_yield = False
         if model_response_delta.role is not None:
-            stream_data.response_role = model_response_delta.role
+            stream_data.response_role = model_response_delta.role  # type: ignore
 
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
