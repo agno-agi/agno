@@ -28,6 +28,7 @@ class Trace:
     session_id: Optional[str]
     user_id: Optional[str]
     agent_id: Optional[str]
+    team_id: Optional[str]
 
     created_at: int
 
@@ -52,6 +53,7 @@ class Trace:
             user_id=data.get("user_id"),
             agent_id=data.get("agent_id"),
             created_at=data["created_at"],
+            team_id=data.get("team_id"),
         )
 
 
@@ -197,6 +199,8 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     # Try to extract agent_id from the span name or attributes
     agent_id = attrs.get("agent_id") or attrs.get("agno.agent.id")
 
+    team_id = attrs.get("team_id") or attrs.get("agno.team.id")
+
     return Trace(
         trace_id=trace_id,
         name=root_span.name,
@@ -210,5 +214,6 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
         session_id=session_id,
         user_id=user_id,
         agent_id=agent_id,
+        team_id=team_id,
         created_at=int(time()),
     )

@@ -2047,12 +2047,15 @@ class SqliteDb(BaseDb):
                         update_values["user_id"] = trace.user_id
                     if trace.agent_id is not None:
                         update_values["agent_id"] = trace.agent_id
+                    if trace.team_id is not None:
+                        update_values["team_id"] = trace.team_id
 
                     log_debug(
                         f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
                         f"session_id={update_values.get('session_id', 'unchanged')}, "
                         f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}"
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
+                        f"team_id={update_values.get('team_id', 'unchanged')}"
                     )
 
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
@@ -2120,6 +2123,7 @@ class SqliteDb(BaseDb):
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
@@ -2133,6 +2137,7 @@ class SqliteDb(BaseDb):
             session_id: Filter by session ID.
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
             status: Filter by status (OK, ERROR, UNSET).
             start_time: Filter traces starting after this timestamp (nanoseconds).
             end_time: Filter traces ending before this timestamp (nanoseconds).
@@ -2170,6 +2175,8 @@ class SqliteDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
                 if status:
                     base_stmt = base_stmt.where(table.c.status == status)
                 if start_time:

@@ -1772,6 +1772,7 @@ def get_base_router(
                                     "session_id": "session456",
                                     "user_id": "user789",
                                     "agent_id": "agent_stock",
+                                    "team_id": None,
                                     "created_at": 1234567890,
                                 }
                             ],
@@ -1792,6 +1793,7 @@ def get_base_router(
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
@@ -1815,6 +1817,7 @@ def get_base_router(
                 session_id=session_id,
                 user_id=user_id,
                 agent_id=agent_id,
+                team_id=team_id,
                 status=status,
                 start_time=start_time,
                 end_time=end_time,
@@ -1925,6 +1928,7 @@ def get_base_router(
                                     "session_id": "session456",
                                     "user_id": "user789",
                                     "agent_id": "stock_agent",
+                                    "team_id": None,
                                     "created_at": 1234567890,
                                     "tree": [
                                         {

@@ -106,6 +106,8 @@ TRACE_TABLE_SCHEMA = {
     "session_id": {"type": String, "nullable": True, "index": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
 }
 

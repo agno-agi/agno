@@ -1162,6 +1162,7 @@ class TraceSummary(BaseModel):
     session_id: Optional[str] = Field(None, description="Associated session ID")
     user_id: Optional[str] = Field(None, description="Associated user ID")
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
+    team_id: Optional[str] = Field(None, description="Associated team ID")
     created_at: int = Field(..., description="Unix timestamp when trace was created")
 
     @classmethod
@@ -1186,6 +1187,7 @@ class TraceSummary(BaseModel):
             session_id=trace.session_id,
             user_id=trace.user_id,
             agent_id=trace.agent_id,
+            team_id=trace.team_id,
             created_at=trace.created_at,
         )
 
@@ -1218,6 +1220,7 @@ class TraceDetail(BaseModel):
     session_id: Optional[str] = Field(None, description="Associated session ID")
     user_id: Optional[str] = Field(None, description="Associated user ID")
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
+    team_id: Optional[str] = Field(None, description="Associated team ID")
     created_at: int = Field(..., description="Unix timestamp when trace was created")
     tree: List[TraceNode] = Field(..., description="Hierarchical tree of spans (root nodes)")
 
@@ -1269,6 +1272,7 @@ class TraceDetail(BaseModel):
             session_id=trace.session_id,
             user_id=trace.user_id,
             agent_id=trace.agent_id,
+            team_id=trace.team_id,
             created_at=trace.created_at,
             tree=span_tree,
         )
