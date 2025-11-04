@@ -27,7 +27,7 @@ def get_default_sync_client() -> httpx.Client:
     global _global_sync_client
     if _global_sync_client is None or _global_sync_client.is_closed:
         _global_sync_client = httpx.Client(
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200), http2=True
+            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200), http2=True, follow_redirects=True
         )
     return _global_sync_client
 
@@ -41,7 +41,7 @@ def get_default_async_client() -> httpx.AsyncClient:
     global _global_async_client
     if _global_async_client is None or _global_async_client.is_closed:
         _global_async_client = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200), http2=True
+            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200), http2=True, follow_redirects=True
         )
     return _global_async_client
 

@@ -98,8 +98,8 @@ class TestOpenAIChatClientCaching:
         client2 = model.get_client()
 
         assert client1 is client2, "OpenAI sync clients should be cached"
-        assert model.openai_client is not None
-        assert model.openai_client is client1
+        assert model.client is not None
+        assert model.client is client1
 
     def test_async_client_is_cached(self):
         """Verify that OpenAIChat caches the async client."""
@@ -109,8 +109,8 @@ class TestOpenAIChatClientCaching:
         client2 = model.get_async_client()
 
         assert client1 is client2, "OpenAI async clients should be cached"
-        assert model.openai_async_client is not None
-        assert model.openai_async_client is client1
+        assert model.async_client is not None
+        assert model.async_client is client1
 
     def test_multiple_models_share_global_httpx_client(self):
         """Verify that multiple models can share the same global httpx client."""

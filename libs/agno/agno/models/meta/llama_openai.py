@@ -61,18 +61,3 @@ class LlamaOpenAI(OpenAILike):
             Dict[str, Any]: The formatted message.
         """
         return format_message(message, openai_like=True)
-
-    def get_async_client(self):
-        """Override to provide custom httpx client that properly handles redirects"""
-        # Return cached client if it exists
-        if self.openai_async_client is not None:
-            return self.openai_async_client
-
-        client_params = self._get_client_params()
-
-        # Use global async client - it's configured with proper limits
-        client_params["http_client"] = get_default_async_client()
-
-        # Create and cache the client
-        self.openai_async_client = AsyncOpenAIClient(**client_params)
-        return self.openai_async_client

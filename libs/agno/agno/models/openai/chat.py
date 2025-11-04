@@ -83,8 +83,8 @@ class OpenAIChat(Model):
     client_params: Optional[Dict[str, Any]] = None
 
     # Cached clients to avoid recreating them on every request
-    openai_client: Optional[OpenAIClient] = None
-    openai_async_client: Optional[AsyncOpenAIClient] = None
+    client: Optional[OpenAIClient] = None
+    async_client: Optional[AsyncOpenAIClient] = None
 
     # The role to map the message role to.
     default_role_map = {
@@ -129,9 +129,10 @@ class OpenAIChat(Model):
             OpenAIClient: An instance of the OpenAI client.
         """
         # Return cached client if it exists and is not closed
-        if self.openai_client is not None and not self.openai_client.is_closed():
-            return self.openai_client
+        if self.client is not None and not self.client.is_closed():
+            return self.client
 
+        log_debug(f"Creating new sync OpenAI client for model {self.id}")
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.Client):
@@ -145,8 +146,8 @@ class OpenAIChat(Model):
             client_params["http_client"] = get_default_sync_client()
 
         # Create and cache the client
-        self.openai_client = OpenAIClient(**client_params)
-        return self.openai_client
+        self.client = OpenAIClient(**client_params)
+        return self.client
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
@@ -155,10 +156,11 @@ class OpenAIChat(Model):
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        # Return cached client if it exists
-        if self.openai_async_client is not None:
-            return self.openai_async_client
+        # Return cached client if it exists and is not closed
+        if self.async_client is not None and not self.async_client.is_closed():
+            return self.async_client
 
+        log_debug(f"Creating new async OpenAI client for model {self.id}")
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.AsyncClient):
@@ -174,8 +176,8 @@ class OpenAIChat(Model):
             client_params["http_client"] = get_default_async_client()
 
         # Create and cache the client
-        self.openai_async_client = AsyncOpenAIClient(**client_params)
-        return self.openai_async_client
+        self.async_client = AsyncOpenAIClient(**client_params)
+        return self.async_client
 
     def get_request_params(
         self,
