@@ -46,7 +46,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.team.team import Team
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -454,21 +454,22 @@ class AgentOS:
 
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
+                log_error(f"HTTP exception: {exc.status_code} {exc.detail}")
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"detail": str(exc.detail)},
                 )
 
-            async def general_exception_handler(request: Request, call_next):
-                try:
-                    return await call_next(request)
-                except Exception as e:
-                    return JSONResponse(
-                        status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
-                        content={"detail": str(e)},
-                    )
+            @fastapi_app.exception_handler(Exception)
+            async def general_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+                import traceback
 
-            fastapi_app.middleware("http")(general_exception_handler)
+                log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
+
+                return JSONResponse(
+                    status_code=getattr(exc, "status_code", 500),
+                    content={"detail": str(exc)},
+                )
 
         # Update CORS middleware
         update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
@@ -500,7 +501,7 @@ class AgentOS:
                 # Skip conflicting AgentOS routes, prefer user's existing routes
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
-                    logger.debug(
+                    log_debug(
                         f"Skipping conflicting AgentOS route: {methods_str} {conflict['path']} - "
                         f"Using existing custom route instead"
                     )
@@ -519,7 +520,7 @@ class AgentOS:
                 # Log warnings but still add all routes (AgentOS routes will override)
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
-                    logger.warning(
+                    log_warning(
                         f"Route conflict detected: {methods_str} {conflict['path']} - "
                         f"AgentOS route will override existing custom route"
                     )
