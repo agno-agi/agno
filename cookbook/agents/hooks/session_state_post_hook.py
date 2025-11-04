@@ -66,7 +66,7 @@ agent.print_response(
     session_id="topics_analyzer_session",
 )
 print(
-    f"Current session state, after the first run: {agent.get_session_state(session_id='test_session')}"
+    f"Current session state, after the first run: {agent.get_session_state(session_id='topics_analyzer_session')}"
 )
 
 agent.print_response(
@@ -74,5 +74,5 @@ agent.print_response(
     session_id="topics_analyzer_session",
 )
 print(
-    f"Current session state, after the second run: {agent.get_session_state(session_id='test_session')}"
+    f"Current session state, after the second run: {agent.get_session_state(session_id='topics_analyzer_session')}"
 )
