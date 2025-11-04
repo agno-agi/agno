@@ -8,6 +8,7 @@ from agno.utils.log import logger
 
 try:
     from vllm import LLM  # type: ignore
+    from vllm.outputs import EmbeddingRequestOutput  # type: ignore
 except ImportError:
     raise ImportError("`vllm` not installed. Please install using `pip install vllm`.")
 
@@ -37,7 +38,7 @@ class VLLMEmbedder(Embedder):
         - Ref: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
     """
 
-    id: str = "intfloat/e5-mistral-7b-instruct"
+    id: str = "sentence-transformers/all-MiniLM-L6-v2"
     dimensions: int = 4096
     # Local mode parameters
     enforce_eager: bool = True
@@ -99,7 +100,7 @@ class VLLMEmbedder(Embedder):
         self.async_remote_client = AsyncOpenAI(**_client_params)
         return self.async_remote_client
 
-    def _create_embedding_local(self, text: str) -> Optional[Any]:
+    def _create_embedding_local(self, text: str) -> Optional[EmbeddingRequestOutput]:
         """Create embedding using local VLLM."""
         try:
             outputs = self._get_vllm_client().embed([text])
@@ -194,8 +195,12 @@ class VLLMEmbedder(Embedder):
                 return [], None
         else:
             # Local mode: use thread executor for CPU-bound operations
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
+            try:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
+            except Exception as e:
+                logger.warning(f"Error in async local embedding: {e}")
+                return [], None
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
