@@ -141,10 +141,13 @@ def redis_db(import_redisdb, mock_embedder):
     db.index = idx
     return db, idx
 
+
 @pytest.fixture()
 def import_knowledge():
     from agno.knowledge.knowledge import Knowledge
+
     return Knowledge
+
 
 @pytest.fixture()
 def create_knowledge(import_knowledge, redis_db):
@@ -157,6 +160,7 @@ def create_knowledge(import_knowledge, redis_db):
     )
     return knowledge
 
+
 def test_knowlwedge_add_content(create_knowledge):
     knowledge = create_knowledge
     try:
@@ -168,9 +172,10 @@ def test_knowlwedge_add_content(create_knowledge):
         )
 
         assert result is None or result is not False
-    
+
     except Exception as e:
         pytest.fail(f"add_content raised an unexpected exception: {e}")
+
 
 def test_create_and_exists(redis_db):
     db, idx = redis_db

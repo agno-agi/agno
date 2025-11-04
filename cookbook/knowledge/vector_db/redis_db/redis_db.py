@@ -1,3 +1,12 @@
+"""
+This example shows how to use Redis as a vector database with Agno.
+
+To get started, either set the REDIS_URL environment variable to your Redis connection string,
+or start the local Redis docker container using the following command:
+./cookbook/scripts/run_redis.sh
+
+"""
+
 import os
 
 from agno.agent import Agent

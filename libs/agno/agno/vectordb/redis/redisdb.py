@@ -10,9 +10,7 @@ try:
     from redisvl.redis.utils import array_to_buffer, convert_bytes
     from redisvl.schema import IndexSchema
 except ImportError:
-    raise ImportError(
-        "`redis` and `redisvl` not installed. Please install using `pip install redis redisvl`"
-    )
+    raise ImportError("`redis` and `redisvl` not installed. Please install using `pip install redis redisvl`")
 
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
@@ -113,9 +111,7 @@ class RedisDB(VectorDb):
                 raise ValueError("redis_url must be provided for async operations")
             url: str = self.redis_url
             self._async_redis_client = AsyncRedis.from_url(url)
-            self._async_index = AsyncSearchIndex(
-                schema=self.schema, redis_client=self._async_redis_client
-            )
+            self._async_index = AsyncSearchIndex(schema=self.schema, redis_client=self._async_redis_client)
         return self._async_index
 
     def _get_schema(self):
@@ -316,9 +312,7 @@ class RedisDB(VectorDb):
                 parsed_documents.append(parsed_doc)
 
             self.index.load(parsed_documents, id_field="id")
-            log_debug(
-                f"Inserted {len(documents)} documents with content_hash: {content_hash}"
-            )
+            log_debug(f"Inserted {len(documents)} documents with content_hash: {content_hash}")
         except Exception as e:
             logger.error(f"Error inserting documents: {e}")
             raise
@@ -338,9 +332,7 @@ class RedisDB(VectorDb):
                 parsed_doc["content_hash"] = content_hash
                 parsed_documents.append(parsed_doc)
             await async_index.load(parsed_documents, id_field="id")
-            log_debug(
-                f"Inserted {len(documents)} documents with content_hash: {content_hash}"
-            )
+            log_debug(f"Inserted {len(documents)} documents with content_hash: {content_hash}")
         except Exception as e:
             logger.error(f"Error inserting documents: {e}")
             raise
@@ -411,9 +403,7 @@ class RedisDB(VectorDb):
             logger.error(f"Error upserting documents: {e}")
             raise
 
-    def search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search for documents using the specified search type."""
         try:
             if self.search_type == SearchType.vector:
@@ -438,9 +428,7 @@ class RedisDB(VectorDb):
         """Perform vector similarity search."""
         try:
             # Get query embedding
-            query_embedding = array_to_buffer(
-                self.embedder.get_embedding(query), "float32"
-            )
+            query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
 
             # TODO: do we want to pass back the embedding?
             # Create vector query
@@ -490,9 +478,7 @@ class RedisDB(VectorDb):
         """Perform hybrid search combining vector and keyword search."""
         try:
             # Get query embedding
-            query_embedding = array_to_buffer(
-                self.embedder.get_embedding(query), "float32"
-            )
+            query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
 
             # Create vector query
             vector_query = HybridQuery(
@@ -663,9 +649,7 @@ class RedisDB(VectorDb):
                 if key:
                     deleted_count += self.index.drop_keys(key)
 
-            log_debug(
-                f"Deleted {deleted_count} documents with content_id '{content_id}'"
-            )
+            log_debug(f"Deleted {deleted_count} documents with content_id '{content_id}'")
             return deleted_count > 0
         except Exception as e:
             logger.error(f"Error deleting documents by content_id: {e}")
