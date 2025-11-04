@@ -23,10 +23,6 @@ jobs:
       matrix:
         python-version: ["3.10"]
 
-    defaults:
-      run:
-        working-directory: libs/agno
-
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -36,13 +32,13 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
-          python -m pip install -e .[dev]
+          python -m pip install -e "./libs/agno/"[dev]
       - name: Ruff check
         run: |
           ruff check .
       - name: Mypy
         run: |
-          mypy . --config-file pyproject.toml
+          mypy . --config-file ./libs/agno/pyproject.toml
 
   style-check-cookbook:
     runs-on: ubuntu-latest
@@ -50,10 +46,6 @@ jobs:
       matrix:
         python-version: ["3.10"]
 
-    defaults:
-      run:
-        working-directory: cookbook
-
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -63,13 +55,10 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest
-          pip install --no-deps -r ../libs/agno/requirements.txt
+          python -m pip install -e "./libs/agno/"[dev]
       - name: Ruff check
         run: |
-          ruff check .
+          ruff check ./cookbook/
       # - name: Mypy
       #   run: |
       #     mypy .
@@ -81,10 +70,6 @@ jobs:
       matrix:
         python-version: ["3.10"]
 
-    defaults:
-      run:
-        working-directory: libs/agno_infra
-
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -94,16 +79,13 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest
-          pip install -r requirements.txt
+          python -m pip install -e "./libs/agno_infra"[dev]
       - name: Ruff check
         run: |
-          ruff check .
+          ruff check ./libs/agno_infra/
       - name: Mypy
         run: |
-          mypy .
+          mypy . --config-file ./libs/agno_infra/pyproject.toml
 
   tests:
     runs-on: ubuntu-latest

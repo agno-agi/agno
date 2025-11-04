@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy==1.17.1", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff==0.12.9", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
+dev = ["mypy==1.17.1", "ruff==0.12.9", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
 

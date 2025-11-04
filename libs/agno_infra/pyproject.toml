@@ -43,10 +43,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "mypy",
+  "mypy==1.17.1",
+  "ruff==0.12.9",
   "pytest",
   "pytest-asyncio",
-  "ruff",
 ]
 
 # Dependencies for Docker

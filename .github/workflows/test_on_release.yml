@@ -5,7 +5,6 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -18,42 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  style-check:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9"]
-      fail-fast: true # Stop all matrix jobs if one fails
-
-    defaults:
-      run:
-        working-directory: libs/agno
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-venv
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest types-pyyaml
-          pip install --no-deps -r requirements.txt
-      - name: Ruff format
-        run: |
-          ruff format .
-      - name: Ruff check
-        run: |
-          ruff check .
-      - name: Mypy
-        run: |
-          mypy .
-
   # Run tests for OpenAI
   test-openai:
     runs-on: ubuntu-latest
