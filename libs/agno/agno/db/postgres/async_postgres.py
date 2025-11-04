@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
@@ -23,6 +23,9 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 try:
     from sqlalchemy import Index, String, UniqueConstraint, func, update
@@ -1902,7 +1905,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
 
     # --- Traces ---
-    async def create_trace(self, trace) -> None:
+    async def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
@@ -1989,7 +1992,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         raise NotImplementedError
 
     # --- Spans ---
-    async def create_span(self, span) -> None:
+    async def create_span(self, span: "Span") -> None:
         """Create a single span in the database.
 
         Args:

@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -25,6 +25,9 @@ from agno.db.utils import deserialize_session_json_fields, serialize_session_jso
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 try:
     from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
@@ -1998,7 +2001,7 @@ class SqliteDb(BaseDb):
 
     # -- Trace methods --
 
-    def create_trace(self, trace) -> None:
+    def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
@@ -2283,7 +2286,7 @@ class SqliteDb(BaseDb):
 
     # -- Span methods --
 
-    def create_span(self, span) -> None:
+    def create_span(self, span: "Span") -> None:
         """Create a single span in the database.
 
         Args:

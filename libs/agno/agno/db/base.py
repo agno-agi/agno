@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
 from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -282,7 +285,7 @@ class BaseDb(ABC):
 
     # --- Traces ---
     @abstractmethod
-    def create_trace(self, trace) -> None:
+    def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
@@ -373,7 +376,7 @@ class BaseDb(ABC):
 
     # --- Spans ---
     @abstractmethod
-    def create_span(self, span) -> None:
+    def create_span(self, span: "Span") -> None:
         """Create a single span in the database.
 
         Args:

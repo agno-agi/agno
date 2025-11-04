@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
@@ -23,6 +23,9 @@ from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 try:
     import asyncio
@@ -1999,7 +2002,7 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     # --- Traces ---
-    async def create_trace(self, trace) -> None:
+    async def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
@@ -2064,7 +2067,7 @@ class AsyncMongoDb(AsyncBaseDb):
         raise NotImplementedError
 
     # --- Spans ---
-    async def create_span(self, span) -> None:
+    async def create_span(self, span: "Span") -> None:
         """Create a single span in the database.
 
         Args:

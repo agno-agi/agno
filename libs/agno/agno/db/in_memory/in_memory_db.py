@@ -1,7 +1,7 @@
 import time
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -19,6 +19,9 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 
 class InMemoryDb(BaseDb):
@@ -1156,7 +1159,7 @@ class InMemoryDb(BaseDb):
             raise e
 
     # --- Traces ---
-    def create_trace(self, trace) -> None:
+    def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
@@ -1243,7 +1246,7 @@ class InMemoryDb(BaseDb):
         raise NotImplementedError
 
     # --- Spans ---
-    def create_span(self, span) -> None:
+    def create_span(self, span: "Span") -> None:
         """Create a single span in the database.
 
         Args:

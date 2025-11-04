@@ -1,10 +1,13 @@
 from types import MethodType
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pytest
 
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager, UserMemory
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 
 class DummyAsyncMemoryDb(AsyncBaseDb):
@@ -130,7 +133,7 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         raise NotImplementedError
 
     # --- Traces ---
-    async def create_trace(self, trace) -> None:
+    async def create_trace(self, trace: "Trace") -> None:
         raise NotImplementedError
 
     async def get_trace(self, trace_id: str):
@@ -149,8 +152,11 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     ) -> List:
         raise NotImplementedError
 
+    async def get_trace_stats(self, *args, **kwargs):
+        raise NotImplementedError
+
     # --- Spans ---
-    async def create_span(self, span) -> None:
+    async def create_span(self, span: "Span") -> None:
         raise NotImplementedError
 
     async def create_spans(self, spans: List) -> None:
