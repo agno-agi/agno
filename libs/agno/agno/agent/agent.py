@@ -5383,7 +5383,7 @@ class Agent:
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
                             async_mode=False,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
                 else:
@@ -5391,7 +5391,7 @@ class Agent:
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
                             async_mode=False,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
 
@@ -5471,7 +5471,7 @@ class Agent:
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
                             async_mode=True,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
                 else:
@@ -5479,7 +5479,7 @@ class Agent:
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
                             async_mode=True,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
 
@@ -7109,7 +7109,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            valid_filters = await self.knowledge.aget_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -8104,7 +8104,7 @@ class Agent:
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:  # type: ignore
@@ -10216,7 +10216,7 @@ class Agent:
                 session.session_data = {"session_state": run_context.session_state}
 
         # Save session to memory
-        self.save_session(session=session)
+        await self.asave_session(session=session)
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
         """
