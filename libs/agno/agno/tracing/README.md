@@ -75,14 +75,13 @@ agent.run (root span)
 # Batch processing (default, better performance)
 setup_tracing(
     db=db,
-    use_batch_processor=True,
+    batch_processing=True,
     max_queue_size=2048,
     max_export_batch_size=512,
     schedule_delay_millis=5000,  # Export every 5 seconds
 )
 
-# Simple processing (immediate export, for debugging)
-setup_tracing(db=db, use_batch_processor=False)
+setup_tracing(db=db, batch_processing=False)
 ```
 
 ## Querying Traces

@@ -25,7 +25,7 @@ except ImportError:
 
 def setup_tracing(
     db: Union[BaseDb, AsyncBaseDb],
-    use_batch_processor: bool = False,
+    batch_processing: bool = False,
     max_queue_size: int = 2048,
     max_export_batch_size: int = 512,
     schedule_delay_millis: int = 5000,
@@ -43,7 +43,7 @@ def setup_tracing(
 
     Args:
         db: Database instance to store traces (sync or async)
-        use_batch_processor: If True, use BatchSpanProcessor for better performance
+        batch_processing: If True, use BatchSpanProcessor for better performance
                             If False, use SimpleSpanProcessor (immediate export)
         max_queue_size: Maximum queue size for batch processor
         max_export_batch_size: Maximum batch size for export
@@ -80,7 +80,7 @@ def setup_tracing(
 
         # Configure span processor
         processor: SpanProcessor
-        if use_batch_processor:
+        if batch_processing:
             processor = BatchSpanProcessor(
                 exporter,
                 max_queue_size=max_queue_size,
