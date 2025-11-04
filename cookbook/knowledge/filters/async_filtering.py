@@ -15,7 +15,7 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.DOCX
 )
 
-# Initialize PostgresDB
+# Cleanup Sqlite database if it already exists
 if os.path.exists("tmp/knowledge_contents.db"):
     os.remove("tmp/knowledge_contents.db")
 
