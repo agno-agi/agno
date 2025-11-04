@@ -100,8 +100,6 @@ TRACE_TABLE_SCHEMA = {
     "start_time_ns": {"type": BigInteger, "nullable": False, "index": True},
     "end_time_ns": {"type": BigInteger, "nullable": False},
     "duration_ms": {"type": BigInteger, "nullable": False},
-    "total_spans": {"type": BigInteger, "nullable": False},
-    "error_count": {"type": BigInteger, "nullable": False, "default": 0},
     "run_id": {"type": String, "nullable": True, "index": True},
     "session_id": {"type": String, "nullable": True, "index": True},
     "user_id": {"type": String, "nullable": True, "index": True},

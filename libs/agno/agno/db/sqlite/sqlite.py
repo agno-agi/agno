@@ -2007,6 +2007,35 @@ class SqliteDb(BaseDb):
 
     # -- Trace methods --
 
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, func, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
     def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
@@ -2019,18 +2048,11 @@ class SqliteDb(BaseDb):
                 return
 
             with self.Session() as sess, sess.begin():
-                # First, check if trace exists and get current total_spans
+                # Check if trace exists
                 existing = sess.execute(table.select().where(table.c.trace_id == trace.trace_id)).fetchone()
 
                 if existing:
-                    # Update with incremental values
-                    current_total = existing.total_spans
-                    current_errors = existing.error_count
-
-                    # Build update values - preserve non-null context fields
                     update_values = {
-                        "total_spans": current_total + trace.total_spans,
-                        "error_count": current_errors + trace.error_count,
                         "end_time_ns": trace.end_time_ns,
                         "duration_ms": trace.duration_ms,
                         "status": trace.status,
@@ -2055,14 +2077,16 @@ class SqliteDb(BaseDb):
                         f"session_id={update_values.get('session_id', 'unchanged')}, "
                         f"user_id={update_values.get('user_id', 'unchanged')}, "
                         f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}"
+                        f"team_id={update_values.get('team_id', 'unchanged')}, "
                     )
 
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     sess.execute(stmt)
                 else:
-                    # Insert new trace
-                    stmt = sqlite.insert(table).values(trace.to_dict())
+                    trace_dict = trace.to_dict()
+                    trace_dict.pop("total_spans", None)
+                    trace_dict.pop("error_count", None)
+                    stmt = sqlite.insert(table).values(trace_dict)
                     sess.execute(stmt)
 
         except Exception as e:
@@ -2094,8 +2118,12 @@ class SqliteDb(BaseDb):
             if table is None:
                 return None
 
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
             with self.Session() as sess:
-                stmt = table.select()
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
 
                 if trace_id:
                     stmt = stmt.where(table.c.trace_id == trace_id)
@@ -2161,9 +2189,12 @@ class SqliteDb(BaseDb):
                 log_debug(" Traces table not found")
                 return [], 0
 
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
             with self.Session() as sess:
-                # Build base query with filters
-                base_stmt = table.select()
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
 
                 # Apply filters
                 if run_id:
