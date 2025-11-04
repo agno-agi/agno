@@ -66,7 +66,7 @@ jobs:
           python -m pip install -e "../libs/agno/"[dev]
       - name: Ruff check
         run: |
-          ruff check . --config-file ../libs/agno/pyproject.toml
+          ruff check .
       # - name: Mypy
       #   run: |
       #     mypy .
