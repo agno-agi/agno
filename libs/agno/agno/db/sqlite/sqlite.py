@@ -48,8 +48,8 @@ class SqliteDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        trace_table: Optional[str] = None,
-        span_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -71,7 +71,8 @@ class SqliteDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
-            trace_table (Optional[str]): Name of the table to store trace spans.
+            traces_table (Optional[str]): Name of the table to store trace spans.
+            spans_table (Optional[str]): Name of the table to store span events.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -89,8 +90,8 @@ class SqliteDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            trace_table=trace_table,
-            span_table=span_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -241,20 +242,20 @@ class SqliteDb(BaseDb):
             return self.knowledge_table
 
         elif table_type == "traces":
-            self.trace_table = self._get_or_create_table(
+            self.traces_table = self._get_or_create_table(
                 table_name=self.trace_table_name,
                 table_type="traces",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.trace_table
+            return self.traces_table
 
         elif table_type == "spans":
-            self.span_table = self._get_or_create_table(
+            self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
                 table_type="spans",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.span_table
+            return self.spans_table
 
         elif table_type == "culture":
             self.culture_table = self._get_or_create_table(

@@ -28,8 +28,8 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        trace_table: Optional[str] = None,
-        span_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -39,8 +39,8 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
-        self.trace_table_name = trace_table or "agno_traces"
-        self.span_table_name = span_table or "agno_spans"
+        self.trace_table_name = traces_table or "agno_traces"
+        self.span_table_name = spans_table or "agno_spans"
 
     # --- Sessions ---
     @abstractmethod
@@ -463,8 +463,8 @@ class AsyncBaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        trace_table: Optional[str] = None,
-        span_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -473,8 +473,8 @@ class AsyncBaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
-        self.trace_table_name = trace_table or "agno_traces"
-        self.span_table_name = span_table or "agno_spans"
+        self.trace_table_name = traces_table or "agno_traces"
+        self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
 
     # --- Sessions ---
