@@ -480,7 +480,6 @@ class TeamResponse(BaseModel):
             session=TeamSession(session_id=str(uuid4()), session_data={}),
             run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
-            session_state={},
             team_run_context={},
             check_mcp_tools=False,
         )
