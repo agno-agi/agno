@@ -52,6 +52,8 @@ class MessageData:
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
+    
+    response_metrics: Optional[Metrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -842,14 +844,11 @@ class Model(ABC):
             ):
                 yield model_response_delta
 
-                # Add role to assistant message
-                if model_response_delta.role is not None:
-                    assistant_message.role = model_response_delta.role
-
-                if model_response_delta.response_usage is not None:
-                    assistant_message.metrics += model_response_delta.response_usage
-
             # Populate assistant message from stream data after the stream ends
+            if stream_data.response_role is not None:
+                assistant_message.role = stream_data.response_role
+            if stream_data.response_metrics is not None:
+                assistant_message.metrics = stream_data.response_metrics
             if stream_data.response_content:
                 assistant_message.content = stream_data.response_content
             if stream_data.response_reasoning_content:
@@ -1050,14 +1049,11 @@ class Model(ABC):
             ):
                 yield model_response_delta
 
-                # Add role to assistant message
-                if model_response_delta.role is not None:
-                    assistant_message.role = model_response_delta.role
-
-                if model_response_delta.response_usage is not None:
-                    assistant_message.metrics += model_response_delta.response_usage
-
             # Populate assistant message from stream data after the stream ends
+            if stream_data.role is not None:
+                assistant_message.role = stream_data.role
+            if stream_data.response_metrics is not None:
+                assistant_message.metrics = stream_data.response_metrics
             if stream_data.response_content:
                 assistant_message.content = stream_data.response_content
             if stream_data.response_reasoning_content:
@@ -1238,6 +1234,14 @@ class Model(ABC):
         """Update the stream data and assistant message with the model response."""
 
         should_yield = False
+        if model_response_delta.role is not None:
+            stream_data.response_role = model_response_delta.role
+
+        if model_response_delta.response_usage is not None:
+            if stream_data.response_metrics is None:
+                stream_data.response_metrics = Metrics()
+            stream_data.response_metrics += model_response_delta.response_usage
+            
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
