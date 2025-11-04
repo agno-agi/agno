@@ -187,9 +187,6 @@ class AgentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
 
-    class Config:
-        exclude_none = True
-
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -478,12 +475,14 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
+        run_id = str(uuid4())
+        session_id = str(uuid4())
         _tools = team._determine_tools_for_model(
             model=team.model,  # type: ignore
-            session=TeamSession(session_id=str(uuid4()), session_data={}),
-            run_response=TeamRunOutput(run_id=str(uuid4())),
+            session=TeamSession(session_id=session_id, session_data={}),
+            run_response=TeamRunOutput(run_id=run_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, session_state={}),
             async_mode=True,
-            session_state={},
             team_run_context={},
             check_mcp_tools=False,
         )
