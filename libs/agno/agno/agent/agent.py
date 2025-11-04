@@ -2336,7 +2336,7 @@ class Agent:
             await self._acleanup_and_store(
                 run_response=run_response,
                 session=agent_session,
-                session_state=run_context.session_state,
+                run_context=run_context,
                 user_id=user_id,
             )
         finally:
@@ -2742,7 +2742,7 @@ class Agent:
 
         # Initialize run context
         run_context = RunContext(
-            run_id=run_id,
+            run_id=run_id,  # type: ignore
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
@@ -3328,7 +3328,7 @@ class Agent:
 
         # Initialize run context
         run_context = RunContext(
-            run_id=run_id,
+            run_id=run_id,  # type: ignore
             session_id=session_id,
             user_id=user_id,
             session_state={},
@@ -5669,7 +5669,7 @@ class Agent:
                     sig = signature(value)
 
                     # Build kwargs for the function
-                    kwargs = {}
+                    kwargs: Dict[str, Any] = {}
                     if "agent" in sig.parameters:
                         kwargs["agent"] = self
                     if "run_context" in sig.parameters:

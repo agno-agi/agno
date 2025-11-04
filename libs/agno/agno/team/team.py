@@ -7107,7 +7107,10 @@ class Team:
             use_team_logger()
 
             _process_delegate_task_to_member(
-                member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
             )
 
         async def adelegate_task_to_member(
@@ -7230,7 +7233,10 @@ class Team:
             use_team_logger()
 
             _process_delegate_task_to_member(
-                member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
             )
 
         # When the task should be delegated to all members
@@ -7339,7 +7345,10 @@ class Team:
                         yield f"Agent {member_agent.name}: Error - {str(e)}"
 
                 _process_delegate_task_to_member(
-                    member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
                 )
 
             # After all the member runs, switch back to the team logger
@@ -7403,7 +7412,10 @@ class Team:
                             await queue.put(member_agent_run_output_event)
                     finally:
                         _process_delegate_task_to_member(
-                            member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
                         )
                     await queue.put(done_marker)
 
@@ -7468,7 +7480,10 @@ class Team:
                         check_if_run_cancelled(member_agent_run_response)
 
                         _process_delegate_task_to_member(
-                            member_agent_run_response, member_agent, member_agent_task, member_session_state_copy
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
                         )
 
                         member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
