@@ -2158,7 +2158,7 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
-                    session_state=session_state,
+                    session_state=run_context.session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2175,7 +2175,7 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
-                    session_state=session_state,
+                    session_state=run_context.session_state,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
