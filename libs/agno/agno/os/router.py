@@ -62,45 +62,67 @@ if TYPE_CHECKING:
 
 
 async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
-    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+    """Given a Request and an endpoint function, return a dictionary with all extra fields.
+
+    Supports both multipart/form-data and application/json requests.
+
     Args:
         request: The FastAPI Request object
         endpoint_func: The function exposing the endpoint that received the request
 
     Returns:
-        A dictionary of kwargs
+        A dictionary of kwargs with extra fields not in the endpoint signature
     """
     import inspect
 
-    form_data = await request.form()
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
-    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    kwargs = {}
 
-    # Handle JSON parameters. They are passed as strings and need to be deserialized.
-    if session_state := kwargs.get("session_state"):
+    content_type = request.headers.get("content-type", "")
+
+    # Handle multipart/form-data requests
+    if "multipart/form-data" in content_type:
+        form_data = await request.form()
+        kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Handle application/json requests
+    elif "application/json" in content_type:
         try:
-            session_state_dict = json.loads(session_state)  # type: ignore
-            kwargs["session_state"] = session_state_dict
-        except json.JSONDecodeError:
-            kwargs.pop("session_state")
-            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+            body = await request.json()
+            kwargs = {key: value for key, value in body.items() if key not in known_fields}
+        except Exception:
+            # If JSON parsing fails, return empty kwargs
+            pass
+
+    # Handle JSON parameters that are passed as strings in form data
+    # (for backward compatibility with multipart requests)
+    if session_state := kwargs.get("session_state"):
+        if isinstance(session_state, str):
+            try:
+                session_state_dict = json.loads(session_state)
+                kwargs["session_state"] = session_state_dict
+            except json.JSONDecodeError:
+                kwargs.pop("session_state")
+                log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
 
     if dependencies := kwargs.get("dependencies"):
-        try:
-            dependencies_dict = json.loads(dependencies)  # type: ignore
-            kwargs["dependencies"] = dependencies_dict
-        except json.JSONDecodeError:
-            kwargs.pop("dependencies")
-            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+        if isinstance(dependencies, str):
+            try:
+                dependencies_dict = json.loads(dependencies)
+                kwargs["dependencies"] = dependencies_dict
+            except json.JSONDecodeError:
+                kwargs.pop("dependencies")
+                log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
 
     if metadata := kwargs.get("metadata"):
-        try:
-            metadata_dict = json.loads(metadata)  # type: ignore
-            kwargs["metadata"] = metadata_dict
-        except json.JSONDecodeError:
-            kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+        if isinstance(metadata, str):
+            try:
+                metadata_dict = json.loads(metadata)
+                kwargs["metadata"] = metadata_dict
+            except json.JSONDecodeError:
+                kwargs.pop("metadata")
+                log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
 
     return kwargs
 
@@ -242,6 +264,7 @@ async def agent_response_streamer(
     files: Optional[List[FileMedia]] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
+    log_debug(f"Session ID: {session_id}")
     try:
         run_response = agent.arun(
             input=message,
@@ -814,7 +837,7 @@ def get_base_router(
         request: Request,
         params: dict = Depends(parse_agent_run_request),
     ):
-        kwargs = await _get_request_kwargs(request, create_agent_run)
+        kwargs = params["extra_kwargs"]
 
         # Extract params
         message = params["message"]
