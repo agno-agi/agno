@@ -23,6 +23,7 @@ from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.schema import (
     AgentResponse,
+    AgentRunRequest,
     AgentSummaryResponse,
     BadRequestResponse,
     ConfigResponse,
@@ -36,6 +37,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
     WorkflowResponse,
     WorkflowSummaryResponse,
+    parse_agent_run_request,  # To be moved to utils
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -712,7 +714,6 @@ def get_base_router(
         return list(unique_models.values())
 
     # -- Agent routes ---
-
     @router.post(
         "/agents/{agent_id}/runs",
         tags=["Agents"],
@@ -730,6 +731,66 @@ def get_base_router(
             "**Streaming Response:**\n"
             "When `stream=true`, returns SSE events with `event` and `data` fields."
         ),
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": AgentRunRequest.model_json_schema(),
+                        "examples": {
+                            "simple_message": {
+                                "summary": "Simple text message",
+                                "value": {"message": "What's the weather like today?", "stream": False},
+                            },
+                            "streaming_with_session": {
+                                "summary": "Streaming message with session context",
+                                "value": {
+                                    "message": "Continue our previous conversation",
+                                    "stream": True,
+                                    "session_id": "session_123",
+                                    "user_id": "user_456",
+                                },
+                            },
+                        },
+                    },
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string", "description": "The message to send to the agent"},
+                                "stream": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Whether to stream the response",
+                                },
+                                "session_id": {
+                                    "type": "string",
+                                    "nullable": True,
+                                    "description": "Optional session ID for context",
+                                },
+                                "user_id": {
+                                    "type": "string",
+                                    "nullable": True,
+                                    "description": "Optional user ID for context",
+                                },
+                                "files": {
+                                    "type": "array",
+                                    "items": {"type": "string", "format": "binary"},
+                                    "description": "Optional media files (images, audio, video, documents)",
+                                },
+                            },
+                            "required": ["message"],
+                        },
+                        "examples": {
+                            "with_image": {
+                                "summary": "Message with image attachment",
+                                "description": "Upload an image for the agent to analyze",
+                            }
+                        },
+                    },
+                },
+            }
+        },
         responses={
             200: {
                 "description": "Agent run executed successfully",
@@ -751,13 +812,16 @@ def get_base_router(
     async def create_agent_run(
         agent_id: str,
         request: Request,
-        message: str = Form(...),
-        stream: bool = Form(False),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
+        params: dict = Depends(parse_agent_run_request),
     ):
         kwargs = await _get_request_kwargs(request, create_agent_run)
+
+        # Extract params
+        message = params["message"]
+        stream = params["stream"]
+        session_id = params["session_id"]
+        user_id = params["user_id"]
+        files = params["files"]
 
         if hasattr(request.state, "user_id"):
             if user_id:

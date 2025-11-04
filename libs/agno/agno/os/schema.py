@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from uuid import uuid4
 
+from fastapi import Body, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
@@ -1051,3 +1052,44 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class AgentRunRequest(BaseModel):
+    message: str = Field(..., description="Message to send to the agent")
+    stream: bool = Field(False, description="Whether to stream the response")
+    session_id: Optional[str] = Field(None, description="Session ID to use for the run")
+    user_id: Optional[str] = Field(None, description="User ID to use for the run")
+
+
+async def parse_agent_run_request(
+    request: Request,
+    body: Optional[AgentRunRequest] = Body(None),
+    message: Optional[str] = Form(None),
+    stream: Optional[bool] = Form(False),
+    session_id: Optional[str] = Form(None),
+    user_id: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    """Parse either JSON or multipart requests"""
+
+    # JSON request (no files)
+    if body is not None:
+        return {
+            "message": body.message,
+            "stream": body.stream,
+            "session_id": body.session_id,
+            "user_id": body.user_id,
+            "files": None,
+        }
+
+    # Multipart request (with or without files)
+    if message is not None:
+        return {
+            "message": message,
+            "stream": stream,
+            "session_id": session_id,
+            "user_id": user_id,
+            "files": files,
+        }
+
+    raise HTTPException(400, detail="Request must be application/json or multipart/form-data with 'message' field")
