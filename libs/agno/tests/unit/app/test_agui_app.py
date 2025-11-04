@@ -1266,3 +1266,35 @@ async def test_message_id_regression_prevention():
     assert len(all_referenced_ids) == 3, (
         f"Should have exactly 3 unique message IDs in the conversation. Found: {sorted(all_referenced_ids)}"
     )
+
+def test_validate_agui_state_with_valid_dict():
+    """Test validate_agui_state with valid dict."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    result = validate_agui_state({"user_name": "Alice", "counter": 5}, "test_thread")
+    assert result == {"user_name": "Alice", "counter": 5}
+
+
+def test_validate_agui_state_with_none():
+    """Test validate_agui_state with None state."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    result = validate_agui_state(None, "test_thread")
+    assert result is None
+
+
+def test_validate_agui_state_with_invalid_type():
+    """Test validate_agui_state with non-dict type returns None."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    # String state should be rejected
+    result = validate_agui_state("invalid_string", "test_thread")
+    assert result is None
+
+    # List state should be rejected
+    result = validate_agui_state([1, 2, 3], "test_thread")
+    assert result is None
+
+    # Number state should be rejected
+    result = validate_agui_state(42, "test_thread")
+    assert result is None
