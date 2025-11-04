@@ -893,6 +893,12 @@ class RunSchema(BaseModel):
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
         run_input = get_run_input(run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
+        def extract_files_from_messages(messages):
+            files = []
+            for msg in messages or []:
+                if msg.get("files"): # type: ignore
+                    files.extend(msg["files"]) # type: ignore
+            return files
         return cls(
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
@@ -913,7 +919,7 @@ class RunSchema(BaseModel):
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
-            files=run_dict.get("files", []),
+            files=extract_files_from_messages(run_dict.get("messages", [])) if run_dict.get("messages") else None, # type: ignore
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)

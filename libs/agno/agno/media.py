@@ -413,6 +413,8 @@ class File(BaseModel):
         import httpx
 
         if self.url:
+            if self.url.startswith("file://"):
+                return None
             response = httpx.get(self.url)
             content = response.content
             mime_type = response.headers.get("Content-Type", "").split(";")[0]
