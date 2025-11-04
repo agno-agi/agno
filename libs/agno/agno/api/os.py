@@ -14,4 +14,4 @@ def log_os_telemetry(launch: OSLaunch) -> None:
             )
             response.raise_for_status()
         except Exception as e:
-            log_debug(f"Could not create OS launch: {e}")
+            log_debug(f"Could not register OS launch for telemetry: {e}")
