@@ -70,7 +70,6 @@ class Span:
     end_time_ns: int
     duration_ms: int
     attributes: Dict[str, Any]
-    events: List[Dict[str, Any]]
     created_at: int
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,7 +91,6 @@ class Span:
             end_time_ns=data["end_time_ns"],
             duration_ms=data["duration_ms"],
             attributes=data.get("attributes", {}),
-            events=data.get("events", []),
             created_at=data["created_at"],
         )
 
@@ -145,17 +143,6 @@ class Span:
                 else:
                     attributes[key] = str(value)
 
-        # Convert events to list of dictionaries
-        events = []
-        if otel_span.events:
-            for event in otel_span.events:
-                event_dict = {
-                    "name": event.name,
-                    "timestamp": event.timestamp,
-                    "attributes": dict(event.attributes) if event.attributes else {},
-                }
-                events.append(event_dict)
-
         return cls(
             span_id=span_id,
             trace_id=trace_id,
@@ -168,7 +155,6 @@ class Span:
             end_time_ns=end_time_ns,
             duration_ms=duration_ms,
             attributes=attributes,
-            events=events,
             created_at=int(time()),
         )
 

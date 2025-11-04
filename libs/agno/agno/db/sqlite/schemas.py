@@ -121,7 +121,6 @@ SPAN_TABLE_SCHEMA = {
     "end_time_ns": {"type": BigInteger, "nullable": False},
     "duration_ms": {"type": BigInteger, "nullable": False},
     "attributes": {"type": JSON, "nullable": True},
-    "events": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
 }
 
