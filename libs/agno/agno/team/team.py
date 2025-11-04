@@ -1945,6 +1945,7 @@ class Team:
         run_response = TeamRunOutput(
             run_id=run_id,
             session_id=session_id,
+            user_id=user_id,
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
@@ -2786,6 +2787,7 @@ class Team:
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
+            user_id=user_id,
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
