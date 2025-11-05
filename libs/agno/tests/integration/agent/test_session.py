@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 def add_item(run_context: RunContext, item: str) -> str:

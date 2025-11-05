@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 def add_item(run_context: RunContext, item: str) -> str:
