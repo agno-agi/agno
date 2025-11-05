@@ -19,7 +19,7 @@ Team Hierarchy & Roles:
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.team import Team
 
 db = SqliteDb(db_file="tmp/example.db")

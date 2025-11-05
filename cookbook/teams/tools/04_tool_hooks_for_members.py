@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict
 
 from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.team.team import Team
 
 CUSTOMER_PERMISSIONS = {

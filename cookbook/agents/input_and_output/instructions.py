@@ -8,7 +8,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 # This will be our instructions function
