@@ -67,10 +67,10 @@ label_manager_agent = Agent(
             include_tools=[
                 "list_custom_labels",
                 "apply_label",
-                "remove_label", 
+                "remove_label",
                 "delete_label",
                 "search_emails",
-                "get_emails_by_context"
+                "get_emails_by_context",
             ]
         )
     ],
