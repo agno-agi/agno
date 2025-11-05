@@ -1,5 +1,5 @@
 from agno.memory.manager import MemoryManager, UserMemory
-from agno.memory.strategies import MergeStrategy
+from agno.memory.strategies import SummarizeStrategy
 from agno.memory.strategy import (
     MemoryOptimizationStrategy,
     MemoryOptimizationStrategyFactory,
@@ -12,5 +12,5 @@ __all__ = [
     "MemoryOptimizationStrategy",
     "MemoryOptimizationStrategyType",
     "MemoryOptimizationStrategyFactory",
-    "MergeStrategy",
+    "SummarizeStrategy",
 ]

@@ -722,7 +722,7 @@ class MemoryManager:
         user_id: Optional[str] = None,
         strategy: Union[
             MemoryOptimizationStrategyType, MemoryOptimizationStrategy
-        ] = MemoryOptimizationStrategyType.MERGE,
+        ] = MemoryOptimizationStrategyType.SUMMARIZE,
         apply: bool = False,
     ) -> List[UserMemory]:
         """Optimize user memories using the specified strategy.
@@ -730,7 +730,7 @@ class MemoryManager:
         Args:
             user_id: User ID to optimize memories for. Defaults to "default".
             strategy: Optimization strategy. Can be:
-                - Enum: MemoryOptimizationStrategyType.MERGE
+                - Enum: MemoryOptimizationStrategyType.SUMMARIZE
                 - Instance: Custom MemoryOptimizationStrategy instance
             apply: If True, automatically replace memories in database.
 
@@ -803,7 +803,7 @@ class MemoryManager:
         user_id: Optional[str] = None,
         strategy: Union[
             MemoryOptimizationStrategyType, MemoryOptimizationStrategy
-        ] = MemoryOptimizationStrategyType.MERGE,
+        ] = MemoryOptimizationStrategyType.SUMMARIZE,
         apply: bool = False,
     ) -> List[UserMemory]:
         """Async version of optimize_memories.
@@ -811,7 +811,7 @@ class MemoryManager:
         Args:
             user_id: User ID to optimize memories for. Defaults to "default".
             strategy: Optimization strategy. Can be:
-                - Enum: MemoryOptimizationStrategyType.MERGE
+                - Enum: MemoryOptimizationStrategyType.SUMMARIZE
                 - Instance: Custom MemoryOptimizationStrategy instance
             apply: If True, automatically replace memories in database.
 

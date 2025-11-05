@@ -1,16 +1,16 @@
 """
-Memory optimization using the "merge" strategy.
+Memory optimization using the "summarize" strategy.
 
-The "merge" strategy combines all memories into a single comprehensive summary,
+The "summarize" strategy combines all memories into a single comprehensive summary,
 achieving maximum compression. This is useful when you need aggressive token
 reduction and can accept losing the individual memory structure.
 
-Run: python cookbook/memory/10_memory_merge_strategy.py
+Run: python cookbook/memory/09_memory_summarize_strategy.py
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.memory import MemoryManager, MergeStrategy
+from agno.memory import MemoryManager, SummarizeStrategy
 from agno.memory.strategy import MemoryOptimizationStrategyType
 from agno.models.openai import OpenAIChat
 
@@ -64,7 +64,7 @@ memories_before = agent.get_user_memories(user_id=user_id)
 print(f"  Memory count: {len(memories_before)}")
 
 # Count tokens before optimization
-strategy = MergeStrategy()
+strategy = SummarizeStrategy()
 tokens_before = strategy.count_tokens(memories_before)
 print(f"  Token count: {tokens_before} tokens")
 
@@ -78,10 +78,10 @@ memory_manager = MemoryManager(
     db=db,
 )
 
-print("\nOptimizing memories with 'merge' strategy...")
+print("\nOptimizing memories with 'summarize' strategy...")
 memory_manager.optimize_memories(
     user_id=user_id,
-    strategy=MemoryOptimizationStrategyType.MERGE,  # Combine all memories into one
+    strategy=MemoryOptimizationStrategyType.SUMMARIZE,  # Combine all memories into one
     apply=True,  # Apply changes to database
 )
 
@@ -101,7 +101,7 @@ if tokens_before > 0:
     print(f"  Reduction: {reduction_pct:.1f}% ({tokens_saved} tokens saved)")
 
 if memories_after:
-    print("\nMerged memory:")
+    print("\nSummarized memory:")
     print(f"  {memories_after[0].memory}")
 else:
     print("\n No memories found after optimization")

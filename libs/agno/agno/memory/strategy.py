@@ -8,7 +8,7 @@ from agno.memory.strategies.base import MemoryOptimizationStrategy
 class MemoryOptimizationStrategyType(str, Enum):
     """Enumeration of available memory optimization strategies."""
 
-    MERGE = "merge"
+    SUMMARIZE = "summarize"
 
 
 class MemoryOptimizationStrategyFactory:
@@ -26,12 +26,12 @@ class MemoryOptimizationStrategyFactory:
             MemoryOptimizationStrategy instance
         """
         strategy_map = {
-            MemoryOptimizationStrategyType.MERGE: cls._create_merge,
+            MemoryOptimizationStrategyType.SUMMARIZE: cls._create_summarize,
         }
         return strategy_map[strategy_type](**kwargs)
 
     @classmethod
-    def _create_merge(cls, **kwargs) -> MemoryOptimizationStrategy:
-        from agno.memory.strategies.merge import MergeStrategy
+    def _create_summarize(cls, **kwargs) -> MemoryOptimizationStrategy:
+        from agno.memory.strategies.summarize import SummarizeStrategy
 
-        return MergeStrategy(**kwargs)
+        return SummarizeStrategy(**kwargs)

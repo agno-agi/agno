@@ -1,4 +1,4 @@
-"""Merge strategy: Combine all memories into single comprehensive summary."""
+"""Summarize strategy: Combine all memories into single comprehensive summary."""
 
 from datetime import datetime
 from textwrap import dedent
@@ -12,22 +12,22 @@ from agno.models.message import Message
 from agno.utils.log import log_debug
 
 
-class MergeStrategy(MemoryOptimizationStrategy):
+class SummarizeStrategy(MemoryOptimizationStrategy):
     """Combine all memories into single comprehensive summary.
 
-    This strategy merges all memories into one coherent narrative,
+    This strategy summarizes all memories into one coherent narrative,
     achieving maximum compression by eliminating redundancy. All
-    metadata (topics, user_id) is preserved in the merged memory.
+    metadata (topics, user_id) is preserved in the summarized memory.
     """
 
     def get_system_prompt(self) -> str:
-        """Get system prompt for memory merging.
+        """Get system prompt for memory summarization.
 
         Returns:
             System prompt string for LLM
         """
         return dedent("""\
-            You are a memory compression assistant. Your task is to merge multiple memories about a user
+            You are a memory compression assistant. Your task is to summarize multiple memories about a user
             into a single comprehensive summary while preserving all key facts.
 
             Requirements:
@@ -38,7 +38,7 @@ class MergeStrategy(MemoryOptimizationStrategy):
             - Maintain third-person perspective
             - Do not add information not present in the original memories
 
-            Return only the merged memory text, nothing else.\
+            Return only the summarized memory text, nothing else.\
         """)
 
     def optimize(
@@ -47,66 +47,66 @@ class MergeStrategy(MemoryOptimizationStrategy):
         model: Model,
         user_id: Optional[str] = None,
     ) -> List[UserMemory]:
-        """Merge multiple memories into single comprehensive summary.
+        """Summarize multiple memories into single comprehensive summary.
 
         Args:
-            memories: List of UserMemory objects to merge
+            memories: List of UserMemory objects to summarize
             model: Model to use for summarization
-            user_id: User ID for the merged memory
+            user_id: User ID for the summarized memory
 
         Returns:
-            List containing single merged UserMemory object
+            List containing single summarized UserMemory object
         """
         # Collect all memory contents
         memory_contents = [mem.memory for mem in memories if mem.memory]
 
-        # Merge topics - get unique topics from all memories
+        # Combine topics - get unique topics from all memories
         all_topics: List[str] = []
         for mem in memories:
             if mem.topics:
                 all_topics.extend(mem.topics)
-        merged_topics = list(set(all_topics)) if all_topics else None
+        summarized_topics = list(set(all_topics)) if all_topics else None
 
         # Check if agent_id and team_id are consistent
         agent_ids = {mem.agent_id for mem in memories if mem.agent_id}
-        merged_agent_id = list(agent_ids)[0] if len(agent_ids) == 1 else None
+        summarized_agent_id = list(agent_ids)[0] if len(agent_ids) == 1 else None
 
         team_ids = {mem.team_id for mem in memories if mem.team_id}
-        merged_team_id = list(team_ids)[0] if len(team_ids) == 1 else None
+        summarized_team_id = list(team_ids)[0] if len(team_ids) == 1 else None
 
-        # Create comprehensive prompt for merging
+        # Create comprehensive prompt for summarization
         combined_content = "\n\n".join([f"Memory {i + 1}: {content}" for i, content in enumerate(memory_contents)])
 
         system_prompt = self.get_system_prompt()
 
         messages_for_model = [
             Message(role="system", content=system_prompt),
-            Message(role="user", content=f"Merge these memories into a single summary:\n\n{combined_content}"),
+            Message(role="user", content=f"Summarize these memories into a single summary:\n\n{combined_content}"),
         ]
 
-        # Generate merged summary
+        # Generate summarized content
         response = model.response(messages=messages_for_model)
-        merged_content = response.content or " ".join(memory_contents)
+        summarized_content = response.content or " ".join(memory_contents)
 
         # Generate new memory_id
         new_memory_id = str(uuid4())
 
-        # Create merged memory
-        merged_memory = UserMemory(
+        # Create summarized memory
+        summarized_memory = UserMemory(
             memory_id=new_memory_id,
-            memory=merged_content.strip(),
-            topics=merged_topics,
+            memory=summarized_content.strip(),
+            topics=summarized_topics,
             user_id=user_id or (memories[0].user_id if memories else None),
-            agent_id=merged_agent_id,
-            team_id=merged_team_id,
+            agent_id=summarized_agent_id,
+            team_id=summarized_team_id,
             updated_at=datetime.now(),
         )
 
         log_debug(
-            f"Merged {len(memories)} memories into 1: {self.count_tokens(memories)} -> {self.count_tokens([merged_memory])} tokens"
+            f"Summarized {len(memories)} memories into 1: {self.count_tokens(memories)} -> {self.count_tokens([summarized_memory])} tokens"
         )
 
-        return [merged_memory]
+        return [summarized_memory]
 
     async def aoptimize(
         self,
@@ -114,63 +114,63 @@ class MergeStrategy(MemoryOptimizationStrategy):
         model: Model,
         user_id: Optional[str] = None,
     ) -> List[UserMemory]:
-        """Async version: Merge multiple memories into single comprehensive summary.
+        """Async version: Summarize multiple memories into single comprehensive summary.
 
         Args:
-            memories: List of UserMemory objects to merge
+            memories: List of UserMemory objects to summarize
             model: Model to use for summarization
-            user_id: User ID for the merged memory
+            user_id: User ID for the summarized memory
 
         Returns:
-            List containing single merged UserMemory object
+            List containing single summarized UserMemory object
         """
         # Collect all memory contents
         memory_contents = [mem.memory for mem in memories if mem.memory]
 
-        # Merge topics - get unique topics from all memories
+        # Combine topics - get unique topics from all memories
         all_topics: List[str] = []
         for mem in memories:
             if mem.topics:
                 all_topics.extend(mem.topics)
-        merged_topics = list(set(all_topics)) if all_topics else None
+        summarized_topics = list(set(all_topics)) if all_topics else None
 
         # Check if agent_id and team_id are consistent
         agent_ids = {mem.agent_id for mem in memories if mem.agent_id}
-        merged_agent_id = list(agent_ids)[0] if len(agent_ids) == 1 else None
+        summarized_agent_id = list(agent_ids)[0] if len(agent_ids) == 1 else None
 
         team_ids = {mem.team_id for mem in memories if mem.team_id}
-        merged_team_id = list(team_ids)[0] if len(team_ids) == 1 else None
+        summarized_team_id = list(team_ids)[0] if len(team_ids) == 1 else None
 
-        # Create comprehensive prompt for merging
+        # Create comprehensive prompt for summarization
         combined_content = "\n\n".join([f"Memory {i + 1}: {content}" for i, content in enumerate(memory_contents)])
 
         system_prompt = self.get_system_prompt()
 
         messages_for_model = [
             Message(role="system", content=system_prompt),
-            Message(role="user", content=f"Merge these memories into a single summary:\n\n{combined_content}"),
+            Message(role="user", content=f"Summarize these memories into a single summary:\n\n{combined_content}"),
         ]
 
-        # Generate merged summary (async)
+        # Generate summarized content (async)
         response = await model.aresponse(messages=messages_for_model)
-        merged_content = response.content or " ".join(memory_contents)
+        summarized_content = response.content or " ".join(memory_contents)
 
         # Generate new memory_id
         new_memory_id = str(uuid4())
 
-        # Create merged memory
-        merged_memory = UserMemory(
+        # Create summarized memory
+        summarized_memory = UserMemory(
             memory_id=new_memory_id,
-            memory=merged_content.strip(),
-            topics=merged_topics,
+            memory=summarized_content.strip(),
+            topics=summarized_topics,
             user_id=user_id or (memories[0].user_id if memories else None),
-            agent_id=merged_agent_id,
-            team_id=merged_team_id,
+            agent_id=summarized_agent_id,
+            team_id=summarized_team_id,
             updated_at=datetime.now(),
         )
 
         log_debug(
-            f"Merged {len(memories)} memories into 1: {self.count_tokens(memories)} -> {self.count_tokens([merged_memory])} tokens"
+            f"Summarized {len(memories)} memories into 1: {self.count_tokens(memories)} -> {self.count_tokens([summarized_memory])} tokens"
         )
 
-        return [merged_memory]
+        return [summarized_memory]
