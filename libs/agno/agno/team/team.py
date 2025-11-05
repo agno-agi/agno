@@ -396,6 +396,10 @@ class Team:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
+    # List of secondary models that should be inherited by member agents
+    # Options: "output_model", "parser_model", "reasoning_model"
+    inherit_secondary_models: Optional[List[str]] = None
+
     # --- Team Streaming ---
     # Stream the response from the Team
     stream: Optional[bool] = None
@@ -519,6 +523,7 @@ class Team:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        inherit_secondary_models: Optional[List[str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -642,6 +647,8 @@ class Team:
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
+
+        self.inherit_secondary_models = inherit_secondary_models
 
         self.stream = stream
         self.stream_events = stream_events or stream_intermediate_steps
@@ -800,13 +807,25 @@ class Team:
             member.team_id = self.id
             member.set_id()
 
-            # Inherit team models if agent has no explicit model
-            for model_type in ["model", "reasoning_model", "parser_model", "output_model"]:
-                if getattr(member, model_type) is None and getattr(self, model_type) is not None:
-                    setattr(member, model_type, getattr(self, model_type))
-                    log_info(
-                        f"Agent '{member.name or member.id}' inheriting {model_type} from Team: {getattr(self, model_type).id}"
-                    )
+            # Inherit team primary model if agent has no explicit model
+            if member.model is None and self.model is not None:
+                member.model = self.model
+                log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {self.model.id}")
+
+            # Inherit secondary models only if specified in inherit_secondary_models
+            if self.inherit_secondary_models:
+                valid_secondary_models = {"output_model", "parser_model", "reasoning_model"}
+                for model_type in self.inherit_secondary_models:
+                    if model_type not in valid_secondary_models:
+                        log_error(
+                            f"Invalid model type '{model_type}' in inherit_secondary_models. Valid options: {valid_secondary_models}"
+                        )
+                        continue
+                    if getattr(member, model_type) is None and getattr(self, model_type) is not None:
+                        setattr(member, model_type, getattr(self, model_type))
+                        log_info(
+                            f"Agent '{member.name or member.id}' inheriting {model_type} from Team: {getattr(self, model_type).id}"
+                        )
 
         elif isinstance(member, Team):
             member.parent_team_id = self.id

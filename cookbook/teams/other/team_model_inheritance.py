@@ -1,5 +1,5 @@
 """
-This example demonstrates how agents automatically inherit the model from their Team when not explicitly set.
+This example demonstrates how agents automatically inherit models from their Team.
 
 This is particularly useful when:
 - Using non-OpenAI models (Claude, Ollama, VLLM, etc.) to avoid manual model configuration on every agent
@@ -7,14 +7,14 @@ This is particularly useful when:
 - Simplifying code by setting the model once on the team instead of on each agent
 
 Key behaviors:
-1. Agents without explicit models inherit from their team
-2. Agents with explicit models keep their own configuration
-3. Nested teams and their members inherit from their immediate parent team
-4. All model types are inherited: model, reasoning_model, parser_model, output_model
+1. Primary model is always inherited by agents without explicit models
+2. Secondary models (output_model, parser_model, reasoning_model) are not inherited by default
+3. Use inherit_secondary_models parameter to opt-in to secondary model inheritance
+4. Agents with explicit models keep their own configuration
+5. Nested teams and their members inherit from their immediate parent team
 """
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -47,15 +47,19 @@ analyst = Agent(
 
 sub_team = Team(
     name="Analysis Team",
-    model=Claude(id="claude-3-5-haiku-20241022"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[analyst],
 )
 
 
-# Main team with all members
+# Main team with all members and secondary model inheritance
 team = Team(
     name="Content Production Team",
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=OpenAIChat(id="gpt-4o"),
+    output_model=OpenAIChat(id="gpt-4o-mini"),  # For structured output from team
+    parser_model=OpenAIChat(id="gpt-4o-mini"),  # For parsing responses
+    # Only inherit output_model to members, not parser_model
+    inherit_secondary_models=["output_model"],
     members=[researcher, writer, editor, sub_team],
     instructions=[
         "Research the topic thoroughly",
@@ -69,13 +73,26 @@ if __name__ == "__main__":
     team.initialize_team()
 
     # researcher and writer inherit Claude Sonnet from team
-    print(f"Researcher: {researcher.model.id}")
-    print(f"Writer: {writer.model.id}")
-
+    print(f"Researcher model: {researcher.model.id}")
+    print(f"Writer model: {writer.model.id}")
     # editor keeps its explicit model
-    print(f"Editor: {editor.model.id}")
-
+    print(f"Editor model: {editor.model.id}")
     # analyst inherits Claude Haiku from its sub-team
-    print(f"Analyst: {analyst.model.id}")
+    print(f"Analyst model: {analyst.model.id}")
+
+    # output_model is inherited because it's in inherit_secondary_models list
+    print(
+        f"Researcher output_model: {researcher.output_model.id if researcher.output_model else 'None'}"
+    )
+    print(
+        f"Writer output_model: {writer.output_model.id if writer.output_model else 'None'}"
+    )
+    # parser_model is NOT inherited because it's not in inherit_secondary_models list
+    print(
+        f"Researcher parser_model: {researcher.parser_model.id if researcher.parser_model else 'None (not inherited)'}"
+    )
+    print(
+        f"Writer parser_model: {writer.parser_model.id if writer.parser_model else 'None (not inherited)'}"
+    )
 
     team.print_response("Write a brief article about AI", stream=True)
