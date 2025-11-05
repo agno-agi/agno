@@ -16,7 +16,7 @@ Key behaviors:
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team.team import SecondaryModelType, Team
 
 # These agents don't have models set
 researcher = Agent(
@@ -56,10 +56,10 @@ sub_team = Team(
 team = Team(
     name="Content Production Team",
     model=OpenAIChat(id="gpt-4o"),
-    output_model=OpenAIChat(id="gpt-4o-mini"),  # For structured output from team
-    parser_model=OpenAIChat(id="gpt-4o-mini"),  # For parsing responses
-    # Only inherit output_model to members, not parser_model
-    inherit_secondary_models=["output_model"],
+    output_model=OpenAIChat(id="gpt-4o-mini"),
+    parser_model=OpenAIChat(id="gpt-4o-mini"),
+    # Inherit only output_model (options: output_model, parser_model, reasoning_model)
+    inherit_secondary_models=[SecondaryModelType.output_model],
     members=[researcher, writer, editor, sub_team],
     instructions=[
         "Research the topic thoroughly",
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     print(
         f"Writer output_model: {writer.output_model.id if writer.output_model else 'None'}"
     )
-    # parser_model is NOT inherited because it's not in inherit_secondary_models list
+    # parser_model is not inherited because it's not in inherit_secondary_models list
     print(
         f"Researcher parser_model: {researcher.parser_model.id if researcher.parser_model else 'None (not inherited)'}"
     )

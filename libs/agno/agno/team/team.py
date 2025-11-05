@@ -4,6 +4,7 @@ import json
 from collections import ChainMap, deque
 from copy import copy
 from dataclasses import dataclass
+from enum import Enum
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -160,6 +161,14 @@ from agno.utils.team import (
     get_team_run_context_videos,
 )
 from agno.utils.timer import Timer
+
+
+class SecondaryModelType(str, Enum):
+    """Types of secondary models that can be inherited by team members"""
+
+    output_model = "output_model"
+    parser_model = "parser_model"
+    reasoning_model = "reasoning_model"
 
 
 @dataclass(init=False)
@@ -396,9 +405,8 @@ class Team:
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
-    # List of secondary models that should be inherited by member agents
-    # Options: "output_model", "parser_model", "reasoning_model"
-    inherit_secondary_models: Optional[List[str]] = None
+    # List of secondary models that should be inherited by members
+    inherit_secondary_models: Optional[List[SecondaryModelType]] = None
 
     # --- Team Streaming ---
     # Stream the response from the Team
@@ -523,7 +531,7 @@ class Team:
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
-        inherit_secondary_models: Optional[List[str]] = None,
+        inherit_secondary_models: Optional[List[SecondaryModelType]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -814,17 +822,11 @@ class Team:
 
             # Inherit secondary models only if specified in inherit_secondary_models
             if self.inherit_secondary_models:
-                valid_secondary_models = {"output_model", "parser_model", "reasoning_model"}
                 for model_type in self.inherit_secondary_models:
-                    if model_type not in valid_secondary_models:
-                        log_error(
-                            f"Invalid model type '{model_type}' in inherit_secondary_models. Valid options: {valid_secondary_models}"
-                        )
-                        continue
                     if getattr(member, model_type) is None and getattr(self, model_type) is not None:
                         setattr(member, model_type, getattr(self, model_type))
                         log_info(
-                            f"Agent '{member.name or member.id}' inheriting {model_type} from Team: {getattr(self, model_type).id}"
+                            f"Agent '{member.name or member.id}' inheriting {model_type.value} from Team: {getattr(self, model_type).id}"
                         )
 
         elif isinstance(member, Team):

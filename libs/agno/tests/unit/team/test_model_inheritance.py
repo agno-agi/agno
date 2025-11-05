@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team.team import SecondaryModelType, Team
 
 
 def test_model_inheritance():
@@ -114,7 +114,11 @@ def test_secondary_models_opt_in_inheritance():
         reasoning_model=OpenAIChat(id="o1"),
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         output_model=OpenAIChat(id="gpt-4o-mini"),
-        inherit_secondary_models=["reasoning_model", "parser_model", "output_model"],
+        inherit_secondary_models=[
+            SecondaryModelType.reasoning_model,
+            SecondaryModelType.parser_model,
+            SecondaryModelType.output_model,
+        ],
         members=[agent1, agent2],
     )
 
@@ -132,25 +136,6 @@ def test_secondary_models_opt_in_inheritance():
     assert agent2.reasoning_model.id == "o1"
     assert agent2.output_model.id == "gpt-4o-mini"
     assert agent2.parser_model.id == "gpt-3.5-turbo"
-
-
-def test_invalid_secondary_model_name():
-    """Test that invalid model names in inherit_secondary_models are logged as errors."""
-    agent1 = Agent(name="Agent 1", role="Assistant")
-
-    team = Team(
-        name="Test Team",
-        model=Claude(id="claude-3-5-sonnet-20241022"),
-        output_model=OpenAIChat(id="gpt-4o-mini"),
-        inherit_secondary_models=["output_model", "invalid_model", "wrong_name"],
-        members=[agent1],
-    )
-
-    team.initialize_team()
-
-    # Agent should still inherit valid models
-    assert isinstance(agent1.model, Claude)
-    assert agent1.output_model.id == "gpt-4o-mini"
 
 
 def test_default_model():
