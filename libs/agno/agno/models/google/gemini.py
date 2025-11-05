@@ -770,7 +770,9 @@ class Gemini(Model):
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
-                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+                combined_function_result.append(
+                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": result.content}
+                )
                 message_metrics += result.metrics
 
         if combined_content:

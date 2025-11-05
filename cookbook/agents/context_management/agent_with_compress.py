@@ -9,6 +9,7 @@ Run: `python cookbook/agents/context_compression/02_custom_compression_prompt.py
 from agno.agent import Agent
 from agno.context.manager import ContextManager
 from agno.db.sqlite import SqliteDb
+from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -53,25 +54,17 @@ context_manager = ContextManager(
 # Create agent with custom context manager
 agent = Agent(
     name="Competitive Intelligence Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    # model=OpenAIChat(id="gpt-4o"),
+    model=Gemini(id="gemini-2.5-pro", vertexai=True),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     context_manager=context_manager,  # Pass custom context manager
     markdown=True,
-    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent.db"),
+    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent7.db"),
     session_id="competitive_intelligence_agent",
     add_history_to_context=True,
     num_history_runs=6,
 )
-
-print("=" * 80)
-print("🎯 CUSTOM COMPRESSION PROMPT EXAMPLE")
-print("=" * 80)
-print("\nThis agent uses a domain-specific compression prompt optimized for")
-print("competitive intelligence gathering.")
-print("\nCompression model: gpt-4o-mini (cost-optimized)")
-print("Main model: gpt-4o (high-quality research)")
-print("=" * 80)
 
 # Research multiple competitors
 response = agent.print_response(
@@ -111,18 +104,3 @@ response = agent.print_response(
     For each, find specific actions with dates and numbers.""",
     stream=True,
 )
-
-# Show compression effectiveness
-if agent.context_manager:
-    print("\n" + "=" * 80)
-    print("📊 COMPRESSION STATS")
-    print("=" * 80)
-    print(
-        f"Compression model: {agent.context_manager.model.id if agent.context_manager.model else 'None'}"
-    )
-    print(f"Times compressed: {agent.context_manager.compression_count}")
-    print(f"Threshold: {agent.context_manager.compress_tool_calls_limit} tool results")
-    print(
-        "\n✅ Custom prompt ensured compressed results focus on actionable intelligence!"
-    )
-    print("=" * 80)

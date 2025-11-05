@@ -145,8 +145,8 @@ class Model(ABC):
     cache_ttl: Optional[int] = None
     cache_dir: Optional[str] = None
 
-    # Context compression manager (set by Agent for mid-run compression)
-    context_manager: Optional[Any] = None  # TYPE_CHECKING: "ContextManager"
+    # Context compression manager
+    context_manager: Optional[Any] = None
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
@@ -439,10 +439,7 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
-                # Ensure tool_call_ids are set for compression tracking
-                self._ensure_tool_call_ids(messages=messages, function_call_results=function_call_results)
-
-                # Compress tool results if needed (mid-run compression)
+                # Compress tool results
                 if self.context_manager and self.context_manager.should_compress(messages):
                     messages[:] = self.context_manager.compress_tool_results(
                         messages=messages,
@@ -611,10 +608,7 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
-                # Ensure tool_call_ids are set for compression tracking
-                self._ensure_tool_call_ids(messages=messages, function_call_results=function_call_results)
-
-                # Compress tool results if needed (mid-run compression)
+                # Compress tool results
                 if self.context_manager and self.context_manager.should_compress(messages):
                     log_debug("Compressing tool results mid-run")
                     messages[:] = self.context_manager.compress_tool_results(
@@ -792,7 +786,7 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
-            assistant_message.tool_calls = provider_response.tool_calls
+            assistant_message.tool_calls = self.parse_tool_calls(provider_response.tool_calls)
 
         # Add audio to assistant message
         if provider_response.audio is not None:
@@ -982,10 +976,7 @@ class Model(ABC):
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
-                # Ensure tool_call_ids are set for compression tracking
-                self._ensure_tool_call_ids(messages=messages, function_call_results=function_call_results)
-
-                # Compress tool results if needed (mid-run compression)
+                # Compress tool results
                 if self.context_manager and self.context_manager.should_compress(messages):
                     messages[:] = self.context_manager.compress_tool_results(
                         messages=messages,
@@ -1174,9 +1165,6 @@ class Model(ABC):
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
-                # Ensure tool_call_ids are set for compression tracking
-                self._ensure_tool_call_ids(messages=messages, function_call_results=function_call_results)
-
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     self._handle_function_call_media(
@@ -1341,7 +1329,15 @@ class Model(ABC):
     def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Parse the tool calls from the model provider into a list of tool calls.
+        Ensures all tool calls have an ID, generating one if not provided by the model.
         """
+        from uuid import uuid4
+
+        for tool_call in tool_calls_data:
+            # Ensure each tool call has an ID, generate one if missing
+            if tool_call.get("id") is None:
+                tool_call["id"] = str(uuid4())
+
         return tool_calls_data
 
     def get_function_call_to_run_from_tool_execution(
@@ -2116,66 +2112,31 @@ class Model(ABC):
         """
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
+        self._ensure_tool_call_ids(messages=messages, function_call_results=function_call_results)
 
     def _ensure_tool_call_ids(
         self,
         messages: List[Message],
         function_call_results: List[Message],
     ) -> None:
-        """
-        Ensure all tool messages have tool_call_id set for compression tracking.
-
-        This is a defensive mechanism that works regardless of how format_function_call_results
-        transforms the messages. Handles multiple patterns:
-
-        1. Individual messages: Message(role="tool", tool_call_id="call_123")
-        2. Combined messages: Message(role="tool", tool_calls=[{"tool_call_id": "call_123", ...}])
-        3. Missing IDs: Generates from original function_call_results mapping
-
-        Args:
-            messages: The message list after format_function_call_results
-            function_call_results: The original results with tool_call_ids
-        """
+        """Ensure all tool messages have tool_call_id (defensive safety net)."""
         from uuid import uuid4
 
-        # Build mapping of tool results to their IDs
-        tool_id_map = {}
-        for fc_result in function_call_results:
-            if fc_result.tool_call_id:
-                # Map by content hash for matching after transformation
-                content_key = str(fc_result.content)[:100] if fc_result.content else ""
-                tool_id_map[content_key] = fc_result.tool_call_id
-
-        # Process recent tool messages (ones just added by format_function_call_results)
+        # Process only recently added tool messages
         num_to_check = len(function_call_results)
+        if num_to_check == 0:
+            return
+
         tool_messages = [m for m in messages if m.role == "tool"]
-        recent_tool_messages = tool_messages[-num_to_check:] if num_to_check > 0 else []
+        recent_messages = tool_messages[-num_to_check:]
 
-        for msg in recent_tool_messages:
-            # Pattern 1: Message already has tool_call_id (OpenAI, base default)
-            if msg.tool_call_id:
-                continue
-
-            # Pattern 2: tool_calls array with IDs (Gemini after our fix)
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    if isinstance(tc, dict) and not tc.get("tool_call_id"):
-                        # Try to find ID from original results
-                        tc_content = str(tc.get("content", ""))[:100]
-                        if tc_content in tool_id_map:
-                            tc["tool_call_id"] = tool_id_map[tc_content]
-                        else:
-                            # Generate fallback ID
+        for msg in recent_messages:
+            if not msg.tool_call_id:
+                if msg.tool_calls and isinstance(msg.tool_calls, list):
+                    for tc in msg.tool_calls:
+                        if isinstance(tc, dict) and not tc.get("tool_call_id"):
                             tc["tool_call_id"] = str(uuid4())
-                continue
-
-            # Pattern 3: No tool_call_id anywhere - try to match and set it
-            if msg.content:
-                content_key = str(msg.content)[:100] if isinstance(msg.content, str) else str(msg.content)[:100]
-                if content_key in tool_id_map:
-                    msg.tool_call_id = tool_id_map[content_key]
                 else:
-                    # Last resort: generate ID
                     msg.tool_call_id = str(uuid4())
 
     def _handle_function_call_media(
