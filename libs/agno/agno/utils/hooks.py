@@ -5,7 +5,7 @@ from agno.utils.log import log_warning
 
 
 def normalize_hooks(
-    hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]],
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
     async_mode: bool = False,
 ) -> Optional[List[Callable[..., Any]]]:
     """Normalize hooks to a list format"""

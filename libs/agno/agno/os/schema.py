@@ -19,8 +19,8 @@ from agno.os.utils import (
     get_team_input_schema_dict,
     get_workflow_input_schema_dict,
 )
+from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
@@ -186,9 +186,6 @@ class AgentResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
-
-    class Config:
-        exclude_none = True
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
@@ -478,12 +475,14 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
+        run_id = str(uuid4())
+        session_id = str(uuid4())
         _tools = team._determine_tools_for_model(
             model=team.model,  # type: ignore
-            session=TeamSession(session_id=str(uuid4()), session_data={}),
-            run_response=TeamRunOutput(run_id=str(uuid4())),
+            session=TeamSession(session_id=session_id, session_data={}),
+            run_response=TeamRunOutput(run_id=run_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, session_state={}),
             async_mode=True,
-            session_state={},
             team_run_context={},
             check_mcp_tools=False,
         )

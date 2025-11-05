@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 def get_instructions(run_context: RunContext):
