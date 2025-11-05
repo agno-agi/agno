@@ -1519,6 +1519,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
         debug_mode: Optional[bool] = None,
+        session=Optional[Union[AgentSession, TeamSession, WorkflowSession]],
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Run the Agent and return the response."""
@@ -1565,8 +1566,22 @@ class Agent:
         )
 
         # Read existing session from database
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = None
+        if session is not None:
+            agent_session = session
+        else:
+            agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+        if agent_session is None:
+            raise ValueError("Session not found")
+
+        log_info(f"Agent Session: {agent_session}")
+
+        agent_session = self._validate_session(session=agent_session)
+
         self._update_metadata(session=agent_session)
+
+        log_info(f"Agent Session: {agent_session}")
 
         # Initialize session state
         session_state = self._initialize_session_state(
@@ -5913,6 +5928,35 @@ class Agent:
             self._cached_session = agent_session
 
         return agent_session
+
+    def _validate_session(
+        self, session: Union[AgentSession, TeamSession, WorkflowSession]
+    ) -> Union[AgentSession, List[RunOutput]]:
+        """Validate the session"""
+        if isinstance(session, AgentSession):
+            return session
+        elif isinstance(session, WorkflowSession):
+            agent_runs: List[RunOutput] = []
+            for wf_run_output in session.runs:
+                for run in wf_run_output.step_executor_runs:
+                    if isinstance(run, RunOutput) and run.agent_id is not None and run.agent_id == self.id:
+                        run.parent_run_id = None
+                        agent_runs.append(run)
+            log_error(f"Agent runs: {agent_runs}")
+            return AgentSession(
+                session_id=session.session_id,
+                agent_id=self.id,
+                runs=agent_runs,
+                created_at=session.created_at,
+                updated_at=session.updated_at,
+                session_data=session.session_data,
+                metadata=session.metadata,
+            )
+        # TODO: Add conversion for TeamSession
+        elif isinstance(session, TeamSession):
+            return session
+        else:
+            raise ValueError("Invalid session type")
 
     # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
