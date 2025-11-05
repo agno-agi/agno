@@ -1,12 +1,13 @@
+from dataclasses import dataclass
 from textwrap import dedent
 
 import pytest
 from pydantic import BaseModel
-from dataclasses import dataclass
+
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from agno.run.agent import RunEvent, RunInput, RunOutput, CustomEvent
+from agno.run.agent import CustomEvent, RunEvent, RunInput, RunOutput
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
@@ -160,15 +161,15 @@ def test_intermediate_steps_with_tools(shared_db):
 
 def test_intermediate_steps_with_custom_events():
     """Test that the agent streams events."""
-    
+
     @dataclass
     class WeatherRequestEvent(CustomEvent):
         city: str = ""
         temperature: int = 0
-    
+
     def get_weather(city: str):
         yield WeatherRequestEvent(city=city, temperature=70)
-    
+
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_weather],
@@ -184,7 +185,7 @@ def test_intermediate_steps_with_custom_events():
         events[run_response_delta.event].append(run_response_delta)
 
     assert events.keys() == {
-        RunEvent.run_started, 
+        RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.custom_event,
         RunEvent.tool_call_completed,
@@ -199,6 +200,7 @@ def test_intermediate_steps_with_custom_events():
     assert events[RunEvent.custom_event][0].temperature == 70
     assert events[RunEvent.custom_event][0].to_dict()["city"] == "Tokyo"
     assert events[RunEvent.custom_event][0].to_dict()["temperature"] == 70
+
 
 def test_intermediate_steps_with_reasoning():
     """Test that the agent streams events."""
