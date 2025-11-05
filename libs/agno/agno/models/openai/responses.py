@@ -478,8 +478,17 @@ class OpenAIResponses(Model):
                         call_id_value = fc_id_to_call_id[function_call_id]
                     else:
                         call_id_value = function_call_id
+                    if not isinstance(call_id_value, str) or call_id_value.strip() == "":
+                        log_warning("Skipping tool message with invalid call_id: %s", call_id_value)
+                        continue
+                    call_id_str = str(call_id_value)
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
+                        {
+                            "type": "function_call_output",
+                            "id": call_id_str,
+                            "call_id": call_id_str,
+                            "output": message.content,
+                        }
                     )
             # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
