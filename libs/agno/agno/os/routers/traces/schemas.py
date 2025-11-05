@@ -15,6 +15,7 @@ class TraceNode(BaseModel):
     status: str = Field(..., description="Status code (OK, ERROR)")
     input: Optional[str] = Field(None, description="Input to the span")
     output: Optional[str] = Field(None, description="Output from the span")
+    error: Optional[str] = Field(None, description="Error message if status is ERROR")
     spans: Optional[List["TraceNode"]] = Field(None, description="Child spans in the trace hierarchy")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional span attributes and data")
     extra_data: Optional[Dict[str, Any]] = Field(
@@ -38,6 +39,12 @@ class TraceNode(BaseModel):
         input_val = span.attributes.get("input.value")
         output_val = span.attributes.get("output.value")
 
+        # Extract error information
+        error_val = None
+        if span.status_code == "ERROR":
+            error_val = span.status_message or span.attributes.get("exception.message")
+            output_val = None
+
         # Build metadata with key attributes based on span kind
         metadata: Dict[str, Any] = {}
 
@@ -59,10 +66,6 @@ class TraceNode(BaseModel):
             if tool_params := span.attributes.get("tool.parameters"):
                 metadata["parameters"] = tool_params
 
-        # Add error information if present
-        if span.status_code == "ERROR" and span.status_message:
-            metadata["error"] = span.status_message
-
         # Add session/user context if present
         if session_id := span.attributes.get("session.id"):
             metadata["session_id"] = session_id
@@ -79,6 +82,7 @@ class TraceNode(BaseModel):
             status=span.status_code,
             input=input_val,
             output=output_val,
+            error=error_val,
             spans=spans,
             metadata=metadata if metadata else None,
             extra_data=None,
@@ -154,6 +158,7 @@ class TraceDetail(BaseModel):
     error_count: int = Field(..., description="Number of spans with errors")
     input: Optional[str] = Field(None, description="Input to the agent/workflow")
     output: Optional[str] = Field(None, description="Output from the agent/workflow")
+    error: Optional[str] = Field(None, description="Error message if status is ERROR")
     run_id: Optional[str] = Field(None, description="Associated run ID")
     session_id: Optional[str] = Field(None, description="Associated session ID")
     user_id: Optional[str] = Field(None, description="Associated user ID")
@@ -172,13 +177,22 @@ class TraceDetail(BaseModel):
         else:
             duration_str = f"{duration_ms / 1000:.2f}s"
 
-        # Find root span to extract input/output
+        # Find root span to extract input/output/error
         root_span = next((s for s in spans if not s.parent_span_id), None)
         trace_input = None
         trace_output = None
+        trace_error = None
+
         if root_span:
             trace_input = root_span.attributes.get("input.value")
-            trace_output = root_span.attributes.get("output.value")
+            output_val = root_span.attributes.get("output.value")
+
+            # If trace status is ERROR, extract error and set output to None
+            if trace.status == "ERROR" or root_span.status_code == "ERROR":
+                trace_error = root_span.status_message or root_span.attributes.get("exception.message")
+                trace_output = None
+            else:
+                trace_output = output_val
 
         # Calculate total tokens from all LLM spans
         total_input_tokens = 0
@@ -206,6 +220,7 @@ class TraceDetail(BaseModel):
             error_count=trace.error_count,
             input=trace_input,
             output=trace_output,
+            error=trace_error,
             run_id=trace.run_id,
             session_id=trace.session_id,
             user_id=trace.user_id,
@@ -255,7 +270,7 @@ class TraceDetail(BaseModel):
                 duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
-                # Skip input/output for root span (already at top level of TraceDetail)
+                # Skip input/output/error for root span (already at top level of TraceDetail)
 
                 return TraceNode(
                     id=span.span_id,
@@ -267,6 +282,7 @@ class TraceDetail(BaseModel):
                     status=span.status_code,
                     input=None,  # Skip for root span (already at TraceDetail level)
                     output=None,  # Skip for root span (already at TraceDetail level)
+                    error=None,  # Skip for root span (already at TraceDetail level)
                     spans=children_nodes,
                     metadata=root_metadata if root_metadata else None,
                     extra_data=None,

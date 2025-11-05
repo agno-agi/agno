@@ -243,6 +243,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                                     "error_count": 0,
                                     "input": "What is Tesla stock price?",
                                     "output": "The current price of Tesla (TSLA) is $245.67.",
+                                    "error": None,
                                     "run_id": "run123",
                                     "session_id": "session456",
                                     "user_id": "user789",
@@ -256,6 +257,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                                             "type": "AGENT",
                                             "duration": "1.2s",
                                             "status": "OK",
+                                            "input": None,
+                                            "output": None,
+                                            "error": None,
                                             "spans": [],
                                         }
                                     ],
