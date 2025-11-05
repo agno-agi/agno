@@ -1,6 +1,7 @@
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 from agno.team.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -10,14 +11,15 @@ db = SqliteDb(db_file="tmp/workflow.db")
 
 # === TEAM TOOLS FOR STEP MANAGEMENT ===
 def add_step(
-    session_state, step_name: str, assignee: str, priority: str = "medium"
+    run_context: RunContext, step_name: str, assignee: str, priority: str = "medium"
 ) -> str:
     """Add a step to the team's workflow session state."""
-    if session_state is None:
-        session_state = {}
 
-    if "steps" not in session_state:
-        session_state["steps"] = []
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if "steps" not in run_context.session_state:
+        run_context.session_state["steps"] = []
 
     step = {
         "name": step_name,
@@ -26,18 +28,18 @@ def add_step(
         "priority": priority,
         "created_at": "now",
     }
-    session_state["steps"].append(step)
+    run_context.session_state["steps"].append(step)  # type: ignore
 
-    result = f"✅ Successfully added step '{step_name}' assigned to {assignee} (priority: {priority}). Total steps: {len(session_state['steps'])}"
+    result = f"✅ Successfully added step '{step_name}' assigned to {assignee} (priority: {priority}). Total steps: {len(run_context.session_state['steps'])}"
     return result
 
 
-def delete_step(session_state, step_name: str) -> str:
+def delete_step(run_context: RunContext, step_name: str) -> str:
     """Delete a step from the team's workflow session state."""
-    if session_state is None or "steps" not in session_state:
+    if run_context.session_state is None or "steps" not in run_context.session_state:
         return "❌ No steps found to delete"
 
-    steps = session_state["steps"]
+    steps = run_context.session_state["steps"]
     for i, step in enumerate(steps):
         if step["name"] == step_name:
             deleted_step = steps.pop(i)
@@ -50,13 +52,13 @@ def delete_step(session_state, step_name: str) -> str:
 
 # === AGENT TOOLS FOR STATUS MANAGEMENT ===
 def update_step_status(
-    session_state, step_name: str, new_status: str, notes: str = ""
+    run_context: RunContext, step_name: str, new_status: str, notes: str = ""
 ) -> str:
     """Update the status of a step in the workflow session state."""
-    if session_state is None or "steps" not in session_state:
+    if run_context.session_state is None or "steps" not in run_context.session_state:
         return "❌ No steps found in workflow session state"
 
-    steps = session_state["steps"]
+    steps = run_context.session_state["steps"]
     for step in steps:
         if step["name"] == step_name:
             old_status = step["status"]
@@ -75,12 +77,12 @@ def update_step_status(
     return result
 
 
-def assign_step(session_state, step_name: str, new_assignee: str) -> str:
+def assign_step(run_context: RunContext, step_name: str, new_assignee: str) -> str:
     """Reassign a step to a different person."""
-    if session_state is None or "steps" not in session_state:
+    if run_context.session_state is None or "steps" not in run_context.session_state:
         return "❌ No steps found in workflow session state"
 
-    steps = session_state["steps"]
+    steps = run_context.session_state["steps"]
     for step in steps:
         if step["name"] == step_name:
             old_assignee = step["assignee"]
