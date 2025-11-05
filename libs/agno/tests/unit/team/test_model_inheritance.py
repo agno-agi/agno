@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.team.team import SecondaryModelType, Team
+from agno.team.team import Team
 
 
 def test_model_inheritance():
@@ -71,71 +71,6 @@ def test_nested_team_model_inheritance():
 
     assert isinstance(sub_agent2.model, Claude)
     assert sub_agent2.model.id == "claude-3-5-haiku-20241022"
-
-
-def test_secondary_models_not_inherited_by_default():
-    """Test that secondary models are not inherited by default."""
-    agent1 = Agent(name="Agent 1", role="Assistant")
-    agent2 = Agent(name="Agent 2", role="Helper", parser_model=OpenAIChat(id="gpt-3.5-turbo"))
-
-    team = Team(
-        name="Multi Model Team",
-        model=Claude(id="claude-3-5-sonnet-20241022"),
-        reasoning_model=OpenAIChat(id="o1"),
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
-        output_model=OpenAIChat(id="gpt-4o-mini"),
-        members=[agent1, agent2],
-    )
-
-    team.initialize_team()
-
-    # Agent 1 should only inherit primary model, not secondary models
-    assert isinstance(agent1.model, Claude)
-    assert agent1.model.id == "claude-3-5-sonnet-20241022"
-    assert agent1.reasoning_model is None
-    assert agent1.parser_model is None
-    assert agent1.output_model is None
-
-    # Agent 2 should only inherit primary model, keep explicit parser_model
-    assert isinstance(agent2.model, Claude)
-    assert agent2.reasoning_model is None
-    assert agent2.output_model is None
-    assert agent2.parser_model.id == "gpt-3.5-turbo"
-
-
-def test_secondary_models_opt_in_inheritance():
-    """Test that secondary models can be inherited when explicitly specified."""
-    agent1 = Agent(name="Agent 1", role="Assistant")
-    agent2 = Agent(name="Agent 2", role="Helper", parser_model=OpenAIChat(id="gpt-3.5-turbo"))
-
-    team = Team(
-        name="Multi Model Team",
-        model=Claude(id="claude-3-5-sonnet-20241022"),
-        reasoning_model=OpenAIChat(id="o1"),
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
-        output_model=OpenAIChat(id="gpt-4o-mini"),
-        inherit_secondary_models=[
-            SecondaryModelType.reasoning_model,
-            SecondaryModelType.parser_model,
-            SecondaryModelType.output_model,
-        ],
-        members=[agent1, agent2],
-    )
-
-    team.initialize_team()
-
-    # Agent 1 should inherit all model types
-    assert isinstance(agent1.model, Claude)
-    assert agent1.model.id == "claude-3-5-sonnet-20241022"
-    assert agent1.reasoning_model.id == "o1"
-    assert agent1.parser_model.id == "gpt-4o-mini"
-    assert agent1.output_model.id == "gpt-4o-mini"
-
-    # Agent 2 should inherit all except parser_model (has explicit)
-    assert isinstance(agent2.model, Claude)
-    assert agent2.reasoning_model.id == "o1"
-    assert agent2.output_model.id == "gpt-4o-mini"
-    assert agent2.parser_model.id == "gpt-3.5-turbo"
 
 
 def test_default_model():
