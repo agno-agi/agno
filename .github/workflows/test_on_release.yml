@@ -838,6 +838,8 @@ jobs:
       matrix:
         python-version: ["3.12"]
       fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -848,10 +850,11 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Setup environment for A2A tests (without conflicting deps)
+      - name: Setup environment
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
           VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock
       - name: Run Basic Clean Test
@@ -868,6 +871,8 @@ jobs:
       matrix:
         python-version: ["3.12"]
       fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -878,10 +883,11 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Setup environment for A2A tests (without conflicting deps)
+      - name: Setup environment
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
           VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock
       - name: Run Basic Clean Test
