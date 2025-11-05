@@ -802,13 +802,10 @@ class Team:
             member.team_id = self.id
             member.set_id()
 
-            # Inherit team models if agent has no explicit model
-            for model_type in ["model", "reasoning_model", "parser_model", "output_model"]:
-                if getattr(member, model_type) is None and getattr(self, model_type) is not None:
-                    setattr(member, model_type, getattr(self, model_type))
-                    log_info(
-                        f"Agent '{member.name or member.id}' inheriting {model_type} from Team: {getattr(self, model_type).id}"
-                    )
+            # Inherit team primary model if agent has no explicit model
+            if member.model is None and self.model is not None:
+                member.model = self.model
+                log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {self.model.id}")
 
         elif isinstance(member, Team):
             member.parent_team_id = self.id
