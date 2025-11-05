@@ -853,7 +853,7 @@ jobs:
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock
       - name: Run Basic Clean Test
         working-directory: .
         env:
@@ -883,7 +883,7 @@ jobs:
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock
       - name: Run Basic Clean Test
         working-directory: .
         env:
