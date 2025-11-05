@@ -40,7 +40,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
             user_id = run_input.forwarded_props.get("user_id")
 
-        # Validate the session state
+        # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
 
         # Request streaming response from agent
