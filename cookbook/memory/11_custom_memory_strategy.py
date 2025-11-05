@@ -115,7 +115,6 @@ memory_manager = MemoryManager(
 
 memory_manager.optimize_memories(
     user_id=user_id,
-    token_limit=100,  # Not used by our strategy
     strategy=custom_strategy,  # Pass custom strategy instance
     apply=True,  # Apply changes to database
 )
@@ -133,7 +132,9 @@ print(f"  Token count: {tokens_after} tokens")
 if tokens_before > 0:
     reduction_pct = ((tokens_before - tokens_after) / tokens_before) * 100
     tokens_saved = tokens_before - tokens_after
-    print(f"  Reduction: {reduction_pct:.1f}% ({tokens_saved} tokens saved by keeping 2 most recent)")
+    print(
+        f"  Reduction: {reduction_pct:.1f}% ({tokens_saved} tokens saved by keeping 2 most recent)"
+    )
 
 print("\nRemaining memories (2 most recent):")
 for i, memory in enumerate(memories_after, 1):

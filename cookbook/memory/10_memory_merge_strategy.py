@@ -11,6 +11,7 @@ Run: python cookbook/memory/10_memory_merge_strategy.py
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.memory import MemoryManager, MergeStrategy
+from agno.memory.strategy import MemoryOptimizationStrategyType
 from agno.models.openai import OpenAIChat
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -80,8 +81,7 @@ memory_manager = MemoryManager(
 print("\nOptimizing memories with 'merge' strategy...")
 memory_manager.optimize_memories(
     user_id=user_id,
-    token_limit=100,  # Target token limit
-    strategy="merge",  # Combine all memories into one
+    strategy=MemoryOptimizationStrategyType.MERGE,  # Combine all memories into one
     apply=True,  # Apply changes to database
 )
 
