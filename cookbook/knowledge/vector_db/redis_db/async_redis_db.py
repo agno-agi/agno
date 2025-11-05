@@ -33,6 +33,7 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
+
 async def main():
     # Add content (ingestion + chunking + embedding handled by Knowledge)
     await knowledge.add_content_async(
@@ -44,11 +45,14 @@ async def main():
 
     # Query with an Agent
     agent = Agent(knowledge=knowledge)
-    await agent.aprint_response("List down the ingredients to make Massaman Gai", markdown=True)
+    await agent.aprint_response(
+        "List down the ingredients to make Massaman Gai", markdown=True
+    )
 
     # Cleanup examples (uncomment to remove the content)
     # vector_db.delete_by_name("Recipes")
     # or
     # vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+
 
 asyncio.run(main())

@@ -173,6 +173,7 @@ a2a = ["a2a-sdk"]
 huggingface = [
     "huggingface-hub",
 ]
+vllm = ["vllm"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -292,7 +293,8 @@ knowledge = [
 
 # All embedders
 embedders = [
-  "agno[huggingface]"
+  "agno[huggingface]",
+  "agno[vllm]"
 ]
 
 # All libraries for testing
