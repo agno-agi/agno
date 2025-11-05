@@ -158,7 +158,7 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    input = run_dict.get("input", [])
+    input = run_dict.get("input", {})
     input_media["images"].extend(input.get("images", []))
     input_media["videos"].extend(input.get("videos", []))
     input_media["audios"].extend(input.get("audios", []))
@@ -233,8 +233,15 @@ def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Call
     return formatted_tools
 
 
-def format_team_tools(team_tools: List[Function]):
-    return [tool.to_dict() for tool in team_tools]
+def format_team_tools(team_tools: List[Union[Function, dict]]):
+    formatted_tools: List[Dict] = []
+    if team_tools is not None:
+        for tool in team_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+    return formatted_tools
 
 
 def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
@@ -264,6 +271,33 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
     for workflow in workflows:
         if workflow.id == workflow_id:
             return workflow
+    return None
+
+
+#  INPUT SCHEMA VALIDATIONS
+
+
+def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    if agent.input_schema is not None:
+        try:
+            return agent.input_schema.model_json_schema()
+        except Exception:
+            return None
+
+    return None
+
+
+def get_team_input_schema_dict(team: Team) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    if team.input_schema is not None:
+        try:
+            return team.input_schema.model_json_schema()
+        except Exception:
+            return None
+
     return None
 
 

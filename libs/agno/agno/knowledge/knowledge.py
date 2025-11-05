@@ -4,7 +4,6 @@ import io
 import time
 from dataclasses import dataclass
 from enum import Enum
-from functools import cached_property
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
@@ -122,6 +121,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             for url in urls:
                 await self.add_content_async(
@@ -133,6 +133,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -146,6 +147,7 @@ class Knowledge:
                     exclude=exclude,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
             if topics:
                 await self.add_content_async(
@@ -168,6 +170,7 @@ class Knowledge:
                     remote_content=remote_content,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
+                    reader=reader,
                 )
 
         else:
@@ -183,10 +186,14 @@ class Knowledge:
         paths: Optional[List[str]] = None,
         urls: Optional[List[str]] = None,
         metadata: Optional[Dict[str, str]] = None,
+        topics: Optional[List[str]] = None,
+        text_contents: Optional[List[str]] = None,
+        reader: Optional[Reader] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = False,
+        remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
     def add_contents(self, *args, **kwargs) -> None:
@@ -204,10 +211,14 @@ class Knowledge:
             paths: Optional list of file paths to load content from
             urls: Optional list of URLs to load content from
             metadata: Optional metadata dictionary to apply to all content
+            topics: Optional list of topics to add
+            text_contents: Optional list of text content strings to add
+            reader: Optional reader to use for processing content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
+            remote_content: Optional remote content (S3, GCS, etc.) to add
         """
         asyncio.run(self.add_contents_async(*args, **kwargs))
 
@@ -497,7 +508,7 @@ class Knowledge:
         await self._add_to_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
-            self._update_content(content)
+            await self._aupdate_content(content)
             return
 
         if self.vector_db.__class__.__name__ == "LightRag":
@@ -543,6 +554,8 @@ class Knowledge:
                 reader = self.pdf_reader
             elif file_extension == ".docx":
                 reader = self.docx_reader
+            elif file_extension == ".pptx":
+                reader = self.pptx_reader
             elif file_extension == ".json":
                 reader = self.json_reader
             elif file_extension == ".markdown":
@@ -719,7 +732,7 @@ class Knowledge:
             await self._add_to_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                await self._aupdate_content(content)
                 return
 
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -735,7 +748,7 @@ class Knowledge:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "No reader available for topic"
-                self._update_content(content)
+                await self._aupdate_content(content)
                 continue
 
             read_documents = content.reader.read(topic)
@@ -831,6 +844,8 @@ class Knowledge:
                     reader = self.csv_reader
                 elif s3_object.uri.endswith(".docx"):
                     reader = self.docx_reader
+                elif s3_object.uri.endswith(".pptx"):
+                    reader = self.pptx_reader
                 elif s3_object.uri.endswith(".json"):
                     reader = self.json_reader
                 elif s3_object.uri.endswith(".markdown"):
@@ -913,6 +928,8 @@ class Knowledge:
                     reader = self.csv_reader
                 elif gcs_object.name.endswith(".docx"):
                     reader = self.docx_reader
+                elif gcs_object.name.endswith(".pptx"):
+                    reader = self.pptx_reader
                 elif gcs_object.name.endswith(".json"):
                     reader = self.json_reader
                 elif gcs_object.name.endswith(".markdown"):
@@ -1439,14 +1456,16 @@ class Knowledge:
     def get_valid_filters(self) -> Set[str]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(self._get_filters_from_db)
+        self.valid_metadata_filters.update(self._get_filters_from_db())
         return self.valid_metadata_filters
 
-    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+    async def aget_valid_filters(self) -> Set[str]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(self._get_filters_from_db)
+        self.valid_metadata_filters.update(await self._aget_filters_from_db())
+        return self.valid_metadata_filters
 
+    def _validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if not filters:
             return {}, []
 
@@ -1470,6 +1489,20 @@ class Knowledge:
 
         return valid_filters, invalid_keys
 
+    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(self._get_filters_from_db())
+
+        return self._validate_filters(filters)
+
+    async def async_validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(await self._aget_filters_from_db())
+
+        return self._validate_filters(filters)
+
     def add_filters(self, metadata: Dict[str, Any]) -> None:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
@@ -1478,11 +1511,20 @@ class Knowledge:
             for key in metadata.keys():
                 self.valid_metadata_filters.add(key)
 
-    @cached_property
     def _get_filters_from_db(self) -> Set[str]:
         if self.contents_db is None:
             return set()
         contents, _ = self.get_content()
+        valid_filters: Set[str] = set()
+        for content in contents:
+            if content.metadata:
+                valid_filters.update(content.metadata.keys())
+        return valid_filters
+
+    async def _aget_filters_from_db(self) -> Set[str]:
+        if self.contents_db is None:
+            return set()
+        contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
         for content in contents:
             if content.metadata:
@@ -1888,6 +1930,11 @@ class Knowledge:
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
         return self._get_reader("docx")
+
+    @property
+    def pptx_reader(self) -> Optional[Reader]:
+        """PPTX reader - lazy loaded via factory."""
+        return self._get_reader("pptx")
 
     @property
     def json_reader(self) -> Optional[Reader]:

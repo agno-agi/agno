@@ -10,6 +10,7 @@ from typing_extensions import TypeGuard
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
+from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
@@ -210,6 +211,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -224,7 +226,11 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
-        session_state_copy = copy(session_state) if session_state is not None else {}
+
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = copy(run_context.session_state)
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -382,7 +388,6 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-
         if hasattr(event, "workflow_id"):
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
@@ -404,9 +409,11 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -422,11 +429,18 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
+
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = copy(run_context.session_state)
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
+
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
 
         # Emit StepStartedEvent
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
@@ -548,7 +562,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -588,7 +602,7 @@ class Step:
                 yield final_response
 
                 # Emit StepCompletedEvent
-                if stream_intermediate_steps and workflow_run_response:
+                if stream_events and workflow_run_response:
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
                         workflow_name=workflow_run_response.workflow_name or "",
@@ -809,6 +823,7 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
@@ -831,7 +846,10 @@ class Step:
         # Create session_state copy once to avoid duplication
         session_state_copy = copy(session_state) if session_state is not None else {}
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Emit StepStartedEvent
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -978,7 +996,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -1015,7 +1033,7 @@ class Step:
                 final_response = self._process_step_output(final_response)
                 yield final_response
 
-                if stream_intermediate_steps and workflow_run_response:
+                if stream_events and workflow_run_response:
                     # Emit StepCompletedEvent
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",

@@ -1,6 +1,7 @@
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -8,34 +9,41 @@ db = SqliteDb(db_file="tmp/workflow.db")
 
 
 # Define tools to manage a shopping list in workflow session state
-def add_item(session_state, item: str) -> str:
+def add_item(run_context: RunContext, item: str) -> str:
     """Add an item to the shopping list in workflow session state.
 
     Args:
         item (str): The item to add to the shopping list
     """
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Check if item already exists (case-insensitive)
     existing_items = [
-        existing_item.lower() for existing_item in session_state["shopping_list"]
+        existing_item.lower()
+        for existing_item in run_context.session_state["shopping_list"]
     ]
     if item.lower() not in existing_items:
-        session_state["shopping_list"].append(item)
+        run_context.session_state["shopping_list"].append(item)
         return f"Added '{item}' to the shopping list."
     else:
         return f"'{item}' is already in the shopping list."
 
 
-def remove_item(session_state, item: str) -> str:
+def remove_item(run_context: RunContext, item: str) -> str:
     """Remove an item from the shopping list in workflow session state.
 
     Args:
         item (str): The item to remove from the shopping list
     """
-    if len(session_state["shopping_list"]) == 0:
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if len(run_context.session_state["shopping_list"]) == 0:
         return f"Shopping list is empty. Cannot remove '{item}'."
 
     # Find and remove item (case-insensitive)
-    shopping_list = session_state["shopping_list"]
+    shopping_list = run_context.session_state["shopping_list"]
     for i, existing_item in enumerate(shopping_list):
         if existing_item.lower() == item.lower():
             removed_item = shopping_list.pop(i)
@@ -44,18 +52,24 @@ def remove_item(session_state, item: str) -> str:
     return f"'{item}' not found in the shopping list."
 
 
-def remove_all_items(session_state) -> str:
+def remove_all_items(run_context: RunContext) -> str:
     """Remove all items from the shopping list in workflow session state."""
-    session_state["shopping_list"] = []
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    run_context.session_state["shopping_list"] = []
     return "Removed all items from the shopping list."
 
 
-def list_items(session_state) -> str:
+def list_items(run_context: RunContext) -> str:
     """List all items in the shopping list from workflow session state."""
-    if len(session_state["shopping_list"]) == 0:
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if len(run_context.session_state["shopping_list"]) == 0:
         return "Shopping list is empty."
 
-    items = session_state["shopping_list"]
+    items = run_context.session_state["shopping_list"]
     items_str = "\n".join([f"- {item}" for item in items])
     return f"Shopping list:\n{items_str}"
 

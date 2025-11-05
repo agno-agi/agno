@@ -3,6 +3,7 @@ import wave
 from typing import Iterator
 
 from agno.agent import Agent, RunOutputEvent  # noqa
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
 
 # Audio Configuration
@@ -20,6 +21,7 @@ agent = Agent(
             "format": "pcm16",
         },  # Only pcm16 is supported with streaming
     ),
+    db=InMemoryDb(),
 )
 output_stream: Iterator[RunOutputEvent] = agent.run(
     "Tell me a 10 second story", stream=True
@@ -48,3 +50,6 @@ with wave.open(str(filename), "wb") as wav_file:
                     print(f"Error decoding audio: {e}")
 print()
 print(f"Saved audio to {filename}")
+
+print("Metrics:")
+print(agent.get_last_run_output().metrics)
