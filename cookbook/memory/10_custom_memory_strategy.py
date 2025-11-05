@@ -26,19 +26,33 @@ class RecentOnlyStrategy(MemoryOptimizationStrategy):
     def __init__(self, keep_count: int = 2):
         self.keep_count = keep_count
 
-    def get_system_prompt(self, **kwargs) -> str:
+    def get_system_prompt(self) -> str:
         """Not used by this strategy."""
         return "RecentOnlyStrategy doesn't use LLM"
 
     def optimize(
         self,
         memories: List[UserMemory],
-        token_limit: int,
         model: Model,
         user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Keep only the most recent N memories."""
         # Sort by updated_at or created_at, most recent first
+        sorted_memories = sorted(
+            memories,
+            key=lambda m: m.updated_at or m.created_at or datetime.min,
+            reverse=True,
+        )
+        # Keep only the specified number
+        return sorted_memories[: self.keep_count]
+
+    async def aoptimize(
+        self,
+        memories: List[UserMemory],
+        model: Model,
+        user_id: Optional[str] = None,
+    ) -> List[UserMemory]:
+        """Async version: Keep only the most recent N memories."""
         sorted_memories = sorted(
             memories,
             key=lambda m: m.updated_at or m.created_at or datetime.min,
