@@ -1,7 +1,7 @@
-from agno.vectordb.redis.redisdb import RedisVectorDb
+from agno.vectordb.redis.redisdb import RedisDB
 
 # Backward compatibility alias
-RedisDB = RedisVectorDb
+RedisVectorDb = RedisDB
 
 __all__ = [
     "RedisVectorDb",
