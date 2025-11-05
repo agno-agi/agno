@@ -10,8 +10,8 @@ from typing_extensions import TypeGuard
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
+from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,

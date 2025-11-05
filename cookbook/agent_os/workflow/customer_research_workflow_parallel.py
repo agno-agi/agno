@@ -7,7 +7,7 @@ from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
