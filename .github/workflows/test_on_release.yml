@@ -831,6 +831,72 @@ jobs:
           pip install a2a-sdk
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
+  test-clean:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_basic.py
+  
+  test-clean-os:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_os_basic.py
+
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest

@@ -7,6 +7,7 @@ or start the local Redis docker container using the following command:
 
 """
 
+import asyncio
 import os
 
 from agno.agent import Agent
@@ -32,19 +33,26 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-# Add content (ingestion + chunking + embedding handled by Knowledge)
-knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
-    skip_if_exists=True,
-)
 
-# Query with an Agent
-agent = Agent(knowledge=knowledge)
-agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+async def main():
+    # Add content (ingestion + chunking + embedding handled by Knowledge)
+    await knowledge.add_content_async(
+        name="Recipes",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"doc_type": "recipe_book"},
+        skip_if_exists=True,
+    )
 
-# Cleanup examples (uncomment to remove the content)
-# vector_db.delete_by_name("Recipes")
-# or
-# vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+    # Query with an Agent
+    agent = Agent(knowledge=knowledge)
+    await agent.aprint_response(
+        "List down the ingredients to make Massaman Gai", markdown=True
+    )
+
+    # Cleanup examples (uncomment to remove the content)
+    # vector_db.delete_by_name("Recipes")
+    # or
+    # vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+
+
+asyncio.run(main())

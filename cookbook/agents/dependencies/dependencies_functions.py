@@ -6,7 +6,7 @@ We will then use this function as a dependency in an agent, allowing us to get t
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 def get_project_settings(run_context: RunContext) -> dict:

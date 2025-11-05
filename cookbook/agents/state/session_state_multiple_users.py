@@ -13,7 +13,7 @@ import json
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 # In-memory database to store user shopping lists
 # Organized by user ID and session ID
