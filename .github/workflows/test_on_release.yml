@@ -831,7 +831,6 @@ jobs:
           pip install a2a-sdk
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
-  # Run A2A tests (isolated due to dependency conflicts)
   test-clean:
     runs-on: ubuntu-latest
     strategy:
