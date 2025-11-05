@@ -357,7 +357,7 @@ class LanceDb(VectorDb):
     ) -> None:
         """
         Asynchronously insert documents into the database.
-        
+
         Note: Currently wraps sync insert method since LanceDB async insert has sync/async table
         synchronization issues causing empty vectors. We still do async embedding for performance.
 
@@ -376,7 +376,7 @@ class LanceDb(VectorDb):
             try:
                 doc_contents = [doc.content for doc in documents]
                 embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
-                
+
                 for j, doc in enumerate(documents):
                     if j < len(embeddings):
                         doc.embedding = embeddings[j]
@@ -422,7 +422,7 @@ class LanceDb(VectorDb):
     ) -> None:
         """
         Asynchronously upsert documents into the database.
-        
+
         Note: Uses async embedding for performance, then sync upsert for reliability.
         """
         if len(documents) > 0:
@@ -449,7 +449,7 @@ class LanceDb(VectorDb):
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                 await asyncio.gather(*embed_tasks, return_exceptions=True)
-        
+
         # Use sync upsert for reliability
         self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
@@ -517,8 +517,8 @@ class LanceDb(VectorDb):
     async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
         """
         Asynchronously search for documents matching the query.
-        
-        Note: Currently wraps sync search method since LanceDB async search has sync/async table 
+
+        Note: Currently wraps sync search method since LanceDB async search has sync/async table
         synchronization issues. Performance impact is minimal for search operations.
 
         Args:

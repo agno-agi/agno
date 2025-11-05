@@ -1473,7 +1473,7 @@ class Knowledge:
 
         valid_filters: Optional[Dict[str, Any]] = None
         invalid_keys = []
-        
+
         if isinstance(filters, dict):
             if not filters:
                 return None, []

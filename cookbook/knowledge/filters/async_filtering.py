@@ -2,14 +2,13 @@ import asyncio
 import os
 
 from agno.agent import Agent
-from agno.knowledge.knowledge import Knowledge
 from agno.db.sqlite import AsyncSqliteDb
-from agno.utils.search_filters import IN
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.lancedb import LanceDb
+from agno.utils.search_filters import IN
 from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths
@@ -20,25 +19,13 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
 # Clean up old databases
 if os.path.exists("tmp/knowledge_contents.db"):
     os.remove("tmp/knowledge_contents.db")
-if os.path.exists("tmp/lancedb") and os.path.isdir("tmp/lancedb"):
-    from shutil import rmtree
-
-    rmtree(path="tmp/lancedb", ignore_errors=True)
-
-
 db = AsyncSqliteDb(
     db_file="tmp/knowledge_contents.db",
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
-vector_db = LanceDb(
-    table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
-)
-
+# Initialize Vector Database
 vector_db = PgVector(
-    table_name="recipes",
+    table_name="CVs",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
 
@@ -126,7 +113,7 @@ if __name__ == "__main__":
     asyncio.run(
         agent.aprint_response(
             "Tell me about the candidate's experience and skills",
-            # knowledge_filters=[(IN("user_id", ["jordan_mitchell"]))],
+            knowledge_filters=[(IN("user_id", ["jordan_mitchell"]))],
             markdown=True,
         )
     )

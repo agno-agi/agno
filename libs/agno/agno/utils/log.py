@@ -108,6 +108,7 @@ workflow_logger: AgnoLogger = build_logger(WORKFLOW_LOGGER_NAME, source_type="wo
 # Set the default logger to the agent logger
 logger: AgnoLogger = agent_logger
 
+
 # Suppress noisy third-party loggers
 def _suppress_third_party_loggers():
     """Suppress verbose logging from third-party libraries."""
@@ -115,6 +116,7 @@ def _suppress_third_party_loggers():
     logging.getLogger("httpx").disabled = True
     # Disable openai SDK's httpx logs
     logging.getLogger("openai._base_client").disabled = True
+
 
 # Apply suppression on module import
 _suppress_third_party_loggers()
@@ -163,7 +165,7 @@ def set_log_level_to_error(source_type: Optional[str] = None):
 
 def enable_third_party_logs():
     """Enable verbose logging from third-party libraries like httpx.
-    
+
     Useful for debugging HTTP requests and responses.
     """
     logging.getLogger("httpx").disabled = False
@@ -174,7 +176,7 @@ def enable_third_party_logs():
 
 def disable_third_party_logs():
     """Disable verbose logging from third-party libraries like httpx.
-    
+
     This is the default behavior to reduce log noise.
     """
     _suppress_third_party_loggers()

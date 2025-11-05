@@ -12,8 +12,8 @@ from agno.utils.media import (
     download_knowledge_filters_sample_data,
 )
 from agno.utils.search_filters import AND, EQ, IN, NOT
-from agno.vectordb.pgvector import PgVector
 from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.pgvector import PgVector
 
 # Download all sample sales documents and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
@@ -91,27 +91,24 @@ print("--------------------------------")
 print("Using IN operator")
 sales_agent.print_response(
     "Describe revenue performance for the region",
-    knowledge_filters={"region": "north_america", "data_type": "sales"},
-    # knowledge_filters=[(IN("region", ["north_america"]))],
+    knowledge_filters=[(IN("region", ["north_america"]))],
     markdown=True,
 )
 
-# print("--------------------------------")
-# print("Using NOT operator")
-# sales_agent.print_response(
-#     "Describe revenue performance for the region",
-#     # knowledge_filters=[{"region": "north_america", "data_type": "sales"}],
-#     knowledge_filters=[NOT(IN("region", ["north_america"]))],
-#     markdown=True,
-# )
+print("--------------------------------")
+print("Using NOT operator")
+sales_agent.print_response(
+    "Describe revenue performance for the region",
+    knowledge_filters=[NOT(IN("region", ["north_america"]))],
+    markdown=True,
+)
 
-# print("--------------------------------")
-# print("Using AND operator")
-# sales_agent.print_response(
-#     "Describe revenue performance for the region",
-#     # knowledge_filters=[{"region": "north_america", "data_type": "sales"}],
-#     knowledge_filters=[
-#         AND(EQ("data_type", "sales"), NOT(EQ("region", "north_america")))
-#     ],
-#     markdown=True,
-# )
+print("--------------------------------")
+print("Using AND operator")
+sales_agent.print_response(
+    "Describe revenue performance for the region",
+    knowledge_filters=[
+        AND(EQ("data_type", "sales"), NOT(EQ("region", "north_america")))
+    ],
+    markdown=True,
+)
