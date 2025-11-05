@@ -112,6 +112,7 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
             kwargs.pop("knowledge_filters")
             log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
     
+    # Parse boolean and null values
     for key, value in kwargs.items():
         if isinstance(value, str) and value.lower() in ["true", "false"]:
             kwargs[key] = value.lower() == "true"
