@@ -3,7 +3,7 @@ from typing import List
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
