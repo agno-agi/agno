@@ -1,21 +1,27 @@
 from agno.agent import Agent
 from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.utils.log import logger
 
 
-def add_item(session_state: dict, item: str) -> str:
+def add_item(run_context: RunContext, item: str) -> str:
     """Add an item to the shopping list."""
-    if session_state:
-        session_state["shopping_list"].append(item)
-        len_shopping_list = len(session_state["shopping_list"])
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if run_context.session_state:
+        run_context.session_state["shopping_list"].append(item)
+        len_shopping_list = len(run_context.session_state["shopping_list"])
     if len_shopping_list < 3:
         raise StopAgentRun(
-            f"Shopping list is: {session_state['shopping_list']}. We must stop the agent."  # type: ignore
+            f"Shopping list is: {run_context.session_state['shopping_list']}. We must stop the agent."  # type: ignore
         )
 
-    logger.info(f"The shopping list is now: {session_state.get('shopping_list')}")  # type: ignore
-    return f"The shopping list is now: {session_state.get('shopping_list')}"  # type: ignore
+    logger.info(
+        f"The shopping list is now: {run_context.session_state.get('shopping_list')}"
+    )  # type: ignore
+    return f"The shopping list is now: {run_context.session_state.get('shopping_list')}"  # type: ignore
 
 
 agent = Agent(
