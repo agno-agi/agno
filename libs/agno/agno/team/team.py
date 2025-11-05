@@ -988,7 +988,7 @@ class Team:
 
     def _execute_pre_hooks(
         self,
-        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
+        hooks: Optional[List[Callable[..., Any]]],
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
@@ -1053,7 +1053,7 @@ class Team:
 
     async def _aexecute_pre_hooks(
         self,
-        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
+        hooks: Optional[List[Callable[..., Any]]],
         run_response: TeamRunOutput,
         run_input: TeamRunInput,
         session: TeamSession,
@@ -1124,7 +1124,7 @@ class Team:
 
     def _execute_post_hooks(
         self,
-        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
+        hooks: Optional[List[Callable[..., Any]]],
         run_output: TeamRunOutput,
         session: TeamSession,
         run_context: RunContext,
@@ -1184,7 +1184,7 @@ class Team:
 
     async def _aexecute_post_hooks(
         self,
-        hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
+        hooks: Optional[List[Callable[..., Any]]],
         run_output: TeamRunOutput,
         session: TeamSession,
         run_context: RunContext,
@@ -1828,9 +1828,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)
+                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)
+                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -2676,9 +2676,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -8742,4 +8742,3 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
-

@@ -784,6 +784,7 @@ class Agent:
             self.add_culture_to_context = (
                 self.enable_agentic_culture or self.update_cultural_knowledge or self.culture_manager is not None
             )
+
     def _set_memory_manager(self) -> None:
         if self.db is None:
             log_warning("Database not provided. Memories will not be stored.")
@@ -1540,9 +1541,9 @@ class Agent:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)
+                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)
+                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -2453,9 +2454,9 @@ class Agent:
         # Normalise hooks & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         # Initialize session
@@ -4212,6 +4213,7 @@ class Agent:
         yield pause_event  # type: ignore
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
     async def _ahandle_agent_run_paused(
         self,
         run_response: RunOutput,
@@ -5643,6 +5645,7 @@ class Agent:
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
+
     def _resolve_run_dependencies(self, run_context: RunContext) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
@@ -6432,6 +6435,7 @@ class Agent:
         if self.db is None:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
+
     def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
         """Get messages for a session
 
