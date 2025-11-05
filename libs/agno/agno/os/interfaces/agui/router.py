@@ -80,7 +80,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         if input.forwarded_props and isinstance(input.forwarded_props, dict):
             user_id = input.forwarded_props.get("user_id")
 
-        # AG-UI sends state as Any type, but Agno requires Dict[str, Any]
+        # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(input.state, input.thread_id)
 
         # Request streaming response from team
