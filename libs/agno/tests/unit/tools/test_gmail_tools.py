@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import pytest
 from google.oauth2.credentials import Credentials
+from googleapiclient.errors import HttpError
 
 from agno.tools.gmail import GmailTools
 
@@ -733,21 +734,21 @@ def test_attachment_filename_extraction(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().send.assert_called_once()
 
 
-def test_list_labels_with_custom_labels(gmail_tools, mock_gmail_service):
+def test_list_custom_labels_with_custom_labels(gmail_tools, mock_gmail_service):
     """Test listing custom labels when they exist."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_1", "name": "INBOX"},  # System label
-            {"id": "Label_2", "name": "SENT"},  # System label
-            {"id": "Label_3", "name": "CustomLabel1"},  # Custom label
-            {"id": "Label_4", "name": "Work Projects"},  # Custom label
-            {"id": "Label_5", "name": "STARRED"},  # System label
+            {"id": "Label_1", "name": "INBOX", "type": "system"},  # System label
+            {"id": "Label_2", "name": "SENT", "type": "system"},  # System label
+            {"id": "Label_3", "name": "CustomLabel1", "type": "user"},  # Custom label
+            {"id": "Label_4", "name": "Work Projects", "type": "user"},  # Custom label
+            {"id": "Label_5", "name": "STARRED", "type": "system"},  # System label
         ]
     }
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.list_labels()
+    result = gmail_tools.list_custom_labels()
 
     assert "Your Custom Labels (2 total):" in result
     assert "1. CustomLabel1" in result
@@ -756,33 +757,52 @@ def test_list_labels_with_custom_labels(gmail_tools, mock_gmail_service):
     assert "SENT" not in result
 
 
-def test_list_labels_no_custom_labels(gmail_tools, mock_gmail_service):
-    """Test listing labels when only system labels exist."""
+def test_list_custom_labels_no_custom_labels(gmail_tools, mock_gmail_service):
+    """Test listing custom labels when only system labels exist."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_1", "name": "INBOX"},
-            {"id": "Label_2", "name": "SENT"},
-            {"id": "Label_3", "name": "STARRED"},
+            {"id": "Label_1", "name": "INBOX", "type": "system"},
+            {"id": "Label_2", "name": "SENT", "type": "system"},
+            {"id": "Label_3", "name": "STARRED", "type": "system"},
         ]
     }
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.list_labels()
+    result = gmail_tools.list_custom_labels()
 
     assert "No custom labels found" in result
     assert "Create labels using apply_label function!" in result
 
 
-def test_list_labels_error_handling(gmail_tools, mock_gmail_service):
-    """Test error handling in list_labels."""
-    from googleapiclient.errors import HttpError
+def test_list_custom_labels_with_missing_type_field(gmail_tools, mock_gmail_service):
+    """Test that labels without type field are treated as system labels."""
+    mock_labels_response = {
+        "labels": [
+            {"id": "Label_1", "name": "INBOX"},  # No type field - should be treated as system
+            {"id": "Label_2", "name": "CustomLabel1", "type": "user"},  # User label
+            {"id": "Label_3", "name": "SENT"},  # No type field - should be treated as system
+        ]
+    }
+
+    mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
+
+    result = gmail_tools.list_custom_labels()
+
+    assert "Your Custom Labels (1 total):" in result
+    assert "1. CustomLabel1" in result
+    assert "INBOX" not in result
+    assert "SENT" not in result
+
+
+def test_list_custom_labels_error_handling(gmail_tools, mock_gmail_service):
+    """Test error handling in list_custom_labels."""
 
     mock_gmail_service.users().labels().list().execute.side_effect = HttpError(
         resp=Mock(status=403), content=b'{"error": {"message": "Access Denied"}}'
     )
 
-    result = gmail_tools.list_labels()
+    result = gmail_tools.list_custom_labels()
     assert "Error fetching labels" in result
 
 
@@ -794,13 +814,13 @@ def test_apply_label_new_label(gmail_tools, mock_gmail_service):
     # Mock labels list response (no existing label)
     mock_labels_response = {
         "labels": [
-            {"id": "Label_1", "name": "INBOX"},
-            {"id": "Label_2", "name": "SENT"},
+            {"id": "Label_1", "name": "INBOX", "type": "system"},
+            {"id": "Label_2", "name": "SENT", "type": "system"},
         ]
     }
 
     # Mock label creation response
-    mock_create_label_response = {"id": "Label_new", "name": "NewLabel"}
+    mock_create_label_response = {"id": "Label_new", "name": "NewLabel", "type": "user"}
 
     # Reset the mock to clear any previous calls
     mock_gmail_service.reset_mock()
@@ -827,8 +847,8 @@ def test_apply_label_existing_label(gmail_tools, mock_gmail_service):
     # Mock labels list response (with existing label)
     mock_labels_response = {
         "labels": [
-            {"id": "Label_1", "name": "INBOX"},
-            {"id": "Label_existing", "name": "ExistingLabel"},
+            {"id": "Label_1", "name": "INBOX", "type": "system"},
+            {"id": "Label_existing", "name": "ExistingLabel", "type": "user"},
         ]
     }
 
@@ -866,7 +886,7 @@ def test_apply_label_case_insensitive(gmail_tools, mock_gmail_service):
 
     mock_labels_response = {
         "labels": [
-            {"id": "Label_existing", "name": "TestLabel"},
+            {"id": "Label_existing", "name": "TestLabel", "type": "user"},
         ]
     }
 
@@ -902,8 +922,8 @@ def test_remove_label_success(gmail_tools, mock_gmail_service):
     # Mock labels list response
     mock_labels_response = {
         "labels": [
-            {"id": "Label_target", "name": "TargetLabel"},
-            {"id": "Label_other", "name": "OtherLabel"},
+            {"id": "Label_target", "name": "TargetLabel", "type": "user"},
+            {"id": "Label_other", "name": "OtherLabel", "type": "user"},
         ]
     }
 
@@ -926,7 +946,7 @@ def test_remove_label_not_found(gmail_tools, mock_gmail_service):
     """Test removing a label that doesn't exist."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_other", "name": "OtherLabel"},
+            {"id": "Label_other", "name": "OtherLabel", "type": "user"},
         ]
     }
 
@@ -945,7 +965,7 @@ def test_remove_label_no_messages_found(gmail_tools, mock_gmail_service):
     """Test removing label when no messages match the context."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_target", "name": "TargetLabel"},
+            {"id": "Label_target", "name": "TargetLabel", "type": "user"},
         ]
     }
 
@@ -967,7 +987,7 @@ def test_remove_label_case_insensitive(gmail_tools, mock_gmail_service):
     """Test that label removal is case insensitive."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_target", "name": "TestLabel"},
+            {"id": "Label_target", "name": "TestLabel", "type": "user"},
         ]
     }
 
@@ -1012,8 +1032,8 @@ def test_delete_label_success(gmail_tools, mock_gmail_service):
     """Test successfully deleting a custom label."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_target", "name": "CustomLabel"},
-            {"id": "Label_other", "name": "OtherLabel"},
+            {"id": "Label_target", "name": "CustomLabel", "type": "user"},
+            {"id": "Label_other", "name": "OtherLabel", "type": "user"},
         ]
     }
 
@@ -1033,7 +1053,7 @@ def test_delete_label_not_found(gmail_tools, mock_gmail_service):
     """Test deleting a label that doesn't exist."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_other", "name": "OtherLabel"},
+            {"id": "Label_other", "name": "OtherLabel", "type": "user"},
         ]
     }
 
@@ -1052,7 +1072,26 @@ def test_delete_system_label(gmail_tools, mock_gmail_service):
     """Test attempting to delete a system label."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_inbox", "name": "INBOX"},
+            {"id": "Label_inbox", "name": "INBOX", "type": "system"},
+        ]
+    }
+
+    # Reset the mock to clear any previous calls
+    mock_gmail_service.reset_mock()
+
+    mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
+
+    result = gmail_tools.delete_label("INBOX", confirm=True)
+
+    assert "Cannot delete system label 'INBOX'. Only user-created labels can be deleted." in result
+    mock_gmail_service.users().labels().delete.assert_not_called()
+
+
+def test_delete_label_missing_type_field(gmail_tools, mock_gmail_service):
+    """Test that labels without type field cannot be deleted."""
+    mock_labels_response = {
+        "labels": [
+            {"id": "Label_inbox", "name": "INBOX"},  # No type field - should be treated as system
         ]
     }
 
@@ -1071,7 +1110,7 @@ def test_delete_label_case_insensitive(gmail_tools, mock_gmail_service):
     """Test that label deletion is case insensitive."""
     mock_labels_response = {
         "labels": [
-            {"id": "Label_target", "name": "TestLabel"},
+            {"id": "Label_target", "name": "TestLabel", "type": "user"},
         ]
     }
 

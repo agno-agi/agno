@@ -28,7 +28,7 @@ read_only_agent = Agent(
                 "get_emails_by_thread",
                 "mark_email_as_read",
                 "mark_email_as_unread",
-                "list_labels",
+                "list_custom_labels",
             ]
         )
     ],
@@ -58,7 +58,34 @@ safe_gmail_agent = Agent(
     output_schema=FindEmailOutput,
 )
 
-# Example 3: Full Gmail functionality (default)
+# Example 3: Label Management Specialist Agent
+label_manager_agent = Agent(
+    name="Gmail Label Manager",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        GmailTools(
+            include_tools=[
+                "list_custom_labels",
+                "apply_label",
+                "remove_label", 
+                "delete_label",
+                "search_emails",
+                "get_emails_by_context"
+            ]
+        )
+    ],
+    description="You are a Gmail label management specialist that helps organize emails with labels.",
+    instructions=[
+        "You specialize in Gmail label management operations.",
+        "You can list existing custom labels, apply labels to emails, remove labels, and delete labels.",
+        "Always be careful when deleting labels - confirm with the user first.",
+        "When applying or removing labels, search for relevant emails first.",
+        "Provide clear feedback on label operations performed.",
+    ],
+    markdown=True,
+)
+
+# Example 4: Full Gmail functionality (default)
 agent = Agent(
     name="Full Gmail Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -74,6 +101,9 @@ agent = Agent(
     markdown=True,
     output_schema=FindEmailOutput,
 )
+
+
+# BASIC GMAIL OPERATIONS EXAMPLES
 
 # Example 1: Find the last email from a specific sender
 email = "<replace_with_email_address>"
@@ -94,10 +124,33 @@ agent.print_response(
     stream=True,
 )
 
-# Example : Send a new email with attachments
+# Example 3: Send a new email with attachments
 # agent.print_response(
 #     f"""Send an email to {email} with subject 'Subject'
 #     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
 #     markdown=True,
 #     stream=True,
 # )
+
+# LABEL MANAGEMENT EXAMPLES
+
+# Example 4.1: List all custom labels
+label_manager_agent.print_response(
+    "List all my custom labels in Gmail.",
+    markdown=True,
+    stream=True,
+)
+
+# Example 4.2: Apply labels to organize emails
+label_manager_agent.print_response(
+    "Apply the 'Newsletters' label to emails from 'newsletter@company.com'. Process the last 5 emails.",
+    markdown=True,
+    stream=True,
+)
+
+# Example 4.3: Remove labels from emails
+label_manager_agent.print_response(
+    "Remove the 'Urgent' label from emails containing 'resolved' in the subject. Process up to 5 emails.",
+    markdown=True,
+    stream=True,
+)

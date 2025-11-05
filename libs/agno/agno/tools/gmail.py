@@ -142,7 +142,7 @@ class GmailTools(Toolkit):
             self.send_email,
             self.send_email_reply,
             # Label management
-            self.list_labels,
+            self.list_custom_labels,
             self.apply_label,
             self.remove_label,
             self.delete_label,
@@ -166,7 +166,7 @@ class GmailTools(Toolkit):
             "get_emails_by_date",
             "get_emails_by_thread",
             "search_emails",
-            "list_labels",
+            "list_custom_labels",
         ]
         modify_operations = ["mark_email_as_read", "mark_email_as_unread"]
         if any(read_operation in self.functions for read_operation in read_operations):
@@ -607,43 +607,19 @@ class GmailTools(Toolkit):
             return f"Error marking email {message_id} as unread: {type(error).__name__}: {error}"
 
     @authenticate
-    def list_labels(self) -> str:
+    def list_custom_labels(self) -> str:
         """
         List only user-created custom labels (filters out system labels) in a numbered format.
 
         Returns:
             str: A numbered list of custom labels only
         """
-        # System labels to filter out
-        system_labels = {
-            "CHAT",
-            "SENT",
-            "INBOX",
-            "IMPORTANT",
-            "TRASH",
-            "DRAFT",
-            "SPAM",
-            "CATEGORY_FORUMS",
-            "CATEGORY_UPDATES",
-            "CATEGORY_PERSONAL",
-            "CATEGORY_PROMOTIONS",
-            "CATEGORY_SOCIAL",
-            "STARRED",
-            "UNREAD",
-            "YELLOW_STAR",
-            "RED_STAR",
-            "ORANGE_STAR",
-            "GREEN_STAR",
-            "BLUE_STAR",
-            "PURPLE_STAR",
-        }
-
         try:
             results = self.service.users().labels().list(userId="me").execute()  # type: ignore
             labels = results.get("labels", [])
 
-            # Filter to only custom labels
-            custom_labels = [label["name"] for label in labels if label["name"] not in system_labels]
+            # Filter out only user-created labels
+            custom_labels = [label["name"] for label in labels if label.get("type") == "user"]
 
             if not custom_labels:
                 return "No custom labels found.\nCreate labels using apply_label function!"
@@ -779,39 +755,22 @@ class GmailTools(Toolkit):
         try:
             # Get all labels to find the target label
             labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-            label_id = None
+            target_label = None
 
             for label in labels:
                 if label["name"].lower() == label_name.lower():
-                    label_id = label["id"]
+                    target_label = label
                     break
 
-            if not label_id:
+            if not target_label:
                 return f"Label '{label_name}' not found."
 
-            # Check if it's a system label (can't delete those)
-            system_labels = {
-                "CHAT",
-                "SENT",
-                "INBOX",
-                "IMPORTANT",
-                "TRASH",
-                "DRAFT",
-                "SPAM",
-                "CATEGORY_FORUMS",
-                "CATEGORY_UPDATES",
-                "CATEGORY_PERSONAL",
-                "CATEGORY_PROMOTIONS",
-                "CATEGORY_SOCIAL",
-                "STARRED",
-                "UNREAD",
-            }
-
-            if label_name.upper() in system_labels:
-                return f"Cannot delete system label '{label_name}'."
+            # Check if it's a system label using the type field
+            if target_label.get("type") != "user":
+                return f"Cannot delete system label '{label_name}'. Only user-created labels can be deleted."
 
             # Delete the label
-            self.service.users().labels().delete(userId="me", id=label_id).execute()  # type: ignore
+            self.service.users().labels().delete(userId="me", id=target_label["id"]).execute()  # type: ignore
 
             return f"Successfully deleted label '{label_name}'. This label has been removed from all emails."
 
