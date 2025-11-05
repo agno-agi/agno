@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel

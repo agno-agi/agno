@@ -14,6 +14,7 @@ from agno.agent import Agent
 from agno.exceptions import CheckTrigger, InputCheckError, OutputCheckError
 from agno.models.base import Model
 from agno.models.response import ModelResponse
+from agno.run import RunContext
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.session.team import TeamSession
 from agno.team import Team
@@ -950,6 +951,7 @@ def test_hook_receives_correct_parameters():
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         debug_mode: Optional[bool] = None,
     ) -> None:
         """Pre-hook that captures all available parameters."""
@@ -963,6 +965,7 @@ def test_hook_receives_correct_parameters():
         received_params["pre_dependencies"] = dependencies
         received_params["pre_metadata"] = metadata
         received_params["pre_user_id"] = user_id
+        received_params["pre_run_context"] = run_context is not None
         received_params["pre_debug_mode"] = debug_mode
 
     def comprehensive_post_hook(
@@ -973,6 +976,7 @@ def test_hook_receives_correct_parameters():
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         debug_mode: Optional[bool] = None,
     ) -> None:
         """Post-hook that captures all available parameters."""
@@ -986,6 +990,7 @@ def test_hook_receives_correct_parameters():
         received_params["post_dependencies"] = dependencies
         received_params["post_metadata"] = metadata
         received_params["post_user_id"] = user_id
+        received_params["post_run_context"] = run_context is not None
         received_params["post_debug_mode"] = debug_mode
 
     # Create team with specific configuration
@@ -1009,6 +1014,7 @@ def test_hook_receives_correct_parameters():
     # Verify pre-hook received all parameters correctly
     assert received_params["pre_run_input"] is True
     assert received_params["pre_run_input_content"] == "Test comprehensive parameter passing"
+    assert received_params["pre_run_context"] is not None
     assert received_params["pre_team"] is True
     assert received_params["pre_team_name"] == "Test Team"
     assert received_params["pre_session"] is True
@@ -1022,6 +1028,7 @@ def test_hook_receives_correct_parameters():
     # Verify post-hook received all parameters correctly
     assert received_params["post_run_output"] is True
     assert received_params["post_run_output_content"] is not None
+    assert received_params["post_run_context"] is not None
     assert received_params["post_team"] is True
     assert received_params["post_team_name"] == "Test Team"
     assert received_params["post_session"] is True

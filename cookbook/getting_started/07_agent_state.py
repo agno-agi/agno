@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 def increment_counter(run_context: RunContext) -> str:

@@ -4,7 +4,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 @pytest.fixture

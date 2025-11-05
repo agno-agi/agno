@@ -11,8 +11,8 @@ from typing import Optional
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
+from agno.run import RunContext
 from agno.run.agent import CustomEvent
-from agno.run.base import RunContext
 from agno.team import Team
 
 # Setup the database
