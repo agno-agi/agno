@@ -1,5 +1,5 @@
-from agno.vectordb.redis.redisdb import RedisDB
+from agno.vectordb.redis.redisdb import RedisVectorDb
 
 __all__ = [
-    "RedisDB",
+    "RedisVectorDb",
 ]
