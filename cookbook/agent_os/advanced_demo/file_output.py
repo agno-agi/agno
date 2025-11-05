@@ -11,7 +11,7 @@ file_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     tools=[FileGenerationTools(output_directory="tmp")],
-    instructions="Just return the file url as it is don't do anythings."
+    instructions="Just return the file url as it is don't do anythings.",
 )
 
 agent_os = AgentOS(
