@@ -1,10 +1,10 @@
 import uuid
-from typing import Any, Dict
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 
 
 @pytest.fixture
@@ -415,9 +415,12 @@ def test_convenience_functions_without_db():
 def test_get_session_state_with_tool_updates(test_agent):
     """Test session state updates via tools."""
 
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the list."""
-        session_state["items"].append(item)
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["items"].append(item)
         return f"Added {item}"
 
     agent = Agent(

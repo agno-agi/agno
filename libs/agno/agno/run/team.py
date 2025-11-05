@@ -261,6 +261,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -468,20 +469,25 @@ def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
 class TeamRunOutput:
     """Response returned by Team.run() functions"""
 
+    run_id: Optional[str] = None
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+    session_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    # Input media and messages from user
+    input: Optional[TeamRunInput] = None
+
     content: Optional[Any] = None
     content_type: str = "str"
+
     messages: Optional[List[Message]] = None
     metrics: Optional[Metrics] = None
     model: Optional[str] = None
     model_provider: Optional[str] = None
 
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
-
-    run_id: Optional[str] = None
-    team_id: Optional[str] = None
-    team_name: Optional[str] = None
-    session_id: Optional[str] = None
-    parent_run_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None
 
@@ -492,14 +498,12 @@ class TeamRunOutput:
 
     response_audio: Optional[Audio] = None  # Model audio response
 
-    # Input media and messages from user
-    input: Optional[TeamRunInput] = None
-
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
