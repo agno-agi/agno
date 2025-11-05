@@ -5090,6 +5090,10 @@ class Agent:
                     for audio in model_response_event.audios:
                         self._add_audio(audio, run_response)
 
+                if model_response_event.files is not None:
+                    for file in model_response_event.files:
+                        self._add_file(file, run_response)
+
                 reasoning_step: Optional[ReasoningStep] = None
 
                 tool_executions_list = model_response_event.tool_executions
