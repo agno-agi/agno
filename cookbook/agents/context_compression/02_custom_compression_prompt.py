@@ -8,6 +8,7 @@ Run: `python cookbook/agents/context_compression/02_custom_compression_prompt.py
 
 from agno.agent import Agent
 from agno.context.manager import ContextManager
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -44,7 +45,8 @@ Example:
 # Create context manager with custom compression
 context_manager = ContextManager(
     model=OpenAIChat(id="gpt-4o-mini"),  # Use mini model for compression to save costs
-    tool_compression_threshold=3,
+    # compress_tool_calls_limit=5,
+    compress_tokens_limit=15000,  # Add this for token-based compression
     tool_compression_instructions=custom_compression_prompt,  # Custom prompt!
 )
 
@@ -55,9 +57,11 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     context_manager=context_manager,  # Pass custom context manager
-    compress_context=True,
     markdown=True,
-    debug_mode=True,
+    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent.db"),
+    session_id="competitive_intelligence_agent",
+    add_history_to_context=True,
+    num_history_runs=6,
 )
 
 print("=" * 80)
@@ -70,14 +74,40 @@ print("Main model: gpt-4o (high-quality research)")
 print("=" * 80)
 
 # Research multiple competitors
-response = agent.run(
+response = agent.print_response(
     """Research recent activities (last 3 months) for these AI companies:
     
     1. OpenAI - product launches, partnerships, pricing
     2. Anthropic - new features, enterprise deals, funding
     3. Google DeepMind - research breakthroughs, product releases
     4. Meta AI - open source releases, research papers
+   
+    For each, find specific actions with dates and numbers.""",
+    stream=True,
+)
+response = agent.print_response(
+    """Research recent activities (last 3 months) for these AI companies:
     
+    5. Microsoft - new products, partnerships, acquisitions
+    6. IBM - new products, partnerships, acquisitions
+    7. Oracle - new products, partnerships, acquisitions
+    8. SAP - new products, partnerships, acquisitions
+    9. Salesforce - new products, partnerships, acquisitions
+    
+   
+    For each, find specific actions with dates and numbers.""",
+    stream=True,
+)
+response = agent.print_response(
+    """Research recent activities (last 3 months) for these AI companies:
+    
+    10. Accenture - new products, partnerships, acquisitions
+    11. Deloitte - new products, partnerships, acquisitions
+    12. PwC - new products, partnerships, acquisitions
+    13. KPMG - new products, partnerships, acquisitions
+    14. EY - new products, partnerships, acquisitions
+    
+   
     For each, find specific actions with dates and numbers.""",
     stream=True,
 )
@@ -91,7 +121,7 @@ if agent.context_manager:
         f"Compression model: {agent.context_manager.model.id if agent.context_manager.model else 'None'}"
     )
     print(f"Times compressed: {agent.context_manager.compression_count}")
-    print(f"Threshold: {agent.context_manager.tool_compression_threshold} tool results")
+    print(f"Threshold: {agent.context_manager.compress_tool_calls_limit} tool results")
     print(
         "\n✅ Custom prompt ensured compressed results focus on actionable intelligence!"
     )

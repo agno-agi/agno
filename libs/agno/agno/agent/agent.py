@@ -441,7 +441,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        compress_context: bool = False,
+        compress_tool_calls: bool = False,
         context_manager: Optional[Any] = None,  # TYPE_CHECKING: "ContextManager"
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
@@ -547,7 +547,7 @@ class Agent:
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compression settings
-        self.compress_context = compress_context
+        self.compress_tool_calls = compress_tool_calls
         self.context_manager = context_manager
 
         self.add_history_to_context = add_history_to_context
@@ -821,7 +821,7 @@ class Agent:
             )
 
     def _set_context_manager(self) -> None:
-        if self.compress_context and self.context_manager is None:
+        if self.compress_tool_calls and self.context_manager is None:
             log_info("Setting default context manager")
             self.context_manager = ContextManager(model=self.model)
 
@@ -859,7 +859,7 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
-        if self.compress_context or self.context_manager is not None:
+        if self.compress_tool_calls or self.context_manager is not None:
             log_info("Setting context manager")
             self._set_context_manager()
 
@@ -1052,7 +1052,7 @@ class Agent:
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
-            if self.compress_context and self.context_manager:
+            if self.compress_tool_calls and self.context_manager:
                 self.model.context_manager = self.context_manager
 
             model_response: ModelResponse = self.model.response(
@@ -1900,7 +1900,7 @@ class Agent:
 
             # 9. Generate a response from the Model (includes running function calls)
             # Pass context manager to model for mid-run compression
-            if self.compress_context and self.context_manager:
+            if self.compress_tool_calls and self.context_manager:
                 self.model.context_manager = self.context_manager
 
             model_response: ModelResponse = await self.model.aresponse(
@@ -4748,7 +4748,7 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Pass context manager to model for mid-run compression
-        if self.compress_context and self.context_manager:
+        if self.compress_tool_calls and self.context_manager:
             self.model.context_manager = self.context_manager
 
         reasoning_state = {
@@ -4843,7 +4843,7 @@ class Agent:
             stream_model_response = False
 
         # Pass context manager to model for mid-run compression
-        if self.compress_context and self.context_manager:
+        if self.compress_tool_calls and self.context_manager:
             self.model.context_manager = self.context_manager
 
         model_response_stream = self.model.aresponse_stream(
@@ -7646,14 +7646,25 @@ class Agent:
             )
 
             if len(history) > 0:
-                # Create a deep copy of the history messages to avoid modifying the original messages
+                # Pre-emptive compression: check if we need to compress BEFORE deepcopy
+                # This way compression modifies the session's original messages directly
+                if self.context_manager and self.context_manager.should_compress(history):
+                    log_info("⚡ Pre-compressing historical tool results before first model call")
+                    # Compress the original history messages (these are references to session.runs[X].messages)
+                    # This modifies the session's stored messages in-place
+                    history = self.context_manager.compress_tool_results(
+                        messages=history,
+                    )
+
+                # Create a deep copy of the history messages (now already compressed if needed)
+                # This prevents runtime-only modifications (from_history, filtering) from affecting session
                 history_copy = [deepcopy(msg) for msg in history]
 
-                # Tag each message as coming from history
+                # Tag each message as coming from history (runtime-only, won't persist to DB)
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set (before adding to run_messages)
+                # Filter tool calls from history if limit is set (runtime-only, won't persist to DB)
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
@@ -7858,14 +7869,25 @@ class Agent:
             )
 
             if len(history) > 0:
-                # Create a deep copy of the history messages to avoid modifying the original messages
+                # Pre-emptive compression: check if we need to compress BEFORE deepcopy
+                # This way compression modifies the session's original messages directly
+                if self.context_manager and self.context_manager.should_compress(history):
+                    log_info("⚡ Pre-compressing historical tool results before first model call")
+                    # Compress the original history messages (these are references to session.runs[X].messages)
+                    # This modifies the session's stored messages in-place
+                    history = self.context_manager.compress_tool_results(
+                        messages=history,
+                    )
+
+                # Create a deep copy of the history messages (now already compressed if needed)
+                # This prevents runtime-only modifications (from_history, filtering) from affecting session
                 history_copy = [deepcopy(msg) for msg in history]
 
-                # Tag each message as coming from history
+                # Tag each message as coming from history (runtime-only, won't persist to DB)
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set (before adding to run_messages)
+                # Filter tool calls from history if limit is set (runtime-only, won't persist to DB)
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
