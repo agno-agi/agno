@@ -1,7 +1,7 @@
 from typing import List, Optional, TypedDict
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -44,8 +44,7 @@ class OptionalResearchTopic(BaseModel):
 class StrictResearchTopic(BaseModel):
     """Strict research topic with validation"""
 
-    class Config:
-        extra = "forbid"  # Forbid extra fields
+    model_config = ConfigDict(extra="forbid")  # Forbid extra fields
 
     topic: str = Field(min_length=1, max_length=100)
     focus_areas: List[str] = Field(min_items=1, max_items=5)

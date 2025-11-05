@@ -53,7 +53,7 @@ def run_team(task: str):
     team_leader.print_response(
         task,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         show_full_reasoning=True,
     )
 

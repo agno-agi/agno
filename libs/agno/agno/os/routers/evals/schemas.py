@@ -2,7 +2,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.db.schemas.evals import EvalType
 from agno.eval import AccuracyResult, PerformanceResult, ReliabilityResult
@@ -12,43 +12,43 @@ from agno.eval.reliability import ReliabilityEval
 
 
 class EvalRunInput(BaseModel):
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
+    agent_id: Optional[str] = Field(None, description="Agent ID to evaluate")
+    team_id: Optional[str] = Field(None, description="Team ID to evaluate")
 
-    model_id: Optional[str] = None
-    model_provider: Optional[str] = None
-    eval_type: EvalType
-    input: str
-    additional_guidelines: Optional[str] = None
-    additional_context: Optional[str] = None
-    num_iterations: Optional[int] = 1
-    name: Optional[str] = None
+    model_id: Optional[str] = Field(None, description="Model ID to use for evaluation")
+    model_provider: Optional[str] = Field(None, description="Model provider name")
+    eval_type: EvalType = Field(..., description="Type of evaluation to run (accuracy, performance, or reliability)")
+    input: str = Field(..., description="Input text/query for the evaluation", min_length=1)
+    additional_guidelines: Optional[str] = Field(None, description="Additional guidelines for the evaluation")
+    additional_context: Optional[str] = Field(None, description="Additional context for the evaluation")
+    num_iterations: int = Field(1, description="Number of times to run the evaluation", ge=1, le=100)
+    name: Optional[str] = Field(None, description="Name for this evaluation run")
 
     # Accuracy eval specific fields
-    expected_output: Optional[str] = None
+    expected_output: Optional[str] = Field(None, description="Expected output for accuracy evaluation")
 
     # Performance eval specific fields
-    warmup_runs: Optional[int] = 0
+    warmup_runs: int = Field(0, description="Number of warmup runs before measuring performance", ge=0, le=10)
 
     # Reliability eval specific fields
-    expected_tool_calls: Optional[List[str]] = None
+    expected_tool_calls: Optional[List[str]] = Field(None, description="Expected tool calls for reliability evaluation")
 
 
 class EvalSchema(BaseModel):
-    id: str
+    id: str = Field(..., description="Unique identifier for the evaluation run")
 
-    agent_id: Optional[str] = None
-    model_id: Optional[str] = None
-    model_provider: Optional[str] = None
-    team_id: Optional[str] = None
-    workflow_id: Optional[str] = None
-    name: Optional[str] = None
-    evaluated_component_name: Optional[str] = None
-    eval_type: EvalType
-    eval_data: Dict[str, Any]
-    eval_input: Optional[Dict[str, Any]] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    agent_id: Optional[str] = Field(None, description="Agent ID that was evaluated")
+    model_id: Optional[str] = Field(None, description="Model ID used in evaluation")
+    model_provider: Optional[str] = Field(None, description="Model provider name")
+    team_id: Optional[str] = Field(None, description="Team ID that was evaluated")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID that was evaluated")
+    name: Optional[str] = Field(None, description="Name of the evaluation run")
+    evaluated_component_name: Optional[str] = Field(None, description="Name of the evaluated component")
+    eval_type: EvalType = Field(..., description="Type of evaluation (accuracy, performance, or reliability)")
+    eval_data: Dict[str, Any] = Field(..., description="Evaluation results and metrics")
+    eval_input: Optional[Dict[str, Any]] = Field(None, description="Input parameters used for the evaluation")
+    created_at: Optional[datetime] = Field(None, description="Timestamp when evaluation was created")
+    updated_at: Optional[datetime] = Field(None, description="Timestamp when evaluation was last updated")
 
     @classmethod
     def from_dict(cls, eval_run: Dict[str, Any]) -> "EvalSchema":
@@ -135,8 +135,8 @@ class EvalSchema(BaseModel):
 
 
 class DeleteEvalRunsRequest(BaseModel):
-    eval_run_ids: List[str]
+    eval_run_ids: List[str] = Field(..., description="List of evaluation run IDs to delete", min_length=1)
 
 
 class UpdateEvalRunRequest(BaseModel):
-    name: str
+    name: str = Field(..., description="New name for the evaluation run", min_length=1, max_length=255)

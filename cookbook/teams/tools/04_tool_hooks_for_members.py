@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict
 
 from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
+from agno.run import RunContext
 from agno.team.team import Team
 
 CUSTOMER_PERMISSIONS = {
@@ -102,15 +103,19 @@ def member_input_hook(
     function_name: str,
     function_call: Callable,
     arguments: Dict[str, Any],
-    session_state: Dict[str, Any],
+    run_context: RunContext,
 ):
     """
     Tool hook that verifies whether the user has the correct permissions.
     """
+
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     if function_name == "delegate_task_to_member":
         member_id = arguments.get("member_id")
 
-        customer_id = session_state.get("current_user_id")
+        customer_id = run_context.session_state.get("current_user_id")
 
         if customer_id not in CUSTOMER_PERMISSIONS:
             raise Exception("Customer not found")

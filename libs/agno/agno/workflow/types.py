@@ -10,6 +10,12 @@ from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_videos,
+)
 from agno.utils.serialize import json_serializer
 
 
@@ -176,7 +182,7 @@ class StepInput:
 
     def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
         """Get workflow conversation history as structured data for custom function steps
-        
+
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
@@ -187,7 +193,7 @@ class StepInput:
 
     def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
         """Get formatted workflow conversation history context for custom function steps
-        
+
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
@@ -308,21 +314,10 @@ class StepOutput:
     def from_dict(cls, data: Dict[str, Any]) -> "StepOutput":
         """Create StepOutput from dictionary"""
         # Reconstruct media artifacts
-        images = data.get("images")
-        if images:
-            images = [Image.model_validate(img) for img in images]
-
-        videos = data.get("videos")
-        if videos:
-            videos = [Video.model_validate(vid) for vid in videos]
-
-        audio = data.get("audio")
-        if audio:
-            audio = [Audio.model_validate(aud) for aud in audio]
-
-        files = data.get("files")
-        if files:
-            files = [File.model_validate(file) for file in files]
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audio = reconstruct_audio_list(data.get("audio"))
+        files = reconstruct_files(data.get("files"))
 
         metrics_data = data.get("metrics")
         metrics = None
