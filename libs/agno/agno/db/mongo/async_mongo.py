@@ -2062,6 +2062,30 @@ class AsyncMongoDb(AsyncBaseDb):
         """
         raise NotImplementedError
 
+    async def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        raise NotImplementedError
+
     # --- Spans ---
     async def create_span(self, span: "Span") -> None:
         """Create a single span in the database.
