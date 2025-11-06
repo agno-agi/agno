@@ -23,6 +23,7 @@ from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.schema import (
     AgentResponse,
+    AgentRunRequest,
     AgentSummaryResponse,
     BadRequestResponse,
     ConfigResponse,
@@ -36,6 +37,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
     WorkflowResponse,
     WorkflowSummaryResponse,
+    parse_agent_run_request,  # To be moved to utils
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -60,45 +62,67 @@ if TYPE_CHECKING:
 
 
 async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
-    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+    """Given a Request and an endpoint function, return a dictionary with all extra fields.
+
+    Supports both multipart/form-data and application/json requests.
+
     Args:
         request: The FastAPI Request object
         endpoint_func: The function exposing the endpoint that received the request
 
     Returns:
-        A dictionary of kwargs
+        A dictionary of kwargs with extra fields not in the endpoint signature
     """
     import inspect
 
-    form_data = await request.form()
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
-    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    kwargs = {}
 
-    # Handle JSON parameters. They are passed as strings and need to be deserialized.
-    if session_state := kwargs.get("session_state"):
+    content_type = request.headers.get("content-type", "")
+
+    # Handle multipart/form-data requests
+    if "multipart/form-data" in content_type:
+        form_data = await request.form()
+        kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Handle application/json requests
+    elif "application/json" in content_type:
         try:
-            session_state_dict = json.loads(session_state)  # type: ignore
-            kwargs["session_state"] = session_state_dict
-        except json.JSONDecodeError:
-            kwargs.pop("session_state")
-            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+            body = await request.json()
+            kwargs = {key: value for key, value in body.items() if key not in known_fields}
+        except Exception:
+            # If JSON parsing fails, return empty kwargs
+            pass
+
+    # Handle JSON parameters that are passed as strings in form data
+    # (for backward compatibility with multipart requests)
+    if session_state := kwargs.get("session_state"):
+        if isinstance(session_state, str):
+            try:
+                session_state_dict = json.loads(session_state)
+                kwargs["session_state"] = session_state_dict
+            except json.JSONDecodeError:
+                kwargs.pop("session_state")
+                log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
 
     if dependencies := kwargs.get("dependencies"):
-        try:
-            dependencies_dict = json.loads(dependencies)  # type: ignore
-            kwargs["dependencies"] = dependencies_dict
-        except json.JSONDecodeError:
-            kwargs.pop("dependencies")
-            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+        if isinstance(dependencies, str):
+            try:
+                dependencies_dict = json.loads(dependencies)
+                kwargs["dependencies"] = dependencies_dict
+            except json.JSONDecodeError:
+                kwargs.pop("dependencies")
+                log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
 
     if metadata := kwargs.get("metadata"):
-        try:
-            metadata_dict = json.loads(metadata)  # type: ignore
-            kwargs["metadata"] = metadata_dict
-        except json.JSONDecodeError:
-            kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+        if isinstance(metadata, str):
+            try:
+                metadata_dict = json.loads(metadata)
+                kwargs["metadata"] = metadata_dict
+            except json.JSONDecodeError:
+                kwargs.pop("metadata")
+                log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
 
     return kwargs
 
@@ -240,6 +264,7 @@ async def agent_response_streamer(
     files: Optional[List[FileMedia]] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
+    log_debug(f"Session ID: {session_id}")
     try:
         run_response = agent.arun(
             input=message,
@@ -712,7 +737,6 @@ def get_base_router(
         return list(unique_models.values())
 
     # -- Agent routes ---
-
     @router.post(
         "/agents/{agent_id}/runs",
         tags=["Agents"],
@@ -730,6 +754,66 @@ def get_base_router(
             "**Streaming Response:**\n"
             "When `stream=true`, returns SSE events with `event` and `data` fields."
         ),
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": AgentRunRequest.model_json_schema(),
+                        "examples": {
+                            "simple_message": {
+                                "summary": "Simple text message",
+                                "value": {"message": "What's the weather like today?", "stream": False},
+                            },
+                            "streaming_with_session": {
+                                "summary": "Streaming message with session context",
+                                "value": {
+                                    "message": "Continue our previous conversation",
+                                    "stream": True,
+                                    "session_id": "session_123",
+                                    "user_id": "user_456",
+                                },
+                            },
+                        },
+                    },
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string", "description": "The message to send to the agent"},
+                                "stream": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Whether to stream the response",
+                                },
+                                "session_id": {
+                                    "type": "string",
+                                    "nullable": True,
+                                    "description": "Optional session ID for context",
+                                },
+                                "user_id": {
+                                    "type": "string",
+                                    "nullable": True,
+                                    "description": "Optional user ID for context",
+                                },
+                                "files": {
+                                    "type": "array",
+                                    "items": {"type": "string", "format": "binary"},
+                                    "description": "Optional media files (images, audio, video, documents)",
+                                },
+                            },
+                            "required": ["message"],
+                        },
+                        "examples": {
+                            "with_image": {
+                                "summary": "Message with image attachment",
+                                "description": "Upload an image for the agent to analyze",
+                            }
+                        },
+                    },
+                },
+            }
+        },
         responses={
             200: {
                 "description": "Agent run executed successfully",
@@ -751,13 +835,16 @@ def get_base_router(
     async def create_agent_run(
         agent_id: str,
         request: Request,
-        message: str = Form(...),
-        stream: bool = Form(False),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
+        params: dict = Depends(parse_agent_run_request),
     ):
-        kwargs = await _get_request_kwargs(request, create_agent_run)
+        kwargs = params["extra_kwargs"]
+
+        # Extract params
+        message = params["message"]
+        stream = params["stream"]
+        session_id = params["session_id"]
+        user_id = params["user_id"]
+        files = params["files"]
 
         if hasattr(request.state, "user_id"):
             if user_id:

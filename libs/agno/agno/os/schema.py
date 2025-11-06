@@ -1,8 +1,10 @@
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from uuid import uuid4
 
+from fastapi import Body, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
@@ -1053,3 +1055,123 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class AgentRunRequest(BaseModel):
+    message: str = Field(..., description="Message to send to the agent")
+    stream: bool = Field(False, description="Whether to stream the response")
+    session_id: Optional[str] = Field(None, description="Session ID to use for the run")
+    user_id: Optional[str] = Field(None, description="User ID to use for the run")
+
+
+async def parse_agent_run_request(
+    request: Request,
+    body: Optional[AgentRunRequest] = Body(None),
+    message: Optional[str] = Form(None),
+    stream: Optional[bool] = Form(False),
+    session_id: Optional[str] = Form(None),
+    user_id: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+) -> Dict[str, Any]:
+    """Parse either JSON or multipart requests and return all data including extra fields"""
+
+    content_type = request.headers.get("content-type", "")
+
+    # ========================================
+    # Handle JSON Request
+    # ========================================
+    if "application/json" in content_type:
+        try:
+            json_body = await request.json()
+        except Exception as e:
+            raise HTTPException(400, f"Invalid JSON body: {str(e)}")
+
+        # Validate required fields using Pydantic
+        try:
+            validated = AgentRunRequest(**json_body)
+        except Exception as e:
+            raise HTTPException(400, f"Invalid request data: {str(e)}")
+
+        # Standard fields
+        result = {
+            "message": validated.message,
+            "stream": validated.stream,
+            "session_id": validated.session_id,
+            "user_id": validated.user_id,
+            "files": None,
+        }
+
+        # Extract extra fields (session_state, dependencies, metadata, etc.)
+        known_fields = {"message", "stream", "session_id", "user_id"}
+        extra_kwargs = {k: v for k, v in json_body.items() if k not in known_fields}
+
+        # These are already parsed as objects in JSON, no need to deserialize
+        result["extra_kwargs"] = extra_kwargs
+
+        return result
+
+    # ========================================
+    # Handle Multipart Request
+    # ========================================
+    elif "multipart/form-data" in content_type:
+        if message is None:
+            raise HTTPException(400, "message field is required")
+
+        # Get all form data
+        form_data = await request.form()
+
+        # Standard fields
+        result = {
+            "message": message,
+            "stream": stream if stream is not None else False,
+            "session_id": session_id,
+            "user_id": user_id,
+            "files": files,
+        }
+
+        # Extract extra fields from form data
+        known_fields = {"message", "stream", "session_id", "user_id", "files"}
+        extra_kwargs = {}
+
+        for key, value in form_data.items():
+            if key not in known_fields and not isinstance(value, UploadFile):
+                extra_kwargs[key] = value
+
+        # Parse JSON-encoded strings for specific fields
+        # (backward compatibility with multipart encoding)
+        if session_state := extra_kwargs.get("session_state"):
+            if isinstance(session_state, str):
+                try:
+                    extra_kwargs["session_state"] = json.loads(session_state)
+                except json.JSONDecodeError:
+                    extra_kwargs.pop("session_state")
+                    # Optional: log warning
+                    # log_warning(f"Invalid session_state parameter: {session_state}")
+
+        if dependencies := extra_kwargs.get("dependencies"):
+            if isinstance(dependencies, str):
+                try:
+                    extra_kwargs["dependencies"] = json.loads(dependencies)
+                except json.JSONDecodeError:
+                    extra_kwargs.pop("dependencies")
+                    # Optional: log warning
+                    # log_warning(f"Invalid dependencies parameter: {dependencies}")
+
+        if metadata := extra_kwargs.get("metadata"):
+            if isinstance(metadata, str):
+                try:
+                    extra_kwargs["metadata"] = json.loads(metadata)
+                except json.JSONDecodeError:
+                    extra_kwargs.pop("metadata")
+                    # Optional: log warning
+                    # log_warning(f"Invalid metadata parameter: {metadata}")
+
+        result["extra_kwargs"] = extra_kwargs
+
+        return result
+
+    # ========================================
+    # Invalid Content-Type
+    # ========================================
+    else:
+        raise HTTPException(400, "Content-Type must be application/json or multipart/form-data")
