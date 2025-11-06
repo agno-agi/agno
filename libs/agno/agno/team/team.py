@@ -1775,7 +1775,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1802,7 +1802,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1947,7 +1947,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response # For backwards compatibility
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Initialize the current run
@@ -2632,7 +2632,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -2659,7 +2659,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -2786,7 +2786,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response # For backwards compatibility
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Run the team
