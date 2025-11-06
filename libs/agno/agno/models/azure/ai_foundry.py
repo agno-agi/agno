@@ -60,6 +60,7 @@ class AzureAIFoundry(Model):
     stop: Optional[Union[str, List[str]]] = None
     seed: Optional[int] = None
     model_extras: Optional[Dict[str, Any]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     request_params: Optional[Dict[str, Any]] = None
     # Client parameters
     api_key: Optional[str] = None
@@ -116,7 +117,7 @@ class AzureAIFoundry(Model):
                         name=response_format.__name__,
                         schema=response_format.model_json_schema(),  # type: ignore
                         description=response_format.__doc__,
-                        strict=True,
+                        strict=self.strict_output,
                     ),
                 )
 

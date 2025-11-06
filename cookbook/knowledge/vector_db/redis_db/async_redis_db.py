@@ -12,7 +12,7 @@ import os
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.redis import RedisDB
+from agno.vectordb.redis import RedisVectorDb
 from agno.vectordb.search import SearchType
 
 # Configure Redis connection
@@ -20,7 +20,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 INDEX_NAME = os.getenv("REDIS_INDEX", "agno_cookbook_vectors")
 
 # Initialize Redis Vector DB
-vector_db = RedisDB(
+vector_db = RedisVectorDb(
     index_name=INDEX_NAME,
     redis_url=REDIS_URL,
     search_type=SearchType.vector,  # try SearchType.hybrid for hybrid search
