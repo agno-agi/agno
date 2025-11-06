@@ -1,12 +1,12 @@
 chat:
   quick_prompts:
     agno-mcp-agent:
-      - "What is the AgentOS?"
+      - "What is AgentOS?"
       - "What are Agno's key features?"
       - "What's the difference between an Agent and a Team in Agno?"
 
     agno-knowledge-agent:
-      - "What is the AgentOS?"
+      - "What is AgentOS?"
       - "What are Agno's key features?"
       - "What's the difference between an Agent and a Team in Agno?"
 

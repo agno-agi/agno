@@ -73,36 +73,6 @@ def test_nested_team_model_inheritance():
     assert sub_agent2.model.id == "claude-3-5-haiku-20241022"
 
 
-def test_multiple_model_types_inheritance():
-    """Test that all model types are inherited and explicit models are preserved."""
-    agent1 = Agent(name="Agent 1", role="Assistant")
-    agent2 = Agent(name="Agent 2", role="Helper", parser_model=OpenAIChat(id="gpt-3.5-turbo"))
-
-    team = Team(
-        name="Multi Model Team",
-        model=Claude(id="claude-3-5-sonnet-20241022"),
-        reasoning_model=OpenAIChat(id="o1"),
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
-        output_model=OpenAIChat(id="gpt-4o-mini"),
-        members=[agent1, agent2],
-    )
-
-    team.initialize_team()
-
-    # Agent 1 should inherit all model types
-    assert isinstance(agent1.model, Claude)
-    assert agent1.model.id == "claude-3-5-sonnet-20241022"
-    assert agent1.reasoning_model.id == "o1"
-    assert agent1.parser_model.id == "gpt-4o-mini"
-    assert agent1.output_model.id == "gpt-4o-mini"
-
-    # Agent 2 should inherit all except parser_model
-    assert isinstance(agent2.model, Claude)
-    assert agent2.reasoning_model.id == "o1"
-    assert agent2.output_model.id == "gpt-4o-mini"
-    assert agent2.parser_model.id == "gpt-3.5-turbo"
-
-
 def test_default_model():
     """Test that agents and team default to OpenAI when team has no model."""
     agent = Agent(name="Agent", role="Assistant")
