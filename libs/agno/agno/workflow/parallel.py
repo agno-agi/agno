@@ -216,8 +216,9 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
+            # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
-                session_state_copies.append(deepcopy(run_context.session_state))
+                session_state_copies.append(run_context.session_state)
             else:
                 if session_state is not None:
                     session_state_copies.append(deepcopy(session_state))
@@ -294,11 +295,8 @@ class Parallel:
                         )
                     )
 
-        if session_state is not None:
-            if run_context is not None and run_context.session_state is not None:
-                merge_parallel_session_states(run_context.session_state, modified_session_states)
-            else:
-                merge_parallel_session_states(session_state, modified_session_states)
+        if run_context is None and session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         results_with_indices.sort(key=lambda x: x[0])
@@ -348,8 +346,9 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
+            # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
-                session_state_copies.append(deepcopy(run_context.session_state))
+                session_state_copies.append(run_context.session_state)
             else:
                 if session_state is not None:
                     session_state_copies.append(deepcopy(session_state))
@@ -481,11 +480,8 @@ class Parallel:
                     logger.error(f"Future completion error: {e}")
 
         # Merge all session_state changes back into the original session_state
-        if session_state is not None:
-            if run_context is not None and run_context.session_state is not None:
-                merge_parallel_session_states(run_context.session_state, modified_session_states)
-            else:
-                merge_parallel_session_states(session_state, modified_session_states)
+        if run_context is None and session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
         flattened_step_results: List[StepOutput] = []
@@ -540,8 +536,9 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
+            # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
-                session_state_copies.append(deepcopy(run_context.session_state))
+                session_state_copies.append(run_context.session_state)
             else:
                 if session_state is not None:
                     session_state_copies.append(deepcopy(session_state))
@@ -618,11 +615,8 @@ class Parallel:
                 log_debug(f"Parallel step {step_name} completed")
 
         # Smart merge all session_state changes back into the original session_state
-        if session_state is not None:
-            if run_context is not None and run_context.session_state is not None:
-                merge_parallel_session_states(run_context.session_state, modified_session_states)
-            else:
-                merge_parallel_session_states(session_state, modified_session_states)
+        if run_context is None and session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         processed_results_with_indices.sort(key=lambda x: x[0])
@@ -672,8 +666,9 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
+            # If using run context, no need to deepcopy the state. We want the direct reference.
             if run_context is not None and run_context.session_state is not None:
-                session_state_copies.append(deepcopy(run_context.session_state))
+                session_state_copies.append(run_context.session_state)
             else:
                 if session_state is not None:
                     session_state_copies.append(deepcopy(session_state))
@@ -793,11 +788,8 @@ class Parallel:
         await asyncio.gather(*tasks, return_exceptions=True)
 
         # Merge all session_state changes back into the original session_state
-        if session_state is not None:
-            if run_context is not None and run_context.session_state is not None:
-                merge_parallel_session_states(run_context.session_state, modified_session_states)
-            else:
-                merge_parallel_session_states(session_state, modified_session_states)
+        if run_context is None and session_state is not None:
+            merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
         flattened_step_results: List[StepOutput] = []
