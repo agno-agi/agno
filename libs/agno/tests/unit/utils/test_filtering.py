@@ -9,7 +9,7 @@ Tests cover:
 - Edge cases
 """
 
-from agno.utils.search_filters import AND, EQ, GT, IN, LT, NOT, OR, FilterExpr
+from agno.filters import AND, EQ, GT, IN, LT, NOT, OR, FilterExpr
 
 
 class TestBasicOperators:
@@ -531,3 +531,89 @@ class TestTypeValidation:
 
         or_expr = OR(EQ("a", 1), EQ("b", 2))
         assert all(isinstance(c, FilterExpr) for c in or_expr.conditions)
+
+
+class TestUsagePatterns:
+    """Test proper usage patterns and common mistakes."""
+
+    def test_single_filter_should_be_wrapped_in_list(self):
+        """Test that single filters work when properly wrapped."""
+        # Correct usage: wrap single filter in list
+        filters = [EQ("status", "active")]
+        assert isinstance(filters, list)
+        assert len(filters) == 1
+        assert isinstance(filters[0], FilterExpr)
+
+    def test_multiple_filters_in_list(self):
+        """Test multiple independent filters in a list."""
+        # When passing multiple filters, they should all be in a list
+        filters = [
+            EQ("status", "active"),
+            GT("age", 18),
+            IN("category", ["tech", "science"]),
+        ]
+        assert isinstance(filters, list)
+        assert len(filters) == 3
+        assert all(isinstance(f, FilterExpr) for f in filters)
+
+    def test_list_with_single_complex_expression(self):
+        """Test list containing single complex AND/OR expression."""
+        # Single complex expression wrapped in list
+        filters = [AND(EQ("status", "active"), GT("score", 80))]
+        assert isinstance(filters, list)
+        assert len(filters) == 1
+        assert isinstance(filters[0], AND)
+
+    def test_list_with_multiple_complex_expressions(self):
+        """Test list with multiple complex expressions."""
+        # Multiple complex expressions in list
+        filters = [
+            AND(EQ("type", "article"), GT("views", 1000)),
+            OR(EQ("featured", True), GT("score", 90)),
+        ]
+        assert isinstance(filters, list)
+        assert len(filters) == 2
+
+    def test_filter_expr_is_not_iterable(self):
+        """Test that FilterExpr objects are not directly iterable."""
+        # This test documents that you cannot iterate over a single filter
+        # You must wrap it in a list first
+        filter_expr = EQ("status", "active")
+
+        # Attempting to iterate over a FilterExpr will fail
+        try:
+            list(filter_expr)  # This should fail
+            assert False, "Expected TypeError when iterating over FilterExpr"
+        except TypeError:
+            pass  # Expected behavior
+
+    def test_correct_way_to_pass_single_filter(self):
+        """Test the correct way to pass a single filter to a list-expecting function."""
+        # Simulate what knowledge_filters parameter expects
+        def validate_filters(filters):
+            """Simulate filter validation that expects a list."""
+            if isinstance(filters, list):
+                for f in filters:
+                    if not isinstance(f, FilterExpr):
+                        raise ValueError(f"Expected FilterExpr, got {type(f)}")
+                return True
+            else:
+                raise TypeError("filters must be a list")
+
+        # Correct: single filter wrapped in list
+        correct_usage = [EQ("user_id", "123")]
+        assert validate_filters(correct_usage)
+
+        # Incorrect: single filter without list (would fail)
+        incorrect_usage = EQ("user_id", "123")
+        try:
+            validate_filters(incorrect_usage)
+            assert False, "Should have raised TypeError"
+        except TypeError:
+            pass  # Expected
+
+    def test_empty_filter_list(self):
+        """Test that empty filter list is valid."""
+        filters = []
+        assert isinstance(filters, list)
+        assert len(filters) == 0

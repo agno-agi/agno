@@ -14,7 +14,7 @@ Operators can be combined using Python operators:
     - `~` for NOT
 
 Example:
-    >>> from agno.utils.search_filters import EQ, GT, IN, AND, OR
+    >>> from agno.filters import EQ, GT, IN, AND, OR
     >>>
     >>> # Simple equality filter
     >>> filter = EQ("category", "technology")

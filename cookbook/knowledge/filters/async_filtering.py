@@ -8,7 +8,7 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.utils.search_filters import IN
+from agno.filters import IN
 from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths

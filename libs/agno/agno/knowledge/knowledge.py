@@ -19,7 +19,7 @@ from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.search_filters import FilterExpr
+from agno.filters import FilterExpr
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
@@ -1502,7 +1502,7 @@ class Knowledge:
                         f"Invalid filter at index {i}: expected FilterExpr instance, "
                         f"got {type(filter_item).__name__}. "
                         f"Use filter expressions like EQ('key', 'value'), IN('key', [values]), "
-                        f"AND(...), OR(...), NOT(...) from agno.utils.search_filters"
+                        f"AND(...), OR(...), NOT(...) from agno.filters"
                     )
 
             # Filter expressions are already validated, return empty dict/list

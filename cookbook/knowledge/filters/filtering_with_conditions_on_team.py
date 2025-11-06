@@ -14,7 +14,7 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.utils.search_filters import AND, EQ, IN, NOT, OR
+from agno.filters import AND, EQ, IN, NOT, OR
 from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths
@@ -133,22 +133,5 @@ team_with_knowledge.print_response(
             NOT(IN("user_id", ["morgan_lee", "casey_jordan", "alex_rivera"])),
         )
     ],
-    markdown=True,
-)
-
-print("--------------------------------")
-print("Using OR operator")
-team_with_knowledge.print_response(
-    "Tell me about the candidate's work and experience",
-    knowledge_filters=[
-        OR(EQ("user_id", "this candidate does not exist"), EQ("year", 2020))
-    ],
-    markdown=True,
-)
-
-
-team_with_knowledge.print_response(
-    "Tell me about the candidate's work and experience",
-    knowledge_filters=EQ("user_id", "jordan_mitchell"),  # Wrong: plain strings
     markdown=True,
 )
