@@ -5,6 +5,7 @@
 # Used for Knowledge VectorDB
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
+
 class DemoDBType:
     DYNAMODB = "dynamodb"
     MONGO = "mongo"
@@ -14,6 +15,7 @@ class DemoDBType:
     SINGLESTORE = "singlestore"
     SQLITE = "sqlite"
     ASYNC_SQLITE = "async_sqlite"
+
 
 # --- Adjust the type here to use a different database across the demo folder ---
 db_type = DemoDBType.POSTGRES

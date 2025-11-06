@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -555,8 +555,6 @@ class AgentOS:
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
 
-        from agno.db.base import AsyncBaseDb, BaseDb
-
         dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
         knowledge_dbs: Dict[
             str, List[Union[BaseDb, AsyncBaseDb]]
@@ -620,9 +618,6 @@ class AgentOS:
         """Initialize all discovered databases and create all Agno tables that don't exist yet."""
         from itertools import chain
 
-        from agno.db.base import AsyncBaseDb, BaseDb
-        from agno.utils.log import log_debug, log_warning
-
         # Collect all database instances and remove duplicates by identity
         unique_dbs = list(
             {
@@ -669,6 +664,7 @@ class AgentOS:
         """Get the table names for a database"""
         table_names = {
             "session_table_name": db.session_table_name,
+            "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,

@@ -60,6 +60,10 @@ class BaseDb(ABC):
             or table_name == self.culture_table_name
         )
 
+    def _create_all_tables(self) -> None:
+        """Create all tables for this database."""
+        pass
+
     # --- Sessions ---
     @abstractmethod
     def delete_session(self, session_id: str) -> bool:
