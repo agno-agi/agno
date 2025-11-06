@@ -1,14 +1,23 @@
 from agno.agent import Agent
 from agno.exceptions import RetryAgentRun
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.tools import FunctionCall, tool
 from agno.utils.log import logger
 
 
-def post_hook(session_state: dict, fc: FunctionCall):
+def post_hook(run_context: RunContext, fc: FunctionCall):
     logger.info(f"Post-hook: {fc.function.name}")
     logger.info(f"Arguments: {fc.arguments}")
-    shopping_list = session_state.get("shopping_list", []) if session_state else []
+
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    shopping_list = (
+        run_context.session_state.get("shopping_list", [])
+        if run_context.session_state
+        else []
+    )
     if len(shopping_list) < 3:
         raise RetryAgentRun(
             f"Shopping list is: {shopping_list}. Minimum 3 items in the shopping list. "
@@ -17,11 +26,14 @@ def post_hook(session_state: dict, fc: FunctionCall):
 
 
 @tool(post_hook=post_hook)
-def add_item(session_state: dict, item: str) -> str:
+def add_item(run_context: RunContext, item: str) -> str:
     """Add an item to the shopping list."""
-    if session_state:
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if run_context.session_state:
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
     return ""
 
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
+from agno.run import RunContext
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -122,6 +123,8 @@ class Function(BaseModel):
     _agent: Optional[Any] = None
     # The team that the function is associated with
     _team: Optional[Any] = None
+    # The run context that the function is associated with
+    _run_context: Optional[RunContext] = None
     # The session state that the function is associated with
     _session_state: Optional[Dict[str, Any]] = None
     # The dependencies that the function is associated with
@@ -196,8 +199,13 @@ class Function(BaseModel):
                 del type_hints["agent"]
             if "team" in sig.parameters and "team" in type_hints:
                 del type_hints["team"]
+            if "run_context" in sig.parameters and "run_context" in type_hints:
+                del type_hints["run_context"]
             if "session_state" in sig.parameters and "session_state" in type_hints:
                 del type_hints["session_state"]
+            if "dependencies" in sig.parameters and "dependencies" in type_hints:
+                del type_hints["dependencies"]
+
             # Remove media parameters from type hints as they are injected automatically
             if "images" in sig.parameters and "images" in type_hints:
                 del type_hints["images"]
@@ -207,8 +215,6 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            if "dependencies" in sig.parameters and "dependencies" in type_hints:
-                del type_hints["dependencies"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
@@ -217,7 +223,18 @@ class Function(BaseModel):
                 for name in sig.parameters
                 if name != "return"
                 and name
-                not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files", "dependencies"]
+                not in [
+                    "agent",
+                    "team",
+                    "run_context",
+                    "session_state",
+                    "dependencies",
+                    "self",
+                    "images",
+                    "videos",
+                    "audios",
+                    "files",
+                ]
             }
 
             # Parse docstring for parameters
@@ -250,13 +267,14 @@ class Function(BaseModel):
                     not in [
                         "agent",
                         "team",
+                        "run_context",
                         "session_state",
+                        "dependencies",
                         "self",
                         "images",
                         "videos",
                         "audios",
                         "files",
-                        "dependencies",
                     ]
                 ]
             else:
@@ -269,13 +287,14 @@ class Function(BaseModel):
                     not in [
                         "agent",
                         "team",
+                        "run_context",
                         "session_state",
+                        "dependencies",
                         "self",
                         "images",
                         "videos",
                         "audios",
                         "files",
-                        "dependencies",
                     ]
                 ]
 
@@ -325,8 +344,12 @@ class Function(BaseModel):
                 del type_hints["agent"]
             if "team" in sig.parameters and "team" in type_hints:
                 del type_hints["team"]
+            if "run_context" in sig.parameters and "run_context" in type_hints:
+                del type_hints["run_context"]
             if "session_state" in sig.parameters and "session_state" in type_hints:
                 del type_hints["session_state"]
+            if "dependencies" in sig.parameters and "dependencies" in type_hints:
+                del type_hints["dependencies"]
             if "images" in sig.parameters and "images" in type_hints:
                 del type_hints["images"]
             if "videos" in sig.parameters and "videos" in type_hints:
@@ -335,8 +358,6 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            if "dependencies" in sig.parameters and "dependencies" in type_hints:
-                del type_hints["dependencies"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
@@ -344,13 +365,14 @@ class Function(BaseModel):
                 "return",
                 "agent",
                 "team",
+                "run_context",
                 "session_state",
+                "dependencies",
                 "self",
                 "images",
                 "videos",
                 "audios",
                 "files",
-                "dependencies",
             ]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
@@ -512,7 +534,18 @@ class Function(BaseModel):
             name
             for name in self.parameters["properties"]
             if name
-            not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self", "dependencies"]
+            not in [
+                "agent",
+                "team",
+                "run_context",
+                "session_state",
+                "dependencies",
+                "images",
+                "videos",
+                "audios",
+                "files",
+                "self",
+            ]
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
@@ -526,8 +559,12 @@ class Function(BaseModel):
             del copy_entrypoint_args["agent"]
         if "team" in copy_entrypoint_args:
             del copy_entrypoint_args["team"]
+        if "run_context" in copy_entrypoint_args:
+            del copy_entrypoint_args["run_context"]
         if "session_state" in copy_entrypoint_args:
             del copy_entrypoint_args["session_state"]
+        if "dependencies" in copy_entrypoint_args:
+            del copy_entrypoint_args["dependencies"]
         if "images" in copy_entrypoint_args:
             del copy_entrypoint_args["images"]
         if "videos" in copy_entrypoint_args:
@@ -536,8 +573,6 @@ class Function(BaseModel):
             del copy_entrypoint_args["audios"]
         if "files" in copy_entrypoint_args:
             del copy_entrypoint_args["files"]
-        if "dependencies" in copy_entrypoint_args:
-            del copy_entrypoint_args["dependencies"]
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
         args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
@@ -663,8 +698,14 @@ class FunctionCall(BaseModel):
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
                 # Check if the pre-hook has an session_state argument
+                if "run_context" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["run_context"] = self.function._run_context
+                # Check if the pre-hook has an session_state argument
                 if "session_state" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["session_state"] = self.function._session_state
+                # Check if the pre-hook has an dependencies argument
+                if "dependencies" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["dependencies"] = self.function._dependencies
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -691,8 +732,14 @@ class FunctionCall(BaseModel):
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
                 # Check if the post-hook has an session_state argument
+                if "run_context" in signature(self.function.post_hook).parameters:
+                    post_hook_args["run_context"] = self.function._run_context
+                # Check if the post-hook has an session_state argument
                 if "session_state" in signature(self.function.post_hook).parameters:
                     post_hook_args["session_state"] = self.function._session_state
+                # Check if the post-hook has an dependencies argument
+                if "dependencies" in signature(self.function.post_hook).parameters:
+                    post_hook_args["dependencies"] = self.function._dependencies
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -716,6 +763,9 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an team argument
         if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["team"] = self.function._team
+        # Check if the entrypoint has an run_context argument
+        if "run_context" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["run_context"] = self.function._run_context
         # Check if the entrypoint has an session_state argument
         if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["session_state"] = self.function._session_state
@@ -748,13 +798,15 @@ class FunctionCall(BaseModel):
         # Check if the hook has an team argument
         if "team" in signature(hook).parameters:
             hook_args["team"] = self.function._team
+        # Check if the hook has an run_context argument
+        if "run_context" in signature(hook).parameters:
+            hook_args["run_context"] = self.function._run_context
         # Check if the hook has an session_state argument
         if "session_state" in signature(hook).parameters:
             hook_args["session_state"] = self.function._session_state
         # Check if the hook has an dependencies argument
         if "dependencies" in signature(hook).parameters:
             hook_args["dependencies"] = self.function._dependencies
-
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
         if "function_name" in signature(hook).parameters:
@@ -857,8 +909,16 @@ class FunctionCall(BaseModel):
                 result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
 
             updated_session_state = None
-            if entrypoint_args.get("session_state") is not None:
-                updated_session_state = entrypoint_args.get("session_state")
+            if entrypoint_args.get("run_context") is not None:
+                run_context = entrypoint_args.get("run_context")
+                updated_session_state = (
+                    run_context.session_state
+                    if run_context is not None and run_context.session_state is not None
+                    else None
+                )
+            else:
+                if self.function._session_state is not None:
+                    updated_session_state = self.function._session_state
 
             # Handle generator case
             if isgenerator(result):
@@ -906,9 +966,15 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an team argument
                 if "team" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["team"] = self.function._team
+                # Check if the pre-hook has an run_context argument
+                if "run_context" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["run_context"] = self.function._run_context
                 # Check if the pre-hook has an session_state argument
                 if "session_state" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["session_state"] = self.function._session_state
+                # Check if the pre-hook has an dependencies argument
+                if "dependencies" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["dependencies"] = self.function._dependencies
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -935,9 +1001,15 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an team argument
                 if "team" in signature(self.function.post_hook).parameters:
                     post_hook_args["team"] = self.function._team
+                # Check if the post-hook has an run_context argument
+                if "run_context" in signature(self.function.post_hook).parameters:
+                    post_hook_args["run_context"] = self.function._run_context
                 # Check if the post-hook has an session_state argument
                 if "session_state" in signature(self.function.post_hook).parameters:
                     post_hook_args["session_state"] = self.function._session_state
+                # Check if the post-hook has an dependencies argument
+                if "dependencies" in signature(self.function.post_hook).parameters:
+                    post_hook_args["dependencies"] = self.function._dependencies
 
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
@@ -1071,8 +1143,13 @@ class FunctionCall(BaseModel):
                 self.function._save_to_cache(cache_file, self.result)
 
             updated_session_state = None
-            if entrypoint_args.get("session_state") is not None:
-                updated_session_state = entrypoint_args.get("session_state")
+            if entrypoint_args.get("run_context") is not None:
+                run_context = entrypoint_args.get("run_context")
+                updated_session_state = (
+                    run_context.session_state
+                    if run_context is not None and run_context.session_state is not None
+                    else None
+                )
 
             execution_result = FunctionExecutionResult(
                 status="success", result=self.result, updated_session_state=updated_session_state

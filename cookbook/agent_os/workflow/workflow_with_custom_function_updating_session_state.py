@@ -2,6 +2,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.run import RunContext
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -43,8 +44,11 @@ content_planner = Agent(
 
 
 def custom_content_planning_function(
-    step_input: StepInput, session_state: dict
+    step_input: StepInput, run_context: RunContext
 ) -> StepOutput:
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     """
     Custom function that does intelligent content planning with session state tracking
     """
@@ -52,43 +56,45 @@ def custom_content_planning_function(
     previous_step_content = step_input.previous_step_content
 
     # Initialize session state for content planning if not exists
-    if "content_planning" not in session_state:
-        session_state["content_planning"] = {
+    if "content_planning" not in run_context.session_state:
+        run_context.session_state["content_planning"] = {
             "total_plans_created": 0,
             "topics_processed": [],
             "planning_history": [],
         }
 
     # Track this planning request
-    session_state["content_planning"]["total_plans_created"] += 1
-    session_state["content_planning"]["topics_processed"].append(str(message))
+    run_context.session_state["content_planning"]["total_plans_created"] += 1
+    run_context.session_state["content_planning"]["topics_processed"].append(
+        str(message)
+    )
 
     # Use session state data to enhance planning
-    planning_context = session_state["content_planning"]
+    planning_context = run_context.session_state["content_planning"]
     previous_topics = planning_context["topics_processed"][:-1]  # Exclude current topic
 
     # Extract workflow configuration and user preferences
-    workflow_config = session_state.get("workflow_config", {})
-    user_preferences = session_state.get("user_preferences", {})
+    workflow_config = run_context.session_state.get("workflow_config", {})
+    user_preferences = run_context.session_state.get("user_preferences", {})
 
     # Create intelligent planning prompt with session context
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST #{planning_context["total_plans_created"]}:
-        
+
         Core Topic: {message}
         Research Results: {previous_step_content[:500] if previous_step_content else "No research results"}
         Session Context: {"First-time planning" if planning_context["total_plans_created"] == 1 else f"Building on {len(previous_topics)} previous topics: {', '.join(previous_topics[-3:])}"}
-        
+
         Workflow Configuration:
         - Environment: {workflow_config.get("environment", "unknown")}
         - Content Goals: {", ".join(workflow_config.get("content_goals", []))}
         - Created By: {workflow_config.get("created_by", "system")}
-        
+
         User Preferences:
         - Content Style: {user_preferences.get("content_style", "default")}
         - Target Audience: {user_preferences.get("target_audience", "general")}
         - Posting Frequency: {user_preferences.get("posting_frequency", "regular")}
-        
+
         Planning Requirements:
         1. Create a comprehensive content strategy based on the research
         2. Leverage the research findings effectively
@@ -98,7 +104,7 @@ def custom_content_planning_function(
         6. Identify content formats and channels
         7. Provide timeline and priority recommendations
         8. Include engagement and distribution strategies
-        
+
         Please create a detailed, actionable content plan that incorporates all session context.
     """
 
@@ -112,17 +118,19 @@ def custom_content_planning_function(
             "success": True,
             "content_length": len(str(response.content)),
         }
-        session_state["content_planning"]["planning_history"].append(planning_result)
+        run_context.session_state["content_planning"]["planning_history"].append(
+            planning_result
+        )
 
         enhanced_content = f"""
             ## Strategic Content Plan #{planning_context["total_plans_created"]}
             **Planning Topic:** {message}
             **Session Context:** {len(previous_topics)} previous topics planned
             **Research Integration:** {"✓ Research-based" if previous_step_content else "✗ No research foundation"}
-            
+
             **Content Strategy:**
             {response.content}
-            
+
             **Session-Enhanced Features:**
             - Plan Number: {planning_context["total_plans_created"]}
             - Context Awareness: {"Multi-topic session" if len(previous_topics) > 0 else "Initial planning session"}
@@ -132,7 +140,7 @@ def custom_content_planning_function(
             - Content Goals: {", ".join(workflow_config.get("content_goals", []))}
             - Strategic Alignment: Optimized for multi-channel distribution
             - Execution Ready: Detailed action items included
-            
+
             **Session State Summary:**
             - Total plans: {planning_context["total_plans_created"]}
             - Topics covered: {", ".join(planning_context["topics_processed"])}
@@ -141,13 +149,13 @@ def custom_content_planning_function(
             - Planning history: {len(planning_context["planning_history"])} recorded sessions
         """.strip()
 
-        print("--> session state", session_state)
+        print("--> session state", run_context.session_state)
 
         return StepOutput(content=enhanced_content)
 
     except Exception as e:
         # Track failed planning in session state
-        session_state["content_planning"]["planning_history"].append(
+        run_context.session_state["content_planning"]["planning_history"].append(
             {
                 "topic": str(message),
                 "timestamp": "current_session",

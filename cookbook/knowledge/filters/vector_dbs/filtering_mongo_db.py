@@ -4,7 +4,7 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.mongodb import MongoDb
+from agno.vectordb.mongodb import MongoVectorDb
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
@@ -21,7 +21,7 @@ mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.ne
 knowledge = Knowledge(
     name="MongoDB Knowledge Base",
     description="A knowledge base for MongoDB",
-    vector_db=MongoDb(
+    vector_db=MongoVectorDb(
         collection_name="filters",
         db_url=mdb_connection_string,
         search_index_name="filters",

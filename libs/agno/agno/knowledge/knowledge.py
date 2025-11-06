@@ -4,7 +4,6 @@ import io
 import time
 from dataclasses import dataclass
 from enum import Enum
-from functools import cached_property
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
@@ -1457,14 +1456,16 @@ class Knowledge:
     def get_valid_filters(self) -> Set[str]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(self._get_filters_from_db)
+        self.valid_metadata_filters.update(self._get_filters_from_db())
         return self.valid_metadata_filters
 
-    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+    async def aget_valid_filters(self) -> Set[str]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(self._get_filters_from_db)
+        self.valid_metadata_filters.update(await self._aget_filters_from_db())
+        return self.valid_metadata_filters
 
+    def _validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if not filters:
             return {}, []
 
@@ -1488,6 +1489,20 @@ class Knowledge:
 
         return valid_filters, invalid_keys
 
+    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(self._get_filters_from_db())
+
+        return self._validate_filters(filters)
+
+    async def async_validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+        self.valid_metadata_filters.update(await self._aget_filters_from_db())
+
+        return self._validate_filters(filters)
+
     def add_filters(self, metadata: Dict[str, Any]) -> None:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
@@ -1496,11 +1511,20 @@ class Knowledge:
             for key in metadata.keys():
                 self.valid_metadata_filters.add(key)
 
-    @cached_property
     def _get_filters_from_db(self) -> Set[str]:
         if self.contents_db is None:
             return set()
         contents, _ = self.get_content()
+        valid_filters: Set[str] = set()
+        for content in contents:
+            if content.metadata:
+                valid_filters.update(content.metadata.keys())
+        return valid_filters
+
+    async def _aget_filters_from_db(self) -> Set[str]:
+        if self.contents_db is None:
+            return set()
+        contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
         for content in contents:
             if content.metadata:
