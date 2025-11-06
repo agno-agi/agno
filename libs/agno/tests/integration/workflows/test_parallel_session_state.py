@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import pytest
 
-from agno.run.base import RunStatus
+from agno.run.base import RunContext, RunStatus
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
@@ -46,6 +46,41 @@ def test_basic_parallel_modifications(shared_db):
     assert final_state == {"a": 2, "b": 3, "c": 4}
 
 
+def test_basic_parallel_modifications_with_run_context(shared_db):
+    """Test basic parallel modifications to different keys"""
+
+    def func_a(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["a"] += 1  # type: ignore
+        return StepOutput(content="A done")
+
+    def func_b(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["b"] += 1  # type: ignore
+        return StepOutput(content="B done")
+
+    def func_c(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["c"] += 1  # type: ignore
+        return StepOutput(content="C done")
+
+    workflow = Workflow(
+        name="Basic Parallel Test",
+        steps=[
+            Parallel(
+                Step(name="Step A", executor=func_a),
+                Step(name="Step B", executor=func_b),
+                Step(name="Step C", executor=func_c),
+            )
+        ],
+        session_state={"a": 1, "b": 2, "c": 3},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    assert final_state == {"a": 2, "b": 3, "c": 4}
+
+
+# TODO: is this the correct behavior?
 def test_overlapping_modifications(shared_db):
     """Test when multiple functions modify the same key"""
 
