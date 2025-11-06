@@ -617,31 +617,29 @@ class AgentOS:
                 asyncio.run(self._initialize_databases())
 
     async def _initialize_databases(self) -> None:
-        """Initialize/scaffold all discovered databases by ensuring their tables are created."""
+        """Initialize all discovered databases and create all Agno tables that don't exist yet."""
+        from itertools import chain
+
         from agno.db.base import AsyncBaseDb, BaseDb
         from agno.utils.log import log_debug, log_warning
 
-        all_dbs: List[Union[BaseDb, AsyncBaseDb]] = []
-
-        # Collect all database instances
-        for db_list in self.dbs.values():
-            all_dbs.extend(db_list)
-        for db_list in self.knowledge_dbs.values():
-            all_dbs.extend(db_list)
-
-        # Remove duplicates by object identity (same physical instance)
-        # Multiple instances can have the same db.id but different table configurations
-        seen_instances: set = set()
-        unique_dbs: List[Union[BaseDb, AsyncBaseDb]] = []
-        for db in all_dbs:
-            db_instance_id = id(db)
-            if db_instance_id not in seen_instances:
-                seen_instances.add(db_instance_id)
-                unique_dbs.append(db)
+        # Collect all database instances and remove duplicates by identity
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
 
         # Separate sync and async databases
-        sync_dbs = [(db.id, db) for db in unique_dbs if not isinstance(db, AsyncBaseDb)]
-        async_dbs = [(db.id, db) for db in unique_dbs if isinstance(db, AsyncBaseDb)]
+        sync_dbs: List[Tuple[str, BaseDb]] = []
+        async_dbs: List[Tuple[str, AsyncBaseDb]] = []
+
+        for db in unique_dbs:
+            target = async_dbs if isinstance(db, AsyncBaseDb) else sync_dbs
+            target.append((db.id, db))  # type: ignore
 
         # Initialize sync databases
         for db_id, db in sync_dbs:
