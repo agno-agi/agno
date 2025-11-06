@@ -24,6 +24,9 @@ async def get_db(
 ) -> Union[BaseDb, AsyncBaseDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
+    if table and not db_id:
+        raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
+
     async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
         """Check if this database has the specified table (configured and actually exists)."""
         # First check if table name is configured
@@ -70,14 +73,6 @@ async def get_db(
 
         # If no table specified, return the first database with this ID
         return target_db_list[0]
-
-    # If only table is specified (no db_id), search all databases for that table
-    if table:
-        for db_list in dbs.values():
-            for db in db_list:
-                if await _has_table(db, table):
-                    return db
-        raise HTTPException(status_code=404, detail=f"No database found with table '{table}'")
 
     # Raise if multiple databases are provided but no db_id is provided
     if len(dbs) > 1:
