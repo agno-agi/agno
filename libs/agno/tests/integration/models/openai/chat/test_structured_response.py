@@ -67,10 +67,10 @@ def test_structured_response_with_enum_fields():
     assert isinstance(response.content.recipe_name, str)
 
 
-def test_structured_response_strict_false():
-    """Test structured response with strict=False (guided mode)"""
+def test_structured_response_strict_output_false():
+    """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini", strict=False),
+        model=OpenAIChat(id="gpt-4o-mini", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )

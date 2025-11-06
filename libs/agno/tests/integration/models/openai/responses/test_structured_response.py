@@ -3,8 +3,6 @@ from typing import Dict, List, Literal
 
 import pytest
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
-
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -203,10 +201,10 @@ async def test_async_tool_use_with_structured_output_stream():
         assert isinstance(finding, str) and len(finding.strip()) > 0
 
 
-def test_structured_response_strict_false():
-    """Test structured response with strict=False (guided mode)"""
+def test_structured_response_strict_output_false():
+    """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=OpenAIResponses(id="gpt-4o", strict=False),
+        model=OpenAIResponses(id="gpt-4o", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )

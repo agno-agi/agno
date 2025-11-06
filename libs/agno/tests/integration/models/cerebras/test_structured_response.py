@@ -24,7 +24,7 @@ class MovieScript(BaseModel):
 
 def test_structured_response():
     structured_output_agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="qwen-3-32b"),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
@@ -52,7 +52,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="qwen-3-32b"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -62,8 +62,8 @@ def test_structured_response_with_enum_fields():
     assert isinstance(response.content.recipe_name, str)
 
 
-def test_structured_response_strict_false():
-    """Test structured response with strict=False (guided mode)"""
+def test_structured_response_strict_output_false():
+    """Test structured response with strict_output=False (guided mode)"""
 
     class MovieScriptWithDict(BaseModel):
         setting: str = Field(..., description="Provide a nice setting for a blockbuster movie.")
@@ -71,7 +71,7 @@ def test_structured_response_strict_false():
         name: str = Field(..., description="Give a name to this movie")
 
     guided_output_agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct", strict=False),
+        model=Cerebras(id="qwen-3-32b", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScriptWithDict,
     )

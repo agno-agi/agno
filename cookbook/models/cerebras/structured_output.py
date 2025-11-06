@@ -25,17 +25,17 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses structured outputs with strict=True (default)
+# Agent that uses structured outputs with strict_output=True (default)
 structured_output_agent = Agent(
-    model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+    model=Cerebras(id="qwen-3-32b"),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )
 
 
-# Agent with strict=False (guided mode)
+# Agent with strict_output=False (guided mode)
 guided_output_agent = Agent(
-    model=Cerebras(id="llama-4-scout-17b-16e-instruct", strict=False),
+    model=Cerebras(id="qwen-3-32b", strict_output=False),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )
