@@ -140,6 +140,7 @@ class TraceSessionStats(BaseModel):
     session_id: str = Field(..., description="Session identifier")
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
     agent_id: Optional[str] = Field(None, description="Agent ID(s) used in the session")
+    team_id: Optional[str] = Field(None, description="Team ID associated with the session")
     total_traces: int = Field(..., description="Total number of traces in this session")
     first_trace_at: int = Field(..., description="Unix timestamp of first trace in session")
     last_trace_at: int = Field(..., description="Unix timestamp of last trace in session")

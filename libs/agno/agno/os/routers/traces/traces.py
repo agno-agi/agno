@@ -378,6 +378,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                                     "session_id": "37029bc6-1794-4ba8-a629-1efedc53dcad",
                                     "user_id": "kaustubh@agno.com",
                                     "agent_id": "hackernews-agent",
+                                    "team_id": None,
                                     "total_traces": 5,
                                     "first_trace_at": 1762156516,
                                     "last_trace_at": 1762156890,
@@ -399,6 +400,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
     async def get_trace_stats(
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
+        team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
@@ -421,6 +423,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
             stats_result = db.get_trace_stats(
                 user_id=user_id,
                 agent_id=agent_id,
+                team_id=team_id,
                 limit=limit,
                 page=page,
             )
@@ -444,6 +447,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
                     session_id=stat["session_id"],
                     user_id=stat.get("user_id"),
                     agent_id=stat.get("agent_id"),
+                    team_id=stat.get("team_id"),
                     total_traces=stat["total_traces"],
                     first_trace_at=stat["first_trace_at"],
                     last_trace_at=stat["last_trace_at"],

@@ -2238,6 +2238,7 @@ class SqliteDb(BaseDb):
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -2246,6 +2247,7 @@ class SqliteDb(BaseDb):
         Args:
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 
@@ -2271,17 +2273,20 @@ class SqliteDb(BaseDb):
                         table.c.session_id,
                         table.c.user_id,
                         table.c.agent_id,
+                        table.c.team_id,
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(table.c.session_id, table.c.user_id, table.c.agent_id)
+                    .group_by(table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id)
                 )
 
                 # Apply filters
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
 
@@ -2303,6 +2308,7 @@ class SqliteDb(BaseDb):
                         "session_id": row.session_id,
                         "user_id": row.user_id,
                         "agent_id": row.agent_id,
+                        "team_id": row.team_id,
                         "total_traces": row.total_traces,
                         "first_trace_at": row.first_trace_at,
                         "last_trace_at": row.last_trace_at,
