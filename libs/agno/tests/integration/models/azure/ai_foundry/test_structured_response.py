@@ -4,7 +4,7 @@ from typing import Dict, List
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.models.openai.chat import OpenAIChat
+from agno.models.azure import AzureAIFoundry
 
 
 class MovieScript(BaseModel):
@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 
 def test_structured_response_with_dict_fields():
     structured_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=AzureAIFoundry(id="gpt-4o-mini"),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
@@ -57,7 +57,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=AzureAIFoundry(id="gpt-4o"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -70,7 +70,7 @@ def test_structured_response_with_enum_fields():
 def test_structured_response_strict_output_false():
     """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini", strict_output=False),
+        model=AzureAIFoundry(id="gpt-4o-mini", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )

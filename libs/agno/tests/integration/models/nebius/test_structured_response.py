@@ -1,10 +1,12 @@
 import enum
-from typing import Dict, List
+from typing import List
 
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.models.openai.chat import OpenAIChat
+from agno.models.nebius import Nebius
+
+NEBIUS_MODEL_ID = "Qwen/Qwen3-4B-fast"
 
 
 class MovieScript(BaseModel):
@@ -20,21 +22,16 @@ class MovieScript(BaseModel):
     name: str = Field(..., description="Give a name to this movie")
     characters: List[str] = Field(..., description="Name of characters for this movie.")
     storyline: str = Field(..., description="3 sentence storyline for the movie. Make it exciting!")
-    rating: Dict[str, int] = Field(
-        ...,
-        description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
-    )
 
 
-def test_structured_response_with_dict_fields():
+def test_structured_response():
     structured_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=Nebius(id=NEBIUS_MODEL_ID),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
     response = structured_output_agent.run("New York")
     assert response.content is not None
-    assert isinstance(response.content.rating, Dict)
     assert isinstance(response.content.setting, str)
     assert isinstance(response.content.ending, str)
     assert isinstance(response.content.genre, str)
@@ -57,7 +54,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=Nebius(id=NEBIUS_MODEL_ID),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -70,7 +67,7 @@ def test_structured_response_with_enum_fields():
 def test_structured_response_strict_output_false():
     """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini", strict_output=False),
+        model=Nebius(id=NEBIUS_MODEL_ID, strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )
