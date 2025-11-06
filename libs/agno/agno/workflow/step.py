@@ -183,7 +183,7 @@ class Step:
     ) -> Any:
         """Call custom function with session_state support if the function accepts it"""
 
-        kwargs = {}
+        kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
@@ -200,7 +200,7 @@ class Step:
     ) -> Any:
         """Call custom async function with session_state support if the function accepts it"""
 
-        kwargs = {}
+        kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
