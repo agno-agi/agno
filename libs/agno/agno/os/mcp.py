@@ -57,7 +57,7 @@ def get_mcp_server(
             os_id=os.id or "AgentOS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=[db.id for db in os.dbs.values()],
+            databases=[db.id for db_list in os.dbs.values() for db in db_list],
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
@@ -104,7 +104,7 @@ def get_mcp_server(
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ):
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions = await db.get_sessions(
@@ -137,7 +137,7 @@ def get_mcp_server(
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ):
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions = await db.get_sessions(
@@ -170,7 +170,7 @@ def get_mcp_server(
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ):
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions = await db.get_sessions(
@@ -203,7 +203,7 @@ def get_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         user_memory = db.upsert_user_memory(
             memory=UserMemory(
                 memory_id=str(uuid4()),
@@ -225,7 +225,7 @@ def get_mcp_server(
         sort_order: str = "desc",
         db_id: Optional[str] = None,
     ):
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memories = await db.get_user_memories(
@@ -252,7 +252,7 @@ def get_mcp_server(
         memory: str,
         user_id: str,
     ) -> UserMemorySchema:
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memory = await db.upsert_user_memory(
@@ -282,7 +282,7 @@ def get_mcp_server(
         db_id: str,
         memory_id: str,
     ) -> None:
-        db = get_db(os.dbs, db_id)
+        db = await get_db(os.dbs, db_id)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memory(memory_id=memory_id)

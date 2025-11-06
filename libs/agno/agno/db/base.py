@@ -45,6 +45,14 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
 
+    @abstractmethod
+    def table_exists(self, table_name: str) -> bool:
+        raise NotImplementedError
+
+    def _create_all_tables(self) -> None:
+        """Create all tables for this database."""
+        pass
+
     # --- Sessions ---
     @abstractmethod
     def delete_session(self, session_id: str) -> bool:
@@ -483,6 +491,21 @@ class AsyncBaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
+
+    @abstractmethod
+    async def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in this database.
+
+        Default implementation returns True if the table name is configured.
+        Subclasses should override this to perform actual existence checks.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists, False otherwise
+        """
+        raise NotImplementedError
 
     # --- Sessions ---
     @abstractmethod
