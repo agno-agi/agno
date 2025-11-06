@@ -308,7 +308,7 @@ def _create_events_from_chunk(
         try:
             custom_event_value = chunk.to_dict()
         except Exception:
-            custom_event_value = chunk.content
+            custom_event_value = chunk.content  # type: ignore
 
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
