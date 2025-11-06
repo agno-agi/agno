@@ -62,7 +62,6 @@ class DocxReader(Reader):
                     content=doc_content,
                 )
             ]
-
             if self.chunk:
                 chunked_documents = []
                 for document in documents:

@@ -19,23 +19,69 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_db(dbs: dict[str, Union[BaseDb, AsyncBaseDb]], db_id: Optional[str] = None) -> Union[BaseDb, AsyncBaseDb]:
-    """Return the database with the given ID, or the first database if no ID is provided."""
+async def get_db(
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None
+) -> Union[BaseDb, AsyncBaseDb]:
+    """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
+
+    if table and not db_id:
+        raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
+
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+        """Check if this database has the specified table (configured and actually exists)."""
+        # First check if table name is configured
+        is_configured = (
+            hasattr(db, "session_table_name")
+            and db.session_table_name == table_name
+            or hasattr(db, "memory_table_name")
+            and db.memory_table_name == table_name
+            or hasattr(db, "metrics_table_name")
+            and db.metrics_table_name == table_name
+            or hasattr(db, "eval_table_name")
+            and db.eval_table_name == table_name
+            or hasattr(db, "knowledge_table_name")
+            and db.knowledge_table_name == table_name
+        )
+
+        if not is_configured:
+            return False
+
+        # Then check if table actually exists in the database
+        try:
+            if isinstance(db, AsyncBaseDb):
+                # For async databases, await the check
+                return await db.table_exists(table_name)
+            else:
+                # For sync databases, call directly
+                return db.table_exists(table_name)
+        except (NotImplementedError, AttributeError):
+            # If table_exists not implemented, fall back to configuration check
+            return is_configured
+
+    # If db_id is provided, first find the database with that ID
+    if db_id:
+        target_db_list = dbs.get(db_id)
+        if not target_db_list:
+            raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
+
+        # If table is also specified, search through all databases with this ID to find one with the table
+        if table:
+            for db in target_db_list:
+                if await _has_table(db, table):
+                    return db
+            raise HTTPException(status_code=404, detail=f"No database with id '{db_id}' has table '{table}'")
+
+        # If no table specified, return the first database with this ID
+        return target_db_list[0]
 
     # Raise if multiple databases are provided but no db_id is provided
-    if not db_id and len(dbs) > 1:
+    if len(dbs) > 1:
         raise HTTPException(
             status_code=400, detail="The db_id query parameter is required when using multiple databases"
         )
 
-    # Get and return the database with the given ID, or raise if not found
-    if db_id:
-        db = dbs.get(db_id)
-        if not db:
-            raise HTTPException(status_code=404, detail=f"Database with id '{db_id}' not found")
-    else:
-        db = next(iter(dbs.values()))
-    return db
+    # Return the first (and only) database
+    return next(db for dbs in dbs.values() for db in dbs)
 
 
 def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id: Optional[str] = None) -> Knowledge:
