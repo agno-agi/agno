@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Opti
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.models.response import ModelResponse
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
@@ -289,6 +290,83 @@ def collect_joint_files(
         log_debug(f"Files Available to Model: {len(joint_files)} files")
 
     return joint_files if joint_files else None
+
+
+def store_media_util(run_response: Union[RunOutput, TeamRunOutput], model_response: ModelResponse):
+    """Store media from model response in run_response for persistence"""
+    # Handle generated media fields from ModelResponse (generated media)
+    if model_response.images is not None:
+        for image in model_response.images:
+            if run_response.images is None:
+                run_response.images = []
+            run_response.images.append(image)  # Generated images go to run_response.images
+
+    if model_response.videos is not None:
+        for video in model_response.videos:
+            if run_response.videos is None:
+                run_response.videos = []
+            run_response.videos.append(video)  # Generated videos go to run_response.videos
+
+    if model_response.audios is not None:
+        for audio in model_response.audios:
+            if run_response.audio is None:
+                run_response.audio = []
+            run_response.audio.append(audio)  # Generated audio go to run_response.audio
+
+    if model_response.files is not None:
+        for file in model_response.files:
+            if run_response.files is None:
+                run_response.files = []
+            run_response.files.append(file)  # Generated files go to run_response.files
+
+
+def validate_media_object_id(
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    audios: Optional[Sequence[Audio]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> tuple:
+    image_list = None
+    if images:
+        image_list = []
+        for img in images:
+            if not img.id:
+                from uuid import uuid4
+
+                img.id = str(uuid4())
+            image_list.append(img)
+
+    video_list = None
+    if videos:
+        video_list = []
+        for vid in videos:
+            if not vid.id:
+                from uuid import uuid4
+
+                vid.id = str(uuid4())
+            video_list.append(vid)
+
+    audio_list = None
+    if audios:
+        audio_list = []
+        for aud in audios:
+            if not aud.id:
+                from uuid import uuid4
+
+                aud.id = str(uuid4())
+            audio_list.append(aud)
+
+    file_list = None
+    if files:
+        file_list = []
+        for file in files:
+            if not file.id:
+                from uuid import uuid4
+
+                file.id = str(uuid4())
+            file_list.append(file)
+
+    return image_list, video_list, audio_list, file_list
 
 
 def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:

@@ -6,7 +6,7 @@ import pytest
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 
 
 # Test tools: Async functions (return values)

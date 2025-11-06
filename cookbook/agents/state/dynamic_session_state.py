@@ -4,7 +4,7 @@ from typing import Any, Dict
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_info, log_warning
 

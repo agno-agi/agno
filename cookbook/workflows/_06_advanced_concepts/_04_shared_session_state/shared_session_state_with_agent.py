@@ -1,7 +1,7 @@
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
