@@ -4,7 +4,6 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.os import AgentOS
-from agno_assist_agent_with_tracing import agno_assist_agent_with_tracing
 from agno_knowledge_agent import agno_knowledge_agent
 from agno_mcp_agent import agno_mcp_agent
 from competitive_brief import competitive_brief
@@ -35,7 +34,6 @@ agent_os = AgentOS(
         finance_agent,
         memory_manager,
         research_agent,
-        agno_assist_agent_with_tracing,
     ],
     teams=[
         finance_team,

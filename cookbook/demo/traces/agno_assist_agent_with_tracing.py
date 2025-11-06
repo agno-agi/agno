@@ -6,12 +6,13 @@ from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
+from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector, SearchType
-from db import db_url
 
 # ************* Database Setup *************
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url, id="agno_assist_db_with_tracing")
-db_sqlite = SqliteDb(db_file="tmp/traces.db", id="agno_assist_db_with_tracing_sqlite")
+db_sqlite = SqliteDb(db_file="tmp/traces.db", id="agno_assist_db_with_tracing")
 # *******************************
 
 
@@ -100,7 +101,7 @@ knowledge = Knowledge(
 )
 
 # Setup our Agno Agent
-agno_assist_agent_with_tracing = Agent(
+agno_assist = Agent(
     name="Agno Assist Agent with Tracing",
     id="agno-assist-agent-with-tracing",
     model=Claude(id="claude-sonnet-4-0"),
@@ -115,3 +116,22 @@ agno_assist_agent_with_tracing = Agent(
     markdown=True,
     tracing=True,  # Enable tracing
 )
+
+agent_os = AgentOS(
+    description="Example app with Agno Docs Agent with knowledge and tracing",
+    agents=[agno_assist],
+)
+
+
+app = agent_os.get_app()
+
+if __name__ == "__main__":
+    knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+    """Run your AgentOS.
+
+    You can see test your AgentOS at:
+    http://localhost:7777/docs
+
+    """
+    # Don't use reload=True here, this can cause issues with the lifespan
+    agent_os.serve(app="agno_assist_agent_with_tracing:app")
