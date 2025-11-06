@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from agno.models.metrics import Metrics
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ParallelExecutionCompletedEvent,
@@ -200,6 +201,7 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -214,10 +216,13 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(deepcopy(run_context.session_state))
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
@@ -235,6 +240,7 @@ class Parallel:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    run_context=run_context,
                     session_state=step_session_state,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
@@ -289,7 +295,10 @@ class Parallel:
                     )
 
         if session_state is not None:
-            merge_parallel_session_states(session_state, modified_session_states)
+            if run_context is not None and run_context.session_state is not None:
+                merge_parallel_session_states(run_context.session_state, modified_session_states)
+            else:
+                merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         results_with_indices.sort(key=lambda x: x[0])
@@ -322,6 +331,7 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -338,10 +348,13 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(deepcopy(run_context.session_state))
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         stream_events = stream_events or stream_intermediate_steps
@@ -469,7 +482,10 @@ class Parallel:
 
         # Merge all session_state changes back into the original session_state
         if session_state is not None:
-            merge_parallel_session_states(session_state, modified_session_states)
+            if run_context is not None and run_context.session_state is not None:
+                merge_parallel_session_states(run_context.session_state, modified_session_states)
+            else:
+                merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
         flattened_step_results: List[StepOutput] = []
@@ -509,6 +525,7 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -523,10 +540,13 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(deepcopy(run_context.session_state))
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
@@ -599,7 +619,10 @@ class Parallel:
 
         # Smart merge all session_state changes back into the original session_state
         if session_state is not None:
-            merge_parallel_session_states(session_state, modified_session_states)
+            if run_context is not None and run_context.session_state is not None:
+                merge_parallel_session_states(run_context.session_state, modified_session_states)
+            else:
+                merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
         processed_results_with_indices.sort(key=lambda x: x[0])
@@ -632,6 +655,7 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -648,10 +672,13 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(deepcopy(run_context.session_state))
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         stream_events = stream_events or stream_intermediate_steps
@@ -767,7 +794,10 @@ class Parallel:
 
         # Merge all session_state changes back into the original session_state
         if session_state is not None:
-            merge_parallel_session_states(session_state, modified_session_states)
+            if run_context is not None and run_context.session_state is not None:
+                merge_parallel_session_states(run_context.session_state, modified_session_states)
+            else:
+                merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
         flattened_step_results: List[StepOutput] = []

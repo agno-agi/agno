@@ -430,7 +430,7 @@ class Step:
         if workflow_session:
             step_input.workflow_session = workflow_session
 
-        # Create session_state copy once to avoid duplication
+        # Create session_state copy once to avoid duplication. Consider both run_context.session_state and session_state.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = copy(run_context.session_state)
         else:
@@ -492,7 +492,10 @@ class Step:
 
                             # Merge session_state changes back
                             if session_state is not None:
-                                merge_dictionaries(session_state, session_state_copy)
+                                if run_context is not None and run_context.session_state is not None:
+                                    merge_dictionaries(run_context.session_state, session_state_copy)
+                                else:
+                                    merge_dictionaries(session_state, session_state_copy)
 
                             if not final_response:
                                 final_response = StepOutput(content=content)
@@ -505,7 +508,10 @@ class Step:
 
                         # Merge session_state changes back
                         if session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
+                            if run_context is not None and run_context.session_state is not None:
+                                merge_dictionaries(run_context.session_state, session_state_copy)
+                            else:
+                                merge_dictionaries(session_state, session_state_copy)
 
                         if isinstance(result, StepOutput):
                             final_response = result
@@ -640,6 +646,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional["WorkflowSession"] = None,
@@ -656,7 +663,10 @@ class Step:
         if workflow_session:
             step_input.workflow_session = workflow_session
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = copy(run_context.session_state)
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -710,7 +720,10 @@ class Step:
 
                         # Merge session_state changes back
                         if session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
+                            if run_context is not None and run_context.session_state is not None:
+                                merge_dictionaries(run_context.session_state, session_state_copy)
+                            else:
+                                merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
                             response = final_response
@@ -726,7 +739,10 @@ class Step:
 
                         # Merge session_state changes back
                         if session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
+                            if run_context is not None and run_context.session_state is not None:
+                                merge_dictionaries(run_context.session_state, session_state_copy)
+                            else:
+                                merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
                         if isinstance(result, StepOutput):
@@ -787,9 +803,12 @@ class Step:
                             **kwargs,
                         )
 
+                        # Update workflow session state
                         if session_state is not None:
-                            # Update workflow session state
-                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                            if run_context is not None and run_context.session_state is not None:
+                                merge_dictionaries(run_context.session_state, session_state_copy)
+                            else:
+                                merge_dictionaries(session_state, session_state_copy)
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
@@ -827,6 +846,7 @@ class Step:
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -844,7 +864,10 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = copy(run_context.session_state)
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         stream_events = stream_events or stream_intermediate_steps
@@ -945,7 +968,10 @@ class Step:
 
                     # Merge session_state changes back
                     if session_state is not None:
-                        merge_dictionaries(session_state, session_state_copy)
+                        if run_context is not None and run_context.session_state is not None:
+                            merge_dictionaries(run_context.session_state, session_state_copy)
+                        else:
+                            merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1011,9 +1037,12 @@ class Step:
                             if stream_executor_events:
                                 yield enriched_event  # type: ignore[misc]
 
+                        # Update workflow session state
                         if session_state is not None:
-                            # Update workflow session state
-                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                            if run_context is not None and run_context.session_state is not None:
+                                merge_dictionaries(run_context.session_state, session_state_copy)
+                            else:
+                                merge_dictionaries(session_state, session_state_copy)
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
