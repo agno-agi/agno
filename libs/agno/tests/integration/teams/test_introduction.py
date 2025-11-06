@@ -1,7 +1,5 @@
 import uuid
 
-import pytest
-
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
@@ -332,7 +330,9 @@ def test_team_get_chat_history_with_introduction(shared_db):
     chat_history = team.get_chat_history(session_id=session_id)
 
     assert chat_history is not None
-    assert len(chat_history) >= 5  # Introduction + (2 user messages + 2 assistant responses)
+    # Introduction + system messages + (2 user messages + 2 assistant responses)
+    # System messages are included in team runs
+    assert len(chat_history) >= 7
 
     # First message should be the introduction from assistant
     assert chat_history[0].role == "assistant"

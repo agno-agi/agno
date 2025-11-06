@@ -7586,8 +7586,13 @@ class Team:
                 created_at=int(time()),
             )
             if self.introduction is not None:
+                from uuid import uuid4
+
                 team_session.upsert_run(
                     TeamRunOutput(
+                        run_id=str(uuid4()),
+                        team_id=self.id,
+                        session_id=session_id,
                         content=self.introduction,
                         messages=[Message(role="assistant", content=self.introduction)],
                     )
@@ -7624,18 +7629,28 @@ class Team:
         # Create new session if none found
         if team_session is None:
             log_debug(f"Creating new TeamSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             team_session = TeamSession(
                 session_id=session_id,
                 team_id=self.id,
                 user_id=user_id,
                 team_data=self._get_team_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
             if self.introduction is not None:
+                from uuid import uuid4
+
                 team_session.upsert_run(
                     TeamRunOutput(
+                        run_id=str(uuid4()),
+                        team_id=self.id,
+                        session_id=session_id,
                         content=self.introduction,
                         messages=[Message(role="assistant", content=self.introduction)],
                     )

@@ -1,7 +1,5 @@
 import uuid
 
-import pytest
-
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
