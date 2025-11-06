@@ -176,6 +176,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
     "AttributeDefinitions": [
         {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "user_id", "AttributeType": "S"},
         {"AttributeName": "type", "AttributeType": "S"},
         {"AttributeName": "status", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
