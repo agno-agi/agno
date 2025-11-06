@@ -45,18 +45,28 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
         self,
         memories: List[UserMemory],
         model: Model,
-        user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Summarize multiple memories into single comprehensive summary.
 
         Args:
             memories: List of UserMemory objects to summarize
             model: Model to use for summarization
-            user_id: User ID for the summarized memory
 
         Returns:
             List containing single summarized UserMemory object
+
+        Raises:
+            ValueError: If memories list is empty or if user_id cannot be determined
         """
+        # Validate memories list
+        if not memories:
+            raise ValueError("No Memories found")
+
+        # Extract user_id from first memory
+        user_id = memories[0].user_id
+        if user_id is None:
+            raise ValueError("Cannot determine user_id: first memory does not have a valid user_id or is None")
+
         # Collect all memory contents
         memory_contents = [mem.memory for mem in memories if mem.memory]
 
@@ -96,7 +106,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
             memory_id=new_memory_id,
             memory=summarized_content.strip(),
             topics=summarized_topics,
-            user_id=user_id or (memories[0].user_id if memories else None),
+            user_id=user_id,
             agent_id=summarized_agent_id,
             team_id=summarized_team_id,
             updated_at=datetime.now(),
@@ -112,18 +122,28 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
         self,
         memories: List[UserMemory],
         model: Model,
-        user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Async version: Summarize multiple memories into single comprehensive summary.
 
         Args:
             memories: List of UserMemory objects to summarize
             model: Model to use for summarization
-            user_id: User ID for the summarized memory
 
         Returns:
             List containing single summarized UserMemory object
+
+        Raises:
+            ValueError: If memories list is empty or if user_id cannot be determined
         """
+        # Validate memories list
+        if not memories:
+            raise ValueError("No Memories found")
+
+        # Extract user_id from first memory
+        user_id = memories[0].user_id
+        if user_id is None:
+            raise ValueError("Cannot determine user_id: first memory does not have a valid user_id or is None")
+
         # Collect all memory contents
         memory_contents = [mem.memory for mem in memories if mem.memory]
 
@@ -163,7 +183,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
             memory_id=new_memory_id,
             memory=summarized_content.strip(),
             topics=summarized_topics,
-            user_id=user_id or (memories[0].user_id if memories else None),
+            user_id=user_id,
             agent_id=summarized_agent_id,
             team_id=summarized_team_id,
             updated_at=datetime.now(),

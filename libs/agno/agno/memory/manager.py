@@ -723,7 +723,7 @@ class MemoryManager:
         strategy: Union[
             MemoryOptimizationStrategyType, MemoryOptimizationStrategy
         ] = MemoryOptimizationStrategyType.SUMMARIZE,
-        apply: bool = False,
+        apply: bool = True,
     ) -> List[UserMemory]:
         """Optimize user memories using the specified strategy.
 
@@ -760,7 +760,7 @@ class MemoryManager:
 
         # Optimize memories using strategy
         optimization_model = self.get_model()
-        optimized_memories = strategy_instance.optimize(memories=memories, model=optimization_model, user_id=user_id)
+        optimized_memories = strategy_instance.optimize(memories=memories, model=optimization_model)
 
         # Apply to database if requested
         if apply:
@@ -804,7 +804,7 @@ class MemoryManager:
         strategy: Union[
             MemoryOptimizationStrategyType, MemoryOptimizationStrategy
         ] = MemoryOptimizationStrategyType.SUMMARIZE,
-        apply: bool = False,
+        apply: bool = True,
     ) -> List[UserMemory]:
         """Async version of optimize_memories.
 
@@ -836,9 +836,7 @@ class MemoryManager:
 
         # Optimize memories using strategy (async)
         optimization_model = self.get_model()
-        optimized_memories = await strategy_instance.aoptimize(
-            memories=memories, model=optimization_model, user_id=user_id
-        )
+        optimized_memories = await strategy_instance.aoptimize(memories=memories, model=optimization_model)
 
         # Apply to database if requested
         if apply:
@@ -869,6 +867,8 @@ class MemoryManager:
                     # Insert new memory (for strategies that create new memories)
                     opt_mem.user_id = user_id
                     if not opt_mem.updated_at:
+                        from datetime import datetime
+
                         opt_mem.updated_at = datetime.now()
                     self._upsert_db_memory(memory=opt_mem)
 

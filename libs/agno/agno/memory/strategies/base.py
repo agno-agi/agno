@@ -26,14 +26,12 @@ class MemoryOptimizationStrategy(ABC):
         self,
         memories: List[UserMemory],
         model: Model,
-        user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Optimize memories synchronously.
 
         Args:
             memories: List of UserMemory objects to optimize
             model: Model to use for optimization (if needed)
-            user_id: User ID for optimized memories
 
         Returns:
             List of optimized UserMemory objects
@@ -45,14 +43,12 @@ class MemoryOptimizationStrategy(ABC):
         self,
         memories: List[UserMemory],
         model: Model,
-        user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Optimize memories asynchronously.
 
         Args:
             memories: List of UserMemory objects to optimize
             model: Model to use for optimization (if needed)
-            user_id: User ID for optimized memories
 
         Returns:
             List of optimized UserMemory objects

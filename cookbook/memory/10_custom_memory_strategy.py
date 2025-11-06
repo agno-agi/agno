@@ -34,7 +34,6 @@ class RecentOnlyStrategy(MemoryOptimizationStrategy):
         self,
         memories: List[UserMemory],
         model: Model,
-        user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Keep only the most recent N memories."""
         # Sort by updated_at or created_at, most recent first
@@ -50,7 +49,6 @@ class RecentOnlyStrategy(MemoryOptimizationStrategy):
         self,
         memories: List[UserMemory],
         model: Model,
-        user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Async version: Keep only the most recent N memories."""
         sorted_memories = sorted(
