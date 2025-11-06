@@ -51,6 +51,7 @@ class Cerebras(Model):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -191,10 +192,10 @@ class Cerebras(Model):
                 and response_format.get("type") == "json_schema"
                 and isinstance(response_format.get("json_schema"), dict)
             ):
-                # Ensure json_schema has strict=True as required by Cerebras API
+                # Ensure json_schema has strict parameter set
                 schema = response_format["json_schema"]
                 if isinstance(schema.get("schema"), dict) and "strict" not in schema:
-                    schema["strict"] = True
+                    schema["strict"] = self.strict_output
 
                 request_params["response_format"] = response_format
 
