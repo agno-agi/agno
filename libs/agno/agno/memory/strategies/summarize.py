@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from textwrap import dedent
-from typing import List, Optional
+from typing import List
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory

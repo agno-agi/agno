@@ -9,7 +9,7 @@ Run: python cookbook/memory/10_custom_memory_strategy.py
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
