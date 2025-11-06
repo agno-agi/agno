@@ -407,6 +407,12 @@ class Agent:
     # If True, the agent adds cultural knowledge in the response
     add_culture_to_context: Optional[bool] = None
 
+    # --- Context Compression ---
+    # If True, compress tool call results to save context
+    compress_tool_calls: bool = False
+    # Context manager for compression
+    context_manager: Optional[ContextManager] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -444,7 +450,7 @@ class Agent:
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_calls: bool = False,
-        context_manager: Optional[Any] = None,  # TYPE_CHECKING: "ContextManager"
+        context_manager: Optional[ContextManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -824,12 +830,16 @@ class Agent:
 
     def _set_context_manager(self) -> None:
         if self.compress_tool_calls and self.context_manager is None:
-            log_info("Setting default context manager")
-            self.context_manager = ContextManager(model=self.model)
+            self.context_manager = ContextManager(
+                model=self.model,
+            )
 
         if self.context_manager is not None:
             if self.context_manager.model is None:
                 self.context_manager.model = self.model
+
+            if self.context_manager.agent is None:
+                self.context_manager.agent = self
 
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
@@ -861,7 +871,6 @@ class Agent:
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
         if self.compress_tool_calls or self.context_manager is not None:
-            log_info("Setting context manager")
             self._set_context_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
@@ -1053,9 +1062,6 @@ class Agent:
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
-            if self.compress_tool_calls and self.context_manager:
-                self.model.context_manager = self.context_manager
-
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1064,6 +1070,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
+                context_manager=self.context_manager if self.compress_tool_calls else None,
             )
 
             # Check for cancellation after model call
@@ -1896,10 +1903,6 @@ class Agent:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Pass context manager to model
-            if self.compress_tool_calls and self.context_manager:
-                self.model.context_manager = self.context_manager
-
             # 9. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -1909,6 +1912,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
+                context_manager=self.context_manager if self.compress_tool_calls else None,
             )
 
             # Check for cancellation after model call
@@ -4727,10 +4731,6 @@ class Agent:
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
-        # Pass context manager to model
-        if self.compress_tool_calls and self.context_manager:
-            self.model.context_manager = self.context_manager
-
         reasoning_state = {
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
@@ -4751,6 +4751,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            context_manager=self.context_manager if self.compress_tool_calls else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4822,10 +4823,6 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Pass context manager to model
-        if self.compress_tool_calls and self.context_manager:
-            self.model.context_manager = self.context_manager
-
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -4835,6 +4832,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            context_manager=self.context_manager if self.compress_tool_calls else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -7642,13 +7640,11 @@ class Agent:
 
             if len(history) > 0:
                 # compress tool calls from history if needed
-                if self.context_manager and self.context_manager.should_compress(history):
-                    log_info("Compressing messages from history")
+                if self.compress_tool_calls and self.context_manager.should_compress(history):
                     # Compress the original history messages
                     history = self.context_manager.compress_tool_results(
                         messages=history,
                     )
-
                 # Create a deep copy of the history messages
                 history_copy = [deepcopy(msg) for msg in history]
 
@@ -7862,14 +7858,6 @@ class Agent:
             )
 
             if len(history) > 0:
-                # compress tool calls from history if needed
-                if self.context_manager and self.context_manager.should_compress(history):
-                    log_info("Compressing messages from historyl")
-                    # Compress the original history messages
-                    history = self.context_manager.compress_tool_results(
-                        messages=history,
-                    )
-
                 # Create a deep copy of the history messages
                 history_copy = [deepcopy(msg) for msg in history]
 

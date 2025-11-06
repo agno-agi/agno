@@ -795,7 +795,7 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str]
+        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str], context_manager=None
     ) -> None:
         """
         Handle the results of function calls.
@@ -804,11 +804,20 @@ class OpenAIResponses(Model):
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
+            context_manager (Optional): Context manager for compression.
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
-                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
-                messages.append(_fc_message)
+                # Only use compressed content if context_manager is active
+                if context_manager is not None and _fc_message.compressed_content is not None:
+                    # Use compressed content without mutating original
+                    result_copy = _fc_message.model_copy()
+                    result_copy.content = _fc_message.compressed_content
+                    result_copy.tool_call_id = tool_call_ids[_fc_message_index]
+                    messages.append(result_copy)
+                else:
+                    _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+                    messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """

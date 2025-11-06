@@ -549,14 +549,16 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
     ) -> None:
         """
-        Handle the results of function calls.
+        Handle the results of function calls for Bedrock.
+        Uses compressed_content if context_manager is active.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
+            context_manager: Optional context manager for compression.
             **kwargs: Additional arguments including tool_ids.
         """
         if function_call_results:
@@ -566,9 +568,14 @@ class AwsBedrock(Model):
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 # Use tool_call_id from message if tool_ids list is insufficient
                 tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
+                # Only use compressed content if context_manager is active
+                if context_manager is not None and _fc_message.compressed_content is not None:
+                    content = _fc_message.compressed_content
+                else:
+                    content = _fc_message.content
                 tool_result = {
                     "toolUseId": tool_id,
-                    "content": [{"json": {"result": _fc_message.content}}],
+                    "content": [{"json": {"result": content}}],
                 }
                 tool_result_content.append({"toolResult": tool_result})
 

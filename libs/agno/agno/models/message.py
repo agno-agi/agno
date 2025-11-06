@@ -59,6 +59,9 @@ class Message(BaseModel):
     role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
+    # Compressed content of the message
+    compressed_content: Optional[str] = None
+
     # An optional name for the participant.
     # Provides the model information to differentiate between participants of the same role.
     name: Optional[str] = None
@@ -103,8 +106,6 @@ class Message(BaseModel):
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
-    # This flag is set when a tool result has been compressed by context manager.
-    is_compressed: bool = False
     # Metrics for the message.
     metrics: Metrics = Field(default_factory=Metrics)
     # The references added to the message for RAG
@@ -268,7 +269,7 @@ class Message(BaseModel):
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
-            "is_compressed": self.is_compressed,
+            "compressed_content": self.compressed_content,
             "stop_after_tool_call": self.stop_after_tool_call,
             "role": self.role,
             "name": self.name,

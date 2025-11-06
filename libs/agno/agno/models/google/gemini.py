@@ -490,7 +490,17 @@ class Gemini(Model):
                     )
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
-                for tool_call in message.tool_calls:
+                for idx, tool_call in enumerate(message.tool_calls):
+                    # Log what content is being sent from tool_calls array
+                    tc_content = tool_call.get("content", "")
+                    tc_content_len = len(str(tc_content)) if tc_content else 0
+                    tool_name = tool_call.get("tool_name", "unknown")
+                    tool_call_id = tool_call.get("tool_call_id", "unknown")
+                    log_debug(
+                        f"[SEND_GEMINI] tool_calls[{idx}]: tool_call_id={tool_call_id}, "
+                        f"tool_name={tool_name}, content_len={tc_content_len}"
+                    )
+                    
                     message_parts.append(
                         Part.from_function_response(
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}
@@ -759,19 +769,24 @@ class Gemini(Model):
         return None
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
     ) -> None:
         """
-        Format function call results.
+        Format function call results for Gemini.
         """
         combined_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
         if len(function_call_results) > 0:
             for result in function_call_results:
-                combined_content.append(result.content)
+                # Only use compressed content if context_manager is active
+                if context_manager is not None and result.compressed_content is not None:
+                    content = result.compressed_content
+                else:
+                    content = result.content
+                combined_content.append(content)
                 combined_function_result.append(
-                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": result.content}
+                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": content}
                 )
                 message_metrics += result.metrics
 

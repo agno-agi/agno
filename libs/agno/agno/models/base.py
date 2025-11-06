@@ -145,9 +145,6 @@ class Model(ABC):
     cache_ttl: Optional[int] = None
     cache_dir: Optional[str] = None
 
-    # Context compression manager
-    context_manager: Optional[Any] = None
-
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
@@ -315,6 +312,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        context_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -436,12 +434,15 @@ class Model(ABC):
 
                 # Format and add results to messages
                 self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    messages=messages,
+                    function_call_results=function_call_results,
+                    context_manager=context_manager,
+                    **model_response.extra or {}
                 )
 
                 # Compress tool results
-                if self.context_manager and self.context_manager.should_compress(messages):
-                    messages[:] = self.context_manager.compress_tool_results(
+                if context_manager and context_manager.should_compress(messages):
+                    messages[:] = context_manager.compress_tool_results(
                         messages=messages,
                     )
 
@@ -495,6 +496,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        context_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -605,13 +607,15 @@ class Model(ABC):
 
                 # Format and add results to messages
                 self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    messages=messages,
+                    function_call_results=function_call_results,
+                    context_manager=context_manager,
+                    **model_response.extra or {}
                 )
 
                 # Compress tool results
-                if self.context_manager and self.context_manager.should_compress(messages):
-                    log_debug("Compressing tool results mid-run")
-                    messages[:] = self.context_manager.compress_tool_results(
+                if context_manager and context_manager.should_compress(messages):
+                    messages[:] = context_manager.compress_tool_results(
                         messages=messages,
                     )
 
@@ -873,6 +877,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        context_manager: Optional[Any] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -967,18 +972,28 @@ class Model(ABC):
                 # Format and add results to messages
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        context_manager=context_manager,
+                        **stream_data.extra
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        context_manager=context_manager,
+                        **model_response.extra
                     )
                 else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    self.format_function_call_results(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        context_manager=context_manager
+                    )
 
                 # Compress tool results
-                if self.context_manager and self.context_manager.should_compress(messages):
-                    messages[:] = self.context_manager.compress_tool_results(
+                if context_manager and context_manager.should_compress(messages):
+                    messages[:] = context_manager.compress_tool_results(
                         messages=messages,
                     )
 
@@ -1061,6 +1076,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        context_manager: Optional[Any] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1156,14 +1172,24 @@ class Model(ABC):
                 # Format and add results to messages
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        context_manager=context_manager,
+                        **stream_data.extra
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        context_manager=context_manager,
+                        **model_response.extra or {}
                     )
                 else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    self.format_function_call_results(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        context_manager=context_manager
+                    )
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -2105,14 +2131,23 @@ class Model(ABC):
         return function_calls_to_run
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
     ) -> None:
         """
         Format function call results.
+        Uses compressed_content if available AND context_manager is active.
         """
         if len(function_call_results) > 0:
-            messages.extend(function_call_results)
-        self._ensure_tool_call_ids(messages=messages, function_call_results=function_call_results)
+            for result in function_call_results:
+                # Only use compressed content if context_manager is active (compress_tool_calls=True)
+                if context_manager is not None and result.compressed_content is not None:
+                    # Use compressed content without mutating original
+                    result_copy = result.model_copy()
+                    result_copy.content = result.compressed_content
+                    messages.append(result_copy)
+                else:
+                    # Use original content
+                    messages.append(result)
 
     def _ensure_tool_call_ids(
         self,
