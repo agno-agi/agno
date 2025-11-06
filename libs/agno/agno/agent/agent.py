@@ -1657,7 +1657,7 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response
+        yield_run_output = yield_run_output or yield_run_response # For backwards compatibility
 
         for attempt in range(num_attempts):
             try:
