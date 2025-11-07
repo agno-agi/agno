@@ -994,10 +994,9 @@ class Workflow:
                             return event
 
             # Store the event
-            if workflow_run_response.events is None:
-                workflow_run_response.events = []
-
             if isinstance(event, BaseRunOutputEvent):
+                if workflow_run_response.events is None:
+                    workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
         # Broadcast to WebSocket if available (async context only)
