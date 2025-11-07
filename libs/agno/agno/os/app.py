@@ -259,7 +259,6 @@ class AgentOS:
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
         self._add_router(app, get_health_router())
-        self._add_router(app, get_home_router(self))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -447,9 +446,6 @@ class AgentOS:
         # Mount MCP if needed
         if self.enable_mcp_server and self._mcp_app:
             fastapi_app.mount("/", self._mcp_app)
-        else:
-            # Add the home router
-            self._add_router(fastapi_app, get_home_router(self))
 
         if not self._app_set:
 
