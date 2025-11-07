@@ -13,6 +13,10 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         self.calls: List[Tuple[str, Optional[str]]] = []
         self._memories: Dict[str, Dict[str, UserMemory]] = {}
 
+    async def table_exists(self, table_name: str) -> bool:
+        """Check if a table exists - dummy implementation always returns True."""
+        return True
+
     async def delete_session(self, *args, **kwargs):
         raise NotImplementedError
 

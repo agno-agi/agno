@@ -8,7 +8,7 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model
+from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -53,6 +53,7 @@ class OpenAIResponses(Model):
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -229,7 +230,7 @@ class OpenAIResponses(Model):
                     "type": "json_schema",
                     "name": response_format.__name__,
                     "schema": schema,
-                    "strict": True,
+                    "strict": self.strict_output,
                 }
             else:
                 # JSON mode
@@ -809,63 +810,6 @@ class OpenAIResponses(Model):
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
-
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        for model_response_delta in self.invoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            )
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
-
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        async for model_response_delta in self.ainvoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            ):
-                yield model_response
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """

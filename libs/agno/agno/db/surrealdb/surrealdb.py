@@ -116,11 +116,23 @@ class SurrealDb(BaseDb):
             "workflows": self._workflows_table_name,
         }
 
-    def _table_exists(self, table_name: str) -> bool:
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the SurrealDB database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
         response = self._query_one("INFO FOR DB", {}, dict)
         if response is None:
             raise Exception("Failed to retrieve database information")
         return table_name in response.get("tables", [])
+
+    def _table_exists(self, table_name: str) -> bool:
+        """Deprecated: Use table_exists() instead."""
+        return self.table_exists(table_name)
 
     def _create_table(self, table_type: TableType, table_name: str):
         query = get_schema(table_type, table_name)

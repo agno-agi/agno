@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_memory_router(
-    dbs: dict[str, Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create memory router with comprehensive OpenAPI documentation for user memory management endpoints."""
     router = APIRouter(
@@ -49,7 +49,7 @@ def get_memory_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
     @router.post(
         "/memories",
         response_model=UserMemorySchema,
@@ -85,6 +85,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         request: Request,
         payload: UserMemoryCreateSchema,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
+        table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
     ) -> UserMemorySchema:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
@@ -93,7 +94,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -138,8 +139,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         memory_id: str = Path(description="Memory ID to delete"),
         user_id: Optional[str] = Query(default=None, description="User ID to delete memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
@@ -164,8 +166,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
     async def delete_memories(
         request: DeleteMemoriesRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
@@ -217,8 +220,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
+        table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
@@ -294,8 +298,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         memory_id: str = Path(description="Memory ID to retrieve"),
         user_id: Optional[str] = Query(default=None, description="User ID to query memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
+        table: Optional[str] = Query(default=None, description="Table to query memory from"),
     ) -> UserMemorySchema:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
@@ -343,8 +348,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
     )
     async def get_topics(
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
+        table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             return await db.get_all_memory_topics()
@@ -389,6 +395,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         payload: UserMemoryCreateSchema,
         memory_id: str = Path(description="Memory ID to update"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
+        table: Optional[str] = Query(default=None, description="Table to use for update"),
     ) -> UserMemorySchema:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
@@ -397,7 +404,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -459,8 +466,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]])
         limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
         page: Optional[int] = Query(default=1, description="Page number for pagination"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
+        table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         try:
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
