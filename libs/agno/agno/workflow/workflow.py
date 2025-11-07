@@ -51,7 +51,6 @@ from agno.run.workflow import (
     WorkflowStartedEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.run.base import BaseRunOutputEvent
 from agno.team.team import Team
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
@@ -975,6 +974,7 @@ class Workflow:
         websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
+        from agno.run.base import BaseRunOutputEvent
         from agno.run.agent import RunOutput
         from agno.run.team import TeamRunOutput
 
