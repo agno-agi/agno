@@ -253,8 +253,6 @@ class Step:
                                 if isinstance(chunk, (BaseRunOutputEvent)):
                                     if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
                                         content += chunk.content if chunk.content is not None else ""
-                                    else:
-                                        content += str(chunk)
                                 else:
                                     content += str(chunk)
                                 if isinstance(chunk, StepOutput):
@@ -676,8 +674,6 @@ class Step:
                                     if isinstance(chunk, (BaseRunOutputEvent)):
                                         if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
                                             content += chunk.content if chunk.content is not None else ""
-                                        else:
-                                            content += str(chunk)
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
