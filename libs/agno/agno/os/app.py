@@ -245,16 +245,18 @@ class AgentOS:
         ]
 
         # Clear all previously existing routes
-        app.router.routes = [route for route in app.router.routes if route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]]
-        
+        app.router.routes = [
+            route
+            for route in app.router.routes
+            if hasattr(route, "path") and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]  # type: ignore
+        ]
 
         # Add the built-in routes
         self._add_built_in_routes(app=app)
-        
+
         # Add the updated routes
         for router in updated_routers:
             self._add_router(app, router)
-
 
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
