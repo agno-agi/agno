@@ -173,7 +173,6 @@ a2a = ["a2a-sdk"]
 huggingface = [
     "huggingface-hub",
 ]
-vllm = ["vllm"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
