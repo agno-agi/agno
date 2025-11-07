@@ -11,9 +11,9 @@ from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
 from agno.run import RunContext
-from agno.run.agent import RunCompletedEvent, RunOutput
+from agno.run.agent import RunCompletedEvent, RunOutput, RunContentEvent
 from agno.run.base import BaseRunOutputEvent
-from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent, RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
@@ -260,8 +260,10 @@ class Step:
                                 run_context,
                             ):  # type: ignore
                                 if isinstance(chunk, (BaseRunOutputEvent)):
-                                    if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
                                         content += chunk.content if chunk.content is not None else ""
+                                    elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        content = chunk.content if chunk.content is not None else ""
                                 else:
                                     content += str(chunk)
                                 if isinstance(chunk, StepOutput):
@@ -486,10 +488,8 @@ class Step:
 
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
-
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
-
                     if _is_generator_function(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
                         content = ""
@@ -502,8 +502,10 @@ class Step:
                             )
                             for event in iterator:  # type: ignore
                                 if isinstance(event, (BaseRunOutputEvent)):
-                                    if isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                                         content += event.content if event.content is not None else ""
+                                    elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        content = event.content if event.content is not None else ""
                                 else:
                                     content += str(event)
                                 if isinstance(event, StepOutput):
@@ -717,8 +719,10 @@ class Step:
                                 )
                                 for chunk in iterator:  # type: ignore
                                     if isinstance(chunk, (BaseRunOutputEvent)):
-                                        if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
                                             content += chunk.content if chunk.content is not None else ""
+                                        elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                            content = chunk.content if chunk.content is not None else ""
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
@@ -733,8 +737,10 @@ class Step:
                                     )
                                     async for chunk in iterator:  # type: ignore
                                         if isinstance(chunk, (BaseRunOutputEvent)):
-                                            if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                            if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
                                                 content += chunk.content if chunk.content is not None else ""
+                                            elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                                content = chunk.content if chunk.content is not None else ""
                                         else:
                                             content += str(chunk)
                                         if isinstance(chunk, StepOutput):
@@ -933,8 +939,10 @@ class Step:
                         )
                         async for event in iterator:  # type: ignore
                             if isinstance(event, (BaseRunOutputEvent)):
-                                if isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                                     content += event.content if event.content is not None else ""
+                                elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    content = event.content if event.content is not None else ""
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
@@ -973,8 +981,10 @@ class Step:
                         )
                         for event in iterator:  # type: ignore
                             if isinstance(event, (BaseRunOutputEvent)):
-                                if isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                                     content += event.content if event.content is not None else ""
+                                elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    content = event.content if event.content is not None else ""
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
