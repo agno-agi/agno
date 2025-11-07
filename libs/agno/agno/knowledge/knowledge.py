@@ -1500,6 +1500,7 @@ class Knowledge:
         return valid_filters, invalid_keys
 
     async def async_validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
         valid_filters_from_db = await self.async_get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
