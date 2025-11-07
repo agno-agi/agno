@@ -19,7 +19,7 @@ class Nebius(OpenAILike):
         base_url (str): The base URL. Defaults to "https://api.tokenfactory.nebius.com/v1".
     """
 
-    id: str = "Qwen/Qwen3-4B-fast"  # Default model for chat
+    id: str = "openai/gpt-oss-20b"  # Default model for chat
     name: str = "Nebius"
     provider: str = "Nebius"
 
