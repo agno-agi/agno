@@ -1465,6 +1465,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -1491,6 +1492,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1517,6 +1519,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1527,209 +1530,231 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
-        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+        # Store original output_schema to restore later
+        _output_schema = self.output_schema
+        if output_schema is not None:
+            self.output_schema = output_schema
+            log_debug(f"Using runtime output_schema: {output_schema.__name__}")
+
+        try:
+            if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+                log_warning(
+                    "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+                )
+
+            # Create a run_id for this specific run
+            run_id = str(uuid4())
+
+            # Validate input against input_schema if provided
+            validated_input = self._validate_input(input)
+
+            # Normalise hook & guardails
+            if not self._hooks_normalised:
+                if self.pre_hooks:
+                    self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
+                if self.post_hooks:
+                    self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
+                self._hooks_normalised = True
+
+            session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+            # Initialize the Agent
+            self.initialize_agent(debug_mode=debug_mode)
+
+            image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+                images=images, videos=videos, audios=audio, files=files
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+            # Create RunInput to capture the original user input
+            run_input = RunInput(
+                input_content=validated_input,
+                images=image_artifacts,
+                videos=video_artifacts,
+                audios=audio_artifacts,
+                files=file_artifacts,
+            )
 
-        # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+            # Read existing session from database
+            agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+            self._update_metadata(session=agent_session)
 
-        # Normalise hook & guardails
-        if not self._hooks_normalised:
-            if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
-            if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
-            self._hooks_normalised = True
+            # Initialize session state
+            session_state = self._initialize_session_state(
+                session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            )
+            # Update session state from DB
+            session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+            # Determine runtime dependencies
+            dependencies = dependencies if dependencies is not None else self.dependencies
 
-        # Initialize the Agent
-        self.initialize_agent(debug_mode=debug_mode)
+            # Initialize run context
+            run_context = RunContext(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                session_state=session_state,
+                dependencies=dependencies,
+            )
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
+            # Resolve dependencies
+            if run_context.dependencies is not None:
+                self._resolve_run_dependencies(run_context=run_context)
 
-        # Create RunInput to capture the original user input
-        run_input = RunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=file_artifacts,
-        )
+            add_dependencies = (
+                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+            )
+            add_session_state = (
+                add_session_state_to_context
+                if add_session_state_to_context is not None
+                else self.add_session_state_to_context
+            )
+            add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # Read existing session from database
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=agent_session)
+            # When filters are passed manually
+            if self.knowledge_filters or knowledge_filters:
+                run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
-        )
-        # Update session state from DB
-        session_state = self._load_session_state(session=agent_session, session_state=session_state)
+            # Use stream override value when necessary
+            if stream is None:
+                stream = False if self.stream is None else self.stream
 
-        # Determine runtime dependencies
-        dependencies = dependencies if dependencies is not None else self.dependencies
+            # Considering both stream_events and stream_intermediate_steps (deprecated)
+            stream_events = stream_events or stream_intermediate_steps
 
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-        )
+            # Can't stream events if streaming is disabled
+            if stream is False:
+                stream_events = False
 
-        # Resolve dependencies
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
+            if stream_events is None:
+                stream_events = False if self.stream_events is None else self.stream_events
 
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+            self.stream = self.stream or stream
+            self.stream_events = self.stream_events or stream_events
 
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            # Prepare arguments for the model
+            response_format = self._get_response_format() if self.parser_model is None else None
+            self.model = cast(Model, self.model)
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
+            # Merge agent metadata with run metadata
+            if self.metadata is not None and metadata is not None:
+                merge_dictionaries(metadata, self.metadata)
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+            # Create a new run_response for this attempt
+            run_response = RunOutput(
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=self.id,
+                user_id=user_id,
+                agent_name=self.name,
+                metadata=run_context.metadata,
+                session_state=run_context.session_state,
+                input=run_input,
+            )
 
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
+            run_response.model = self.model.id if self.model is not None else None
+            run_response.model_provider = self.model.provider if self.model is not None else None
 
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+            # Start the run metrics timer, to calculate the run duration
+            run_response.metrics = Metrics()
+            run_response.metrics.start_timer()
 
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
+            # If no retries are set, use the agent's default retries
+            retries = retries if retries is not None else self.retries
 
-        # Prepare arguments for the model
-        response_format = self._get_response_format() if self.parser_model is None else None
-        self.model = cast(Model, self.model)
+            last_exception = None
+            num_attempts = retries + 1
 
-        # Merge agent metadata with run metadata
-        if self.metadata is not None and metadata is not None:
-            merge_dictionaries(metadata, self.metadata)
-
-        # Create a new run_response for this attempt
-        run_response = RunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            agent_id=self.id,
-            user_id=user_id,
-            agent_name=self.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        last_exception = None
-        num_attempts = retries + 1
-
-        for attempt in range(num_attempts):
-            try:
-                if stream:
-                    response_iterator = self._run_stream(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_response=yield_run_response,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
-                    return response_iterator
-                else:
-                    response = self._run(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
-                    return response
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
+            for attempt in range(num_attempts):
+                try:
+                    if stream:
+                        # Wrap the generator to restore output_schema when exhausted
+                        def _stream_with_schema_restore():
+                            try:
+                                for event in self._run_stream(
+                                    run_response=run_response,
+                                    run_context=run_context,
+                                    session=agent_session,
+                                    user_id=user_id,
+                                    add_history_to_context=add_history,
+                                    add_dependencies_to_context=add_dependencies,
+                                    add_session_state_to_context=add_session_state,
+                                    response_format=response_format,
+                                    stream_events=stream_events,
+                                    yield_run_response=yield_run_response,
+                                    debug_mode=debug_mode,
+                                    **kwargs,
+                                ):
+                                    yield event
+                            finally:
+                                # Restore output_schema after streaming completes
+                                self.output_schema = _output_schema
+                        return _stream_with_schema_restore()
                     else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
-
-                if stream:
-                    return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(
-                            from_run_response=run_response,
-                            reason="Operation cancelled by user",
+                        response = self._run(
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            add_history_to_context=add_history,
+                            add_dependencies_to_context=add_dependencies,
+                            add_session_state_to_context=add_session_state,
+                            response_format=response_format,
+                            debug_mode=debug_mode,
+                            **kwargs,
                         )
-                    )
-                else:
-                    return run_response
+                        # Restore schema after execution completes
+                        self.output_schema = _output_schema
+                        return response
+                except (InputCheckError, OutputCheckError) as e:
+                    log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                    raise e
+                except ModelProviderError as e:
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                    if isinstance(e, StopAgentRun):
+                        raise e
+                    last_exception = e
+                    if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                        if self.exponential_backoff:
+                            delay = 2**attempt * self.delay_between_retries
+                        else:
+                            delay = self.delay_between_retries
+                        import time
 
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+                        time.sleep(delay)
+                except KeyboardInterrupt:
+                    run_response.content = "Operation cancelled by user"
+                    run_response.status = RunStatus.cancelled
 
-            raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
+                    if stream:
+                        return generator_wrapper(  # type: ignore
+                            create_run_cancelled_event(
+                                from_run_response=run_response,
+                                reason="Operation cancelled by user",
+                            )
+                        )
+                    else:
+                        return run_response
+
+            # If we get here, all retries failed
+            if last_exception is not None:
+                log_error(
+                    f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+                )
+                if stream:
+                    return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+
+                raise last_exception
+            else:
+                # Restore schema before raising error
+                self.output_schema = _output_schema
+                if stream:
+                    return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+                raise Exception(f"Failed after {num_attempts} attempts.")
+        except Exception:
+            # Restore schema on unexpected exceptions
+            self.output_schema = _output_schema
+            raise
 
     async def _arun(
         self,
@@ -2383,6 +2408,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -2408,6 +2434,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -2434,206 +2461,238 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+        # Store original output_schema to restore later
+        _output_schema = self.output_schema
+        if output_schema is not None:
+            self.output_schema = output_schema
+            log_debug(f"Using runtime output_schema: {output_schema.__name__}")
+
+        try:
+            if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+                log_warning(
+                    "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+                )
+
+            # Create a run_id for this specific run
+            run_id = str(uuid4())
+
+            # 2. Validate input against input_schema if provided
+            validated_input = self._validate_input(input)
+
+            # Normalise hooks & guardails
+            if not self._hooks_normalised:
+                if self.pre_hooks:
+                    self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
+                if self.post_hooks:
+                    self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
+                self._hooks_normalised = True
+
+            # Initialize session
+            session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+            # Initialize the Agent
+            self.initialize_agent(debug_mode=debug_mode)
+
+            image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+                images=images, videos=videos, audios=audio, files=files
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+            # Resolve variables
+            dependencies = dependencies if dependencies is not None else self.dependencies
+            add_dependencies = (
+                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+            )
+            add_session_state = (
+                add_session_state_to_context
+                if add_session_state_to_context is not None
+                else self.add_session_state_to_context
+            )
+            add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # 2. Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+            # Create RunInput to capture the original user input
+            run_input = RunInput(
+                input_content=validated_input,
+                images=image_artifacts,
+                videos=video_artifacts,
+                audios=audio_artifacts,
+                files=files,
+            )
 
-        # Normalise hooks & guardails
-        if not self._hooks_normalised:
-            if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
-            if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
-            self._hooks_normalised = True
+            # Use stream override value when necessary
+            if stream is None:
+                stream = False if self.stream is None else self.stream
 
-        # Initialize session
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+            # Considering both stream_events and stream_intermediate_steps (deprecated)
+            stream_events = stream_events or stream_intermediate_steps
 
-        # Initialize the Agent
-        self.initialize_agent(debug_mode=debug_mode)
+            # Can't stream events if streaming is disabled
+            if stream is False:
+                stream_events = False
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
+            if stream_events is None:
+                stream_events = False if self.stream_events is None else self.stream_events
 
-        # Resolve variables
-        dependencies = dependencies if dependencies is not None else self.dependencies
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+            self.stream = self.stream or stream
+            self.stream_events = self.stream_events or stream_events
 
-        # Create RunInput to capture the original user input
-        run_input = RunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=files,
-        )
+            # Prepare arguments for the model
+            response_format = self._get_response_format() if self.parser_model is None else None
+            self.model = cast(Model, self.model)
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
+            # Get knowledge filters
+            knowledge_filters = knowledge_filters
+            if self.knowledge_filters or knowledge_filters:
+                knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
-        # Prepare arguments for the model
-        response_format = self._get_response_format() if self.parser_model is None else None
-        self.model = cast(Model, self.model)
-
-        # Get knowledge filters
-        knowledge_filters = knowledge_filters
-        if self.knowledge_filters or knowledge_filters:
-            knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
-
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            metadata=metadata,
-        )
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Create a new run_response for this attempt
-        run_response = RunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            agent_id=self.id,
-            user_id=user_id,
-            agent_name=self.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
-        last_exception = None
-        num_attempts = retries + 1
-
-        for attempt in range(num_attempts):
-            try:
-                # Pass the new run_response to _arun
-                if stream:
-                    return self._arun_stream(  # type: ignore
-                        run_response=run_response,
-                        run_context=run_context,
-                        user_id=user_id,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_response=yield_run_response,
-                        session_id=session_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )  # type: ignore[assignment]
+            # Merge agent metadata with run metadata
+            if self.metadata is not None:
+                if metadata is None:
+                    metadata = self.metadata
                 else:
-                    return self._arun(  # type: ignore
-                        run_response=run_response,
-                        run_context=run_context,
-                        user_id=user_id,
-                        response_format=response_format,
-                        session_id=session_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
+                    merge_dictionaries(metadata, self.metadata)
 
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
-                raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
+            # Initialize run context
+            run_context = RunContext(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                session_state=session_state,
+                dependencies=dependencies,
+                knowledge_filters=knowledge_filters,
+                metadata=metadata,
+            )
+
+            # If no retries are set, use the agent's default retries
+            retries = retries if retries is not None else self.retries
+
+            # Create a new run_response for this attempt
+            run_response = RunOutput(
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=self.id,
+                user_id=user_id,
+                agent_name=self.name,
+                metadata=run_context.metadata,
+                session_state=run_context.session_state,
+                input=run_input,
+            )
+
+            run_response.model = self.model.id if self.model is not None else None
+            run_response.model_provider = self.model.provider if self.model is not None else None
+
+            # Start the run metrics timer, to calculate the run duration
+            run_response.metrics = Metrics()
+            run_response.metrics.start_timer()
+
+            last_exception = None
+            num_attempts = retries + 1
+
+            for attempt in range(num_attempts):
+                try:
+                    # Pass the new run_response to _arun
+                    if stream:
+                        # Wrap the generator to restore output_schema when exhausted
+                        async def _stream_with_schema_restore():
+                            try:
+                                async for event in self._arun_stream(  # type: ignore
+                                    run_response=run_response,
+                                    run_context=run_context,
+                                    user_id=user_id,
+                                    response_format=response_format,
+                                    stream_events=stream_events,
+                                    yield_run_response=yield_run_response,
+                                    session_id=session_id,
+                                    add_history_to_context=add_history,
+                                    add_dependencies_to_context=add_dependencies,
+                                    add_session_state_to_context=add_session_state,
+                                    debug_mode=debug_mode,
+                                    **kwargs,
+                                ):
+                                    yield event
+                            finally:
+                                # Restore output_schema after streaming completes
+                                self.output_schema = _output_schema
+                        return _stream_with_schema_restore()  # type: ignore[return-value]
                     else:
-                        delay = self.delay_between_retries
-                    import time
+                        # we need a wrapper to restore schema after execution
+                        async def _run_with_schema_restore():
+                            try:
+                                result = await self._arun(  # type: ignore
+                                    run_response=run_response,
+                                    run_context=run_context,
+                                    user_id=user_id,
+                                    response_format=response_format,
+                                    session_id=session_id,
+                                    add_history_to_context=add_history,
+                                    add_dependencies_to_context=add_dependencies,
+                                    add_session_state_to_context=add_session_state,
+                                    debug_mode=debug_mode,
+                                    **kwargs,
+                                )
+                                return result
+                            finally:
+                                # Restore output_schema after execution completes
+                                self.output_schema = _output_schema
+                        return _run_with_schema_restore()  # type: ignore[return-value]
 
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
+                except (InputCheckError, OutputCheckError) as e:
+                    log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                    raise e
+                except ModelProviderError as e:
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                    if isinstance(e, StopAgentRun):
+                        raise e
+                    last_exception = e
+                    if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                        if self.exponential_backoff:
+                            delay = 2**attempt * self.delay_between_retries
+                        else:
+                            delay = self.delay_between_retries
+                        import time
+
+                        time.sleep(delay)
+                except KeyboardInterrupt:
+                    run_response.content = "Operation cancelled by user"
+                    run_response.status = RunStatus.cancelled
+
+                    if stream:
+                        return async_generator_wrapper(  # type: ignore
+                            create_run_cancelled_event(
+                                from_run_response=run_response,
+                                reason="Operation cancelled by user",
+                            )
+                        )
+                    else:
+                        return run_response
+
+            # If we get here, all retries failed
+            if last_exception is not None:
+                log_error(
+                    f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+                )
+                # Restore schema before raising error
+                self.output_schema = _output_schema
 
                 if stream:
-                    return async_generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(
-                            from_run_response=run_response,
-                            reason="Operation cancelled by user",
-                        )
-                    )
-                else:
-                    return run_response
-
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
+                    return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+                raise last_exception
+            else:
+                # Restore schema before raising error
+                self.output_schema = _output_schema
+                if stream:
+                    return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+                raise Exception(f"Failed after {num_attempts} attempts.")
+        except Exception:
+            # Restore schema on unexpected exceptions
+            self.output_schema = _output_schema
+            raise
 
     @overload
     def continue_run(

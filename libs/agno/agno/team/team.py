@@ -1748,6 +1748,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
@@ -1774,6 +1775,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
@@ -1800,6 +1802,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
@@ -1808,221 +1811,245 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
-        # Initialize Team
-        self.initialize_team(debug_mode=debug_mode)
+        # Store original output_schema to restore later
+        _output_schema = self.output_schema
+        if output_schema is not None:
+            self.output_schema = output_schema
+            log_debug(f"Using runtime output_schema: {output_schema.__name__}")
 
-        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+        try:
+            # Initialize Team
+            self.initialize_team(debug_mode=debug_mode)
+
+            if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
+                log_warning(
+                    "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+                )
+
+            # Create a run_id for this specific run
+            run_id = str(uuid4())
+
+            # Validate input against input_schema if provided
+            validated_input = self._validate_input(input)
+
+            # Normalise hook & guardails
+            if not self._hooks_normalised:
+                if self.pre_hooks:
+                    self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
+                if self.post_hooks:
+                    self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
+                self._hooks_normalised = True
+
+            session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+            image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+                images=images, videos=videos, audios=audio, files=files
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+            # Create RunInput to capture the original user input
+            run_input = TeamRunInput(
+                input_content=validated_input,
+                images=image_artifacts,
+                videos=video_artifacts,
+                audios=audio_artifacts,
+                files=file_artifacts,
+            )
 
-        # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+            # Read existing session from database
+            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+            self._update_metadata(session=team_session)
 
-        # Normalise hook & guardails
-        if not self._hooks_normalised:
-            if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
-            if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
-            self._hooks_normalised = True
+            # Initialize session state
+            session_state = self._initialize_session_state(
+                session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            )
+            # Update session state from DB
+            session_state = self._load_session_state(session=team_session, session_state=session_state)
 
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+            # Determine runtime dependencies
+            dependencies = dependencies if dependencies is not None else self.dependencies
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
+            # Initialize run context
+            run_context = RunContext(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                session_state=session_state,
+                dependencies=dependencies,
+            )
 
-        # Create RunInput to capture the original user input
-        run_input = TeamRunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=file_artifacts,
-        )
+            # Resolve callable dependencies if present
+            if run_context.dependencies is not None:
+                self._resolve_run_dependencies(run_context=run_context)
 
-        # Read existing session from database
-        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=team_session)
+            # Determine runtime context parameters
+            add_dependencies = (
+                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+            )
+            add_session_state = (
+                add_session_state_to_context
+                if add_session_state_to_context is not None
+                else self.add_session_state_to_context
+            )
+            add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
-        )
-        # Update session state from DB
-        session_state = self._load_session_state(session=team_session, session_state=session_state)
+            # When filters are passed manually
+            if self.knowledge_filters or knowledge_filters:
+                run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-        # Determine runtime dependencies
-        dependencies = dependencies if dependencies is not None else self.dependencies
+            # Use stream override value when necessary
+            if stream is None:
+                stream = False if self.stream is None else self.stream
 
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-        )
+            # Considering both stream_events and stream_intermediate_steps (deprecated)
+            stream_events = stream_events or stream_intermediate_steps
 
-        # Resolve callable dependencies if present
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
+            # Can't stream events if streaming is disabled
+            if stream is False:
+                stream_events = False
 
-        # Determine runtime context parameters
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+            if stream_events is None:
+                stream_events = False if self.stream_events is None else self.stream_events
 
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            self.stream = self.stream or stream
+            self.stream_events = self.stream_events or stream_events
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
+            # Configure the model for runs
+            response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+                self._get_response_format() if self.parser_model is None else None
+            )
+            self.model = cast(Model, self.model)
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+            if self.metadata is not None:
+                if metadata is None:
+                    metadata = self.metadata
+                else:
+                    merge_dictionaries(metadata, self.metadata)
 
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
+            if metadata:
+                run_context.metadata = metadata
 
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+            # Create a new run_response for this attempt
+            run_response = TeamRunOutput(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                team_id=self.id,
+                team_name=self.name,
+                metadata=run_context.metadata,
+                session_state=run_context.session_state,
+                input=run_input,
+            )
 
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
+            run_response.model = self.model.id if self.model is not None else None
+            run_response.model_provider = self.model.provider if self.model is not None else None
 
-        # Configure the model for runs
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
-            self._get_response_format() if self.parser_model is None else None
-        )
-        self.model = cast(Model, self.model)
+            # Start the run metrics timer, to calculate the run duration
+            run_response.metrics = Metrics()
+            run_response.metrics.start_timer()
 
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
-
-        if metadata:
-            run_context.metadata = metadata
-
-        # Create a new run_response for this attempt
-        run_response = TeamRunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            team_id=self.id,
-            team_name=self.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
-        for attempt in range(num_attempts):
-            # Initialize the current run
+            # If no retries are set, use the team's default retries
+            retries = retries if retries is not None else self.retries
 
             # Run the team
-            try:
-                if stream:
-                    response_iterator = self._run_stream(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=team_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_response=yield_run_response,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
+            last_exception = None
+            num_attempts = retries + 1
 
-                    return response_iterator  # type: ignore
-                else:
-                    return self._run(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=team_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
+            for attempt in range(num_attempts):
+                # Initialize the current run
 
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                raise e
-            except ModelProviderError as e:
-                import time
-
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
+                # Run the team
+                try:
+                    if stream:
+                        # Wrap the generator to restore output_schema when exhausted
+                        def _stream_with_schema_restore():
+                            try:
+                                for event in self._run_stream(
+                                    run_response=run_response,
+                                    run_context=run_context,
+                                    session=team_session,
+                                    user_id=user_id,
+                                    add_history_to_context=add_history,
+                                    add_dependencies_to_context=add_dependencies,
+                                    add_session_state_to_context=add_session_state,
+                                    response_format=response_format,
+                                    stream_events=stream_events,
+                                    yield_run_response=yield_run_response,
+                                    debug_mode=debug_mode,
+                                    **kwargs,
+                                ):
+                                    yield event
+                            finally:
+                                # Restore output_schema after streaming completes
+                                self.output_schema = _output_schema
+                        return _stream_with_schema_restore()
                     else:
-                        delay = self.delay_between_retries
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
-
-                if stream:
-                    return generator_wrapper(  # type: ignore
-                        create_team_run_cancelled_event(
-                            from_run_response=run_response, reason="Operation cancelled by user"
+                        response = self._run(
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=team_session,
+                            user_id=user_id,
+                            add_history_to_context=add_history,
+                            add_dependencies_to_context=add_dependencies,
+                            add_session_state_to_context=add_session_state,
+                            response_format=response_format,
+                            debug_mode=debug_mode,
+                            **kwargs,
                         )
-                    )
-                else:
-                    return run_response
+                        # Restore schema after execution completes
+                        self.output_schema = _output_schema
+                        return response
 
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
+                except (InputCheckError, OutputCheckError) as e:
+                    log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                    raise e
+                except ModelProviderError as e:
+                    import time
 
-            raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
 
-            raise Exception(f"Failed after {num_attempts} attempts.")
+                    last_exception = e
+                    if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                        if self.exponential_backoff:
+                            delay = 2**attempt * self.delay_between_retries
+                        else:
+                            delay = self.delay_between_retries
+                        time.sleep(delay)
+                except KeyboardInterrupt:
+                    run_response.content = "Operation cancelled by user"
+                    run_response.status = RunStatus.cancelled
+
+                    if stream:
+                        return generator_wrapper(  # type: ignore
+                            create_team_run_cancelled_event(
+                                from_run_response=run_response, reason="Operation cancelled by user"
+                            )
+                        )
+                    else:
+                        return run_response
+
+            # If we get here, all retries failed
+            if last_exception is not None:
+                log_error(
+                    f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+                )
+                if stream:
+                    return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
+
+                # Restore schema before raising error
+                self.output_schema = _output_schema
+                raise last_exception
+            else:
+                # Restore schema before raising error
+                self.output_schema = _output_schema
+                if stream:
+                    return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
+
+                raise Exception(f"Failed after {num_attempts} attempts.")
+        except Exception:
+            # Restore schema on unexpected exceptions
+            self.output_schema = _output_schema
+            raise
 
     async def _arun(
         self,
@@ -2601,6 +2628,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
@@ -2627,6 +2655,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
@@ -2653,209 +2682,240 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
-        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
-            log_warning(
-                "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+        # Store original output_schema to restore later
+        _output_schema = self.output_schema
+        if output_schema is not None:
+            self.output_schema = output_schema
+            log_debug(f"Using runtime output_schema: {output_schema.__name__}")
+
+        try:
+            if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
+                log_warning(
+                    "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+                )
+
+            # Create a run_id for this specific run
+            run_id = str(uuid4())
+
+            # Validate input against input_schema if provided
+            validated_input = self._validate_input(input)
+
+            # Normalise hook & guardails
+            if not self._hooks_normalised:
+                if self.pre_hooks:
+                    self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
+                if self.post_hooks:
+                    self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
+                self._hooks_normalised = True
+
+            session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+            # Initialize Team
+            self.initialize_team(debug_mode=debug_mode)
+
+            image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+                images=images, videos=videos, audios=audio, files=files
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+            # Resolve variables
+            dependencies = dependencies if dependencies is not None else self.dependencies
+            add_dependencies = (
+                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+            )
+            add_session_state = (
+                add_session_state_to_context
+                if add_session_state_to_context is not None
+                else self.add_session_state_to_context
+            )
+            add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+            # Create RunInput to capture the original user input
+            run_input = TeamRunInput(
+                input_content=validated_input,
+                images=image_artifacts,
+                videos=video_artifacts,
+                audios=audio_artifacts,
+                files=files,
+            )
 
-        # Normalise hook & guardails
-        if not self._hooks_normalised:
-            if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
-            if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
-            self._hooks_normalised = True
+            # Use stream override value when necessary
+            if stream is None:
+                stream = False if self.stream is None else self.stream
 
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+            # Considering both stream_events and stream_intermediate_steps (deprecated)
+            stream_events = stream_events or stream_intermediate_steps
 
-        # Initialize Team
-        self.initialize_team(debug_mode=debug_mode)
+            # Can't stream events if streaming is disabled
+            if stream is False:
+                stream_events = False
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
+            if stream_events is None:
+                stream_events = False if self.stream_events is None else self.stream_events
 
-        # Resolve variables
-        dependencies = dependencies if dependencies is not None else self.dependencies
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+            self.stream = self.stream or stream
+            self.stream_events = self.stream_events or stream_events
 
-        # Create RunInput to capture the original user input
-        run_input = TeamRunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=files,
-        )
+            # Configure the model for runs
+            response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+                self._get_response_format() if self.parser_model is None else None
+            )
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
+            self.model = cast(Model, self.model)
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+            if self.metadata is not None:
+                if metadata is None:
+                    metadata = self.metadata
+                else:
+                    merge_dictionaries(metadata, self.metadata)
 
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
+            #  Get knowledge filters
+            effective_filters = knowledge_filters
+            if self.knowledge_filters or knowledge_filters:
+                effective_filters = self._get_effective_filters(knowledge_filters)
 
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+            # Initialize run context
+            run_context = RunContext(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                session_state=session_state,
+                dependencies=dependencies,
+                knowledge_filters=effective_filters,
+                metadata=metadata,
+            )
 
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
+            # Create a new run_response for this attempt
+            run_response = TeamRunOutput(
+                run_id=run_id,
+                user_id=user_id,
+                session_id=session_id,
+                team_id=self.id,
+                team_name=self.name,
+                metadata=run_context.metadata,
+                session_state=run_context.session_state,
+                input=run_input,
+            )
 
-        # Configure the model for runs
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
-            self._get_response_format() if self.parser_model is None else None
-        )
+            run_response.model = self.model.id if self.model is not None else None
+            run_response.model_provider = self.model.provider if self.model is not None else None
 
-        self.model = cast(Model, self.model)
+            # Start the run metrics timer, to calculate the run duration
+            run_response.metrics = Metrics()
+            run_response.metrics.start_timer()
 
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
+            # If no retries are set, use the team's default retries
+            retries = retries if retries is not None else self.retries
 
-        #  Get knowledge filters
-        effective_filters = knowledge_filters
-        if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=effective_filters,
-            metadata=metadata,
-        )
-
-        # Create a new run_response for this attempt
-        run_response = TeamRunOutput(
-            run_id=run_id,
-            user_id=user_id,
-            session_id=session_id,
-            team_id=self.id,
-            team_name=self.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
-        for attempt in range(num_attempts):
             # Run the team
-            try:
-                if stream:
-                    response_iterator = self._arun_stream(
-                        input=validated_input,
-                        run_response=run_response,
-                        run_context=run_context,
-                        session_id=session_id,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_response=yield_run_response,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
-                    return response_iterator  # type: ignore
-                else:
-                    return self._arun(  # type: ignore
-                        input=validated_input,
-                        run_response=run_response,
-                        run_context=run_context,
-                        session_id=session_id,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    )
+            last_exception = None
+            num_attempts = retries + 1
 
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
+            for attempt in range(num_attempts):
+                # Run the team
+                try:
+                    if stream:
+                        # Wrap the generator to restore output_schema when exhausted
+                        async def _stream_with_schema_restore():
+                            try:
+                                async for event in self._arun_stream(  # type: ignore
+                                    input=validated_input,
+                                    run_response=run_response,
+                                    run_context=run_context,
+                                    session_id=session_id,
+                                    user_id=user_id,
+                                    add_history_to_context=add_history,
+                                    add_dependencies_to_context=add_dependencies,
+                                    add_session_state_to_context=add_session_state,
+                                    response_format=response_format,
+                                    stream_events=stream_events,
+                                    yield_run_response=yield_run_response,
+                                    debug_mode=debug_mode,
+                                    **kwargs,
+                                ):
+                                    yield event
+                            finally:
+                                # Restore output_schema
+                                self.output_schema = _output_schema
+                        return _stream_with_schema_restore()  # type: ignore[return-value]
                     else:
-                        delay = self.delay_between_retries
-                    import time
+                        # we need a wrapper to restore schema after execution
+                        async def _run_with_schema_restore():
+                            try:
+                                result = await self._arun(  # type: ignore
+                                    input=validated_input,
+                                    run_response=run_response,
+                                    run_context=run_context,
+                                    session_id=session_id,
+                                    user_id=user_id,
+                                    add_history_to_context=add_history,
+                                    add_dependencies_to_context=add_dependencies,
+                                    add_session_state_to_context=add_session_state,
+                                    response_format=response_format,
+                                    debug_mode=debug_mode,
+                                    **kwargs,
+                                )
+                                return result
+                            finally:
+                                # Restore output_schema
+                                self.output_schema = _output_schema
+                        return _run_with_schema_restore()  # type: ignore[return-value]
 
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
+                except (InputCheckError, OutputCheckError) as e:
+                    log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                    raise e
+                except ModelProviderError as e:
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                    last_exception = e
+                    if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                        if self.exponential_backoff:
+                            delay = 2**attempt * self.delay_between_retries
+                        else:
+                            delay = self.delay_between_retries
+                        import time
 
-                if stream:
-                    return async_generator_wrapper(
-                        create_team_run_cancelled_event(
-                            from_run_response=run_response, reason="Operation cancelled by user"
+                        time.sleep(delay)
+                except KeyboardInterrupt:
+                    run_response.content = "Operation cancelled by user"
+                    run_response.status = RunStatus.cancelled
+
+                    if stream:
+                        return async_generator_wrapper(
+                            create_team_run_cancelled_event(
+                                from_run_response=run_response, reason="Operation cancelled by user"
+                            )
                         )
-                    )
-                else:
-                    return run_response
+                    else:
+                        return run_response
 
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
+            # If we get here, all retries failed
+            if last_exception is not None:
+                log_error(
+                    f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+                )
+                if stream:
+                    return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
 
-            raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
+                # Restore schema before raising error
+                self.output_schema = _output_schema
+                raise last_exception
+            else:
+                # Restore schema before raising error
+                self.output_schema = _output_schema
+                if stream:
+                    return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
 
-            raise Exception(f"Failed after {num_attempts} attempts.")
+                raise Exception(f"Failed after {num_attempts} attempts.")
+        except Exception:
+            # Restore schema on unexpected exceptions
+            self.output_schema = _output_schema
+            raise
 
     def _update_run_response(
         self, model_response: ModelResponse, run_response: TeamRunOutput, run_messages: RunMessages
