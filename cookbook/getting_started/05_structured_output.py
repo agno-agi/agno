@@ -43,6 +43,13 @@ class MovieScript(BaseModel):
     )
 
 
+class TVShow(BaseModel):
+    title: str = Field(..., description="TV show title")
+    seasons: int = Field(..., description="Number of seasons")
+    episodes_per_season: int = Field(..., description="Episodes per season")
+    premise: str = Field(..., description="Show premise in 2-3 sentences")
+
+
 # Agent that uses JSON mode
 json_mode_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -141,3 +148,9 @@ Creative location prompts to explore:
 # pprint(json_mode_response.content)
 # structured_output_response: RunOutput = structured_output_agent.run("New York")
 # pprint(structured_output_response.content)
+
+# Override output_schema for a single run
+# print(f"Schema before override: {structured_output_agent.output_schema.__name__}")
+# tv_show_response: RunOutput = structured_output_agent.run("New York", output_schema=TVShow, stream=False)
+# pprint(tv_show_response.content)
+# print(f"Schema after override: {structured_output_agent.output_schema.__name__}")

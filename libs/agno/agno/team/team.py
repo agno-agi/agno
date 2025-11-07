@@ -1884,7 +1884,9 @@ class Team:
 
             # Determine runtime context parameters
             add_dependencies = (
-                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+                add_dependencies_to_context
+                if add_dependencies_to_context is not None
+                else self.add_dependencies_to_context
             )
             add_session_state = (
                 add_session_state_to_context
@@ -1982,6 +1984,7 @@ class Team:
                             finally:
                                 # Restore output_schema after streaming completes
                                 self.output_schema = _output_schema
+
                         return _stream_with_schema_restore()
                     else:
                         response = self._run(
@@ -2727,7 +2730,9 @@ class Team:
             # Resolve variables
             dependencies = dependencies if dependencies is not None else self.dependencies
             add_dependencies = (
-                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+                add_dependencies_to_context
+                if add_dependencies_to_context is not None
+                else self.add_dependencies_to_context
             )
             add_session_state = (
                 add_session_state_to_context
@@ -2843,6 +2848,7 @@ class Team:
                             finally:
                                 # Restore output_schema
                                 self.output_schema = _output_schema
+
                         return _stream_with_schema_restore()  # type: ignore[return-value]
                     else:
                         # we need a wrapper to restore schema after execution
@@ -2865,6 +2871,7 @@ class Team:
                             finally:
                                 # Restore output_schema
                                 self.output_schema = _output_schema
+
                         return _run_with_schema_restore()  # type: ignore[return-value]
 
                 except (InputCheckError, OutputCheckError) as e:
