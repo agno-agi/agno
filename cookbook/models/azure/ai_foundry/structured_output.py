@@ -25,14 +25,27 @@ class MovieScript(BaseModel):
     )
 
 
-agent = Agent(
+# Agent that uses structured outputs with strict_output=True (default)
+structured_output_agent = Agent(
     model=AzureAIFoundry(id="gpt-4o"),
-    description="You help people write movie scripts.",
+    description="You write movie scripts.",
     output_schema=MovieScript,
 )
 
-# Get the response in a variable
-# run: RunOutput = agent.run("New York")
-# pprint(run.content)
 
-agent.print_response("New York")
+# Agent with strict_output=False (guided mode)
+# strict_output=False: Attempts to follow the schema as a guide but may occasionally deviate
+guided_output_agent = Agent(
+    model=AzureAIFoundry(id="gpt-4o", strict_output=False),
+    description="You write movie scripts.",
+    output_schema=MovieScript,
+)
+
+
+# Get the response in a variable
+# structured_output_response: RunOutput = structured_output_agent.run("New York")
+# pprint(structured_output_response.content)
+
+
+structured_output_agent.print_response("New York")
+guided_output_agent.print_response("New York")
