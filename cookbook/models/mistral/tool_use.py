@@ -9,7 +9,6 @@ agent = Agent(
         id="mistral-large-latest",
     ),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

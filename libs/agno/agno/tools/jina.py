@@ -25,9 +25,10 @@ class JinaReaderTools(Toolkit):
         search_url: str = "https://s.jina.ai/",
         max_content_length: int = 10000,
         timeout: Optional[int] = None,
-        read_url: bool = True,
-        search_query: bool = False,
         search_query_content: bool = True,
+        enable_read_url: bool = True,
+        enable_search_query: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("JINA_API_KEY")
@@ -41,9 +42,9 @@ class JinaReaderTools(Toolkit):
         )
 
         tools: List[Any] = []
-        if read_url:
+        if all or enable_read_url:
             tools.append(self.read_url)
-        if search_query:
+        if all or enable_search_query:
             tools.append(self.search_query)
 
         super().__init__(name="jina_reader_tools", tools=tools, **kwargs)

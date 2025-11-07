@@ -19,10 +19,11 @@ from typing import List, Optional
 import inquirer
 import typer
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.db.base import SessionType
+from agno.db.sqlite import SqliteDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
 
@@ -31,8 +32,7 @@ def initialize_knowledge_base():
     """Initialize the knowledge base with your preferred documentation or knowledge source
     Here we use Agno docs as an example, but you can replace with any relevant URLs
     """
-    agent_knowledge = UrlKnowledge(
-        urls=["https://docs.agno.com/llms-full.txt"],
+    agent_knowledge = Knowledge(
         vector_db=LanceDb(
             uri="tmp/lancedb",
             table_name="deep_knowledge_knowledge",
@@ -40,22 +40,21 @@ def initialize_knowledge_base():
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
     )
-    # Load the knowledge base (comment out after first run)
-    agent_knowledge.load()
+    agent_knowledge.add_content(
+        url="https://docs.agno.com/llms-full.txt",
+    )
     return agent_knowledge
 
 
-def get_agent_storage():
+def get_agent_db():
     """Return agent storage"""
-    return SqliteAgentStorage(
-        table_name="deep_knowledge_sessions", db_file="tmp/agents.db"
-    )
+    return SqliteDb(session_table="deep_knowledge_sessions", db_file="tmp/agents.db")
 
 
 def create_agent(session_id: Optional[str] = None) -> Agent:
     """Create and return a configured DeepKnowledge agent."""
     agent_knowledge = initialize_knowledge_base()
-    agent_storage = get_agent_storage()
+    agent_db = get_agent_db()
     return Agent(
         name="DeepKnowledge",
         session_id=session_id,
@@ -106,10 +105,9 @@ def create_agent(session_id: Optional[str] = None) -> Agent:
         - Memory: You have access to your previous search results and reasoning process.
         """),
         knowledge=agent_knowledge,
-        storage=agent_storage,
-        add_history_to_messages=True,
-        num_history_responses=3,
-        show_tool_calls=True,
+        db=agent_db,
+        add_history_to_context=True,
+        num_history_runs=3,
         read_chat_history=True,
         markdown=True,
     )
@@ -128,13 +126,13 @@ def get_example_topics() -> List[str]:
 
 def handle_session_selection() -> Optional[str]:
     """Handle session selection and return the selected session ID."""
-    agent_storage = get_agent_storage()
+    agent_db = get_agent_db()
 
     new = typer.confirm("Do you want to start a new session?", default=True)
     if new:
         return None
 
-    existing_sessions: List[str] = agent_storage.get_all_session_ids()
+    existing_sessions: List[str] = agent_db.get_sessions(session_type=SessionType.AGENT)
     if not existing_sessions:
         print("No existing sessions found. Starting a new session.")
         return None

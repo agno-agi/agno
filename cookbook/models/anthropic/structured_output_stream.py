@@ -32,9 +32,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
-structured_output_agent.print_response(
-    "New York", stream=True, stream_intermediate_steps=True
-)
+structured_output_agent.print_response("New York", stream=True, stream_events=True)

@@ -20,9 +20,15 @@ class Crawl4aiTools(Toolkit):
         bm25_threshold: float = 1.0,
         headless: bool = True,
         wait_until: str = "domcontentloaded",
+        enable_crawl: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="crawl4ai_tools", tools=[self.crawl], **kwargs)
+        tools = []
+        if all or enable_crawl:
+            tools.append(self.crawl)
+
+        super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)
         self.max_length = max_length
         self.timeout = timeout
         self.use_pruning = use_pruning

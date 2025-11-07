@@ -1,12 +1,10 @@
 from typing import AsyncIterator, Iterator, List, Set, Union
 
 from agno.exceptions import RunCancelledException
-from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.base import RunResponseExtraData
-from agno.run.response import RunResponse, RunResponseEvent, RunResponsePausedEvent
-from agno.run.team import TeamRunResponse, TeamRunResponseEvent
+from agno.run.agent import RunOutput, RunOutputEvent, RunPausedEvent
+from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 
 
 def create_panel(content, title, border_style="blue"):
@@ -16,6 +14,29 @@ def create_panel(content, title, border_style="blue"):
     return Panel(
         content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
     )
+
+
+def build_reasoning_step_panel(
+    step_idx: int, step: ReasoningStep, show_full_reasoning: bool = False, color: str = "green"
+):
+    from rich.text import Text
+
+    # Build step content
+    step_content = Text.assemble()
+    if step.title is not None:
+        step_content.append(f"{step.title}\n", "bold")
+    if step.action is not None:
+        step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
+    if step.result is not None:
+        step_content.append(Text.from_markup(step.result, style="dim"))
+
+    if show_full_reasoning:
+        # Add detailed reasoning information if available
+        if step.reasoning is not None:
+            step_content.append(Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim"))
+        if step.confidence is not None:
+            step_content.append(Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim"))
+    return create_panel(content=step_content, title=f"Reasoning step {step_idx}", border_style=color)
 
 
 def escape_markdown_tags(content: str, tags: Set[str]) -> str:
@@ -29,30 +50,9 @@ def escape_markdown_tags(content: str, tags: Set[str]) -> str:
     return escaped_content
 
 
-def check_if_run_cancelled(run_response: Union[RunResponse, RunResponseEvent, TeamRunResponse, TeamRunResponseEvent]):
-    if run_response.is_cancelled:
+def check_if_run_cancelled(run_output: Union[RunOutput, RunOutputEvent, TeamRunOutput, TeamRunOutputEvent]):
+    if run_output.is_cancelled:
         raise RunCancelledException()
-
-
-def update_run_response_with_reasoning(
-    run_response: Union[RunResponse, TeamRunResponse],
-    reasoning_steps: List[ReasoningStep],
-    reasoning_agent_messages: List[Message],
-) -> None:
-    if run_response.extra_data is None:
-        run_response.extra_data = RunResponseExtraData()
-
-    # Update reasoning_steps
-    if run_response.extra_data.reasoning_steps is None:
-        run_response.extra_data.reasoning_steps = reasoning_steps
-    else:
-        run_response.extra_data.reasoning_steps.extend(reasoning_steps)
-
-    # Update reasoning_messages
-    if run_response.extra_data.reasoning_messages is None:
-        run_response.extra_data.reasoning_messages = reasoning_agent_messages
-    else:
-        run_response.extra_data.reasoning_messages.extend(reasoning_agent_messages)
 
 
 def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
@@ -70,39 +70,39 @@ def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
         if tool_call.tool_name is not None:
             tool_name = tool_call.tool_name
             args_str = ""
-            if tool_call.tool_args is not None:
+            if tool_call.tool_args is not None and tool_call.tool_args:  # Check if args exist and are non-empty
                 args_str = ", ".join(f"{k}={v}" for k, v in tool_call.tool_args.items())
             formatted_tool_calls.append(f"{tool_name}({args_str})")
 
     return formatted_tool_calls
 
 
-def create_paused_run_response_panel(run_response: Union[RunResponsePausedEvent, RunResponse]):
+def create_paused_run_output_panel(run_output: Union[RunPausedEvent, RunOutput]):
     from rich.text import Text
 
     tool_calls_content = Text("Run is paused. ")
-    if run_response.tools is not None:
-        if any(tc.requires_confirmation for tc in run_response.tools):
+    if run_output.tools is not None:
+        if any(tc.requires_confirmation for tc in run_output.tools):
             tool_calls_content.append("The following tool calls require confirmation:\n")
-        for tool_call in run_response.tools:
+        for tool_call in run_output.tools:
             if tool_call.requires_confirmation:
                 args_str = ""
                 for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
                     args_str += f"{arg}={value}, "
                 args_str = args_str.rstrip(", ")
                 tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-        if any(tc.requires_user_input for tc in run_response.tools):
+        if any(tc.requires_user_input for tc in run_output.tools):
             tool_calls_content.append("The following tool calls require user input:\n")
-        for tool_call in run_response.tools:
+        for tool_call in run_output.tools:
             if tool_call.requires_user_input:
                 args_str = ""
                 for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
                     args_str += f"{arg}={value}, "
                 args_str = args_str.rstrip(", ")
                 tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-        if any(tc.external_execution_required for tc in run_response.tools):
+        if any(tc.external_execution_required for tc in run_output.tools):
             tool_calls_content.append("The following tool calls require external execution:\n")
-        for tool_call in run_response.tools:
+        for tool_call in run_output.tools:
             if tool_call.external_execution_required:
                 args_str = ""
                 for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
@@ -119,9 +119,9 @@ def create_paused_run_response_panel(run_response: Union[RunResponsePausedEvent,
     return response_panel
 
 
-def get_paused_content(run_response: RunResponse) -> str:
+def get_paused_content(run_output: RunOutput) -> str:
     paused_content = ""
-    for tool in run_response.tools or []:
+    for tool in run_output.tools or []:
         # Initialize flags for each tool
         confirmation_required = False
         user_input_required = False
@@ -152,12 +152,12 @@ def get_paused_content(run_response: RunResponse) -> str:
 
 
 def generator_wrapper(
-    event: Union[RunResponseEvent, TeamRunResponseEvent],
-) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
+    event: Union[RunOutputEvent, TeamRunOutputEvent],
+) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
     yield event
 
 
 async def async_generator_wrapper(
-    event: Union[RunResponseEvent, TeamRunResponseEvent],
-) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
+    event: Union[RunOutputEvent, TeamRunOutputEvent],
+) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
     yield event

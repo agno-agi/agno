@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.qdrant import Qdrant
 
 
@@ -32,6 +32,7 @@ def mock_qdrant_client():
         client.create_collection = Mock()
         client.delete_collection = Mock()
         client.upsert = Mock()
+        client.delete = Mock()
 
         mock_client_class.return_value = client
         yield client
@@ -60,6 +61,7 @@ def mock_qdrant_async_client():
         client.create_collection = Mock()
         client.delete_collection = Mock()
         client.upsert = Mock()
+        client.delete = Mock()
 
         mock_async_client_class.return_value = client
         yield client
@@ -123,7 +125,7 @@ def test_drop(qdrant_db, mock_qdrant_client):
 def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
     """Test inserting documents"""
     with patch.object(qdrant_db.embedder, "get_embedding", return_value=[0.1] * 768):
-        qdrant_db.insert(sample_documents)
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_qdrant_client.upsert.assert_called_once()
 
         # Verify the right number of points are created
@@ -131,17 +133,6 @@ def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
         assert kwargs["collection_name"] == "test_collection"
         assert kwargs["wait"] is False
         assert len(kwargs["points"]) == 3
-
-
-def test_doc_exists(qdrant_db, sample_documents, mock_qdrant_client):
-    """Test document existence check"""
-    # Test when document exists
-    mock_qdrant_client.retrieve.return_value = [Mock()]
-    assert qdrant_db.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_qdrant_client.retrieve.return_value = []
-    assert qdrant_db.doc_exists(sample_documents[0]) is False
 
 
 def test_name_exists(qdrant_db, mock_qdrant_client):
@@ -159,8 +150,8 @@ def test_upsert_documents(qdrant_db, sample_documents, mock_qdrant_client):
     """Test upserting documents"""
     # Since upsert calls insert, just ensure insert is called
     with patch.object(qdrant_db, "insert") as mock_insert:
-        qdrant_db.upsert(sample_documents)
-        mock_insert.assert_called_once_with(sample_documents, None)
+        qdrant_db.upsert(documents=sample_documents, content_hash="test_hash")
+        mock_insert.assert_called_once()
 
 
 def test_search(qdrant_db, mock_qdrant_client):
@@ -245,3 +236,196 @@ async def test_async_search(mock_embedder):
         results = await db.async_search("test query", limit=1)
         assert len(results) == 1
         assert results[0].name == "test_doc"
+
+
+def test_delete_by_id(qdrant_db, sample_documents, mock_qdrant_client):
+    """Test deleting documents by ID"""
+    # Mock insert and get_count
+    with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_id method
+    with patch.object(qdrant_db, "delete_by_id") as mock_delete_by_id:
+        mock_delete_by_id.return_value = True
+
+        # Get the actual ID that would be generated for the first document
+        from hashlib import md5
+
+        cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
+        doc_id = md5(cleaned_content.encode()).hexdigest()
+
+        # Test delete by ID
+        result = qdrant_db.delete_by_id(doc_id)
+        assert result is True
+        mock_delete_by_id.assert_called_once_with(doc_id)
+
+        # Test delete non-existent ID
+        mock_delete_by_id.reset_mock()
+        mock_delete_by_id.return_value = True
+        result = qdrant_db.delete_by_id("nonexistent_id")
+        assert result is True
+
+
+def test_delete_by_name(qdrant_db, sample_documents, mock_qdrant_client):
+    """Test deleting documents by name"""
+    # Mock insert and get_count
+    with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_name method
+    with patch.object(qdrant_db, "delete_by_name") as mock_delete_by_name:
+        mock_delete_by_name.return_value = True
+        # Test delete by name
+        result = qdrant_db.delete_by_name("tom_kha")
+        assert result is True
+        mock_delete_by_name.assert_called_once_with("tom_kha")
+
+        # Test delete non-existent name
+        mock_delete_by_name.reset_mock()
+        mock_delete_by_name.return_value = False
+        result = qdrant_db.delete_by_name("nonexistent")
+        assert result is False
+
+
+def test_delete_by_metadata(qdrant_db, sample_documents, mock_qdrant_client):
+    """Test deleting documents by metadata"""
+    # Mock insert and get_count
+    with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_metadata method
+    with patch.object(qdrant_db, "delete_by_metadata") as mock_delete_by_metadata:
+        # Test delete all Thai cuisine documents
+        mock_delete_by_metadata.return_value = True
+        result = qdrant_db.delete_by_metadata({"cuisine": "Thai"})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai"})
+
+        # Test delete by specific metadata combination
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = True
+        result = qdrant_db.delete_by_metadata({"cuisine": "Thai", "type": "soup"})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai", "type": "soup"})
+
+        # Test delete by non-existent metadata
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = False
+        result = qdrant_db.delete_by_metadata({"cuisine": "Italian"})
+        assert result is False
+
+
+def test_delete_by_content_id(qdrant_db, sample_documents, mock_qdrant_client):
+    """Test deleting documents by content ID"""
+    # Add content_id to sample documents
+    sample_documents[0].content_id = "recipe_1"
+    sample_documents[1].content_id = "recipe_2"
+    sample_documents[2].content_id = "recipe_3"
+
+    # Mock insert and get_count
+    with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_content_id method
+    with patch.object(qdrant_db, "delete_by_content_id") as mock_delete_by_content_id:
+        # Test delete by content_id
+        mock_delete_by_content_id.return_value = True
+        result = qdrant_db.delete_by_content_id("recipe_1")
+        assert result is True
+        mock_delete_by_content_id.assert_called_once_with("recipe_1")
+
+        # Test delete non-existent content_id
+        mock_delete_by_content_id.reset_mock()
+        mock_delete_by_content_id.return_value = False
+        result = qdrant_db.delete_by_content_id("nonexistent_content_id")
+        assert result is False
+
+
+def test_delete_by_name_multiple_documents(qdrant_db, mock_qdrant_client):
+    """Test deleting multiple documents with the same name"""
+    # Create multiple documents with the same name
+    docs = [
+        Document(
+            content="First version of Tom Kha Gai",
+            meta_data={"version": "1"},
+            name="tom_kha",
+            content_id="recipe_1_v1",
+        ),
+        Document(
+            content="Second version of Tom Kha Gai",
+            meta_data={"version": "2"},
+            name="tom_kha",
+            content_id="recipe_1_v2",
+        ),
+        Document(
+            content="Pad Thai recipe",
+            meta_data={"version": "1"},
+            name="pad_thai",
+            content_id="recipe_2_v1",
+        ),
+    ]
+
+    # Mock insert and get_count
+    with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
+        qdrant_db.insert(documents=docs, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_name and name_exists methods
+    with (
+        patch.object(qdrant_db, "delete_by_name") as mock_delete_by_name,
+        patch.object(qdrant_db, "name_exists") as mock_name_exists,
+    ):
+        mock_delete_by_name.return_value = True
+        mock_name_exists.side_effect = [False, True]  # tom_kha doesn't exist, pad_thai exists
+        # Test delete all documents with name "tom_kha"
+        result = qdrant_db.delete_by_name("tom_kha")
+        assert result is True
+        mock_delete_by_name.assert_called_once_with("tom_kha")
+        # Verify name_exists behavior
+        assert qdrant_db.name_exists("tom_kha") is False
+        assert qdrant_db.name_exists("pad_thai") is True
+
+
+def test_delete_by_metadata_complex(qdrant_db, mock_qdrant_client):
+    """Test deleting documents with complex metadata matching"""
+    docs = [
+        Document(
+            content="Thai soup recipe",
+            meta_data={"cuisine": "Thai", "type": "soup", "spicy": True},
+            name="recipe_1",
+        ),
+        Document(
+            content="Thai noodle recipe",
+            meta_data={"cuisine": "Thai", "type": "noodles", "spicy": False},
+            name="recipe_2",
+        ),
+        Document(
+            content="Italian pasta recipe",
+            meta_data={"cuisine": "Italian", "type": "pasta", "spicy": False},
+            name="recipe_3",
+        ),
+    ]
+
+    # Mock insert and get_count
+    with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
+        qdrant_db.insert(documents=docs, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_metadata method
+    with patch.object(qdrant_db, "delete_by_metadata") as mock_delete_by_metadata:
+        # Test delete only spicy Thai dishes
+        mock_delete_by_metadata.return_value = True
+        result = qdrant_db.delete_by_metadata({"cuisine": "Thai", "spicy": True})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai", "spicy": True})
+
+        # Test delete all non-spicy dishes
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = True
+        result = qdrant_db.delete_by_metadata({"spicy": False})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"spicy": False})

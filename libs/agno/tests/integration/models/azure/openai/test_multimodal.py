@@ -4,7 +4,7 @@ from agno.models.azure import AzureOpenAI
 
 
 def test_image_input():
-    agent = Agent(model=AzureOpenAI(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AzureOpenAI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image.",

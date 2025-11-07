@@ -39,7 +39,6 @@ class ConfluenceTools(Toolkit):
             - CONFLUENCE_API_KEY
         """
 
-        super().__init__(name="confluence_tools", **kwargs)
         self.url = url or getenv("CONFLUENCE_URL")
         self.username = username or getenv("CONFLUENCE_USERNAME")
         self.password = api_key or getenv("CONFLUENCE_API_KEY") or password or getenv("CONFLUENCE_PASSWORD")
@@ -73,13 +72,14 @@ class ConfluenceTools(Toolkit):
             session=session,
         )
 
-        tools: List[Any] = []
-        tools.append(self.get_page_content)
-        tools.append(self.get_space_key)
-        tools.append(self.create_page)
-        tools.append(self.update_page)
-        tools.append(self.get_all_space_detail)
-        tools.append(self.get_all_page_from_space)
+        tools: List[Any] = [
+            self.get_page_content,
+            self.get_space_key,
+            self.create_page,
+            self.update_page,
+            self.get_all_space_detail,
+            self.get_all_page_from_space,
+        ]
 
         super().__init__(name="confluence_tools", tools=tools, **kwargs)
 

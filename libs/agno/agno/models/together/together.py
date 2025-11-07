@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -21,5 +21,5 @@ class Together(OpenAILike):
     id: str = "mistralai/Mixtral-8x7B-Instruct-v0.1"
     name: str = "Together"
     provider: str = "Together"
-    api_key: Optional[str] = getenv("TOGETHER_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("TOGETHER_API_KEY"))
     base_url: str = "https://api.together.xyz/v1"

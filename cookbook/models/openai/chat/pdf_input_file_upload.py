@@ -14,7 +14,7 @@ pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response(

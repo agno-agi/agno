@@ -11,7 +11,6 @@ def test_image_input():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -31,7 +30,6 @@ def test_multimodal_with_tools():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(

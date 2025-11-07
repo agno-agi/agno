@@ -14,17 +14,18 @@ class MoviePyVideoTools(Toolkit):
 
     def __init__(
         self,
-        process_video: bool = True,
-        generate_captions: bool = True,
-        embed_captions: bool = True,
+        enable_process_video: bool = True,
+        enable_generate_captions: bool = True,
+        enable_embed_captions: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         tools: List[Any] = []
-        if process_video:
+        if enable_process_video or all:
             tools.append(self.extract_audio)
-        if generate_captions:
+        if enable_generate_captions or all:
             tools.append(self.create_srt)
-        if embed_captions:
+        if enable_embed_captions or all:
             tools.append(self.embed_captions)
 
         super().__init__(name="video_tools", tools=tools, **kwargs)

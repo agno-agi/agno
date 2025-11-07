@@ -16,7 +16,7 @@ agent = Agent(
         grounding=True,
         grounding_dynamic_threshold=0.7,  # Optional: set threshold for grounding
     ),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 # Ask questions that benefit from real-time information

@@ -6,7 +6,7 @@ Prerequisites:
   You can obtain the API key from the Google Cloud Console:
   https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
 
-- You also need to activate the Address Validation API for your .
+- You also need to activate the Address Validation API for your project.
   https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
 """
@@ -29,14 +29,6 @@ class GoogleMapTools(Toolkit):
     def __init__(
         self,
         key: Optional[str] = None,
-        search_places: bool = True,
-        get_directions: bool = True,
-        validate_address: bool = True,
-        geocode_address: bool = True,
-        reverse_geocode: bool = True,
-        get_distance_matrix: bool = True,
-        get_elevation: bool = True,
-        get_timezone: bool = True,
         **kwargs,
     ):
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
@@ -46,23 +38,16 @@ class GoogleMapTools(Toolkit):
 
         self.places_client = places_v1.PlacesClient()
 
-        tools: List[Any] = []
-        if search_places:
-            tools.append(self.search_places)
-        if get_directions:
-            tools.append(self.get_directions)
-        if validate_address:
-            tools.append(self.validate_address)
-        if geocode_address:
-            tools.append(self.geocode_address)
-        if reverse_geocode:
-            tools.append(self.reverse_geocode)
-        if get_distance_matrix:
-            tools.append(self.get_distance_matrix)
-        if get_elevation:
-            tools.append(self.get_elevation)
-        if get_timezone:
-            tools.append(self.get_timezone)
+        tools: List[Any] = [
+            self.search_places,
+            self.get_directions,
+            self.validate_address,
+            self.geocode_address,
+            self.reverse_geocode,
+            self.get_distance_matrix,
+            self.get_elevation,
+            self.get_timezone,
+        ]
 
         super().__init__(name="google_maps", tools=tools, **kwargs)
 

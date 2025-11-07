@@ -1,320 +1,300 @@
-import os
-import time
 from pathlib import Path
 
 import streamlit as st
-from agents import chat_followup_agent, image_processing_agent
+from agents import get_vision_agent
 from agno.media import Image
-from agno.models.google import Gemini
-from agno.models.mistral.mistral import MistralChat
-from agno.models.openai import OpenAIChat
-from agno.utils.log import logger
-from dotenv import load_dotenv
-from prompt import extraction_prompt
-from utils import about_widget, add_message, clear_chat
-
-load_dotenv()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-
-# Streamlit App Configuration
-st.set_page_config(
-    page_title="VisionAI Chat",
-    page_icon="📷",
-    layout="wide",
+from agno.utils.streamlit import (
+    COMMON_CSS,
+    MODELS,
+    about_section,
+    add_message,
+    display_chat_messages,
+    display_response,
+    export_chat_history,
+    initialize_agent,
+    reset_session_state,
+    session_selector_widget,
 )
+
+st.set_page_config(
+    page_title="Vision AI",
+    page_icon="🖼️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
+
+def restart_agent(model_id: str = None):
+    target_model = model_id or st.session_state.get("current_model", MODELS[0])
+
+    st.session_state["agent"] = None
+    st.session_state["session_id"] = None
+    st.session_state["messages"] = []
+    st.session_state["current_model"] = target_model
+    st.session_state["is_new_session"] = True
+
+    # Clear current image
+    if "current_image" in st.session_state:
+        del st.session_state["current_image"]
+
+
+def on_model_change():
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in MODELS:
+            new_model_id = selected_model
+            current_model = st.session_state.get("current_model")
+
+            if current_model and current_model != new_model_id:
+                try:
+                    st.session_state["is_loading_session"] = False
+                    restart_agent(model_id=new_model_id)
+
+                except Exception as e:
+                    st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
 
 
 def main():
     ####################################################################
-    # App Header
+    # App header
     ####################################################################
+    st.markdown("<h1 class='main-title'>🖼️ Vision AI</h1>", unsafe_allow_html=True)
     st.markdown(
-        """
-        <style>
-            .title {
-                text-align: center;
-                font-size: 3em;
-                font-weight: bold;
-                color: white;
-            }
-            .subtitle {
-                text-align: center;
-                font-size: 1.5em;
-                color: #bbb;
-                margin-top: -15px;
-            }
-        </style>
-        <h1 class='title'>VisionAI 🖼️</h1>
-        <p class='subtitle'>Your AI-powered smart image analysis agent</p>
-        """,
+        "<p class='subtitle'>Smart image analysis and understanding</p>",
         unsafe_allow_html=True,
     )
 
     ####################################################################
-    # Ensure session state variables are initialized
+    # Model selector
     ####################################################################
-    if "last_extracted_image" not in st.session_state:
-        st.session_state["last_extracted_image"] = None
-    if "last_image_response" not in st.session_state:
-        st.session_state["last_image_response"] = None
-    if "messages" not in st.session_state:
-        st.session_state["messages"] = []
-    if "extract_triggered" not in st.session_state:
-        st.session_state["extract_triggered"] = False
-
-    ####################################################################
-    # Sidebar Configuration
-    ####################################################################
-    with st.sidebar:
-        st.markdown("#### 🖼️ Smart Image Analysis Agent")
-
-        # Model Selection
-        model_choice = st.selectbox(
-            "🔍 Select Model Provider", ["OpenAI", "Gemini", "Mistral"], index=0
-        )
-
-        # Mode Selection
-        mode = st.radio(
-            "⚙️ Extraction Mode",
-            ["Auto", "Manual", "Hybrid"],
-            index=0,
-            help="Select how the image analysis should be performed:\n"
-            "- **Auto**: Extracts the image automatically without any extra information from users.\n"
-            "- **Manual**: User provide specific instructions for image extraction.\n"
-            "- **Hybrid**: Combined auto-processing mode with user-defined instructions.",
-        )
-
-        # Web Search Option (Enable/Disable DuckDuckGo)
-        enable_search_option = st.radio("🌐 Enable Web Search?", ["Yes", "No"], index=1)
-        enable_search = True if enable_search_option == "Yes" else False
-
-    ####################################################################
-    # Ensure Model is Initialized Properly
-    ####################################################################
-    if (
-        "model_instance" not in st.session_state
-        or st.session_state.get("model_choice", None) != model_choice
-    ):
-        if model_choice == "OpenAI":
-            if not OPENAI_API_KEY:
-                st.error(
-                    "⚠️ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable."
-                )
-            model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
-        elif model_choice == "Gemini":
-            if not GOOGLE_API_KEY:
-                st.error(
-                    "⚠️ Google API key not found. Please set the GOOGLE_API_KEY environment variable."
-                )
-            model = Gemini(id="gemini-2.0-flash", api_key=GOOGLE_API_KEY)
-        elif model_choice == "Mistral":
-            if not MISTRAL_API_KEY:
-                st.error(
-                    "⚠️ Mistral API key not found. Please set the MISTRAL_API_KEY environment variable."
-                )
-            model = MistralChat(id="pixtral-12b-2409", api_key=MISTRAL_API_KEY)
-        else:
-            st.error(
-                "⚠️ Unsupported model provider. Please select OpenAI, Gemini, or Mistral."
-            )
-            st.stop()  # Stop execution if model is not supported
-
-        st.session_state["model_instance"] = model
-    else:
-        model = st.session_state["model_instance"]
-
-    ####################################################################
-    # Modify Agents Without Creating New Session
-    ####################################################################
-    if (
-        "image_agent" not in st.session_state
-        or "chat_agent" not in st.session_state
-        or st.session_state.get("model_choice", None) != model_choice
-        or st.session_state.get("enable_search", None) != enable_search
-    ):
-        logger.info(
-            f"Updating Agents with model {model.id} and search enabled {enable_search}"
-        )
-        image_agent = image_processing_agent(model=model)
-        st.session_state["image_agent"] = image_agent
-        chat_agent = chat_followup_agent(model=model, enable_search=enable_search)
-        st.session_state["chat_agent"] = chat_agent
-        st.session_state["enable_search"] = enable_search
-
-        ####################################################################
-        # Store new selections in session_state
-        ####################################################################
-        st.session_state["model_choice"] = model_choice
-        st.session_state["enable_search"] = enable_search
-
-    else:
-        image_agent = st.session_state["image_agent"]
-        chat_agent = st.session_state["chat_agent"]
-
-    ####################################################################
-    # Load Runs from Memory (Chat History)
-    ####################################################################
-    if "messages" not in st.session_state:
-        st.session_state["messages"] = []
-
-    ####################################################################
-    # Image Upload Section
-    ####################################################################
-    uploaded_file = st.file_uploader(
-        "📤 Upload an Image (Max: 20MB) 📷", type=["png", "jpg", "jpeg"]
+    selected_model = st.sidebar.selectbox(
+        "Select Model",
+        options=MODELS,
+        index=0,
+        key="model_selector",
+        on_change=on_model_change,
+        help="Choose the AI model for image analysis",
     )
-    image_path = None
+
+    ####################################################################
+    # Vision AI Settings
+    ####################################################################
+    st.sidebar.markdown("#### 🔍 Analysis Settings")
+
+    analysis_mode = st.sidebar.radio(
+        "Analysis Mode",
+        ["Auto", "Manual", "Hybrid"],
+        index=0,
+        help="""
+        - **Auto**: Automatic comprehensive image analysis
+        - **Manual**: Analysis based on your specific instructions  
+        - **Hybrid**: Automatic analysis + your custom instructions
+        """,
+    )
+
+    enable_search = st.sidebar.checkbox(
+        "Enable Web Search",
+        value=False,
+        key="enable_search",
+        help="Allow the agent to search for additional context",
+    )
+
+    ####################################################################
+    # Initialize Agent and Session
+    ####################################################################
+    # Create unified agent with search capability
+    def get_vision_agent_with_settings(model_id: str, session_id: str = None):
+        return get_vision_agent(
+            model_id=model_id, enable_search=enable_search, session_id=session_id
+        )
+
+    vision_agent = initialize_agent(selected_model, get_vision_agent_with_settings)
+    reset_session_state(vision_agent)
+
+    if prompt := st.chat_input("👋 Ask me anything!"):
+        add_message("user", prompt)
+
+    ####################################################################
+    # File upload
+    ####################################################################
+    st.sidebar.markdown("#### 🖼️ Image Analysis")
+
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload an Image", type=["png", "jpg", "jpeg"]
+    )
 
     if uploaded_file:
-        temp_dir = Path("tmp/")
+        temp_dir = Path("tmp")
         temp_dir.mkdir(exist_ok=True)
         image_path = temp_dir / uploaded_file.name
-
-        # Check if this is a new image different from the last one
-        if (
-            "last_extracted_image" in st.session_state
-            and st.session_state["last_extracted_image"] is not None
-            and str(st.session_state["last_extracted_image"]) != str(image_path)
-        ):
-            logger.info(
-                f"New image detected. Resetting chat history and reinitializing agents."
-            )
-            clear_chat()
 
         with open(image_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-            # Display image preview in sidebar if an image is uploaded
-            st.sidebar.markdown("#### 🖼️ Current Image")
-            st.sidebar.image(uploaded_file, use_container_width=True)
+        st.session_state["current_image"] = {
+            "path": str(image_path),
+            "name": uploaded_file.name,
+            "analysis_mode": analysis_mode,
+        }
 
-        logger.info(f"✅ Image successfully saved at: {image_path}")
+        st.sidebar.image(uploaded_file, caption=uploaded_file.name, width=200)
+        st.sidebar.success(f"Image '{uploaded_file.name}' uploaded")
 
-        # Show instruction input only for Manual & Hybrid Mode
-        if mode in ["Manual", "Hybrid"]:
-            instruction = st.text_area(
-                "📝 Enter Extraction Instructions",
-                placeholder="Extract number plates...",
-            )
-        else:
-            instruction = None
+    # Analysis
+    if st.session_state.get("current_image") and not prompt:
+        if st.sidebar.button(
+            "🔍 Analyze Image", type="primary", use_container_width=True
+        ):
+            image_info = st.session_state["current_image"]
 
-        # ADD Extract Data Button
-        if st.button("🔍 Extract Data"):
-            if (
-                image_path
-                and (mode == "Auto" or instruction)
-                and (
-                    "last_image_response" not in st.session_state
-                    or st.session_state["last_extracted_image"] != image_path
+            if analysis_mode == "Manual":
+                custom_instructions = st.sidebar.text_area(
+                    "Analysis Instructions", key="manual_instructions"
                 )
-            ):
-                with st.spinner("📤 Processing Image! Extracting image data..."):
-                    extracted_data = image_agent.run(
-                        extraction_prompt,
-                        images=[Image(filepath=image_path)],
-                        instructions=instruction if instruction else None,
+                if custom_instructions:
+                    add_message(
+                        "user",
+                        f"Analyze this image with instructions: {custom_instructions}",
                     )
+                else:
+                    add_message("user", f"Analyze this image: {image_info['name']}")
+            elif analysis_mode == "Hybrid":
+                custom_instructions = st.sidebar.text_area(
+                    "Additional Instructions", key="hybrid_instructions"
+                )
+                if custom_instructions:
+                    add_message(
+                        "user",
+                        f"Analyze this image with additional focus: {custom_instructions}",
+                    )
+                else:
+                    add_message("user", f"Analyze this image: {image_info['name']}")
+            else:
+                add_message("user", f"Analyze this image: {image_info['name']}")
 
-                # Store last extracted response for chat follow-ups
-                st.session_state["last_image_response"] = extracted_data.content
-                st.session_state["last_extracted_image"] = image_path
-
-                # Create a temporary success message container
-                success_message = st.empty()
-                success_message.success("✅ Image processing completed successfully!")
-
-                logger.info(f"Extracted Data Response: {extracted_data.content}")
-
-                # Wait for 1 seconds, then clear the success message
-                time.sleep(1)
-                success_message.empty()
-
-        # Display Extracted Image Data Persistently
-        if st.session_state["last_image_response"]:
-            st.write("### Extracted Image Insights:")
-            st.write(st.session_state["last_image_response"])
+    ###############################################################
+    # Sample Questions
+    ###############################################################
+    st.sidebar.markdown("#### ❓ Sample Questions")
+    if st.sidebar.button("🔍 What are the main objects?"):
+        add_message("user", "What are the main objects?")
+    if st.sidebar.button("📝 Is there any text to read?"):
+        add_message("user", "Is there any text to read?")
+    if st.sidebar.button("🎨 Describe the colors and mood"):
+        add_message("user", "Describe the colors and mood")
 
     ####################################################################
-    # Follow-up Chat Section
+    # Display Chat Messages
     ####################################################################
-    st.markdown("---")
-    st.markdown("### 💬 Chat with VisionAI")
+    display_chat_messages()
 
     ####################################################################
-    # Display Chat History First
+    # Generate response for user message
     ####################################################################
-    for message in st.session_state["messages"]:
-        if message["role"] == "system":
-            continue
-        with st.chat_message(message["role"]):
-            st.write(message["content"])
+    last_message = (
+        st.session_state["messages"][-1] if st.session_state["messages"] else None
+    )
+    if last_message and last_message.get("role") == "user":
+        question = last_message["content"]
 
-    if prompt := st.chat_input(
-        "💬 Ask follow-up questions on the image extracted data..."
-    ):
-        # Display user message first
-        with st.chat_message("user"):
-            st.write(prompt)
-        # Add user message to session state
-        add_message("user", prompt)
+        images_to_include = []
+        if st.session_state.get("current_image"):
+            image_info = st.session_state["current_image"]
+            images_to_include = [Image(filepath=image_info["path"])]
 
-        ####################################################################
-        # Process User Queries & Stream Responses
-        ####################################################################
-        last_message = (
-            st.session_state["messages"][-1] if st.session_state["messages"] else None
+        if images_to_include:
+            with st.chat_message("assistant"):
+                response_container = st.empty()
+                with st.spinner("🤔 Thinking..."):
+                    try:
+                        response = vision_agent.run(question, images=images_to_include)
+                        response_container.markdown(response.content)
+                        add_message("assistant", response.content)
+                    except Exception as e:
+                        error_message = f"❌ Error: {str(e)}"
+                        response_container.error(error_message)
+                        add_message("assistant", error_message)
+        else:
+            # Use the same unified agent for all responses (maintains session)
+            display_response(vision_agent, question)
+
+    ####################################################################
+    # Utility buttons
+    ####################################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        if st.sidebar.button("🔄 New Chat", use_container_width=True):
+            restart_agent()
+            st.rerun()
+
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
         )
 
-        if last_message and last_message["role"] == "user":
-            user_question = last_message["content"]
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            session_name = None
 
-            # Ensure Image Agent has extracted data before running chat agent
-            if (
-                "last_image_response" not in st.session_state
-                or not st.session_state["last_image_response"]
-            ):
-                st.warning(
-                    "⚠️ No extracted insights available. Please process an image first."
-                )
+            try:
+                if session_id and vision_agent:
+                    session_name = vision_agent.get_session_name()
+            except Exception:
+                session_name = None
+
+            if session_id and session_name:
+                filename = f"vision_ai_chat_{session_name}.md"
+            elif session_id:
+                filename = f"vision_ai_chat_{session_id[:8]}.md"
             else:
-                with st.chat_message("assistant"):
-                    response_container = st.empty()
-                    with st.spinner("🤔 Processing follow-up question..."):
-                        try:
-                            chat_response = chat_agent.run(
-                                f"""You are a chat agent who answers followup questions based on extracted image data.
-    Understand the requirement properly and then answer the question correctly.
+                filename = "vision_ai_chat_new.md"
 
-    Extracted Image Data: {st.session_state["last_image_response"]}
+            if st.sidebar.download_button(
+                "💾 Export Chat",
+                export_chat_history("Vision AI"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Chat history exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Chat",
+                disabled=True,
+                use_container_width=True,
+                help="No messages to export",
+            )
 
-    Use the above image insights to answer the following question.
-    Answer the following question from the above given extracted image data: {user_question}""",
-                                stream=True,
-                            )
+    ####################################################################
+    # Session management widgets
+    ####################################################################
+    is_new_session = st.session_state.get("is_new_session", False)
+    has_messages = (
+        st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+    )
 
-                            response_text = ""
-                            for chunk in chat_response:
-                                if chunk and chunk.content:
-                                    response_text += chunk.content
-                                    response_container.markdown(response_text)
+    if not is_new_session or has_messages:
+        session_selector_widget(
+            vision_agent, selected_model, get_vision_agent_with_settings
+        )
+        if is_new_session and has_messages:
+            st.session_state["is_new_session"] = False
+    else:
+        st.sidebar.info("🆕 New Chat - Start your conversation!")
 
-                            add_message("assistant", response_text)
-
-                        except Exception as e:
-                            error_message = f"❌ Error: {str(e)}"
-                            add_message("assistant", error_message)
-                            st.error(error_message)
-
-    # Add clear chat button in sidebar
-    if st.sidebar.button("🧹 Clear Chat History", key="clear_chat"):
-        clear_chat()
-
-    # About Section
-    about_widget()
+    ####################################################################
+    # About section
+    ####################################################################
+    about_section(
+        "This Vision AI assistant analyzes images and answers questions about visual content using "
+        "advanced vision-language models."
+    )
 
 
 if __name__ == "__main__":

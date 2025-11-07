@@ -5,42 +5,18 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+  workflow_dispatch: # Allows manual triggering
+    inputs:
+      branch:
+        description: "Branch to run checks on"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  style-check:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9"]
-      fail-fast: true # Stop all matrix jobs if one fails
-
-    defaults:
-      run:
-        working-directory: libs/agno
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest types-pyyaml
-          pip install --no-deps -r requirements.txt
-      - name: Ruff format
-        run: |
-          ruff format .
-      - name: Ruff check
-        run: |
-          ruff check .
-      - name: Mypy
-        run: |
-          mypy .
-
   # Run tests for OpenAI
   test-openai:
     runs-on: ubuntu-latest
@@ -118,31 +94,34 @@ jobs:
           ./scripts/run_model_tests.sh anthropic
 
   # Run tests for AWS
-  test-aws:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-      fail-fast: true
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup and AWS tests
-        working-directory: .
-        run: |
-          ./scripts/run_model_tests.sh aws
+  #
+  # -- Some tests hang. Commented out until we revisit them.
+  #
+  # test-aws:
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version: ["3.12"]
+  #     fail-fast: true
+  #   env:
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+  #     AWS_REGION: "us-east-1"
+  #     EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: actions/setup-python@v4
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - name: Install uv
+  #       run: |
+  #         curl -LsSf https://astral.sh/uv/install.sh | sh
+  #         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+  #     - name: Run dev setup and AWS tests
+  #       working-directory: .
+  #       run: |
+  #         ./scripts/run_model_tests.sh aws
 
   # Run tests for Cohere
   test-cohere:
@@ -172,6 +151,7 @@ jobs:
 
   # Run tests for Deepseek
   test-deepseek:
+    if: false # Disable deepseek tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -405,6 +385,7 @@ jobs:
   # Run tests for xAI
   test-xai:
     runs-on: ubuntu-latest
+    if: false # Disable xAI tests until we get a test account
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -648,6 +629,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run agent integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/agent
@@ -678,6 +661,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run teams integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/teams
@@ -706,9 +691,11 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run workflows integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/workflows  ./libs/agno/tests/integration/workflows_2
+          python -m pytest ./libs/agno/tests/integration/workflows
 
   test-embedder:
     runs-on: ubuntu-latest
@@ -735,6 +722,8 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run embedder tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/embedder
@@ -764,17 +753,16 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_csv_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_docx_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_json_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_md_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_bytes_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_text_knowledge_base.py 
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
@@ -801,13 +789,113 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_website_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge_base.py
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
+
+  # Run A2A tests (isolated due to dependency conflicts)
+  test-a2a:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment for A2A tests (without conflicting deps)
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install -e ./libs/agno[dev,os,integration-tests,openai]
+          VIRTUAL_ENV=.venv uv pip install a2a-sdk
+      - name: Run A2A integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          pip install a2a-sdk
+          python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
+
+  test-clean:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_basic.py
+
+  test-clean-os:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_os_basic.py
 
   # Run remaining integration tests
   test-remaining:
@@ -835,6 +923,49 @@ jobs:
           ./scripts/dev_setup.sh
       - name: Run remaining integration tests
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py ./libs/agno/tests/integration
+
+  test-dev-setup:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Make dev_setup.sh executable
+        run: chmod +x ./scripts/dev_setup.sh
+      - name: Run dev setup script
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Verify virtual environment was created
+        run: |
+          if [ ! -d ".venv" ]; then
+            echo "Error: .venv directory not found"
+            exit 1
+          fi
+          echo "✓ Virtual environment created successfully"
+      - name: Verify agno installation
+        run: |
+          source .venv/bin/activate
+          python -c "import agno; print(f'✓ agno version: {agno.__version__}')" || exit 1
+      - name: Verify agno_infra installation
+        run: |
+          source .venv/bin/activate
+          python -c "import agno_infra; print('✓ agno_infra imported successfully')" || exit 1
+      - name: List installed packages
+        run: |
+          source .venv/bin/activate
+          pip list

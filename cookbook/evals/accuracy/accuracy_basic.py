@@ -10,12 +10,12 @@ evaluation = AccuracyEval(
     model=OpenAIChat(id="o4-mini"),
     agent=Agent(
         model=OpenAIChat(id="gpt-4o"),
-        tools=[CalculatorTools(enable_all=True)],
+        tools=[CalculatorTools()],
     ),
     input="What is 10*5 then to the power of 2? do it step by step",
     expected_output="2500",
     additional_guidelines="Agent output should include the steps and the final answer.",
-    num_iterations=3,
+    num_iterations=1,
 )
 
 result: Optional[AccuracyResult] = evaluation.run(print_results=True)

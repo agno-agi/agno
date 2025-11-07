@@ -78,8 +78,8 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - The `VectorDb` interface is defined in `libs/agno/agno/vectordb/base
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
-4. Add a recipe for using your `VectorDb` under `cookbook/agent_concepts/knowledge/vector_dbs/<your_db>`.
-   - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector.py) for an example.
+4. Add a recipe for using your `VectorDb` under `cookbook/knowledge/vector_db/<your_db>`.
+   - Checkout [`cookbook/knowledge/vector_db/pgvector/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/knowledge/vector_db/pgvector/pgvector_db.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 
@@ -95,10 +95,22 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 4. If the Model provider does not support the OpenAI API spec:
    - Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or open an issue to discuss the best way to integrate your LLM provider.
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
-5. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
+5. Add your model provider to `libs/agno/agno/models/utils.py`:
+   - Add a new `elif` clause in the `get_model()` function with your provider name
+   - Use the provider name that matches your module directory (e.g., "meta" for `models/meta/`)
+   - Import and return your Model class with the provided `model_id`
+   - This enables users to use the string format: `model="yourprovider:model-name"`
+   - Example:
+     ```python
+     elif provider == "yourprovider":
+         from agno.models.yourprovider import YourModel
+         return YourModel(id=model_id)
+     ```
+6. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
    - Checkout [`agno/cookbook/models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/models/aws/claude) for an example.
-6. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
-7. Submit a pull request.
+   - Show both the model class and string syntax in your examples
+7. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
+8. Submit a pull request.
 
 ## Adding a new Tool.
 
@@ -107,7 +119,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 3. Create a Class for your Tool that inherits the `Toolkit` Class from `libs/agno/agno/tools/toolkit/.py`.
    - Your Class will be in `libs/agno/agno/tools/<your_tool>.py`.
    - Make sure to register all functions in your class via a flag.
-   - Checkout the [`agno/tools/youtube_tools.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/youtube_tools.py) file for an example.
+   - Checkout the [`agno/tools/youtube.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/youtube.py) file for an example.
    - If your tool requires an API key, checkout the [`agno/tools/serpapi_tools.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/serpapi_tools.py) as well.
 4. Add a recipe for using your Tool under `cookbook/tools/<your_tool>`.
    - Checkout [`agno/cookbook/tools/youtube_tools`](https://github.com/agno-agi/agno/blob/main/cookbook/tools/youtube_tools.py) for an example.
@@ -124,4 +136,4 @@ Message us on [Discord](https://discord.gg/4MtYHHrgA8) or post on [Discourse](ht
 
 ## 📝 License
 
-This project is licensed under the terms of the [MPL-2.0 license](/LICENSE)
+This project is licensed under the terms of the [Apache-2.0 license](/LICENSE)

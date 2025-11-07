@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=DashScope(id="qwen-plus"),
     description="You write movie scripts and return them as structured JSON data.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 structured_output_agent.print_response(

@@ -1,187 +1,192 @@
-import base64
-import json
-import time
-from datetime import datetime
-from os import getenv
-
+import nest_asyncio
 import streamlit as st
-from agents import DeepResearcherAgent
+from agents import get_deep_researcher_workflow
+from agno.utils.streamlit import (
+    COMMON_CSS,
+    about_section,
+    add_message,
+    display_chat_messages,
+    export_chat_history,
+)
 
+nest_asyncio.apply()
 st.set_page_config(
-    page_title="Deep Research Agent",
+    page_title="Deep Researcher",
     page_icon="🔎",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Initialize session state for chat history
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# Add custom CSS
+st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
-with open(
-    "cookbook/examples/streamlit_apps/deep_researcher/assets/scrapegraph.png", "rb"
-) as scrapegraph_file:
-    scrapegraph_base64 = base64.b64encode(scrapegraph_file.read()).decode()
 
-    title_html = f"""
-    <div style="display: flex; justify-content: center; align-items: center; width: 100%; padding: 32px 0 24px 0;">
-        <h1 style="margin: 0; padding: 0; font-size: 2.5rem; font-weight: bold;">
-            <span style="font-size:2.5rem;">🔎</span> Agentic Deep Searcher with 
-            <span style="color: #fb542c;">Agno</span> & 
-            <span style="color: #8564ff;">Scrapegraph</span>
-            <img src="data:image/png;base64,{scrapegraph_base64}" style="height: 60px; margin-left: 12px; vertical-align: middle;"/>
-        </h1>
-    </div>
-    """
-    st.markdown(title_html, unsafe_allow_html=True)
-
-with st.sidebar:
-    st.image(
-        "cookbook/examples/streamlit_apps/deep_researcher/assets/nebius.png", width=150
+def main():
+    ####################################################################
+    # App header
+    ####################################################################
+    st.markdown("<h1 class='main-title'>Deep Researcher</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='subtitle'>Your AI-powered research assistant with multi-agent workflow</p>",
+        unsafe_allow_html=True,
     )
-    nebius_api_key = getenv("NEBIUS_API_KEY")
-    if not nebius_api_key:
-        nebius_api_key = st.text_input("Enter your Nebius API key", type="password")
 
-    scrapegraph_api_key = getenv("SGAI_API_KEY")
-    if not scrapegraph_api_key:
-        scrapegraph_api_key = st.text_input(
-            "Enter your Scrapegraph API key", type="password"
+    ####################################################################
+    # Initialize Workflow
+    ####################################################################
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = []
+
+    if prompt := st.chat_input("🔎 What would you like me to research?"):
+        add_message("user", prompt)
+
+    ####################################################################
+    # API Configuration
+    ####################################################################
+    st.sidebar.markdown("#### 🔑 Configuration")
+
+    nebius_api_key = st.sidebar.text_input(
+        "Nebius API Key",
+        type="password",
+        help="Required for powering the research agents",
+        placeholder="nebius_xxxxxxxxxxxx",
+    )
+
+    scrapegraph_api_key = st.sidebar.text_input(
+        "ScrapeGraph API Key",
+        type="password",
+        help="Required for web scraping and content extraction",
+        placeholder="sgai_xxxxxxxxxxxx",
+    )
+
+    if nebius_api_key and scrapegraph_api_key:
+        st.sidebar.success("✅ API keys configured")
+    else:
+        st.sidebar.warning("⚠️ Please configure your API keys to start researching")
+
+    ###############################################################
+    # Example Research Topics
+    ###############################################################
+    st.sidebar.markdown("#### 🔍 Example Topics")
+
+    if st.sidebar.button("🚀 AI & ML Developments 2024"):
+        add_message("user", "Latest developments in AI and machine learning in 2024")
+
+    if st.sidebar.button("🌱 Sustainable Energy"):
+        add_message("user", "Current trends in sustainable energy technologies")
+
+    if st.sidebar.button("💊 Personalized Medicine"):
+        add_message(
+            "user", "Recent breakthroughs in personalized medicine and genomics"
         )
 
-    st.divider()
+    if st.sidebar.button("🔒 Quantum Cybersecurity"):
+        add_message("user", "Impact of quantum computing on cybersecurity")
 
-    # Example research topics
-    st.header("🔍 Try These Examples")
-    st.markdown("Click any topic below to start an instant deep research:")
+    ###############################################################
+    # Utility buttons
+    ###############################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
 
-    example_topics = [
-        "🚀 Latest developments in AI and machine learning in 2024",
-        "🌱 Current trends in sustainable energy technologies",
-        "💊 Recent breakthroughs in personalized medicine and genomics",
-    ]
-
-    if "trigger_research" not in st.session_state:
-        st.session_state.trigger_research = None
-
-    for topic in example_topics:
-        topic_text = topic.split(" ", 1)[1]  # Remove emoji and space
-        if st.button(topic, use_container_width=True, key=f"example_{topic_text}"):
-            st.session_state.trigger_research = topic_text
-            st.rerun()
-
-    st.divider()
-
-    # Chat management buttons
-    col1, col2 = st.columns(2)
     with col1:
-        if st.button("🆕 New Chat", use_container_width=True):
-            st.session_state.chat_history = []
+        if st.sidebar.button("🔄 New Research", use_container_width=True):
+            st.session_state["messages"] = []
             st.rerun()
 
-        with col2:
-            if st.session_state.chat_history:
-                markdown_content = "# 🔎 Deep Research Agent - Chat History\n\n"
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
 
-                for i, conversation in enumerate(st.session_state.chat_history, 1):
-                    markdown_content += f"## {conversation['question']}\n\n"
-                    markdown_content += f"{conversation['response']}\n\n"
-                    if i < len(st.session_state.chat_history):
-                        markdown_content += "---\n\n"
+        if has_messages:
+            if st.sidebar.download_button(
+                "💾 Export Report",
+                export_chat_history("Deep Research Report"),
+                file_name="research_report.md",
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Research report exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Report",
+                disabled=True,
+                use_container_width=True,
+                help="No research to export",
+            )
 
-                st.download_button(
-                    label="📥 Export Chat",
-                    data=markdown_content,
-                    file_name=f"deep_research_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                    mime="text/markdown",
-                    use_container_width=True,
-                )
-            else:
-                st.button("📥 Export Chat", use_container_width=True, disabled=True)
+    ####################################################################
+    # Display Chat Messages
+    ####################################################################
+    display_chat_messages()
 
-    st.divider()
+    ####################################################################
+    # Generate research response
+    ####################################################################
+    last_message = (
+        st.session_state["messages"][-1] if st.session_state["messages"] else None
+    )
+    if last_message and last_message.get("role") == "user":
+        if not (nebius_api_key and scrapegraph_api_key):
+            st.error(
+                "🔑 Please configure your API keys in the sidebar to start research."
+            )
+            return
 
-    st.header("About")
-    st.markdown(
-        """
-    This Deep Researcher workflow leverages multiple AI agents for a comprehensive research process:
-    - **Searcher**: Finds and extracts information from the web.
-    - **Analyst**: Synthesizes and interprets the research findings.
-    - **Writer**: Produces a final, polished report.
+        research_topic = last_message["content"]
 
-    Built with:
-    - 🚀 Agno
-    - 💫 Streamlit
-    """
+        with st.chat_message("assistant"):
+            # Create containers for different phases
+            response_container = st.empty()
+
+            try:
+                # Get the workflow
+                app = get_deep_researcher_workflow()
+
+                # Execute the research workflow with status updates
+                with st.status(
+                    "🔎 Executing research workflow...", expanded=True
+                ) as status:
+                    status.write(
+                        "🧠 **Phase 1: Researching** - Finding and extracting relevant information..."
+                    )
+                    status.write(
+                        "📊 **Phase 2: Analyzing** - Synthesizing and interpreting the research findings..."
+                    )
+                    status.write(
+                        "📝 **Phase 3: Writing** - Crafting the final report..."
+                    )
+
+                    result = app.run(topic=research_topic)
+
+                    full_report = ""
+                    if result and result.content:
+                        full_report = result.content
+                        response_container.markdown(full_report)
+                    else:
+                        full_report = (
+                            "❌ Failed to generate research report. Please try again."
+                        )
+                        response_container.markdown(full_report)
+
+                    status.update(label="✅ Research completed!", state="complete")
+
+                # Add the complete response to messages
+                add_message("assistant", full_report)
+
+            except Exception as e:
+                st.error(f"❌ Research failed: {str(e)}")
+                st.info("💡 Please check your API keys and try again.")
+
+    ####################################################################
+    # About section
+    ####################################################################
+    about_section(
+        "This Deep Researcher uses a multi-agent workflow to conduct comprehensive research, analysis, and report generation. Built with Agno, ScrapeGraph, and Nebius AI."
     )
 
-# Display chat history
-if st.session_state.chat_history:
-    st.subheader("💬 Chat History")
 
-    for i, conversation in enumerate(st.session_state.chat_history):
-        with st.container():
-            with st.chat_message("user"):
-                st.write(conversation["question"])
-
-            with st.chat_message("assistant"):
-                st.markdown(conversation["response"])
-                st.caption(f"Research completed at: {conversation['timestamp']}")
-
-            if i < len(st.session_state.chat_history) - 1:
-                st.divider()
-
-user_input = st.chat_input("Ask a question...")
-
-if st.session_state.trigger_research:
-    user_input = st.session_state.trigger_research
-    st.session_state.trigger_research = None
-
-    with st.chat_message("user"):
-        st.write(user_input)
-
-if user_input:
-    try:
-        agent = DeepResearcherAgent()
-
-        current_conversation = {
-            "question": user_input,
-            "response": "",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-
-        with st.status("Executing research plan...", expanded=True) as status:
-            # PHASE 1: Researching
-            phase1_msg = "🧠 **Phase 1: Researching** - Finding and extracting relevant information from the web..."
-            status.write(phase1_msg)
-            research_content = agent.searcher.run(user_input)
-
-            # PHASE 2: Analyzing
-            phase2_msg = "🔬 **Phase 2: Analyzing** - Synthesizing and interpreting the research findings..."
-            status.write(phase2_msg)
-            analysis = agent.analyst.run(research_content.content)
-
-            # PHASE 3: Writing Report
-            phase3_msg = (
-                "✍️ **Phase 3: Writing Report** - Producing a final, polished report..."
-            )
-            status.write(phase3_msg)
-            report_iterator = agent.writer.run(analysis.content, stream=True)
-
-        # Collect the full report
-        full_report = ""
-        report_container = st.empty()
-        with st.spinner("🤔 Thinking..."):
-            for chunk in report_iterator:
-                if chunk.content:
-                    full_report += chunk.content
-                    report_container.markdown(full_report)
-
-        # Store the complete conversation
-        current_conversation["response"] = full_report
-        st.session_state.chat_history.append(current_conversation)
-
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+if __name__ == "__main__":
+    main()

@@ -17,7 +17,6 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.tools.yfinance import YFinanceTools
-from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:
@@ -31,12 +30,7 @@ async def run_agent(message: str) -> None:
         agent = Agent(
             tools=[
                 sequential_thinking_mcp_tools,
-                YFinanceTools(
-                    stock_price=True,
-                    analyst_recommendations=True,
-                    company_info=True,
-                    company_news=True,
-                ),
+                YFinanceTools(),
             ],
             instructions=dedent("""\
                 ## Using the think tool
@@ -51,7 +45,6 @@ async def run_agent(message: str) -> None:
                 - Use tables where possible\
                 """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         await agent.aprint_response(message, stream=True)

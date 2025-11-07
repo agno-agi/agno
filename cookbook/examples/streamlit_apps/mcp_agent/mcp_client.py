@@ -1,3 +1,5 @@
+"""MCP Client for connecting to Model Context Protocol servers."""
+
 from contextlib import AsyncExitStack
 from typing import List, Optional
 
@@ -17,6 +19,8 @@ class MCPServerConfig(BaseModel):
 
 
 class MCPClient:
+    """Client for connecting to MCP servers."""
+
     def __init__(self):
         # Initialize session and client objects
         self.session = None
@@ -24,11 +28,14 @@ class MCPClient:
         self.tools = []
         self.server_id = None
 
-    async def connect_to_server(self, server_config):
-        """Connect to an MCP server using the provided configuration
+    async def connect_to_server(self, server_config: MCPServerConfig) -> MCPTools:
+        """Connect to an MCP server using the provided configuration.
 
         Args:
             server_config: Configuration for the MCP server
+
+        Returns:
+            MCPTools instance for interacting with the server
         """
         self.server_id = server_config.id
 
@@ -58,5 +65,8 @@ class MCPClient:
         return mcp_tools
 
     async def cleanup(self):
-        """Clean up resources"""
-        await self.exit_stack.aclose()
+        """Clean up resources."""
+        try:
+            await self.exit_stack.aclose()
+        except Exception as e:
+            logger.warning(f"Error during MCP client cleanup: {e}")

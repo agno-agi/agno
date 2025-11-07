@@ -82,8 +82,7 @@ recipe_agent = Agent(
         - Highlight make-ahead steps
         - Suggest side dish pairings"""),
     markdown=True,
-    add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    add_datetime_to_context=True,
 )
 
 # Example usage with different types of recipe queries

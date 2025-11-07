@@ -69,7 +69,6 @@ async def run_gibsonai_agent(message: str):
             - Providing insights about database structure and best practices
         """),
         markdown=True,
-        show_tool_calls=True,
     )
 
     # Run the agent

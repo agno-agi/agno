@@ -21,7 +21,8 @@ class CustomApiTools(Toolkit):
         headers: Optional[Dict[str, str]] = None,
         verify_ssl: bool = True,
         timeout: int = 30,
-        make_request: bool = True,
+        enable_make_request: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_url = base_url
@@ -33,7 +34,7 @@ class CustomApiTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
-        if make_request:
+        if all or enable_make_request:
             tools.append(self.make_request)
 
         super().__init__(name="api_tools", tools=tools, **kwargs)
@@ -76,7 +77,10 @@ class CustomApiTools(Toolkit):
             str: JSON string containing response data or error message
         """
         try:
-            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}" if self.base_url else endpoint
+            if self.base_url:
+                url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            else:
+                url = endpoint
             log_debug(f"Making {method} request to {url}")
 
             response = requests.request(

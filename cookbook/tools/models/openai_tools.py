@@ -2,9 +2,11 @@
 This example demonstrates how to use the OpenAITools to transcribe an audio file.
 """
 
+import base64
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.run.agent import RunOutput
 from agno.tools.openai import OpenAITools
 from agno.utils.media import download_file, save_base64_data
 
@@ -17,7 +19,6 @@ download_file(url, local_audio_path)
 
 transcription_agent = Agent(
     tools=[OpenAITools(transcription_model="gpt-4o-transcribe")],
-    show_tool_calls=True,
     markdown=True,
 )
 transcription_agent.print_response(
@@ -28,12 +29,14 @@ transcription_agent.print_response(
 agent = Agent(
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
-    show_tool_calls=True,
 )
 
 response = agent.run(
-    "Generate a photorealistic image of a cozy coffee shop interior",
+    "Generate an image of a sports car and tell me its color.", debug_mode=True
 )
 
-if response.images:
-    save_base64_data(response.images[0].content, "tmp/coffee_shop.png")
+if isinstance(response, RunOutput):
+    print("Agent response:", response.content)
+    if response.images:
+        image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
+        save_base64_data(image_base64, "tmp/sports_car.png")

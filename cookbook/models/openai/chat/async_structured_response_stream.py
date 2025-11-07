@@ -33,13 +33,13 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 
 async def main():
     await structured_output_agent.aprint_response(
-        "New York", stream=True, stream_intermediate_steps=True
+        "New York", stream=True, stream_events=True
     )
 
 

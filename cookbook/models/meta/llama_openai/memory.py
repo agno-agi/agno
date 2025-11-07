@@ -7,25 +7,19 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
 from agno.models.meta import LlamaOpenAI
-from agno.storage.postgres import PostgresStorage
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-    # Store the memories and summary in a database
-    memory=Memory(
-        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
-    ),
+    # Store sessions, memories and summaries in the
+    db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
     enable_user_memories=True,
     enable_session_summaries=True,
-    # Store agent sessions in a database
-    storage=PostgresStorage(table_name="personalized_agent_sessions", db_url=db_url),
     # Show debug logs so, you can see the memory being created
-    # debug_mode=True,
+    debug_mode=True,
 )
 
 # -*- Share personal information

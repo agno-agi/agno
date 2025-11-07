@@ -57,11 +57,10 @@ zoom_tools = ZoomTools(
 # Create an agent with Zoom capabilities
 agent = Agent(
     name="Zoom Meeting Manager",
-    agent_id="zoom-meeting-manager",
+    id="zoom-meeting-manager",
     model=OpenAIChat(id="gpt-4"),
     tools=[zoom_tools],
     markdown=True,
-    show_tool_calls=True,
     instructions=[
         "You are an expert at managing Zoom meetings using the Zoom API.",
         "You can:",
