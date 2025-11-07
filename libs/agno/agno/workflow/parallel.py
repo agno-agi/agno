@@ -727,6 +727,7 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,

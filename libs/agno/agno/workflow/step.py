@@ -348,6 +348,7 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
+                            run_context=run_context,
                             **kwargs,
                         )
 
@@ -600,6 +601,7 @@ class Step:
                             stream=True,
                             stream_events=stream_events,
                             yield_run_response=True,
+                            run_context=run_context,
                             **kwargs,
                         )
 
@@ -836,6 +838,7 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,
+                            run_context=run_context,
                             **kwargs,
                         )
 
@@ -1070,6 +1073,7 @@ class Step:
                             session_state=session_state_copy,
                             stream=True,
                             stream_events=stream_events,
+                            run_context=run_context,
                             yield_run_response=True,
                             **kwargs,
                         )
