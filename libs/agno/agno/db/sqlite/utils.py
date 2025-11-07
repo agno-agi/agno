@@ -270,7 +270,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
@@ -278,7 +278,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                 all_user_ids.add(session["user_id"])
 
             # Parse runs from JSON string
-            if runs := session.get("runs", []):
+            if runs := (session.get("runs", []) or []):
                 runs = json.loads(runs) if isinstance(runs, str) else runs
                 metrics[runs_count_key] += len(runs)
                 for run in runs:
