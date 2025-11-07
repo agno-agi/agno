@@ -298,7 +298,19 @@ def _create_events_from_chunk(
 
     # Handle custom events
     elif chunk.event == RunEvent.custom_event:
-        custom_event = CustomEvent(name=chunk.event, value=chunk.content)
+        # Use the name of the event class if available, otherwise default to the CustomEvent
+        try:
+            custom_event_name = chunk.__class__.__name__
+        except Exception:
+            custom_event_name = chunk.event
+
+        # Use the complete Agno event as value if parsing it works, else the event content field
+        try:
+            custom_event_value = chunk.to_dict()
+        except Exception:
+            custom_event_value = chunk.content  # type: ignore
+
+        custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
 
     return events_to_emit, message_started, message_id
