@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     StepsExecutionCompletedEvent,
@@ -118,6 +119,7 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -151,6 +153,7 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -204,6 +207,7 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -269,6 +273,7 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    run_context=run_context,
                     session_state=session_state,
                     stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
@@ -354,6 +359,7 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -387,6 +393,7 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -439,6 +446,7 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -504,6 +512,7 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    run_context=run_context,
                     session_state=session_state,
                     stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
