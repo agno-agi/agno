@@ -2,13 +2,15 @@
 Tests for Agent hooks functionality.
 """
 
-from typing import Optional
+from typing import Any, AsyncIterator, Iterator, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from agno.agent import Agent
 from agno.exceptions import CheckTrigger, InputCheckError, OutputCheckError
+from agno.models.base import Model
+from agno.models.response import ModelResponse
 from agno.run.agent import RunInput, RunOutput
 from agno.session.agent import AgentSession
 
@@ -103,46 +105,83 @@ async def async_tracking_post_hook(run_output: RunOutput, agent: Agent) -> None:
     )
 
 
+class MockTestModel(Model):
+    """Test model class that inherits from Model for testing purposes."""
+
+    def __init__(self, model_response_content: Optional[str] = None):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._model_response_content = model_response_content or "Test response from mock model"
+
+        # Mock the response object
+        self._mock_response = Mock()
+        self._mock_response.content = self._model_response_content
+        self._mock_response.role = "assistant"
+        self._mock_response.reasoning_content = None
+        self._mock_response.tool_executions = None
+        self._mock_response.images = None
+        self._mock_response.videos = None
+        self._mock_response.audios = None
+        self._mock_response.files = None
+        self._mock_response.citations = None
+        self._mock_response.references = None
+        self._mock_response.metadata = None
+
+        # Create Mock objects for response methods to track call_args
+        self.response = Mock(return_value=self._mock_response)
+        self.aresponse = AsyncMock(return_value=self._mock_response)
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        """Mock get_instructions_for_model."""
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        """Mock get_system_message_for_model."""
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        """Mock async get_instructions_for_model."""
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        """Mock async get_system_message_for_model."""
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        """Mock parse_args."""
+        return {}
+
+    # Implement abstract methods required by Model base class
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        """Mock invoke method."""
+        return self._mock_response
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        """Mock async invoke method."""
+        return await self.aresponse(*args, **kwargs)
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        """Mock invoke_stream method."""
+        yield self._mock_response
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        """Mock async invoke_stream method."""
+        yield self._mock_response
+        return
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        """Mock _parse_provider_response method."""
+        return self._mock_response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        """Mock _parse_provider_response_delta method."""
+        return self._mock_response
+
+
 def create_test_agent(pre_hooks=None, post_hooks=None, model_response_content=None) -> Agent:
     """Create a test agent with mock model that supports both sync and async operations."""
-    # Mock the model to avoid needing real API keys
-    mock_model = Mock()
-    mock_model.id = "test-model"
-    mock_model.provider = "test"
-    mock_model.instructions = None
-    mock_model.name = "test-model"
-
-    # Mock the response method to return a proper mock response
-    mock_response = Mock()
-    mock_response.content = model_response_content or "Test response from mock model"
-    mock_response.role = "assistant"
-    mock_response.reasoning_content = None
-    mock_response.tool_executions = None
-    mock_response.images = None
-    mock_response.videos = None
-    mock_response.audios = None
-    mock_response.files = None
-    mock_response.citations = None
-    mock_response.references = None
-    mock_response.metadata = None
-
-    # Set up both sync and async response methods
-    mock_model.response.return_value = mock_response
-
-    # For async operations, we need to mock the async methods
-    # Create an async mock that returns the same mock_response
-    async_response_mock = AsyncMock(return_value=mock_response)
-    mock_model.aresponse = async_response_mock
-
-    # Mock other methods that might be called
-    mock_model.get_instructions_for_model.return_value = None
-    mock_model.get_system_message_for_model.return_value = None
-    mock_model.structured_outputs = False
-    mock_model.parse_args = Mock(return_value={})
-
-    # Add async versions if they exist
-    mock_model.aget_instructions_for_model = AsyncMock(return_value=None)
-    mock_model.aget_system_message_for_model = AsyncMock(return_value=None)
+    # Create a test model that inherits from Model
+    mock_model = MockTestModel(model_response_content=model_response_content)
 
     return Agent(
         name="Test Agent",

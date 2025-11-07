@@ -38,6 +38,14 @@ class BaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
 
+    @abstractmethod
+    def table_exists(self, table_name: str) -> bool:
+        raise NotImplementedError
+
+    def _create_all_tables(self) -> None:
+        """Create all tables for this database."""
+        pass
+
     # --- Sessions ---
     @abstractmethod
     def delete_session(self, session_id: str) -> bool:
@@ -327,6 +335,21 @@ class AsyncBaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.culture_table_name = culture_table or "agno_culture"
+
+    @abstractmethod
+    async def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in this database.
+
+        Default implementation returns True if the table name is configured.
+        Subclasses should override this to perform actual existence checks.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists, False otherwise
+        """
+        raise NotImplementedError
 
     # --- Sessions ---
     @abstractmethod

@@ -2,8 +2,9 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-from db import db
+from db import demo_db
 
 finance_agent = Agent(
     name="Finance Agent",
@@ -45,7 +46,20 @@ finance_agent = Agent(
     add_datetime_to_context=True,
     enable_agentic_memory=True,
     markdown=True,
-    db=db,
+    db=demo_db,
+)
+
+reasoning_finance_agent = Agent(
+    name="Reasoning Finance Agent",
+    model=Claude(id="claude-sonnet-4-5"),
+    tools=[YFinanceTools(), ReasoningTools()],
+    description=finance_agent.description,
+    instructions=finance_agent.instructions,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
+    enable_agentic_memory=True,
+    markdown=True,
+    db=demo_db,
 )
 
 # ************* Demo Scenarios (concise) *************

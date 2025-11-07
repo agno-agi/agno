@@ -5,21 +5,20 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.vectordb.pgvector import PgVector, SearchType
-from db import db, db_url
+from db import db_url, demo_db
 
 # ============================================================================
 # Setup knowledge base for storing Agno documentation
 # ============================================================================
 knowledge = Knowledge(
-    name="Agno Knowledge",
-    description="A knowledge base containing Agno documentation and other relevant information",
+    name="Agno Documentation",
     vector_db=PgVector(
         db_url=db_url,
-        table_name="agno_knowledge",
+        table_name="agno_docs",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
-    contents_db=db,
+    contents_db=demo_db,
 )
 
 # ============================================================================
@@ -85,7 +84,7 @@ agno_knowledge_agent = Agent(
     enable_agentic_memory=True,
     num_history_runs=5,
     markdown=True,
-    db=db,
+    db=demo_db,
 )
 
 if __name__ == "__main__":

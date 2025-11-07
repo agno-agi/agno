@@ -1,9 +1,12 @@
 from agno.agent import Agent
+from agno.run import RunContext
 
 
-def get_instructions(session_state):
-    if session_state and session_state.get("current_user_id"):
-        return f"Make the story about {session_state.get('current_user_id')}."
+def get_instructions(run_context: RunContext):
+    if run_context.session_state and run_context.session_state.get("current_user_id"):
+        return (
+            f"Make the story about {run_context.session_state.get('current_user_id')}."
+        )
     return "Make the story about the user."
 
 

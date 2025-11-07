@@ -83,6 +83,10 @@ class GcsJsonDb(BaseDb):
         self.client = gcs.Client(project=project, credentials=credentials)
         self.bucket = self.client.bucket(self.bucket_name)
 
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
+
     def _get_blob_name(self, filename: str) -> str:
         """Get the full blob name including prefix for a given filename."""
         return f"{self.prefix}{filename}.json"
@@ -218,10 +222,6 @@ class GcsJsonDb(BaseDb):
             for session_data in sessions:
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
-
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
                         continue
 
                     if not deserialize:

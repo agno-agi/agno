@@ -44,6 +44,7 @@ class DatabaseConfig(BaseModel, Generic[DomainConfigType]):
 
     db_id: str
     domain_config: Optional[DomainConfigType] = None
+    tables: Optional[List[str]] = None
 
 
 class EvalsConfig(EvalsDomainConfig):
