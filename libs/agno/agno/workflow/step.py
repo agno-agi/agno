@@ -11,9 +11,10 @@ from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
 from agno.run import RunContext
-from agno.run.agent import RunOutput, RunCompletedEvent
+from agno.run.agent import RunCompletedEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
-from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent, TeamRunOutput
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
