@@ -1283,7 +1283,7 @@ class Workflow:
                         session_id=session.session_id,
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
-                        session_state=run_context.session_state,
+                        run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
@@ -1468,7 +1468,7 @@ class Workflow:
                         stream_events=stream_events,
                         stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
-                        session_state=run_context.session_state,
+                        run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
                         workflow_session=session,
@@ -1748,15 +1748,15 @@ class Workflow:
         user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: RunContext,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=session_state
+        workflow_session, run_context.session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
         workflow_run_response.status = RunStatus.running
@@ -1830,7 +1830,7 @@ class Workflow:
                         session_id=session_id,
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
-                        session_state=session_state,
+                        run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
                         workflow_session=workflow_session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
@@ -1923,7 +1923,7 @@ class Workflow:
         user_id: Optional[str],
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: RunContext,
         stream_events: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
@@ -1932,8 +1932,8 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=session_state
+        workflow_session, run_context.session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
         workflow_run_response.status = RunStatus.running
@@ -2028,7 +2028,7 @@ class Workflow:
                         stream_events=stream_events,
                         stream_executor_events=self.stream_executor_events,
                         workflow_run_response=workflow_run_response,
-                        session_state=session_state,
+                        run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
                         workflow_session=workflow_session,
@@ -2330,6 +2330,7 @@ class Workflow:
                         user_id=user_id,
                         execution_input=inputs,
                         workflow_run_response=workflow_run_response,
+                        run_context=run_context,
                         session_state=session_state,
                         **kwargs,
                     )
@@ -3382,14 +3383,6 @@ class Workflow:
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-        )
-
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
         # Use simple defaults
@@ -3421,6 +3414,14 @@ class Workflow:
         )
 
         self.update_agents_and_teams_session_info()
+
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+        )
 
         # Execute workflow agent if configured
         if self.agent is not None:
@@ -3640,6 +3641,7 @@ class Workflow:
                 websocket=websocket,
                 files=files,
                 session_state=session_state,
+                run_context=run_context,
                 **kwargs,
             )
         else:
@@ -3651,6 +3653,7 @@ class Workflow:
                 websocket=websocket,
                 files=files,
                 session_state=session_state,
+                run_context=run_context,
                 **kwargs,
             )
 
