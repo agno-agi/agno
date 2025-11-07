@@ -600,7 +600,7 @@ class WorkflowRunOutput:
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         if self.events is not None:
-            _dict["events"] = [e.to_dict() for e in self.events if hasattr(e, "to_dict")]
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         return _dict
 

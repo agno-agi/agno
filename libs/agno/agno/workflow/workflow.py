@@ -51,6 +51,7 @@ from agno.run.workflow import (
     WorkflowStartedEvent,
 )
 from agno.session.workflow import WorkflowSession
+from agno.run.base import BaseRunOutputEvent
 from agno.team.team import Team
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
@@ -996,7 +997,8 @@ class Workflow:
             if workflow_run_response.events is None:
                 workflow_run_response.events = []
 
-            workflow_run_response.events.append(event)
+            if isinstance(event, BaseRunOutputEvent):
+                workflow_run_response.events.append(event)
 
         # Broadcast to WebSocket if available (async context only)
         self._broadcast_to_websocket(event, websocket_handler)
