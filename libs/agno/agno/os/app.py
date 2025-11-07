@@ -238,10 +238,10 @@ class AgentOS:
         """Re-provision all routes for the AgentOS."""
         updated_routers = [
             get_session_router(dbs=self.dbs),
-            get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
         ]
 
         # Clear all previously existing routes
@@ -258,9 +258,13 @@ class AgentOS:
 
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
+        # Add the home router if MCP server is not enabled
+        if not self.enable_mcp_server:
+            self._add_router(app, get_home_router(self))
+
+        self._add_router(app, get_health_router())
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
-        self._add_router(app, get_health_router())
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -275,10 +279,6 @@ class AgentOS:
             a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
-
-        # Add the home router if MCP server is not enabled
-        if not self.enable_mcp_server:
-            self._add_router(app, get_home_router(self))
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
