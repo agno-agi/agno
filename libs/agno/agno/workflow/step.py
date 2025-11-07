@@ -470,12 +470,9 @@ class Step:
                         try:
                             iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                             for event in iterator:  # type: ignore
-                                if (
-                                    hasattr(event, "content")
-                                    and event.content is not None
-                                    and isinstance(event.content, str)
-                                ):
-                                    content += event.content
+                                if isinstance(event, (BaseRunOutputEvent)):
+                                    if isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        content += event.content if event.content is not None else ""
                                 else:
                                     content += str(event)
                                 if isinstance(event, StepOutput):
@@ -877,12 +874,9 @@ class Step:
                             session_state_copy,  # type: ignore[arg-type]
                         )  # type: ignore
                         async for event in iterator:  # type: ignore
-                            if (
-                                hasattr(event, "content")
-                                and event.content is not None
-                                and isinstance(event.content, str)
-                            ):
-                                content += event.content
+                            if isinstance(event, (BaseRunOutputEvent)):
+                                if isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    content += event.content if event.content is not None else ""
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
@@ -910,12 +904,9 @@ class Step:
                         # It's a regular generator function - iterate over it
                         iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
                         for event in iterator:  # type: ignore
-                            if (
-                                hasattr(event, "content")
-                                and event.content is not None
-                                and isinstance(event.content, str)
-                            ):
-                                content += event.content
+                            if isinstance(event, (BaseRunOutputEvent)):
+                                if isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    content += event.content if event.content is not None else ""
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
