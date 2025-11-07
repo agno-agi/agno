@@ -974,6 +974,7 @@ class Workflow:
         websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
+        from agno.run.base import BaseRunOutputEvent
         from agno.run.agent import RunOutput
         from agno.run.team import TeamRunOutput
 
@@ -993,10 +994,10 @@ class Workflow:
                             return event
 
             # Store the event
-            if workflow_run_response.events is None:
-                workflow_run_response.events = []
-
-            workflow_run_response.events.append(event)
+            if isinstance(event, BaseRunOutputEvent):
+                if workflow_run_response.events is None:
+                    workflow_run_response.events = []
+                workflow_run_response.events.append(event)
 
         # Broadcast to WebSocket if available (async context only)
         self._broadcast_to_websocket(event, websocket_handler)
