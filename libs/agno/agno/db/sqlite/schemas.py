@@ -93,6 +93,42 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+TRACE_TABLE_SCHEMA = {
+    "trace_id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    "status": {"type": String, "nullable": False, "index": True},
+    "start_time_ns": {"type": BigInteger, "nullable": False, "index": True},
+    "end_time_ns": {"type": BigInteger, "nullable": False},
+    "duration_ms": {"type": BigInteger, "nullable": False},
+    "run_id": {"type": String, "nullable": True, "index": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
+SPAN_TABLE_SCHEMA = {
+    "span_id": {"type": String, "primary_key": True, "nullable": False},
+    "trace_id": {
+        "type": String,
+        "nullable": False,
+        "index": True,
+        "foreign_key": "agno_traces.trace_id",  # Foreign key to traces table
+    },
+    "parent_span_id": {"type": String, "nullable": True, "index": True},
+    "name": {"type": String, "nullable": False},
+    "span_kind": {"type": String, "nullable": False},
+    "status_code": {"type": String, "nullable": False},
+    "status_message": {"type": String, "nullable": True},
+    "start_time_ns": {"type": BigInteger, "nullable": False, "index": True},
+    "end_time_ns": {"type": BigInteger, "nullable": False},
+    "duration_ms": {"type": BigInteger, "nullable": False},
+    "attributes": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False, "index": True},
@@ -123,6 +159,8 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
+        "traces": TRACE_TABLE_SCHEMA,
+        "spans": SPAN_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
