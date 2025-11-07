@@ -500,7 +500,7 @@ class Gemini(Model):
                         f"[SEND_GEMINI] tool_calls[{idx}]: tool_call_id={tool_call_id}, "
                         f"tool_name={tool_name}, content_len={tc_content_len}"
                     )
-                    
+
                     message_parts.append(
                         Part.from_function_response(
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}

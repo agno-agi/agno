@@ -7640,7 +7640,11 @@ class Agent:
 
             if len(history) > 0:
                 # compress tool calls from history if needed
-                if self.compress_tool_calls and self.context_manager.should_compress(history):
+                if (
+                    self.compress_tool_calls
+                    and self.context_manager is not None
+                    and self.context_manager.should_compress(history)
+                ):
                     # Compress the original history messages
                     history = self.context_manager.compress_tool_results(
                         messages=history,

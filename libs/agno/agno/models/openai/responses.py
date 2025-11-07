@@ -795,7 +795,11 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str], context_manager=None
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        tool_call_ids: List[str],
+        context_manager=None,
     ) -> None:
         """
         Handle the results of function calls.

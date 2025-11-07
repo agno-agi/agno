@@ -1,15 +1,15 @@
-"""Advanced context compression with custom compression prompt.
-
+"""
 This example shows how to customize the compression prompt for domain-specific
 use cases. Here we optimize compression for competitive intelligence gathering.
 
-Run: `python cookbook/agents/context_compression/02_custom_compression_prompt.py`
+Run: `python cookbook/agents/context_management/tool_call_compression.py`
 """
 
 from agno.agent import Agent
 from agno.context.manager import ContextManager
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
+from agno.models.aws import AwsBedrock
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.log import log_info
@@ -54,19 +54,19 @@ context_manager = ContextManager(
 # Create agent with custom context manager
 agent = Agent(
     name="Competitive Intelligence Agent",
-    # model=OpenAIChat(id="gpt-4o"),
     model=Gemini(id="gemini-2.5-pro", vertexai=True),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     context_manager=context_manager,
     compress_tool_calls=True,
     markdown=True,
-    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent8.db"),
+    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent10.db"),
     session_id="competitive_intelligence_agent",
     add_history_to_context=True,
     num_history_runs=6,
-    instructions="Use the search tools and alwayd for the latest information and data.", 
+    instructions="Use the search tools and alwayd for the latest information and data.",
 )
+
 
 def print_compression_stats(run_response):
     """Print compression statistics from the run."""
@@ -87,9 +87,10 @@ def print_compression_stats(run_response):
                 compressed_size += len(msg.compressed_content)
 
     if compressed_tools > 0:
-        ratio = int((1 - compressed_size / original_size) * 100) if original_size > 0 else 0
+        ratio = (
+            int((1 - compressed_size / original_size) * 100) if original_size > 0 else 0
+        )
         log_info("=" * 80)
-        log_info(f"🗜️  COMPRESSION STATS:")
         log_info(f"   Total tool calls: {total_tools}")
         log_info(f"   Compressed: {compressed_tools}")
         log_info(f"   Original size: {original_size:,} bytes")
@@ -97,7 +98,10 @@ def print_compression_stats(run_response):
         log_info(f"   Space saved: {ratio}% reduction")
         log_info("=" * 80)
     else:
-        log_info(f"ℹ️  No compression triggered yet ({total_tools} tool calls, threshold: {context_manager.compress_tool_calls_limit})")
+        log_info(
+            f"ℹ️  No compression triggered yet ({total_tools} tool calls, threshold: {context_manager.compress_tool_calls_limit})"
+        )
+
 
 response = agent.run(
     """

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List, Optional
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.utils.log import log_info
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
@@ -59,47 +59,33 @@ class ContextManager:
     compress_tool_calls_limit: int = 3
     tool_compression_instructions: Optional[str] = None
 
-    def _get_agent_details(self) -> Optional[str]:
-        """Extract agent context for compression prompt."""
+    def _get_additional_details(self) -> Optional[str]:
+        """Extract additional details for compression prompt."""
         if not self.agent and not self.team:
             return None
 
-        context_parts = []
+        additional_context = ""
 
-        # Extract from agent
         if self.agent:
             if self.agent.name:
-                context_parts.append(f"Name: {self.agent.name}")
+                additional_context += f"Agent Name: {self.agent.name}\n"
             if self.agent.description:
-                context_parts.append(f"Description: {self.agent.description}")
+                additional_context += f"Description: {self.agent.description}\n"
             if self.agent.instructions:
-                context_parts.append(f"Instructions: {self.agent.instructions}")
+                additional_context += f"Instructions: {self.agent.instructions}\n"
 
-        # Extract from team (for future team support)
-        elif self.team:
-            if self.team.name:
-                context_parts.append(f"Team: {self.team.name}")
-            if self.team.description:
-                context_parts.append(f"Description: {self.team.description}")
-
-        return "\n".join(context_parts) if context_parts else None
+        return additional_context if additional_context else None
 
     def should_compress(self, messages: List[Message]) -> bool:
-        uncompressed_count = len([m for m in messages if m.role == "tool" and m.compressed_content is None])
+        uncompressed_tools_count = len([m for m in messages if m.role == "tool" and m.compressed_content is None])
 
-        # Tool call count-based check
-        should_compress = uncompressed_count > self.compress_tool_calls_limit
-        return should_compress
+        return uncompressed_tools_count > self.compress_tool_calls_limit
 
     def _compress_tool_result(self, tool_results: List[Message]) -> Optional[str]:
         if not tool_results:
             return None
 
-        # Build tool content
-        tool_content = "\n---\n".join(
-            f"Tool: {msg.tool_name or 'unknown'}\n{msg.content}"
-            for msg in tool_results
-        )
+        tool_content = "\n---\n".join(f"Tool: {msg.tool_name or 'unknown'}\n{msg.content}" for msg in tool_results)
 
         self.model = get_model(self.model)
         if not self.model:
@@ -107,42 +93,36 @@ class ContextManager:
 
         compression_prompt = self.tool_compression_instructions or DEFAULT_COMPRESSION_PROMPT
 
-        # Build user message with agent context (if available)
-        user_message_parts = []
+        compression_message = ""
 
-        agent_context = self._get_agent_details()
+        agent_context = self._get_additional_details()
         if agent_context:
-            user_message_parts.append("AGENT CONTEXT:")
-            user_message_parts.append(agent_context)
-            user_message_parts.append("")  # Blank line
+            compression_message += "Additional Details: " + agent_context + "\n"
 
-        user_message_parts.append("TOOL OUTPUT TO COMPRESS:")
-        user_message_parts.append(tool_content)
-
-        user_message = "\n".join(user_message_parts)
+        compression_message += "Tool Results to Compress: " + tool_content + "\n"
 
         try:
             response = self.model.response(
                 messages=[
                     Message(role="system", content=compression_prompt),
-                    Message(role="user", content=user_message),
+                    Message(role="user", content=compression_message),
                 ]
             )
             return response.content
-        except Exception:
+        except Exception as e:
+            log_warning(f"Error compressing tool results: {e}")
             return None
 
     def compress_tool_results(self, messages: List[Message]) -> List[Message]:
         """Compress all uncompressed tool results."""
-        uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
-        if not uncompressed:
+        uncompressed_tools = [m for m in messages if m.role == "tool" and m.compressed_content is None]
+        if not uncompressed_tools:
             return messages
 
-        for tool_msg in uncompressed:
+        for tool_msg in uncompressed_tools:
             compressed_content = self._compress_tool_result([tool_msg])
 
             if compressed_content:
-                # Store compressed content in separate field (keeps original intact)
                 tool_msg.compressed_content = compressed_content
 
         return messages

@@ -437,7 +437,7 @@ class Model(ABC):
                     messages=messages,
                     function_call_results=function_call_results,
                     context_manager=context_manager,
-                    **model_response.extra or {}
+                    **model_response.extra or {},
                 )
 
                 # Compress tool results
@@ -610,7 +610,7 @@ class Model(ABC):
                     messages=messages,
                     function_call_results=function_call_results,
                     context_manager=context_manager,
-                    **model_response.extra or {}
+                    **model_response.extra or {},
                 )
 
                 # Compress tool results
@@ -975,20 +975,18 @@ class Model(ABC):
                         messages=messages,
                         function_call_results=function_call_results,
                         context_manager=context_manager,
-                        **stream_data.extra
+                        **stream_data.extra,
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
                         context_manager=context_manager,
-                        **model_response.extra
+                        **model_response.extra,
                     )
                 else:
                     self.format_function_call_results(
-                        messages=messages,
-                        function_call_results=function_call_results,
-                        context_manager=context_manager
+                        messages=messages, function_call_results=function_call_results, context_manager=context_manager
                     )
 
                 # Compress tool results
@@ -1175,20 +1173,18 @@ class Model(ABC):
                         messages=messages,
                         function_call_results=function_call_results,
                         context_manager=context_manager,
-                        **stream_data.extra
+                        **stream_data.extra,
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
                         context_manager=context_manager,
-                        **model_response.extra or {}
+                        **model_response.extra or {},
                     )
                 else:
                     self.format_function_call_results(
-                        messages=messages,
-                        function_call_results=function_call_results,
-                        context_manager=context_manager
+                        messages=messages, function_call_results=function_call_results, context_manager=context_manager
                     )
 
                 # Handle function call media
@@ -2139,7 +2135,6 @@ class Model(ABC):
         """
         if len(function_call_results) > 0:
             for result in function_call_results:
-                # Only use compressed content if context_manager is active (compress_tool_calls=True)
                 if context_manager is not None and result.compressed_content is not None:
                     # Use compressed content without mutating original
                     result_copy = result.model_copy()
