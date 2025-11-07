@@ -11,8 +11,9 @@ from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
 from agno.run import RunContext
-from agno.run.agent import RunOutput
-from agno.run.team import TeamRunOutput
+from agno.run.agent import RunOutput, RunCompletedEvent
+from agno.run.base import BaseRunOutputEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent, TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -248,12 +249,11 @@ class Step:
                                 step_input,
                                 session_state_copy,  # type: ignore[arg-type]
                             ):  # type: ignore
-                                if (
-                                    hasattr(chunk, "content")
-                                    and chunk.content is not None
-                                    and isinstance(chunk.content, str)
-                                ):
-                                    content += chunk.content
+                                if isinstance(chunk, (BaseRunOutputEvent)):
+                                    if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        content += chunk.content if chunk.content is not None else ""
+                                    else:
+                                        content += str(chunk)
                                 else:
                                     content += str(chunk)
                                 if isinstance(chunk, StepOutput):
@@ -675,12 +675,11 @@ class Step:
                                     session_state_copy,  # type: ignore[arg-type]
                                 )  # type: ignore
                                 for chunk in iterator:  # type: ignore
-                                    if (
-                                        hasattr(chunk, "content")
-                                        and chunk.content is not None
-                                        and isinstance(chunk.content, str)
-                                    ):
-                                        content += chunk.content
+                                    if isinstance(chunk, (BaseRunOutputEvent)):
+                                        if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                            content += chunk.content if chunk.content is not None else ""
+                                        else:
+                                            content += str(chunk)
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
@@ -693,12 +692,9 @@ class Step:
                                         session_state_copy,  # type: ignore[arg-type]
                                     )  # type: ignore
                                     async for chunk in iterator:  # type: ignore
-                                        if (
-                                            hasattr(chunk, "content")
-                                            and chunk.content is not None
-                                            and isinstance(chunk.content, str)
-                                        ):
-                                            content += chunk.content
+                                        if isinstance(chunk, (BaseRunOutputEvent)):
+                                            if isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                                content += chunk.content if chunk.content is not None else ""
                                         else:
                                             content += str(chunk)
                                         if isinstance(chunk, StepOutput):
