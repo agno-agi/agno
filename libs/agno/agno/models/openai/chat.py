@@ -65,6 +65,7 @@ class OpenAIChat(Model):
     user: Optional[str] = None
     top_p: Optional[float] = None
     service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -215,7 +216,7 @@ class OpenAIChat(Model):
                     "json_schema": {
                         "name": response_format.__name__,
                         "schema": schema,
-                        "strict": True,
+                        "strict": self.strict_output,
                     },
                 }
             else:

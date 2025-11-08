@@ -99,6 +99,33 @@ class AsyncMongoDb(AsyncBaseDb):
         self._database: Optional[AsyncIOMotorDatabase] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
+    async def table_exists(self, table_name: str) -> bool:
+        """Check if a collection with the given name exists in the MongoDB database.
+
+        Args:
+            table_name: Name of the collection to check
+
+        Returns:
+            bool: True if the collection exists in the database, False otherwise
+        """
+        collection_names = await self.database.list_collection_names()
+        return table_name in collection_names
+
+    async def _create_all_tables(self):
+        """Create all configured MongoDB collections if they don't exist."""
+        collections_to_create = [
+            ("sessions", self.session_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("culture", self.culture_table_name),
+        ]
+
+        for collection_type, collection_name in collections_to_create:
+            if collection_name and not await self.table_exists(collection_name):
+                await self._get_collection(collection_type, create_collection_if_not_found=True)
+
     def _ensure_client(self) -> AsyncIOMotorClient:
         """
         Ensure the Motor client is valid for the current event loop.

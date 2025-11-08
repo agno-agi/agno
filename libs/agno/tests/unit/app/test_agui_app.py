@@ -1266,3 +1266,95 @@ async def test_message_id_regression_prevention():
     assert len(all_referenced_ids) == 3, (
         f"Should have exactly 3 unique message IDs in the conversation. Found: {sorted(all_referenced_ids)}"
     )
+
+
+def test_validate_agui_state_with_valid_dict():
+    """Test validate_agui_state with valid dict."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    result = validate_agui_state({"user_name": "Alice", "counter": 5}, "test_thread")
+    assert result == {"user_name": "Alice", "counter": 5}
+
+
+def test_validate_agui_state_with_none():
+    """Test validate_agui_state with None state."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    result = validate_agui_state(None, "test_thread")
+    assert result is None
+
+
+def test_validate_agui_state_with_invalid_type():
+    """Test validate_agui_state with non-dict type returns None."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    # String state should be rejected
+    result = validate_agui_state("invalid_string", "test_thread")
+    assert result is None
+    # List state should be rejected
+    result = validate_agui_state([1, 2, 3], "test_thread")
+    assert result is None
+    # Number state should be rejected
+    result = validate_agui_state(42, "test_thread")
+    assert result is None
+
+
+def test_validate_agui_state_with_basemodel():
+    """Test validate_agui_state with Pydantic BaseModel."""
+    from pydantic import BaseModel
+
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    class TestModel(BaseModel):
+        name: str
+        count: int
+
+    model = TestModel(name="test", count=10)
+    result = validate_agui_state(model, "test_thread")
+    assert result == {"name": "test", "count": 10}
+
+
+def test_validate_agui_state_with_dataclass():
+    """Test validate_agui_state with dataclass."""
+    from dataclasses import dataclass
+
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    @dataclass
+    class TestDataclass:
+        name: str
+        count: int
+
+    data = TestDataclass(name="test", count=10)
+    result = validate_agui_state(data, "test_thread")
+    assert result == {"name": "test", "count": 10}
+
+
+def test_validate_agui_state_with_to_dict_method():
+    """Test validate_agui_state with object having to_dict method."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    class TestClass:
+        def __init__(self, name: str, count: int):
+            self.name = name
+            self.count = count
+
+        def to_dict(self):
+            return {"name": self.name, "count": self.count}
+
+    obj = TestClass(name="test", count=10)
+    result = validate_agui_state(obj, "test_thread")
+    assert result == {"name": "test", "count": 10}
+
+
+def test_validate_agui_state_with_invalid_to_dict():
+    """Test validate_agui_state with to_dict method returning non-dict."""
+    from agno.os.interfaces.agui.utils import validate_agui_state
+
+    class TestClass:
+        def to_dict(self):
+            return "not_a_dict"
+
+    obj = TestClass()
+    result = validate_agui_state(obj, "test_thread")
+    assert result is None
