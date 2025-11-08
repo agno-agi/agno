@@ -95,10 +95,10 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         for session in sessions:
             if session.get("user_id"):
                 all_user_ids.add(session["user_id"])
-            runs = session.get("runs", []) or []
+            runs = session.get("runs", [])
             metrics[runs_count_key] += len(runs)
 
-            if runs := (session.get("runs", []) or []):
+            if runs := session.get("runs", []):
                 if isinstance(runs, str):
                     runs = json.loads(runs)
                 for run in runs:
