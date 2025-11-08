@@ -1455,7 +1455,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: bool = False,
+        yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
@@ -1698,7 +1698,7 @@ class Team:
             if stream_events:
                 yield completed_event
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Team Telemetry
@@ -1762,6 +1762,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1775,7 +1776,8 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -1788,6 +1790,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1801,7 +1804,8 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team and return the response."""
@@ -1860,7 +1864,7 @@ class Team:
         dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -1945,6 +1949,8 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             # Initialize the current run
 
@@ -1961,7 +1967,7 @@ class Team:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -2267,7 +2273,7 @@ class Team:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         stream_intermediate_steps: bool = False,
-        yield_run_response: bool = False,
+        yield_run_output: bool = False,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
@@ -2542,7 +2548,7 @@ class Team:
             if stream_events:
                 yield completed_event
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Team Telemetry
@@ -2589,6 +2595,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2615,6 +2622,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2628,7 +2636,8 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -2641,6 +2650,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2654,7 +2664,8 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
@@ -2744,7 +2755,7 @@ class Team:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -2780,6 +2791,8 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             # Run the team
             try:
@@ -2795,7 +2808,7 @@ class Team:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -6985,7 +6998,7 @@ class Team:
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
-                    yield_run_response=True,
+                    yield_run_output=True,
                 )
                 member_agent_run_response = None
                 for member_agent_run_output_event in member_agent_run_response_stream:
@@ -7115,7 +7128,7 @@ class Team:
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
-                    yield_run_response=True,
+                    yield_run_output=True,
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
@@ -7231,7 +7244,7 @@ class Team:
                         add_dependencies_to_context=add_dependencies_to_context,
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
-                        yield_run_response=True,
+                        yield_run_output=True,
                     )
                     member_agent_run_response = None
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
@@ -7347,7 +7360,7 @@ class Team:
                         add_dependencies_to_context=add_dependencies_to_context,
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
-                        yield_run_response=True,
+                        yield_run_output=True,
                     )
                     member_agent_run_response = None
                     try:

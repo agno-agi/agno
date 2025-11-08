@@ -53,6 +53,7 @@ class OpenAIResponses(Model):
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -229,7 +230,7 @@ class OpenAIResponses(Model):
                     "type": "json_schema",
                     "name": response_format.__name__,
                     "schema": schema,
-                    "strict": True,
+                    "strict": self.strict_output,
                 }
             else:
                 # JSON mode
