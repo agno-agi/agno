@@ -1762,6 +1762,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1789,6 +1790,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1862,7 +1864,7 @@ class Team:
         dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -2593,6 +2595,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2619,6 +2622,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2646,6 +2650,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2750,7 +2755,7 @@ class Team:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
