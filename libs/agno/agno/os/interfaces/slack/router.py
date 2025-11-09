@@ -24,7 +24,11 @@ class SlackChallengeResponse(BaseModel):
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None, workflow: Optional[Workflow] = None
+    router: APIRouter,
+    agent: Optional[Agent] = None,
+    team: Optional[Team] = None,
+    workflow: Optional[Workflow] = None,
+    mention_only: bool = True,
 ) -> APIRouter:
     # Determine entity type for documentation
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
@@ -34,7 +38,7 @@ def attach_routes(
         operation_id=f"slack_events_{entity_type}",
         name="slack_events",
         description="Process incoming Slack events",
-        response_model=SlackEventResponse,
+        response_model=None,
         response_model_exclude_none=True,
         responses={
             200: {"description": "Event processed successfully"},
@@ -71,11 +75,13 @@ def attach_routes(
         return SlackEventResponse(status="ok")
 
     async def _process_slack_event(event: dict):
-        if event.get("type") == "message":
+        # Handle both app_mention and message events
+        if event.get("type") in ("app_mention", "message"):
             user = None
             message_text = event.get("text", "")
             channel_id = event.get("channel", "")
             user = event.get("user")
+            channel_type = event.get("channel_type", "")
             if event.get("thread_ts"):
                 ts = event.get("thread_ts", "")
             else:
@@ -83,6 +89,10 @@ def attach_routes(
 
             # Use the timestamp as the session id, so that each thread is a separate session
             session_id = ts
+
+            # prevents duplicate responses when both app_mention and message.channels are subscribed
+            if mention_only and event.get("type") == "message" and channel_type in ("channel", "group"):
+                return
 
             if agent:
                 response = await agent.arun(message_text, user_id=user if user else None, session_id=session_id)

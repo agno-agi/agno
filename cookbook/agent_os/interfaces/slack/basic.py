@@ -18,7 +18,9 @@ basic_agent = Agent(
 # Setup our AgentOS app
 agent_os = AgentOS(
     agents=[basic_agent],
-    interfaces=[Slack(agent=basic_agent)],
+    interfaces=[
+        Slack(agent=basic_agent, mention_only=True)  # bot replies only when mentioned
+    ],
 )
 app = agent_os.get_app()
 

@@ -21,12 +21,14 @@ class Slack(BaseInterface):
         workflow: Optional[Workflow] = None,
         prefix: str = "/slack",
         tags: Optional[List[str]] = None,
+        mention_only: bool = True,
     ):
         self.agent = agent
         self.team = team
         self.workflow = workflow
         self.prefix = prefix
         self.tags = tags or ["Slack"]
+        self.mention_only = mention_only
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team or workflow")
@@ -34,6 +36,12 @@ class Slack(BaseInterface):
     def get_router(self) -> APIRouter:
         self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
 
-        self.router = attach_routes(router=self.router, agent=self.agent, team=self.team, workflow=self.workflow)
+        self.router = attach_routes(
+            router=self.router,
+            agent=self.agent,
+            team=self.team,
+            workflow=self.workflow,
+            mention_only=self.mention_only,
+        )
 
         return self.router
