@@ -8,8 +8,6 @@ try:
 except ImportError:
     raise ImportError("`boto3` not installed. Please install it using `pip install boto3`")
 
-from agno.memory.v2.db.base import MemoryDb
-from agno.memory.v2.db.schema import MemoryRow
 from agno.utils.log import log_debug, log_info, logger
 
 

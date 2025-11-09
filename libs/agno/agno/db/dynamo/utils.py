@@ -52,6 +52,9 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
             data[key] = float(value["N"]) if "." in value["N"] else int(value["N"])
         elif "BOOL" in value:
             data[key] = value["BOOL"]
+        elif "NULL" in value:
+            # Handle DynamoDB NULL type - set as Python None
+            data[key] = None
         elif "SS" in value:
             data[key] = value["SS"]
         elif "NS" in value:
@@ -297,7 +300,22 @@ def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
                     except ValueError:
                         deserialized[field] = datetime.fromtimestamp(float(deserialized[field]), tz=timezone.utc)
 
-        return Session.from_dict(deserialized)  # type: ignore
+        # Determine session type and call the appropriate from_dict() method
+        # Session is a Union type, not a class - must call specific class method
+        session_type = deserialized.get("session_type", "agent")
+        
+        if session_type == "agent":
+            from agno.session.agent import AgentSession
+            return AgentSession.from_dict(deserialized)
+        elif session_type == "team":
+            from agno.session.team import TeamSession
+            return TeamSession.from_dict(deserialized)
+        elif session_type == "workflow":
+            from agno.session.workflow import WorkflowSession
+            return WorkflowSession.from_dict(deserialized)
+        else:
+            log_error(f"Unknown session_type: {session_type}")
+            return None
 
     except Exception as e:
         log_error(f"Failed to deserialize session: {e}")

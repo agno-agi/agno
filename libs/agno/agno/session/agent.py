@@ -58,7 +58,7 @@ class AgentSession:
 
         runs = data.get("runs")
         serialized_runs: List[RunOutput] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs is not None and isinstance(runs, list) and len(runs) > 0 and isinstance(runs[0], dict):
             serialized_runs = [RunOutput.from_dict(run) for run in runs]
 
         summary = data.get("summary")
