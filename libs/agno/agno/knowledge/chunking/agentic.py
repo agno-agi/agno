@@ -20,13 +20,12 @@ class AgenticChunking(ChunkingStrategy):
             except Exception:
                 raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
             model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
-
-        self.max_chunk_size = max_chunk_size
+        self.chunk_size = max_chunk_size
         self.model = model
 
     def chunk(self, document: Document) -> List[Document]:
         """Split text into chunks using LLM to determine natural breakpoints based on context"""
-        if len(document.content) <= self.max_chunk_size:
+        if len(document.content) <= self.chunk_size:
             return [document]
 
         chunks: List[Document] = []
@@ -35,22 +34,22 @@ class AgenticChunking(ChunkingStrategy):
         chunk_number = 1
 
         while remaining_text:
-            # Ask model to find a good breakpoint within max_chunk_size
-            prompt = f"""Analyze this text and determine a natural breakpoint within the first {self.max_chunk_size} characters.
+            # Ask model to find a good breakpoint within chunk_size
+            prompt = f"""Analyze this text and determine a natural breakpoint within the first {self.chunk_size} characters.
             Consider semantic completeness, paragraph boundaries, and topic transitions.
             Return only the character position number of where to break the text:
 
-            {remaining_text[: self.max_chunk_size]}"""
+            {remaining_text[: self.chunk_size]}"""
 
             try:
                 response = self.model.response([Message(role="user", content=prompt)])
                 if response and response.content:
-                    break_point = min(int(response.content.strip()), self.max_chunk_size)
+                    break_point = min(int(response.content.strip()), self.chunk_size)
                 else:
-                    break_point = self.max_chunk_size
+                    break_point = self.chunk_size
             except Exception:
                 # Fallback to max size if model fails
-                break_point = self.max_chunk_size
+                break_point = self.chunk_size
 
             # Extract chunk and update remaining text
             chunk = remaining_text[:break_point].strip()
