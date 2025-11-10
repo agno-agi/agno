@@ -1,7 +1,7 @@
 """
 Example AgentOS app with a custom health endpoint.
 
-This example demonstrates the `health_endpoint` parameter which allows you to customize the health endpoint.
+This example demonstrates how to add a custom health endpoint to your AgentOS app.
 """
 
 from agno.agent import Agent
@@ -51,12 +51,7 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
 
-    With on_route_conflict="preserve_base_app":
-    - Your custom routes are preserved: http://localhost:7777/ and http://localhost:7777/health
-    - AgentOS routes are available at other paths: http://localhost:7777/sessions, etc.
-    - Conflicting AgentOS routes (GET / and GET /health) are skipped
-    - API docs: http://localhost:7777/docs
-
-    Try changing on_route_conflict="preserve_agentos" to see AgentOS routes override your custom ones. This is the default behavior.
+    You can test your custom health endpoint at: http://localhost:7777/health-check
+    While the AgentOS health endpoint is still available at: http://localhost:7777/health
     """
     agent_os.serve(app="custom_health_endpoint:app", reload=True)
