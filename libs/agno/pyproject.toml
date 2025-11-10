@@ -490,6 +490,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
+  "parallel.*",
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"
