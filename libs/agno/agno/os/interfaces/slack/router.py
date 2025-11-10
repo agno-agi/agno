@@ -105,11 +105,11 @@ def attach_routes(
         session_id = ts
 
         if agent:
-            response = await agent.arun(message_text, user_id=user if user else None, session_id=session_id)
+            response = await agent.arun(message_text, user_id=user, session_id=session_id)
         elif team:
-            response = await team.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+            response = await team.arun(message_text, user_id=user, session_id=session_id)  # type: ignore
         elif workflow:
-            response = await workflow.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+            response = await workflow.arun(message_text, user_id=user, session_id=session_id)  # type: ignore
 
         if response:
             if hasattr(response, "reasoning_content") and response.reasoning_content:
