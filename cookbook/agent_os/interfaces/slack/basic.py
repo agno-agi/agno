@@ -20,8 +20,9 @@ agent_os = AgentOS(
     agents=[basic_agent],
     interfaces=[
         Slack(
-            agent=basic_agent, reply_to_mentions_only=True
-        )  # bot replies only when mentioned
+            agent=basic_agent, 
+            reply_to_mentions_only=True, # The Agent will react only to messages mentioning it
+        ) 
     ],
 )
 app = agent_os.get_app()
