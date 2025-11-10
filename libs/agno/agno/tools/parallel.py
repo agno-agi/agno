@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
@@ -102,7 +102,7 @@ class ParallelTools(Toolkit):
             objective (Optional[str]): Natural-language description of what the web search is trying to find.
             search_queries (Optional[List[str]]): Traditional keyword queries with optional search operators.
             max_results (Optional[int]): Upper bound on results returned. Overrides constructor default.
-            max_chars_per_result (Optional[int]): Maximum total characters per URL for excerpt content. Overrides constructor default.
+            max_chars_per_result (Optional[int]): Upper bound on total characters per url for excerpts.
 
         Returns:
             str: A JSON formatted string containing the search results with URLs, titles, publish dates, and relevant excerpts.
@@ -164,34 +164,37 @@ class ParallelTools(Toolkit):
             search_result = self.parallel_client.beta.search(**search_params)
 
             # Use model_dump() if available, otherwise convert to dict
-            if hasattr(search_result, "model_dump"):
-                return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
-            else:
-                # Manually format the results
-                formatted_results: Dict[str, Any] = {
-                    "search_id": getattr(search_result, "search_id", ""),
-                    "results": [],
-                }
+            try:
+                if hasattr(search_result, "model_dump"):
+                    return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
+            except Exception:
+                pass
 
-                if hasattr(search_result, "results") and search_result.results:
-                    results_list: List[Dict[str, Any]] = []
-                    for result in search_result.results:
-                        formatted_result: Dict[str, Any] = {
-                            "title": getattr(result, "title", ""),
-                            "url": getattr(result, "url", ""),
-                            "publish_date": getattr(result, "publish_date", ""),
-                            "excerpt": getattr(result, "excerpt", ""),
-                        }
-                        results_list.append(formatted_result)
-                    formatted_results["results"] = results_list
+            # Manually format the results
+            formatted_results: Dict[str, Any] = {
+                "search_id": getattr(search_result, "search_id", ""),
+                "results": [],
+            }
 
-                if hasattr(search_result, "warnings"):
-                    formatted_results["warnings"] = search_result.warnings
+            if hasattr(search_result, "results") and search_result.results:
+                results_list: List[Dict[str, Any]] = []
+                for result in search_result.results:
+                    formatted_result: Dict[str, Any] = {
+                        "title": getattr(result, "title", ""),
+                        "url": getattr(result, "url", ""),
+                        "publish_date": getattr(result, "publish_date", ""),
+                        "excerpt": getattr(result, "excerpt", ""),
+                    }
+                    results_list.append(formatted_result)
+                formatted_results["results"] = results_list
 
-                if hasattr(search_result, "usage"):
-                    formatted_results["usage"] = search_result.usage
+            if hasattr(search_result, "warnings"):
+                formatted_results["warnings"] = search_result.warnings
 
-                return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            if hasattr(search_result, "usage"):
+                formatted_results["usage"] = search_result.usage
+
+            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
             log_error(f"Error searching Parallel for objective '{objective}': {e}")
@@ -202,8 +205,10 @@ class ParallelTools(Toolkit):
         urls: List[str],
         objective: Optional[str] = None,
         search_queries: Optional[List[str]] = None,
-        excerpts: Optional[Union[bool, Dict[str, Any]]] = True,
-        full_content: Optional[Union[bool, Dict[str, Any]]] = False,
+        excerpts: bool = True,
+        max_chars_per_excerpt: Optional[int] = None,
+        full_content: bool = False,
+        max_chars_for_full_content: Optional[int] = None,
     ) -> str:
         """Use this function to extract content from specific URLs using Parallel's Extract API.
 
@@ -211,8 +216,10 @@ class ParallelTools(Toolkit):
             urls (List[str]): List of public URLs to extract content from.
             objective (Optional[str]): Search focus to guide content extraction.
             search_queries (Optional[List[str]]): Keywords for targeting relevant content.
-            excerpts (Optional[Union[bool, Dict]]): Include relevant text snippets. Default is True. Can be a boolean or a dict with 'max_chars_per_result' key.
-            full_content (Optional[Union[bool, Dict]]): Include complete page text. Default is False. Can be a boolean or a dict with 'max_chars_per_result' key.
+            excerpts (bool): Include relevant text snippets.
+            max_chars_per_excerpt (Optional[int]): Upper bound on total characters per url. Only used when excerpts is True.
+            full_content (bool): Include complete page text.
+            max_chars_for_full_content (Optional[int]): Limit on characters per url. Only used when full_content is True.
 
         Returns:
             str: A JSON formatted string containing extracted content with titles, publish dates, excerpts and/or full content.
@@ -234,11 +241,15 @@ class ParallelTools(Toolkit):
                 extract_params["search_queries"] = search_queries
 
             # Add excerpts configuration
-            if excerpts is not None:
+            if excerpts and max_chars_per_excerpt is not None:
+                extract_params["excerpts"] = {"max_chars_per_result": max_chars_per_excerpt}
+            else:
                 extract_params["excerpts"] = excerpts
 
             # Add full_content configuration
-            if full_content is not None:
+            if full_content and max_chars_for_full_content is not None:
+                extract_params["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
+            else:
                 extract_params["full_content"] = full_content
 
             # Add fetch_policy from constructor defaults
@@ -256,44 +267,47 @@ class ParallelTools(Toolkit):
             extract_result = self.parallel_client.beta.extract(**extract_params)
 
             # Use model_dump() if available, otherwise convert to dict
-            if hasattr(extract_result, "model_dump"):
-                return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
-            else:
-                # Manually format the results
-                formatted_results: Dict[str, Any] = {
-                    "extract_id": getattr(extract_result, "extract_id", ""),
-                    "results": [],
-                    "errors": [],
-                }
+            try:
+                if hasattr(extract_result, "model_dump"):
+                    return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
+            except Exception:
+                pass
 
-                if hasattr(extract_result, "results") and extract_result.results:
-                    results_list: List[Dict[str, Any]] = []
-                    for result in extract_result.results:
-                        formatted_result: Dict[str, Any] = {
-                            "url": getattr(result, "url", ""),
-                            "title": getattr(result, "title", ""),
-                            "publish_date": getattr(result, "publish_date", ""),
-                        }
+            # Manually format the results
+            formatted_results: Dict[str, Any] = {
+                "extract_id": getattr(extract_result, "extract_id", ""),
+                "results": [],
+                "errors": [],
+            }
 
-                        if excerpts and hasattr(result, "excerpts"):
-                            formatted_result["excerpts"] = result.excerpts
+            if hasattr(extract_result, "results") and extract_result.results:
+                results_list: List[Dict[str, Any]] = []
+                for result in extract_result.results:
+                    formatted_result: Dict[str, Any] = {
+                        "url": getattr(result, "url", ""),
+                        "title": getattr(result, "title", ""),
+                        "publish_date": getattr(result, "publish_date", ""),
+                    }
 
-                        if full_content and hasattr(result, "full_content"):
-                            formatted_result["full_content"] = result.full_content
+                    if excerpts and hasattr(result, "excerpts"):
+                        formatted_result["excerpts"] = result.excerpts
 
-                        results_list.append(formatted_result)
-                    formatted_results["results"] = results_list
+                    if full_content and hasattr(result, "full_content"):
+                        formatted_result["full_content"] = result.full_content
 
-                if hasattr(extract_result, "errors") and extract_result.errors:
-                    formatted_results["errors"] = extract_result.errors
+                    results_list.append(formatted_result)
+                formatted_results["results"] = results_list
 
-                if hasattr(extract_result, "warnings"):
-                    formatted_results["warnings"] = extract_result.warnings
+            if hasattr(extract_result, "errors") and extract_result.errors:
+                formatted_results["errors"] = extract_result.errors
 
-                if hasattr(extract_result, "usage"):
-                    formatted_results["usage"] = extract_result.usage
+            if hasattr(extract_result, "warnings"):
+                formatted_results["warnings"] = extract_result.warnings
 
-                return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            if hasattr(extract_result, "usage"):
+                formatted_results["usage"] = extract_result.usage
+
+            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
             log_error(f"Error extracting from Parallel: {e}")
