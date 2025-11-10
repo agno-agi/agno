@@ -292,13 +292,21 @@ class MCPTools(Toolkit):
                     # Get an entrypoint for the tool
                     entrypoint = get_entrypoint_for_tool(tool, self.session)  # type: ignore
                     # Create a Function for the tool
+                    # Note: tool_full_name includes the prefix for consistency with Toolkit.register()
+                    tool_full_name = tool_name_prefix + tool.name
                     f = Function(
-                        name=tool_name_prefix + tool.name,
+                        name=tool_full_name,
                         description=tool.description,
                         parameters=tool.inputSchema,
                         entrypoint=entrypoint,
                         # Set skip_entrypoint_processing to True to avoid processing the entrypoint
                         skip_entrypoint_processing=True,
+                        # Pass toolkit parameters to Function, matching Toolkit.register() behavior
+                        requires_confirmation=tool_full_name in self.requires_confirmation_tools,
+                        external_execution=tool_full_name in self.external_execution_required_tools,
+                        stop_after_tool_call=tool_full_name in self.stop_after_tool_call_tools,
+                        show_result=tool_full_name in self.show_result_tools
+                        or tool_full_name in self.stop_after_tool_call_tools,
                     )
 
                     # Register the Function with the toolkit
