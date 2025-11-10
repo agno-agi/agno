@@ -21,14 +21,14 @@ class Slack(BaseInterface):
         workflow: Optional[Workflow] = None,
         prefix: str = "/slack",
         tags: Optional[List[str]] = None,
-        mention_only: bool = True,
+        reply_to_mentions_only: bool = True,
     ):
         self.agent = agent
         self.team = team
         self.workflow = workflow
         self.prefix = prefix
         self.tags = tags or ["Slack"]
-        self.mention_only = mention_only
+        self.reply_to_mentions_only = reply_to_mentions_only
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team or workflow")
@@ -41,7 +41,7 @@ class Slack(BaseInterface):
             agent=self.agent,
             team=self.team,
             workflow=self.workflow,
-            mention_only=self.mention_only,
+            reply_to_mentions_only=self.reply_to_mentions_only,
         )
 
         return self.router

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -28,7 +28,7 @@ def attach_routes(
     agent: Optional[Agent] = None,
     team: Optional[Team] = None,
     workflow: Optional[Workflow] = None,
-    mention_only: bool = True,
+    reply_to_mentions_only: bool = True,
 ) -> APIRouter:
     # Determine entity type for documentation
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
@@ -38,7 +38,7 @@ def attach_routes(
         operation_id=f"slack_events_{entity_type}",
         name="slack_events",
         description="Process incoming Slack events",
-        response_model=None,
+        response_model=Union[SlackChallengeResponse, SlackEventResponse],
         response_model_exclude_none=True,
         responses={
             200: {"description": "Event processed successfully"},
@@ -75,42 +75,51 @@ def attach_routes(
         return SlackEventResponse(status="ok")
 
     async def _process_slack_event(event: dict):
-        # Handle both app_mention and message events
-        if event.get("type") in ("app_mention", "message"):
-            user = None
-            message_text = event.get("text", "")
-            channel_id = event.get("channel", "")
-            user = event.get("user")
-            channel_type = event.get("channel_type", "")
-            if event.get("thread_ts"):
-                ts = event.get("thread_ts", "")
-            else:
-                ts = event.get("ts", "")
+        event_type = event.get("type")
 
-            # Use the timestamp as the session id, so that each thread is a separate session
-            session_id = ts
+        # Only handle app_mention and message events
+        if event_type not in ("app_mention", "message"):
+            return
 
-            # prevents duplicate responses when both app_mention and message.channels are subscribed
-            if mention_only and event.get("type") == "message" and channel_type in ("channel", "group"):
-                return
+        channel_type = event.get("channel_type", "")
 
-            if agent:
-                response = await agent.arun(message_text, user_id=user if user else None, session_id=session_id)
-            elif team:
-                response = await team.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
-            elif workflow:
-                response = await workflow.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+        # Handle duplicate replies
+        if not reply_to_mentions_only and event_type == "app_mention":
+            return
 
-            if response:
-                if hasattr(response, "reasoning_content") and response.reasoning_content:
-                    _send_slack_message(
-                        channel=channel_id,
-                        message=f"Reasoning: \n{response.reasoning_content}",
-                        thread_ts=ts,
-                        italics=True,
-                    )
+        if reply_to_mentions_only and event_type == "message" and channel_type != "im":
+            return
 
-                _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
+        # Extract event data
+        user = None
+        message_text = event.get("text", "")
+        channel_id = event.get("channel", "")
+        user = event.get("user")
+        if event.get("thread_ts"):
+            ts = event.get("thread_ts", "")
+        else:
+            ts = event.get("ts", "")
+
+        # Use the timestamp as the session id, so that each thread is a separate session
+        session_id = ts
+
+        if agent:
+            response = await agent.arun(message_text, user_id=user if user else None, session_id=session_id)
+        elif team:
+            response = await team.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+        elif workflow:
+            response = await workflow.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+
+        if response:
+            if hasattr(response, "reasoning_content") and response.reasoning_content:
+                _send_slack_message(
+                    channel=channel_id,
+                    message=f"Reasoning: \n{response.reasoning_content}",
+                    thread_ts=ts,
+                    italics=True,
+                )
+
+            _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
 
     def _send_slack_message(channel: str, thread_ts: str, message: str, italics: bool = False):
         if len(message) <= 40000:
