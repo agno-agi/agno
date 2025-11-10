@@ -1,11 +1,11 @@
 import uuid
-from typing import Any, Dict
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 
 
 def test_session_state_precedence_all_three_layers(shared_db):
@@ -168,10 +168,13 @@ def test_session_state_tool_updates_persist_correctly(shared_db):
     """Test that tool updates to session state persist correctly like the working example."""
 
     # Copy exactly from the working test
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     # Create an Agent that maintains state
     agent = Agent(
@@ -197,10 +200,13 @@ def test_session_state_tool_updates_persist_correctly(shared_db):
 def test_manual_session_state_update(shared_db):
     """Test that manual session state update works correctly."""
 
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
