@@ -87,6 +87,7 @@ def attach_routes(
         if not reply_to_mentions_only and event_type == "app_mention":
             return
 
+        # If reply_to_mentions_only is True, ignore every message that is not a DM
         if reply_to_mentions_only and event_type == "message" and channel_type != "im":
             return
 
