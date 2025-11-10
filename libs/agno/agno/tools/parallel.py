@@ -96,9 +96,7 @@ class ParallelTools(Toolkit):
         max_chars_per_result: Optional[int] = None,
     ) -> str:
         """Use this function to search the web using Parallel's Search API with a natural language objective.
-
-        This function converts natural language requests into optimized search results
-        tailored for language models. You must provide at least one of objective or search_queries.
+        You must provide at least one of objective or search_queries.
 
         Args:
             objective (Optional[str]): Natural-language description of what the web search is trying to find.
@@ -208,9 +206,6 @@ class ParallelTools(Toolkit):
         full_content: Optional[Union[bool, Dict[str, Any]]] = False,
     ) -> str:
         """Use this function to extract content from specific URLs using Parallel's Extract API.
-
-        Transforms public URLs into clean markdown format, handling JavaScript-heavy pages
-        and PDFs. Returns either focused excerpts matching your objective or complete page content.
 
         Args:
             urls (List[str]): List of public URLs to extract content from.

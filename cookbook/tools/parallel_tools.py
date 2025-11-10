@@ -1,5 +1,5 @@
 """
-This is an example of how to use the ParallelTools.
+This is an example of how to use the ParallelTools Toolkit.
 
 Prerequisites:
 - Create a Parallel account at https://platform.parallel.ai and get an API key
