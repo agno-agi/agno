@@ -131,9 +131,9 @@ class TestLogicalOperators:
     """Test logical operators (AND, OR, NOT)."""
 
     def test_and_with_two_conditions(self):
-        """Test AND operator with two conditions."""
+        """Test AND operator with two expressions."""
         filter_expr = AND(EQ("status", "published"), GT("views", 1000))
-        assert len(filter_expr.conditions) == 2
+        assert len(filter_expr.expressions) == 2
         assert filter_expr.to_dict() == {
             "op": "AND",
             "conditions": [
@@ -143,19 +143,19 @@ class TestLogicalOperators:
         }
 
     def test_and_with_multiple_conditions(self):
-        """Test AND operator with multiple conditions."""
+        """Test AND operator with multiple expressions."""
         filter_expr = AND(
             EQ("status", "active"),
             GT("age", 18),
             LT("age", 65),
             IN("role", ["user", "admin"]),
         )
-        assert len(filter_expr.conditions) == 4
+        assert len(filter_expr.expressions) == 4
 
     def test_or_with_two_conditions(self):
-        """Test OR operator with two conditions."""
+        """Test OR operator with two expressions."""
         filter_expr = OR(EQ("priority", "high"), EQ("urgent", True))
-        assert len(filter_expr.conditions) == 2
+        assert len(filter_expr.expressions) == 2
         assert filter_expr.to_dict() == {
             "op": "OR",
             "conditions": [
@@ -165,25 +165,25 @@ class TestLogicalOperators:
         }
 
     def test_or_with_multiple_conditions(self):
-        """Test OR operator with multiple conditions."""
+        """Test OR operator with multiple expressions."""
         filter_expr = OR(
             EQ("status", "draft"),
             EQ("status", "published"),
             EQ("status", "archived"),
         )
-        assert len(filter_expr.conditions) == 3
+        assert len(filter_expr.expressions) == 3
 
     def test_not_with_eq(self):
-        """Test NOT operator with EQ condition."""
+        """Test NOT operator with EQ expression."""
         filter_expr = NOT(EQ("status", "archived"))
-        assert isinstance(filter_expr.condition, EQ)
+        assert isinstance(filter_expr.expression, EQ)
         assert filter_expr.to_dict() == {
             "op": "NOT",
             "condition": {"op": "EQ", "key": "status", "value": "archived"},
         }
 
     def test_not_with_in(self):
-        """Test NOT operator with IN condition."""
+        """Test NOT operator with IN expression."""
         filter_expr = NOT(IN("user_id", [101, 102, 103]))
         assert filter_expr.to_dict() == {
             "op": "NOT",
@@ -193,7 +193,7 @@ class TestLogicalOperators:
     def test_not_with_complex_expression(self):
         """Test NOT operator with complex AND expression."""
         filter_expr = NOT(AND(EQ("status", "inactive"), LT("score", 10)))
-        assert isinstance(filter_expr.condition, AND)
+        assert isinstance(filter_expr.expression, AND)
         assert filter_expr.to_dict() == {
             "op": "NOT",
             "condition": {
@@ -213,19 +213,19 @@ class TestOperatorOverloading:
         """Test & operator creates AND expression."""
         filter_expr = EQ("status", "published") & GT("views", 1000)
         assert isinstance(filter_expr, AND)
-        assert len(filter_expr.conditions) == 2
+        assert len(filter_expr.expressions) == 2
 
     def test_or_operator_overload(self):
         """Test | operator creates OR expression."""
         filter_expr = EQ("priority", "high") | EQ("urgent", True)
         assert isinstance(filter_expr, OR)
-        assert len(filter_expr.conditions) == 2
+        assert len(filter_expr.expressions) == 2
 
     def test_not_operator_overload(self):
         """Test ~ operator creates NOT expression."""
         filter_expr = ~EQ("status", "archived")
         assert isinstance(filter_expr, NOT)
-        assert isinstance(filter_expr.condition, EQ)
+        assert isinstance(filter_expr.expression, EQ)
 
     def test_chained_and_operators(self):
         """Test chaining multiple & operators."""
@@ -248,13 +248,13 @@ class TestOperatorOverloading:
         """Test ~ operator with AND expression."""
         filter_expr = ~(EQ("status", "inactive") & LT("score", 10))
         assert isinstance(filter_expr, NOT)
-        assert isinstance(filter_expr.condition, AND)
+        assert isinstance(filter_expr.expression, AND)
 
     def test_not_with_or(self):
         """Test ~ operator with OR expression."""
         filter_expr = ~(EQ("role", "guest") | EQ("role", "banned"))
         assert isinstance(filter_expr, NOT)
-        assert isinstance(filter_expr.condition, OR)
+        assert isinstance(filter_expr.expression, OR)
 
 
 class TestComplexNesting:
@@ -267,8 +267,8 @@ class TestComplexNesting:
             AND(EQ("type", "tutorial"), LT("difficulty", 5)),
         )
         assert isinstance(filter_expr, OR)
-        assert len(filter_expr.conditions) == 2
-        assert all(isinstance(c, AND) for c in filter_expr.conditions)
+        assert len(filter_expr.expressions) == 2
+        assert all(isinstance(e, AND) for e in filter_expr.expressions)
 
     def test_nested_or_and(self):
         """Test OR within AND."""
@@ -277,7 +277,7 @@ class TestComplexNesting:
             OR(EQ("category", "tech"), EQ("category", "science")),
         )
         assert isinstance(filter_expr, AND)
-        assert len(filter_expr.conditions) == 2
+        assert len(filter_expr.expressions) == 2
 
     def test_deeply_nested_expression(self):
         """Test deeply nested expression with multiple levels."""
@@ -299,7 +299,7 @@ class TestComplexNesting:
             OR(GT("score", 80), AND(EQ("tier", "gold"), NOT(LT("age", 18)))),
         )
         assert isinstance(filter_expr, AND)
-        assert isinstance(filter_expr.conditions[0], NOT)
+        assert isinstance(filter_expr.expressions[0], NOT)
 
     def test_triple_nested_and_or_not(self):
         """Test triple nested AND/OR/NOT combination."""
@@ -494,7 +494,7 @@ class TestRealWorldScenarios:
             IN("currency", ["USD", "EUR"]),
             NOT(EQ("archived", True)),
         )
-        assert len(filter_expr.conditions) == 4
+        assert len(filter_expr.expressions) == 4
 
 
 class TestTypeValidation:
@@ -527,10 +527,10 @@ class TestTypeValidation:
         """Test that AND/OR work with FilterExpr instances."""
         # Should work with proper FilterExpr objects
         and_expr = AND(EQ("a", 1), EQ("b", 2))
-        assert all(isinstance(c, FilterExpr) for c in and_expr.conditions)
+        assert all(isinstance(e, FilterExpr) for e in and_expr.expressions)
 
         or_expr = OR(EQ("a", 1), EQ("b", 2))
-        assert all(isinstance(c, FilterExpr) for c in or_expr.conditions)
+        assert all(isinstance(e, FilterExpr) for e in or_expr.expressions)
 
 
 class TestUsagePatterns:
@@ -589,6 +589,7 @@ class TestUsagePatterns:
 
     def test_correct_way_to_pass_single_filter(self):
         """Test the correct way to pass a single filter to a list-expecting function."""
+
         # Simulate what knowledge_filters parameter expects
         def validate_filters(filters):
             """Simulate filter validation that expects a list."""

@@ -6,12 +6,12 @@ or metadata criteria, enabling personalized and contextual responses.
 """
 
 from agno.agent import Agent
+from agno.filters import AND, EQ, IN, NOT
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.filters import AND, EQ, IN, NOT
 from agno.vectordb.pgvector import PgVector
 
 # Download all sample sales documents and get their paths

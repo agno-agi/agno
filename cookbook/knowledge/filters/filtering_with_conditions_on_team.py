@@ -6,6 +6,7 @@ or metadata criteria, enabling personalized and contextual responses.
 """
 
 from agno.agent import Agent
+from agno.filters import AND, IN, NOT
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
@@ -14,7 +15,6 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.filters import AND, EQ, IN, NOT, OR
 from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths

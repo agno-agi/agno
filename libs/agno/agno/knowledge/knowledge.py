@@ -13,13 +13,13 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.filters import FilterExpr
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]

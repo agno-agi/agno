@@ -3,12 +3,12 @@ import os
 
 from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
+from agno.filters import IN
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.filters import IN
 from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths

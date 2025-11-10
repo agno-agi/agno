@@ -52,9 +52,9 @@ class FilterExpr:
     """Base class for all filter expressions.
 
     Provides logical operator overloads for combining filter expressions:
-    - `|` (OR): Combine filters where either condition can be true
-    - `&` (AND): Combine filters where both conditions must be true
-    - `~` (NOT): Negate a filter condition
+    - `|` (OR): Combine filters where either expression can be true
+    - `&` (AND): Combine filters where both expressions must be true
+    - `~` (NOT): Negate a filter expression
 
     Example:
         >>> # Create complex filters using operators
@@ -192,13 +192,13 @@ class LT(FilterExpr):
 
 
 class AND(FilterExpr):
-    """Logical AND operator - matches documents where ALL conditions are true.
+    """Logical AND operator - matches documents where ALL expressions are true.
 
-    Combines multiple filter conditions where every condition must be satisfied
+    Combines multiple filter expressions where every expression must be satisfied
     for a document to match.
 
     Args:
-        *conditions: Variable number of FilterExpr conditions to combine with AND logic
+        *expressions: Variable number of FilterExpr expressions to combine with AND logic
 
     Example:
         >>> # Match documents where status is "published" AND age > 18
@@ -207,7 +207,7 @@ class AND(FilterExpr):
         >>> # Using the & operator (preferred syntax)
         >>> filter = EQ("status", "published") & GT("age", 18)
         >>>
-        >>> # Multiple conditions
+        >>> # Multiple expressions
         >>> filter = AND(
         ...     EQ("status", "active"),
         ...     GT("score", 80),
@@ -215,21 +215,21 @@ class AND(FilterExpr):
         ... )
     """
 
-    def __init__(self, *conditions: FilterExpr):
-        self.conditions = list(conditions)
+    def __init__(self, *expressions: FilterExpr):
+        self.expressions = list(expressions)
 
     def to_dict(self) -> dict:
-        return {"op": "AND", "conditions": [c.to_dict() for c in self.conditions]}
+        return {"op": "AND", "conditions": [e.to_dict() for e in self.expressions]}
 
 
 class OR(FilterExpr):
-    """Logical OR operator - matches documents where ANY condition is true.
+    """Logical OR operator - matches documents where ANY expression is true.
 
-    Combines multiple filter conditions where at least one condition must be satisfied
+    Combines multiple filter expressions where at least one expression must be satisfied
     for a document to match.
 
     Args:
-        *conditions: Variable number of FilterExpr conditions to combine with OR logic
+        *expressions: Variable number of FilterExpr expressions to combine with OR logic
 
     Example:
         >>> # Match documents where status is "published" OR status is "archived"
@@ -245,20 +245,20 @@ class OR(FilterExpr):
         ... )
     """
 
-    def __init__(self, *conditions: FilterExpr):
-        self.conditions = list(conditions)
+    def __init__(self, *expressions: FilterExpr):
+        self.expressions = list(expressions)
 
     def to_dict(self) -> dict:
-        return {"op": "OR", "conditions": [c.to_dict() for c in self.conditions]}
+        return {"op": "OR", "conditions": [e.to_dict() for e in self.expressions]}
 
 
 class NOT(FilterExpr):
-    """Logical NOT operator - matches documents where the condition is NOT true.
+    """Logical NOT operator - matches documents where the expression is NOT true.
 
-    Negates a filter condition, matching documents that don't satisfy the condition.
+    Negates a filter expression, matching documents that don't satisfy the expression.
 
     Args:
-        condition: The FilterExpr condition to negate
+        expression: The FilterExpr expression to negate
 
     Example:
         >>> # Match documents where status is NOT "draft"
@@ -274,8 +274,8 @@ class NOT(FilterExpr):
         >>> filter = ~IN("user_id", [101, 102, 103])
     """
 
-    def __init__(self, condition: FilterExpr):
-        self.condition = condition
+    def __init__(self, expression: FilterExpr):
+        self.expression = expression
 
     def to_dict(self) -> dict:
-        return {"op": "NOT", "condition": self.condition.to_dict()}
+        return {"op": "NOT", "condition": self.expression.to_dict()}
