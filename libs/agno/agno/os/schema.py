@@ -917,9 +917,7 @@ class RunSchema(BaseModel):
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
-            files=run_dict.get("files", [])
-            if run_dict.get("files")
-            else None,  # FIXED: Get files directly from run_dict like images!
+            files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
