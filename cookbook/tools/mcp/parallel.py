@@ -24,14 +24,12 @@ from agno.tools.mcp import MCPTools
 from agno.tools.mcp.params import StreamableHTTPClientParams
 from agno.utils.pprint import apprint_run_response
 
-
 server_params = StreamableHTTPClientParams(
     url="https://search-mcp.parallel.ai/mcp",
     headers={
         "authorization": f"Bearer {getenv('PARALLEL_API_KEY')}",
     },
 )
-
 
 
 async def run_agent(message: str) -> None:
