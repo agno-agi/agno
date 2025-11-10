@@ -405,12 +405,16 @@ class WorkflowMetrics:
     """Complete metrics for a workflow execution"""
 
     steps: Dict[str, StepMetrics]
+    duration: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        return {
+        result: Dict[str, Any] = {
             "steps": {name: step.to_dict() for name, step in self.steps.items()},
         }
+        if self.duration is not None:
+            result["duration"] = self.duration
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowMetrics":
@@ -419,6 +423,7 @@ class WorkflowMetrics:
 
         return cls(
             steps=steps,
+            duration=data.get("duration"),
         )
 
 
