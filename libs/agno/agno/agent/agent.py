@@ -1512,7 +1512,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
+        videos: Optional[Sequence[Videaao]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
