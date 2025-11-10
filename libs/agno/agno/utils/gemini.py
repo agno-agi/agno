@@ -252,12 +252,13 @@ def convert_schema(
                     properties[key] = converted_schema
 
             required = schema_dict.get("required", [])
+            valid_required = [field for field in required if field in properties]
 
             if properties:
                 return Schema(
                     type=GeminiType.OBJECT,
                     properties=properties,
-                    required=required,
+                    required=valid_required,
                     description=description,
                     default=default,
                 )
