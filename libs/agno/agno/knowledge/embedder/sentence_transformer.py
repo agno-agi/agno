@@ -26,7 +26,7 @@ class SentenceTransformerEmbedder(Embedder):
     normalize_embeddings: bool = False
 
     def __post_init__(self):
-        """Initialize the SentenceTransformer model eagerly to avoid race conditions in async contexts."""
+        # Initialize the SentenceTransformer model eagerly to avoid race conditions in async contexts
         if self.sentence_transformer_client is None:
             self.sentence_transformer_client = SentenceTransformer(model_name_or_path=self.id)
 
