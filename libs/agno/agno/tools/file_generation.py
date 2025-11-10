@@ -117,7 +117,6 @@ class FileGenerationTools(Toolkit):
                 filename=filename,
                 size=len(json_content.encode("utf-8")),
                 filepath=file_path if file_path else None,
-                url=None,
             )
 
             log_debug("JSON file generated successfully")
@@ -205,7 +204,6 @@ class FileGenerationTools(Toolkit):
                 filename=filename,
                 size=len(csv_content.encode("utf-8")),
                 filepath=file_path if file_path else None,
-                url=None,
             )
 
             log_debug("CSV file generated successfully")
@@ -290,7 +288,6 @@ class FileGenerationTools(Toolkit):
                 filename=filename,
                 size=len(pdf_content),
                 filepath=file_path if file_path else None,
-                url=None,
             )
 
             log_debug("PDF file generated successfully")
@@ -337,7 +334,6 @@ class FileGenerationTools(Toolkit):
                 filename=filename,
                 size=len(content.encode("utf-8")),
                 filepath=file_path if file_path else None,
-                url=None,
             )
 
             log_debug("Text file generated successfully")
