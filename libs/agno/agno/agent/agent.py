@@ -5116,9 +5116,6 @@ class Agent:
                             run_response.files = []
                         run_response.files.append(file_obj)
 
-                if model_response_event.files is not None:
-                    for file in model_response_event.files:
-                        self._add_file(file, run_response)
 
                 reasoning_step: Optional[ReasoningStep] = None
 
