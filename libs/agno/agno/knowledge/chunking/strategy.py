@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from agno.knowledge.document.base import Document
 
@@ -60,7 +60,13 @@ class ChunkingStrategyFactory:
     """Factory for creating chunking strategy instances."""
 
     @classmethod
-    def create_strategy(cls, strategy_type: ChunkingStrategyType, **kwargs) -> ChunkingStrategy:
+    def create_strategy(
+        cls,
+        strategy_type: ChunkingStrategyType,
+        chunk_size: Optional[int] = None,
+        overlap: Optional[int] = None,
+        **kwargs,
+    ) -> ChunkingStrategy:
         """Create an instance of the chunking strategy with the given parameters."""
         strategy_map = {
             ChunkingStrategyType.AGENTIC_CHUNKER: cls._create_agentic_chunking,
@@ -71,51 +77,89 @@ class ChunkingStrategyFactory:
             ChunkingStrategyType.ROW_CHUNKER: cls._create_row_chunking,
             ChunkingStrategyType.MARKDOWN_CHUNKER: cls._create_markdown_chunking,
         }
-        return strategy_map[strategy_type](**kwargs)
+        return strategy_map[strategy_type](chunk_size=chunk_size, overlap=overlap, **kwargs)
 
     @classmethod
-    def _create_agentic_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_agentic_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.agentic import AgenticChunking
 
-        # Map chunk_size to max_chunk_size for AgenticChunking
-        if "chunk_size" in kwargs and "max_chunk_size" not in kwargs:
-            kwargs["max_chunk_size"] = kwargs.pop("chunk_size")
+        # AgenticChunking accepts max_chunk_size (not chunk_size) and no overlap
+        if chunk_size is not None:
+            kwargs["max_chunk_size"] = chunk_size
+        # Remove overlap since AgenticChunking doesn't support it
         return AgenticChunking(**kwargs)
 
     @classmethod
-    def _create_document_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_document_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.document import DocumentChunking
 
+        # DocumentChunking accepts both chunk_size and overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        if overlap is not None:
+            kwargs["overlap"] = overlap
         return DocumentChunking(**kwargs)
 
     @classmethod
-    def _create_recursive_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_recursive_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.recursive import RecursiveChunking
 
+        # RecursiveChunking accepts both chunk_size and overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        if overlap is not None:
+            kwargs["overlap"] = overlap
         return RecursiveChunking(**kwargs)
 
     @classmethod
-    def _create_semantic_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_semantic_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.semantic import SemanticChunking
 
+        # SemanticChunking accepts chunk_size but not overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        # Remove overlap since SemanticChunking doesn't support it
         return SemanticChunking(**kwargs)
 
     @classmethod
-    def _create_fixed_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_fixed_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.fixed import FixedSizeChunking
 
+        # FixedSizeChunking accepts both chunk_size and overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        if overlap is not None:
+            kwargs["overlap"] = overlap
         return FixedSizeChunking(**kwargs)
 
     @classmethod
-    def _create_row_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_row_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.row import RowChunking
 
-        # Remove chunk_size if present since RowChunking doesn't use it
-        kwargs.pop("chunk_size", None)
+        # RowChunking doesn't accept chunk_size or overlap, only skip_header and clean_rows
         return RowChunking(**kwargs)
 
     @classmethod
-    def _create_markdown_chunking(cls, **kwargs) -> ChunkingStrategy:
+    def _create_markdown_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
         from agno.knowledge.chunking.markdown import MarkdownChunking
 
+        # MarkdownChunking accepts both chunk_size and overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        if overlap is not None:
+            kwargs["overlap"] = overlap
         return MarkdownChunking(**kwargs)

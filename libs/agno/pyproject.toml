@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.2.1"
+version = "2.2.10"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
+dev = ["mypy==1.18.2", "ruff==0.14.3", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
 
@@ -101,6 +101,7 @@ evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+tavily = ["tavily-python"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -111,6 +112,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+notion = ["notion-client"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
 reportlab = ["reportlab"]
@@ -133,7 +135,7 @@ async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
-redis = ["redis"]
+redis = ["redis", "redisvl"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -217,6 +219,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
@@ -235,6 +238,7 @@ tools = [
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
@@ -288,7 +292,8 @@ knowledge = [
 
 # All embedders
 embedders = [
-  "agno[huggingface]"
+  "agno[huggingface]",
+  "agno[vllm]"
 ]
 
 # All libraries for testing
@@ -415,6 +420,7 @@ module = [
   "mem0.*",
   "memori.*",
   "mcp.*",
+  "notion_client.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
@@ -442,6 +448,7 @@ module = [
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
   "redis.*",
+  "redisvl.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",

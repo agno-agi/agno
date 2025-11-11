@@ -34,6 +34,10 @@ class InMemoryDb(BaseDb):
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
 
+    def table_exists(self, table_name: str) -> bool:
+        """In-memory implementation, always returns True."""
+        return True
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:
@@ -107,9 +111,6 @@ class InMemoryDb(BaseDb):
             for session_data in self._sessions:
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
                         continue
 
                     session_data_copy = deepcopy(session_data)

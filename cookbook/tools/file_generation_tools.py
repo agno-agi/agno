@@ -84,10 +84,7 @@ def example_text_generation():
 
 
 if __name__ == "__main__":
-    print("File Generation Tool Cookbook Examples")
+    print("File Generation Tool Cookbook Example")
     print("=" * 50)
 
-    example_json_generation()
-    example_csv_generation()
     example_pdf_generation()
-    example_text_generation()

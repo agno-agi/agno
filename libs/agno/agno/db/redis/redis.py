@@ -100,6 +100,10 @@ class RedisDb(BaseDb):
 
     # -- DB methods --
 
+    def table_exists(self, table_name: str) -> bool:
+        """Redis implementation, always returns True."""
+        return True
+
     def _get_table_name(self, table_type: str) -> str:
         """Get the active table name for the given table type."""
         if table_type == "sessions":
@@ -326,8 +330,6 @@ class RedisDb(BaseDb):
 
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
-                return None
-            if session_type is not None and session.get("session_type") != session_type:
                 return None
 
             if not deserialize:
