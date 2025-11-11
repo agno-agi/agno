@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -42,6 +43,12 @@ try:
     from google.genai.types import (
         File as GeminiFile,
     )
+    # File Search imports
+    from google.genai.types import (
+        FileSearch,
+        ChunkingConfig,
+        CustomMetadata,
+    )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
 
@@ -77,6 +84,8 @@ class Gemini(Model):
     url_context: bool = False
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
+    file_search_store_names: Optional[List[str]] = None
+    file_search_metadata_filter: Optional[str] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -238,6 +247,13 @@ class Gemini(Model):
             builtin_tools.append(
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
+
+        if self.file_search_store_names:
+            log_info("File Search enabled.")
+            file_search_config = {"file_search_store_names": self.file_search_store_names}
+            if self.file_search_metadata_filter:
+                file_search_config["metadata_filter"] = self.file_search_metadata_filter
+            builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))
 
         # Set tools in config
         if builtin_tools:
@@ -1083,3 +1099,654 @@ class Gemini(Model):
             metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
 
         return metrics
+
+    def create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+        """
+        Create a new File Search store.
+
+        Args:
+            display_name: Optional display name for the store
+
+        Returns:
+            FileSearchStore: The created File Search store object
+        """
+        config = {}
+        if display_name:
+            config["display_name"] = display_name
+
+        try:
+            if config:
+                store = self.get_client().file_search_stores.create(config=config)
+            else:
+                store = self.get_client().file_search_stores.create()
+            log_info(f"Created File Search store: {store.name}")
+            return store
+        except Exception as e:
+            log_error(f"Error creating File Search store: {e}")
+            raise
+
+    async def async_create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+        """
+        Args:
+            display_name: Optional display name for the store
+
+        Returns:
+            FileSearchStore: The created File Search store object
+        """
+        config = {}
+        if display_name:
+            config["display_name"] = display_name
+
+        try:
+            if config:
+                store = await self.get_client().aio.file_search_stores.create(config=config)
+            else:
+                store = await self.get_client().aio.file_search_stores.create()
+            log_info(f"Created File Search store: {store.name}")
+            return store
+        except Exception as e:
+            log_error(f"Error creating File Search store: {e}")
+            raise
+
+    def list_file_search_stores(self, page_size: int = 100) -> List[Any]:
+        """
+        List all File Search stores.
+
+        Args:
+            page_size: Maximum number of stores to return per page
+
+        Returns:
+            List: List of FileSearchStore objects
+        """
+        try:
+            stores = []
+            for store in self.get_client().file_search_stores.list(config={"page_size": page_size}):
+                stores.append(store)
+            log_debug(f"Found {len(stores)} File Search stores")
+            return stores
+        except Exception as e:
+            log_error(f"Error listing File Search stores: {e}")
+            raise
+
+    async def async_list_file_search_stores(self, page_size: int = 100) -> List[Any]:
+        """
+        Async version of list_file_search_stores.
+
+        Args:
+            page_size: Maximum number of stores to return per page
+
+        Returns:
+            List: List of FileSearchStore objects
+        """
+        try:
+            stores = []
+            async for store in self.get_client().aio.file_search_stores.list(config={"page_size": page_size}):
+                stores.append(store)
+            log_debug(f"Found {len(stores)} File Search stores")
+            return stores
+        except Exception as e:
+            log_error(f"Error listing File Search stores: {e}")
+            raise
+
+    def get_file_search_store(self, name: str) -> Any:
+        """
+        Get a specific File Search store by name.
+
+        Args:
+            name: The name of the store (e.g., 'fileSearchStores/my-store-123')
+
+        Returns:
+            FileSearchStore: The File Search store object
+        """
+        try:
+            store = self.get_client().file_search_stores.get(name=name)
+            log_debug(f"Retrieved File Search store: {name}")
+            return store
+        except Exception as e:
+            log_error(f"Error getting File Search store {name}: {e}")
+            raise
+
+    async def async_get_file_search_store(self, name: str) -> Any:
+        """
+        Args:
+            name: The name of the store
+
+        Returns:
+            FileSearchStore: The File Search store object
+        """
+        try:
+            store = await self.get_client().aio.file_search_stores.get(name=name)
+            log_debug(f"Retrieved File Search store: {name}")
+            return store
+        except Exception as e:
+            log_error(f"Error getting File Search store {name}: {e}")
+            raise
+
+    def delete_file_search_store(self, name: str, force: bool = True) -> None:
+        """
+        Delete a File Search store.
+
+        Args:
+            name: The name of the store to delete
+            force: If True, force delete even if store contains documents
+        """
+        try:
+            self.get_client().file_search_stores.delete(name=name, config={"force": force})
+            log_info(f"Deleted File Search store: {name}")
+        except Exception as e:
+            log_error(f"Error deleting File Search store {name}: {e}")
+            raise
+
+    async def async_delete_file_search_store(self, name: str, force: bool = True) -> None:
+        """
+        Async version of delete_file_search_store.
+
+        Args:
+            name: The name of the store to delete
+            force: If True, force delete even if store contains documents
+        """
+        try:
+            await self.get_client().aio.file_search_stores.delete(name=name, config={"force": force})
+            log_info(f"Deleted File Search store: {name}")
+        except Exception as e:
+            log_error(f"Error deleting File Search store {name}: {e}")
+            raise
+
+    def wait_for_operation(self, operation: Any, poll_interval: int = 5, max_wait: int = 600) -> Any:
+        """
+        Wait for a long-running operation to complete.
+
+        Args:
+            operation: The operation object to wait for
+            poll_interval: Seconds to wait between status checks
+            max_wait: Maximum seconds to wait before timing out
+
+        Returns:
+            Operation: The completed operation object
+
+        Raises:
+            TimeoutError: If operation doesn't complete within max_wait seconds
+        """
+        elapsed = 0
+        while not operation.done:
+            if elapsed >= max_wait:
+                raise TimeoutError(f"Operation timed out after {max_wait} seconds")
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            operation = self.get_client().operations.get(operation)
+            log_debug(f"Waiting for operation... ({elapsed}s elapsed)")
+
+        log_info("Operation completed successfully")
+        return operation
+
+    async def async_wait_for_operation(
+        self, operation: Any, poll_interval: int = 5, max_wait: int = 600
+    ) -> Any:
+        """
+        Async version of wait_for_operation.
+
+        Args:
+            operation: The operation object to wait for
+            poll_interval: Seconds to wait between status checks
+            max_wait: Maximum seconds to wait before timing out
+
+        Returns:
+            Operation: The completed operation object
+        """
+        elapsed = 0
+        while not operation.done:
+            if elapsed >= max_wait:
+                raise TimeoutError(f"Operation timed out after {max_wait} seconds")
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            operation = await self.get_client().aio.operations.get(operation)
+            log_debug(f"Waiting for operation... ({elapsed}s elapsed)")
+
+        log_info("Operation completed successfully")
+        return operation
+
+    def upload_to_file_search_store(
+        self,
+        file_path: Union[str, Path],
+        store_name: str,
+        display_name: Optional[str] = None,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Upload a file directly to a File Search store.
+
+        Args:
+            file_path: Path to the file to upload
+            store_name: Name of the File Search store
+            display_name: Optional display name for the file (will be visible in citations)
+            chunking_config: Optional chunking configuration
+                Example: {
+                    "white_space_config": {
+                        "max_tokens_per_chunk": 200,
+                        "max_overlap_tokens": 20
+                    }
+                }
+            custom_metadata: Optional custom metadata as list of dicts
+                Example: [
+                    {"key": "author", "string_value": "John Doe"},
+                    {"key": "year", "numeric_value": 2024}
+                ]
+
+        Returns:
+            Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
+        """
+        file_path = file_path if isinstance(file_path, Path) else Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        config = {}
+        if display_name:
+            config["display_name"] = display_name
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
+            if config:
+                operation = self.get_client().file_search_stores.upload_to_file_search_store(
+                    file=file_path, file_search_store_name=store_name, config=config
+                )
+            else:
+                operation = self.get_client().file_search_stores.upload_to_file_search_store(
+                    file=file_path, file_search_store_name=store_name
+                )
+            log_info(f"Upload initiated for {file_path.name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error uploading file to File Search store: {e}")
+            raise
+
+    async def async_upload_to_file_search_store(
+        self,
+        file_path: Union[str, Path],
+        store_name: str,
+        display_name: Optional[str] = None,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Args:
+            file_path: Path to the file to upload
+            store_name: Name of the File Search store
+            display_name: Optional display name for the file
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object
+        """
+        file_path = file_path if isinstance(file_path, Path) else Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        config = {}
+        if display_name:
+            config["display_name"] = display_name
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
+            if config:
+                operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
+                    file=file_path, file_search_store_name=store_name, config=config
+                )
+            else:
+                operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
+                    file=file_path, file_search_store_name=store_name
+                )
+            log_info(f"Upload initiated for {file_path.name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error uploading file to File Search store: {e}")
+            raise
+
+    def import_file_to_store(
+        self,
+        file_name: str,
+        store_name: str,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Import an existing uploaded file (via Files API) into a File Search store.
+
+        Args:
+            file_name: Name of the file already uploaded via Files API
+            store_name: Name of the File Search store
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
+        """
+        config = {}
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Importing file {file_name} to File Search store {store_name}")
+            if config:
+                operation = self.get_client().file_search_stores.import_file(
+                    file_search_store_name=store_name, file_name=file_name, config=config
+                )
+            else:
+                operation = self.get_client().file_search_stores.import_file(
+                    file_search_store_name=store_name, file_name=file_name
+                )
+            log_info(f"Import initiated for {file_name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error importing file to File Search store: {e}")
+            raise
+
+    async def async_import_file_to_store(
+        self,
+        file_name: str,
+        store_name: str,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Args:
+            file_name: Name of the file already uploaded via Files API
+            store_name: Name of the File Search store
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object
+        """
+        config = {}
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Importing file {file_name} to File Search store {store_name}")
+            if config:
+                operation = await self.get_client().aio.file_search_stores.import_file(
+                    file_search_store_name=store_name, file_name=file_name, config=config
+                )
+            else:
+                operation = await self.get_client().aio.file_search_stores.import_file(
+                    file_search_store_name=store_name, file_name=file_name
+                )
+            log_info(f"Import initiated for {file_name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error importing file to File Search store: {e}")
+            raise
+
+
+    def list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
+        """
+        Args:
+            store_name: Name of the File Search store
+            page_size: Maximum number of documents to return per page
+
+        Returns:
+            List: List of document objects
+        """
+        try:
+            documents = []
+            for doc in self.get_client().file_search_stores.documents.list(
+                parent=store_name, config={"page_size": page_size}
+            ):
+                documents.append(doc)
+            log_debug(f"Found {len(documents)} documents in store {store_name}")
+            return documents
+        except Exception as e:
+            log_error(f"Error listing documents in store {store_name}: {e}")
+            raise
+
+    async def async_list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
+        """
+        Async version of list_documents.
+
+        Args:
+            store_name: Name of the File Search store
+            page_size: Maximum number of documents to return per page
+
+        Returns:
+            List: List of document objects
+        """
+        try:
+            documents = []
+            # Await the AsyncPager first, then iterate
+            async for doc in await self.get_client().aio.file_search_stores.documents.list(
+                parent=store_name, config={"page_size": page_size}
+            ):
+                documents.append(doc)
+            log_debug(f"Found {len(documents)} documents in store {store_name}")
+            return documents
+        except Exception as e:
+            log_error(f"Error listing documents in store {store_name}: {e}")
+            raise
+
+    def get_document(self, document_name: str) -> Any:
+        """
+        Get a specific document by name.
+
+        Args:
+            document_name: Full name of the document
+                (e.g., 'fileSearchStores/store-123/documents/doc-456')
+
+        Returns:
+            Document object
+        """
+        try:
+            doc = self.get_client().file_search_stores.documents.get(name=document_name)
+            log_debug(f"Retrieved document: {document_name}")
+            return doc
+        except Exception as e:
+            log_error(f"Error getting document {document_name}: {e}")
+            raise
+
+    async def async_get_document(self, document_name: str) -> Any:
+        """
+        Async version of get_document.
+
+        Args:
+            document_name: Full name of the document
+
+        Returns:
+            Document object
+        """
+        try:
+            doc = await self.get_client().aio.file_search_stores.documents.get(name=document_name)
+            log_debug(f"Retrieved document: {document_name}")
+            return doc
+        except Exception as e:
+            log_error(f"Error getting document {document_name}: {e}")
+            raise
+
+    def delete_document(self, document_name: str) -> None:
+        """
+        Delete a document from a File Search store.
+
+        Args:
+            document_name: Full name of the document to delete
+
+        Example:
+            ```python
+            model = Gemini(id="gemini-2.5-flash")
+            model.delete_document("fileSearchStores/store-123/documents/doc-456")
+            ```
+        """
+        try:
+            self.get_client().file_search_stores.documents.delete(name=document_name)
+            log_info(f"Deleted document: {document_name}")
+        except Exception as e:
+            log_error(f"Error deleting document {document_name}: {e}")
+            raise
+
+    async def async_delete_document(self, document_name: str) -> None:
+        """
+        Async version of delete_document.
+
+        Args:
+            document_name: Full name of the document to delete
+        """
+        try:
+            await self.get_client().aio.file_search_stores.documents.delete(name=document_name)
+            log_info(f"Deleted document: {document_name}")
+        except Exception as e:
+            log_error(f"Error deleting document {document_name}: {e}")
+            raise
+
+    def update_document_metadata(self, document_name: str, metadata: List[Dict[str, Any]]) -> Any:
+        """
+        Update metadata for a document.
+
+        Args:
+            document_name: Full name of the document
+            metadata: List of metadata dicts to update
+                Example: [
+                    {"key": "reviewed", "string_value": "true"},
+                    {"key": "priority", "numeric_value": 5}
+                ]
+
+        Returns:
+            Updated document object
+        """
+        try:
+            updated_doc = self.get_client().file_search_stores.documents.update(
+                name=document_name, config={"custom_metadata": metadata}
+            )
+            log_info(f"Updated metadata for document: {document_name}")
+            return updated_doc
+        except Exception as e:
+            log_error(f"Error updating document metadata for {document_name}: {e}")
+            raise
+
+    async def async_update_document_metadata(self, document_name: str, metadata: List[Dict[str, Any]]) -> Any:
+        """
+        Async version of update_document_metadata.
+
+        Args:
+            document_name: Full name of the document
+            metadata: List of metadata dicts to update
+
+        Returns:
+            Updated document object
+        """
+        try:
+            updated_doc = await self.get_client().aio.file_search_stores.documents.update(
+                name=document_name, config={"custom_metadata": metadata}
+            )
+            log_info(f"Updated metadata for document: {document_name}")
+            return updated_doc
+        except Exception as e:
+            log_error(f"Error updating document metadata for {document_name}: {e}")
+            raise
+
+    def extract_file_search_citations(self, response: Optional[ModelResponse] = None) -> Dict[str, Any]:
+        """
+        Extract File Search citations from a model response.
+
+        Args:
+            response: ModelResponse object. If None, extracts from last response.
+
+        Returns:
+            Dict containing:
+                - sources: List of unique source document titles
+                - grounding_chunks: List of grounding chunks with context
+                - raw_metadata: Raw grounding metadata
+        """
+        if response is None:
+            log_warning("No response provided for citation extraction")
+            return {"sources": [], "grounding_chunks": [], "raw_metadata": None}
+
+        citations_data = {"sources": set(), "grounding_chunks": [], "raw_metadata": None}
+
+        # Check if response has citations with grounding metadata
+        if hasattr(response, "citations") and response.citations and response.citations.raw:
+            grounding_metadata = response.citations.raw.get("grounding_metadata", {})
+            citations_data["raw_metadata"] = grounding_metadata
+
+            # Extract grounding chunks
+            chunks = grounding_metadata.get("grounding_chunks", []) or []
+            for chunk in chunks:
+                if not isinstance(chunk, dict):
+                    continue
+
+                # Check for File Search retrieved context
+                retrieved_context = chunk.get("retrieved_context")
+                if isinstance(retrieved_context, dict):
+                    title = retrieved_context.get("title", "Unknown")
+                    uri = retrieved_context.get("uri", "")
+                    text = retrieved_context.get("text", "")
+
+                    citations_data["sources"].add(title)
+                    citations_data["grounding_chunks"].append(
+                        {"title": title, "uri": uri, "text": text, "type": "file_search"}
+                    )
+
+                # Also check web results (from search/grounding)
+                web = chunk.get("web")
+                if isinstance(web, dict):
+                    title = web.get("title", "Unknown")
+                    uri = web.get("uri", "")
+
+                    citations_data["sources"].add(title)
+                    citations_data["grounding_chunks"].append({"title": title, "uri": uri, "type": "web"})
+
+        # Convert sources set to sorted list
+        citations_data["sources"] = sorted(list(citations_data["sources"]))
+
+        log_debug(f"Extracted {len(citations_data['sources'])} unique sources from citations")
+        return citations_data
+
+    def format_citations(self, citations_data: Dict[str, Any], include_text: bool = False) -> str:
+        """
+        Format citation data into human-readable string.
+
+        Args:
+            citations_data: Citation data from extract_file_search_citations()
+            include_text: If True, include chunk text in formatted output
+
+        Returns:
+            Formatted citation string
+        """
+        if not citations_data or not citations_data.get("sources"):
+            return "No citations found."
+
+        lines = ["Citations:", "=" * 50]
+
+        # Add sources summary
+        lines.append(f"\nSources ({len(citations_data['sources'])}):")
+        for i, source in enumerate(citations_data["sources"], 1):
+            lines.append(f"  [{i}] {source}")
+
+        # Add detailed chunks if requested
+        if include_text and citations_data.get("grounding_chunks"):
+            lines.append(f"\nDetailed Citations ({len(citations_data['grounding_chunks'])}):")
+            for i, chunk in enumerate(citations_data["grounding_chunks"], 1):
+                lines.append(f"\n  [{i}] {chunk.get('title', 'Unknown')}")
+                if chunk.get("uri"):
+                    lines.append(f"      URI: {chunk['uri']}")
+                lines.append(f"      Type: {chunk.get('type', 'unknown')}")
+                if chunk.get("text"):
+                    # Truncate long text
+                    text = chunk["text"]
+                    if len(text) > 200:
+                        text = text[:200] + "..."
+                    lines.append(f"      Text: {text}")
+
+        return "\n".join(lines)
