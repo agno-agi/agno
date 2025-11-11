@@ -1,10 +1,14 @@
 """
-Context Management
+Self-managed Context Management
 
-Demonstrates Claude's context management feature for automatic tool result clearing.
+This cookbook demonstrates Claude's context management feature for automatic tool result clearing.
 This reduces token usage in long-running conversations with extensive tool use.
 
-Documentation: https://docs.claude.com/en/docs/build-with-claude/context-editing
+You can read more in Anthropic docs: https://docs.claude.com/en/docs/build-with-claude/context-editing
+
+1. Install dependencies: `pip install -U agno anthropic ddgs sqlalchemy`
+2. Set your `ANTHROPIC_API_KEY` in your environment variables.
+3. Run the cookbook
 """
 
 from agno.agent import Agent
@@ -15,6 +19,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 agent = Agent(
     model=Claude(
         id="claude-sonnet-4-5",
+        # Activate and configure the context management feature
         default_headers={"anthropic-beta": "context-management-2025-06-27"},
         context_management={
             "edits": [
@@ -26,7 +31,7 @@ agent = Agent(
             ]
         },
     ),
-    instructions="You are a helpful assistant.",
+    instructions="You are a helpful assistant with access to the web.",
     tools=[DuckDuckGoTools()],
     db=SqliteDb(db_file="tmp/context_management.db"),
     session_id="context-editing",

@@ -85,15 +85,15 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
-    context_management: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
-    mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
-    # Skills configuration
+    # Anthropic beta and experimental features
+    betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
+    context_management: Optional[Dict[str, Any]] = None
+    mcp_servers: Optional[List[MCPServerConfiguration]] = None
     skills: Optional[List[Dict[str, str]]] = (
         None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     )
-    betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
 
     # Client parameters
     api_key: Optional[str] = None
@@ -131,6 +131,10 @@ class Claude(Model):
         if self.default_headers is not None:
             client_params["default_headers"] = self.default_headers
         return client_params
+
+    def _has_beta_features(self) -> bool:
+        """Check if the model has any Anthropic beta features enabled."""
+        return self.mcp_servers is not None or self.context_management is not None or self.skills is not None
 
     def get_client(self) -> AnthropicClient:
         """
@@ -284,7 +288,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None or self.context_management is not None or self.skills is not None:
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
@@ -352,7 +356,7 @@ class Claude(Model):
                 run_response.metrics.set_time_to_first_token()
 
             # Beta features
-            if self.mcp_servers is not None or self.context_management is not None or self.skills is not None:
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 with self.get_client().beta.messages.stream(
                     model=self.id,
@@ -408,7 +412,7 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             # Beta features
-            if self.mcp_servers is not None or self.context_management is not None or self.skills is not None:
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
@@ -472,8 +476,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            # Beta features
-            if self.mcp_servers is not None or self.context_management is not None or self.skills is not None:
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
