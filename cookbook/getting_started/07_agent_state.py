@@ -2,23 +2,30 @@
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 
 
-def increment_counter(session_state) -> str:
+def increment_counter(run_context: RunContext) -> str:
     """Increment the counter in session state."""
     # Initialize counter if it doesn't exist
-    if "count" not in session_state:
-        session_state["count"] = 0
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if "count" not in run_context.session_state:
+        run_context.session_state["count"] = 0
 
     # Increment the counter
-    session_state["count"] += 1
+    run_context.session_state["count"] += 1
 
-    return f"Counter incremented! Current count: {session_state['count']}"
+    return f"Counter incremented! Current count: {run_context.session_state['count']}"
 
 
-def get_counter(session_state) -> str:
+def get_counter(run_context: RunContext) -> str:
     """Get the current counter value."""
-    count = session_state.get("count", 0)
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    count = run_context.session_state.get("count", 0)
     return f"Current count: {count}"
 
 

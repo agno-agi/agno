@@ -1,4 +1,5 @@
 import asyncio
+import json
 from hashlib import md5
 from typing import Any, Dict, List, Mapping, Optional, Union, cast
 
@@ -24,6 +25,9 @@ class ChromaDb(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         path: str = "tmp/chromadb",
@@ -31,9 +35,22 @@ class ChromaDb(VectorDb):
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{path}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Collection attributes
         self.collection_name: str = collection
-
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -59,6 +76,44 @@ class ChromaDb(VectorDb):
 
         # Chroma client kwargs
         self.kwargs = kwargs
+
+    def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
+        """
+        Flatten nested metadata to ChromaDB-compatible format.
+
+        Args:
+            metadata: Dictionary that may contain nested structures
+
+        Returns:
+            Flattened dictionary with only primitive values
+        """
+        flattened: Dict[str, Any] = {}
+
+        def _flatten_recursive(obj: Any, prefix: str = "") -> None:
+            if isinstance(obj, dict):
+                if len(obj) == 0:
+                    # Handle empty dictionaries by converting to JSON string
+                    flattened[prefix] = json.dumps(obj)
+                else:
+                    for key, value in obj.items():
+                        new_key = f"{prefix}.{key}" if prefix else key
+                        _flatten_recursive(value, new_key)
+            elif isinstance(obj, (list, tuple)):
+                # Convert lists/tuples to JSON strings
+                flattened[prefix] = json.dumps(obj)
+            elif isinstance(obj, (str, int, float, bool)) or obj is None:
+                if obj is not None:  # ChromaDB doesn't accept None values
+                    flattened[prefix] = obj
+            else:
+                # Convert other complex types to JSON strings
+                try:
+                    flattened[prefix] = json.dumps(obj)
+                except (TypeError, ValueError):
+                    # If it can't be serialized, convert to string
+                    flattened[prefix] = str(obj)
+
+        _flatten_recursive(metadata)
+        return flattened
 
     @property
     def client(self) -> ClientAPI:
@@ -147,11 +202,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Prepared document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Prepared document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -173,11 +231,47 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
-        try:
-            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
-        except Exception as e:
-            log_error(f"Error processing document: {e}")
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            try:
+                embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+                await asyncio.gather(*embed_tasks, return_exceptions=True)
+            except Exception as e:
+                log_error(f"Error processing document: {e}")
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -196,11 +290,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Prepared document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Prepared document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -262,11 +359,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Upserted document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Upserted document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -293,8 +393,44 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    raise e
+                else:
+                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -313,11 +449,14 @@ class ChromaDb(VectorDb):
 
             metadata["content_hash"] = content_hash
 
+            # Flatten metadata for ChromaDB compatibility
+            flattened_metadata = self._flatten_metadata(metadata)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(metadata)
-            log_debug(f"Upserted document: {document.id} | {document.name} | {metadata}")
+            docs_metadata.append(flattened_metadata)
+            log_debug(f"Upserted document: {document.id} | {document.name} | {flattened_metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -374,11 +513,11 @@ class ChromaDb(VectorDb):
         # Build search results
         search_results: List[Document] = []
 
-        ids_list = result.get("ids", [[]])
-        metadata_list = result.get("metadatas", [[{}]])
-        documents_list = result.get("documents", [[]])
-        embeddings_list = result.get("embeddings")
-        distances_list = result.get("distances", [[]])
+        ids_list = result.get("ids", [[]])  # type: ignore
+        metadata_list = result.get("metadatas", [[{}]])  # type: ignore
+        documents_list = result.get("documents", [[]])  # type: ignore
+        embeddings_list = result.get("embeddings")  # type: ignore
+        distances_list = result.get("distances", [[]])  # type: ignore
 
         if not ids_list or not metadata_list or not documents_list or embeddings_list is None or not distances_list:
             return search_results
@@ -658,7 +797,6 @@ class ChromaDb(VectorDb):
 
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
-            print("COLLECTION_----------", collection)
             # Try to get the document by ID
             result = collection.get(ids=[id])
             found_ids = result.get("ids", [])
@@ -747,6 +885,9 @@ class ChromaDb(VectorDb):
                     logger.debug(f"No documents found with content_id: {content_id}")
                     return
 
+                # Flatten the new metadata first
+                flattened_new_metadata = self._flatten_metadata(metadata)
+
                 # Merge metadata for each document
                 updated_metadatas = []
                 for i, current_meta in enumerate(current_metadatas or []):
@@ -754,21 +895,14 @@ class ChromaDb(VectorDb):
                         meta_dict: Dict[str, Any] = {}
                     else:
                         meta_dict = dict(current_meta)  # Convert Mapping to dict
-                    updated_meta: Dict[str, Any] = meta_dict.copy()
-                    updated_meta.update(metadata)
 
-                    if "filters" not in updated_meta:
-                        updated_meta["filters"] = {}
-                    if isinstance(updated_meta["filters"], dict):
-                        updated_meta["filters"].update(metadata)
-                    else:
-                        updated_meta["filters"] = metadata
-                    updated_metadatas.append(updated_meta)
+                    # Update with flattened metadata
+                    meta_dict.update(flattened_new_metadata)
+                    updated_metadatas.append(meta_dict)
 
-                # Update the documents
                 # Convert to the expected type for ChromaDB
-                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool, None]]], updated_metadatas)
-                collection.update(ids=ids, metadatas=chroma_metadatas)
+                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
+                collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
             except TypeError as te:
@@ -783,3 +917,7 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # ChromaDb doesn't use SearchType enum

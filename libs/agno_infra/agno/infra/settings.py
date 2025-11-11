@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from pydantic import BaseModel, model_validator
 
-@dataclass
-class InfraSettings:
+
+class InfraSettings(BaseModel):
     """Settings that can be used by any resource in the infrastructure."""
 
     # Infrastructure name
@@ -75,13 +75,13 @@ class InfraSettings:
     aws_profile: Optional[str] = None
 
     # AWS Subnet Configuration
-    aws_subnet_ids: List[str] = field(default_factory=list)
+    aws_subnet_ids: List[str] = []
     # Public subnets. Will be added to aws_subnet_ids if provided and aws_subnet_ids is empty.
     # Note: not added to aws_subnet_ids if aws_subnet_ids is provided.
-    aws_public_subnets: List[str] = field(default_factory=list)
+    aws_public_subnets: List[str] = []
     # Private subnets. Will be added to aws_subnet_ids if provided and aws_subnet_ids is empty.
     # Note: not added to aws_subnet_ids if aws_subnet_ids is provided.
-    aws_private_subnets: List[str] = field(default_factory=list)
+    aws_private_subnets: List[str] = []
 
     # AWS Availability Zones
     aws_az1: Optional[str] = None
@@ -91,12 +91,14 @@ class InfraSettings:
     aws_az5: Optional[str] = None
 
     # AWS Security Groups
-    aws_security_group_ids: List[str] = field(default_factory=list)
+    aws_security_group_ids: List[str] = []
 
-    def __post_init__(self):
+    @model_validator(mode="after")
+    def validate_and_set_computed_fields(self) -> "InfraSettings":
         """Validate and set computed fields after initialization."""
         self._validate_and_set_keys()
         self._validate_and_set_subnet_ids()
+        return self
 
     def _validate_and_set_keys(self):
         """Validate and set environment keys if not provided."""

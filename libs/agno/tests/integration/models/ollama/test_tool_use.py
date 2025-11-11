@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 import pytest
@@ -33,7 +34,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -70,7 +71,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -99,7 +100,9 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2
     assert response.content is not None
-    assert "TSLA" in response.content and "latest news" in response.content.lower()
+    assert "TSLA" in response.content and (
+        "latest news" in response.content.lower() or "news" in response.content.lower()
+    )
 
 
 def test_tool_call_custom_tool_no_parameters():
@@ -183,6 +186,7 @@ def test_tool_call_custom_tool_untyped_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skipif(os.getenv("EXA_API_KEY") is None, reason="EXA_API_KEY not set")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),

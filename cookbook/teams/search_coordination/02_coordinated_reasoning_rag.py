@@ -133,12 +133,12 @@ async def async_reasoning_demo():
 
     # Add documentation content
     await knowledge.add_contents_async(
-        urls=["https://docs.agno.com/introduction/agents.md"]
+        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
     )
 
     # Run async with streaming and reasoning
     await coordinated_reasoning_team.aprint_response(
-        query, stream=True, stream_intermediate_steps=True, show_full_reasoning=True
+        query, stream=True, stream_events=True, show_full_reasoning=True
     )
 
 
@@ -150,11 +150,13 @@ def sync_reasoning_demo():
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
 
     # Add documentation content
-    knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
+    knowledge.add_contents(
+        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+    )
 
     # Run with detailed reasoning output
     coordinated_reasoning_team.print_response(
-        query, stream=True, stream_intermediate_steps=True, show_full_reasoning=True
+        query, stream=True, stream_events=True, show_full_reasoning=True
     )
 
 

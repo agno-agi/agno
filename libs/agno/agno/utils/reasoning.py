@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -7,6 +7,27 @@ from agno.reasoning.step import ReasoningStep
 if TYPE_CHECKING:
     from agno.run.agent import RunOutput
     from agno.team.team import TeamRunOutput
+
+
+def extract_thinking_content(content: str) -> Tuple[Optional[str], str]:
+    """Extract thinking content from response text between <think> tags."""
+    if not content or "</think>" not in content:
+        return None, content
+
+    # Find the end of thinking content
+    end_idx = content.find("</think>")
+
+    # Look for opening <think> tag, if not found, assume thinking starts at beginning
+    start_idx = content.find("<think>")
+    if start_idx == -1:
+        reasoning_content = content[:end_idx].strip()
+    else:
+        start_idx = start_idx + len("<think>")
+        reasoning_content = content[start_idx:end_idx].strip()
+
+    output_content = content[end_idx + len("</think>") :].strip()
+
+    return reasoning_content, output_content
 
 
 def append_to_reasoning_content(run_response: Union["RunOutput", "TeamRunOutput"], content: str) -> None:

@@ -112,6 +112,7 @@ class DiscordClient:
                 # TODO Unhappy with the duplication here but it keeps MyPy from complaining
                 additional_context = dedent(f"""
                     Discord username: {message_user}
+                    Discord userid: {message_user_id} 
                     Discord url: {message_url}
                     """)
                 if self.agent:

@@ -19,8 +19,8 @@ agent = Agent(
         default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
     ),
     tools=[
-        CalculatorTools(enable_all=True),
-        YFinanceTools(stock_price=True, cache_results=True),
+        CalculatorTools(),
+        YFinanceTools(),
     ],
     instructions=[
         "You are a financial analysis assistant with access to calculator and stock price tools.",

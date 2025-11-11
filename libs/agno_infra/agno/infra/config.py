@@ -127,11 +127,12 @@ class InfraConfig(BaseModel):
         logger.debug(f"Adding {self.infra_root_path} to path")
         sys_path.insert(0, str(self.infra_root_path))
 
+        infra_objects: Dict[str, InfraResources] = {}
+
         infra_dir_path: Optional[Path] = self.infra_dir_path
         if infra_dir_path is not None:
             logger.debug(f"--^^-- Loading Infra from: {infra_dir_path}")
             # Create a dict of objects in the Infra directory
-            infra_objects: Dict[str, InfraResources] = {}
             resource_files = infra_dir_path.rglob("*.py")
             for resource_file in resource_files:
                 if resource_file.name == "__init__.py":

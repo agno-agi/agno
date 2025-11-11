@@ -1,4 +1,7 @@
 from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel
 
 
 class ContentType(str, Enum):
@@ -17,6 +20,7 @@ class ContentType(str, Enum):
     MARKDOWN = ".md"
     DOCX = ".docx"
     DOC = ".doc"
+    PPTX = ".pptx"
     JSON = ".json"
 
     # Spreadsheet file extensions
@@ -28,3 +32,8 @@ class ContentType(str, Enum):
 def get_content_type_enum(content_type_str: str) -> ContentType:
     """Convert a content type string to ContentType enum."""
     return ContentType(content_type_str)
+
+
+class KnowledgeFilter(BaseModel):
+    key: str
+    value: Any

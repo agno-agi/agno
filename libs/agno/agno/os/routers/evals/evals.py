@@ -1,11 +1,11 @@
 import logging
 from copy import deepcopy
-from typing import List, Optional
+from typing import List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
 from agno.os.auth import get_authentication_dependency
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_eval_router(
-    dbs: dict[str, BaseDb],
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
     agents: Optional[List[Agent]] = None,
     teams: Optional[List[Team]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -55,7 +55,10 @@ def get_eval_router(
 
 
 def attach_routes(
-    router: APIRouter, dbs: dict[str, BaseDb], agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
+    router: APIRouter,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
+    agents: Optional[List[Agent]] = None,
+    teams: Optional[List[Team]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -112,21 +115,39 @@ def attach_routes(
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
-        db = get_db(dbs, db_id)
-        eval_runs, total_count = db.get_eval_runs(
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            agent_id=agent_id,
-            team_id=team_id,
-            workflow_id=workflow_id,
-            model_id=model_id,
-            eval_type=eval_types,
-            filter_type=filter_type,
-            deserialize=False,
-        )
+        db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            eval_runs, total_count = await db.get_eval_runs(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_type=eval_types,
+                filter_type=filter_type,
+                deserialize=False,
+            )
+        else:
+            eval_runs, total_count = db.get_eval_runs(  # type: ignore
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_type=eval_types,
+                filter_type=filter_type,
+                deserialize=False,
+            )
 
         return PaginatedResponse(
             data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],  # type: ignore
@@ -178,9 +199,14 @@ def attach_routes(
     async def get_eval_run(
         eval_run_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
-        db = get_db(dbs, db_id)
-        eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+        db = await get_db(dbs, db_id, table)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+        else:
+            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
@@ -200,10 +226,15 @@ def attach_routes(
     async def delete_eval_runs(
         request: DeleteEvalRunsRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         try:
-            db = get_db(dbs, db_id)
-            db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+            db = await get_db(dbs, db_id, table)
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+            else:
+                db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -249,10 +280,15 @@ def attach_routes(
         eval_run_id: str,
         request: UpdateEvalRunRequest,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> EvalSchema:
         try:
-            db = get_db(dbs, db_id)
-            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+            db = await get_db(dbs, db_id, table)
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                eval_run = await db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+            else:
+                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
@@ -304,8 +340,9 @@ def attach_routes(
     async def run_eval(
         eval_run_input: EvalRunInput,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
+        table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
@@ -324,10 +361,10 @@ def attach_routes(
             ):
                 default_model = deepcopy(agent.model)
                 if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     agent.model = model
 
             team = None
@@ -346,10 +383,10 @@ def attach_routes(
             ):
                 default_model = deepcopy(team.model)
                 if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     team.model = model
 
             agent = None
@@ -380,7 +417,7 @@ def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
         description="Comma-separated eval types (accuracy,performance,reliability)",
-        example="accuracy,performance",
+        examples=["accuracy,performance"],
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""

@@ -8,14 +8,18 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from google.cloud import storage as gcs  # type: ignore
@@ -33,8 +37,10 @@ class GcsJsonDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with JSON files stored in Google Cloud Storage as database.
@@ -47,16 +53,25 @@ class GcsJsonDb(BaseDb):
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
+            culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
             project (Optional[str]): GCP project ID. If None, uses default project.
             location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
+            id (Optional[str]): ID of the database.
         """
+        if id is None:
+            prefix_suffix = prefix or "agno/"
+            seed = f"{bucket_name}_{project}#{prefix_suffix}"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            culture_table=culture_table,
         )
 
         self.bucket_name = bucket_name
@@ -67,6 +82,10 @@ class GcsJsonDb(BaseDb):
         # Initialize GCS client and bucket
         self.client = gcs.Client(project=project, credentials=credentials)
         self.bucket = self.client.bucket(self.bucket_name)
+
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
 
     def _get_blob_name(self, filename: str) -> str:
         """Get the full blob name including prefix for a given filename."""
@@ -153,7 +172,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the GCS JSON file.
@@ -172,11 +191,12 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -184,7 +204,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (Optional[SessionType]): The type of the session to read.
+            session_type (SessionType): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -204,10 +224,6 @@ class GcsJsonDb(BaseDb):
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
 
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
-                        continue
-
                     if not deserialize:
                         return session_data
 
@@ -217,12 +233,14 @@ class GcsJsonDb(BaseDb):
                         return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session_data)
+                    else:
+                        raise ValueError(f"Invalid session type: {session_type}")
 
             return None
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -317,7 +335,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -352,7 +370,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -397,7 +415,44 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception upserting session: {e}")
-            return None
+            raise e
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            log_info(
+                f"GcsJsonDb doesn't support efficient bulk operations, falling back to individual upserts for {len(sessions)} sessions"
+            )
+
+            # Fall back to individual upserts
+            results = []
+            for session in sessions:
+                if session is not None:
+                    result = self.upsert_session(session, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {e}")
+            return []
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
         """Check if existing session matches the key for the session type."""
@@ -410,12 +465,23 @@ class GcsJsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> None:
-        """Delete a user memory from the GCS JSON file."""
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
+        """Delete a user memory from the GCS JSON file.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before deletion.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             original_count = len(memories)
-            memories = [m for m in memories if m.get("memory_id") != memory_id]
+
+            # Filter out the memory, with optional user_id verification
+            memories = [
+                m
+                for m in memories
+                if not (m.get("memory_id") == memory_id and (user_id is None or m.get("user_id") == user_id))
+            ]
 
             if len(memories) < original_count:
                 self._write_json_file(self.memory_table_name, memories)
@@ -426,19 +492,37 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error deleting user memory: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        """Delete multiple user memories from the GCS JSON file."""
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete multiple user memories from the GCS JSON file.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before deletion.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
-            memories = [m for m in memories if m.get("memory_id") not in memory_ids]
+
+            # Filter out memories, with optional user_id verification
+            memories = [
+                m
+                for m in memories
+                if not (m.get("memory_id") in memory_ids and (user_id is None or m.get("user_id") == user_id))
+            ]
+
             self._write_json_file(self.memory_table_name, memories)
             log_debug(f"Successfully deleted user memories with ids: {memory_ids}")
         except Exception as e:
             log_warning(f"Error deleting user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
-        """Get all memory topics from the GCS JSON file."""
+        """Get all memory topics from the GCS JSON file.
+
+        Returns:
+            List[str]: List of unique memory topics.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             topics = set()
@@ -450,17 +534,30 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
-            return []
+            raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        """Get a memory from the GCS JSON file."""
+        """Get a memory from the GCS JSON file.
+
+        Args:
+            memory_id (str): The ID of the memory to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to UserMemory object. Defaults to True.
+            user_id (Optional[str]): The ID of the user. If provided, verifies ownership before returning.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]: The memory if found and ownership matches, None otherwise.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
 
             for memory_data in memories:
                 if memory_data.get("memory_id") == memory_id:
+                    # Verify user ownership if user_id is provided
+                    if user_id is not None and memory_data.get("user_id") != user_id:
+                        continue
+
                     if not deserialize:
                         return memory_data
 
@@ -469,7 +566,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -527,25 +624,38 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory statistics."""
+        """Get user memory statistics.
+
+        Args:
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: List of user memory statistics and total count.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
 
             for memory in memories:
-                user_id = memory.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
-                    user_stats[user_id]["total_memories"] += 1
+                memory_user_id = memory.get("user_id")
+
+                if memory_user_id:
+                    if memory_user_id not in user_stats:
+                        user_stats[memory_user_id] = {
+                            "user_id": memory_user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": 0,
+                        }
+                    user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                        user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -563,7 +673,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -597,7 +707,43 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
-            return None
+            raise e
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            log_info(
+                f"GcsJsonDb doesn't support efficient bulk operations, falling back to individual upserts for {len(memories)} memories"
+            )
+            # Fall back to individual upserts
+            results = []
+            for memory in memories:
+                if memory is not None:
+                    result = self.upsert_user_memory(memory, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {e}")
+            return []
 
     def clear_memories(self) -> None:
         """Delete all memories from the database.
@@ -611,6 +757,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -677,7 +824,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception refreshing metrics: {e}")
-            return None
+            raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -732,7 +879,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception reading sessions for metrics: {e}")
-            return []
+            raise e
 
     def get_metrics(
         self,
@@ -764,7 +911,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
     def delete_knowledge_content(self, id: str):
@@ -775,6 +922,7 @@ class GcsJsonDb(BaseDb):
             self._write_json_file(self.knowledge_table_name, knowledge_items)
         except Exception as e:
             log_warning(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get knowledge content by ID."""
@@ -788,7 +936,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -817,7 +965,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the GCS JSON file."""
@@ -841,7 +989,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Error upserting knowledge row: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
@@ -860,7 +1008,7 @@ class GcsJsonDb(BaseDb):
             return eval_run
         except Exception as e:
             log_warning(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the GCS JSON file."""
@@ -876,6 +1024,7 @@ class GcsJsonDb(BaseDb):
                 log_warning(f"No eval run found with ID: {eval_run_id}")
         except Exception as e:
             log_warning(f"Error deleting eval run {eval_run_id}: {e}")
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the GCS JSON file."""
@@ -892,6 +1041,7 @@ class GcsJsonDb(BaseDb):
                 log_warning(f"No eval runs found with IDs: {eval_run_ids}")
         except Exception as e:
             log_warning(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -909,7 +1059,7 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -975,7 +1125,7 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -998,4 +1148,188 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Error renaming eval run {eval_run_id}: {e}")
+            raise e
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            self._write_json_file(self.culture_table_name, [])
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+            cultural_knowledge = [item for item in cultural_knowledge if item.get("id") != id]
+            self._write_json_file(self.culture_table_name, cultural_knowledge)
+            log_debug(f"Deleted cultural knowledge with ID: {id}")
+        except Exception as e:
+            log_warning(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+
+            for item in cultural_knowledge:
+                if item.get("id") == id:
+                    if not deserialize:
+                        return item
+                    return deserialize_cultural_knowledge_from_db(item)
+
             return None
+        except Exception as e:
+            log_warning(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+
+            # Apply filters
+            filtered_items = []
+            for item in cultural_knowledge:
+                if agent_id is not None and item.get("agent_id") != agent_id:
+                    continue
+                if team_id is not None and item.get("team_id") != team_id:
+                    continue
+                if name is not None and name.lower() not in item.get("name", "").lower():
+                    continue
+
+                filtered_items.append(item)
+
+            total_count = len(filtered_items)
+
+            # Apply sorting
+            filtered_items = apply_sorting(filtered_items, sort_by, sort_order)
+
+            # Apply pagination
+            if limit is not None:
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
+                filtered_items = filtered_items[start_idx : start_idx + limit]
+
+            if not deserialize:
+                return filtered_items, total_count
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in filtered_items]
+
+        except Exception as e:
+            log_warning(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in the GCS JSON file.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            cultural_knowledge_list = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            cultural_knowledge_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Find existing item to update
+            item_updated = False
+            for i, existing_item in enumerate(cultural_knowledge_list):
+                if existing_item.get("id") == cultural_knowledge.id:
+                    cultural_knowledge_list[i] = cultural_knowledge_dict
+                    item_updated = True
+                    break
+
+            if not item_updated:
+                cultural_knowledge_list.append(cultural_knowledge_dict)
+
+            self._write_json_file(self.culture_table_name, cultural_knowledge_list)
+
+            if not deserialize:
+                return cultural_knowledge_dict
+
+            return deserialize_cultural_knowledge_from_db(cultural_knowledge_dict)
+
+        except Exception as e:
+            log_warning(f"Error upserting cultural knowledge: {e}")
+            raise e

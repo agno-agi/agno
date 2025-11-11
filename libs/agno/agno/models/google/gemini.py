@@ -16,9 +16,8 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
+from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
@@ -27,6 +26,7 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
+        FunctionCallingConfigMode,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -151,6 +151,7 @@ class Gemini(Model):
         system_message: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Returns the request keyword arguments for the GenerativeModel client.
@@ -191,12 +192,9 @@ class Gemini(Model):
 
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
-            # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
-
-            # Get the normalized schema for Gemini
-            normalized_schema = get_response_schema_for_provider(response_format, "gemini")
-            gemini_schema = convert_schema(normalized_schema)
-            config["response_schema"] = gemini_schema
+            # Convert Pydantic model using our hybrid approach
+            # This will handle complex schemas with nested models, dicts, and circular refs
+            config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
         thinking_config_params = {}
@@ -249,6 +247,18 @@ class Gemini(Model):
         elif tools:
             config["tools"] = [format_function_definitions(tools)]
 
+        if tool_choice is not None:
+            if isinstance(tool_choice, str) and tool_choice.lower() == "auto":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.AUTO}}
+            elif isinstance(tool_choice, str) and tool_choice.lower() == "none":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.NONE}}
+            elif isinstance(tool_choice, str) and tool_choice.lower() == "validated":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.VALIDATED}}
+            elif isinstance(tool_choice, str) and tool_choice.lower() == "any":
+                config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.ANY}}
+            else:
+                config["tool_config"] = {"function_calling_config": {"mode": tool_choice}}
+
         config = {k: v for k, v in config.items() if v is not None}
 
         if config:
@@ -275,7 +285,9 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
         try:
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -319,7 +331,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
         try:
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -360,7 +374,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         try:
             if run_response and run_response.metrics:
@@ -404,7 +420,9 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(
+            system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         try:
             if run_response and run_response.metrics:
@@ -1055,9 +1073,9 @@ class Gemini(Model):
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
         metrics.output_tokens = response_usage.candidates_token_count or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
         if response_usage.thoughts_token_count is not None:
             metrics.output_tokens += response_usage.thoughts_token_count or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 

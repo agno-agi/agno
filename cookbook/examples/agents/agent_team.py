@@ -19,9 +19,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[YFinanceTools()],
     instructions="Use tables to display data.",
     add_datetime_to_context=True,
 )
@@ -51,6 +49,6 @@ Compare their market positions, growth metrics, and future outlook."""
 team_leader.print_response(
     task,
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
     show_full_reasoning=True,
 )

@@ -6,7 +6,7 @@ from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=LangDB(id="gpt-4o"),
-    tools=[YFinanceTools(stock_price=True)],
+    tools=[YFinanceTools()],
     instructions=["Use tables where possible."],
     markdown=True,
 )

@@ -5,12 +5,7 @@ from agno.tools.yfinance import YFinanceTools
 agent = Agent(
     model=Ollama(id="qwen3:8b"),
     tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables to display data.",
 )

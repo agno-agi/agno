@@ -6,7 +6,7 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
-    tools=[YFinanceTools(stock_price=True)],
+    tools=[YFinanceTools()],
     markdown=True,
 )
 

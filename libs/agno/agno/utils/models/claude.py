@@ -32,6 +32,7 @@ class MCPServerConfiguration:
 
 ROLE_MAP = {
     "system": "system",
+    "developer": "system",
     "user": "user",
     "assistant": "assistant",
     "tool": "user",
@@ -69,11 +70,22 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     try:
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
-            return {"type": "image", "source": {"type": "file", "file_id": image.content.id}}
+            content_bytes = image.content
 
         # Case 1: Image is a URL
         if image.url is not None:
-            return {"type": "image", "source": {"type": "url", "url": image.url}}
+            content_bytes = image.get_content_bytes()  # type: ignore
+
+            # If image URL has a suffix, use it as the type (without dot)
+            import os
+            from urllib.parse import urlparse
+
+            img_type = None
+            if image.url:
+                parsed_url = urlparse(image.url)
+                _, ext = os.path.splitext(parsed_url.path)
+                if ext:
+                    img_type = ext.lstrip(".").lower()
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -83,6 +95,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             if path.exists() and path.is_file():
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
+
+                # If image file path has a suffix, use it as the type (without dot)
+                path_ext = path.suffix.lstrip(".")
+                if path_ext:
+                    img_type = path_ext.lower()
             else:
                 log_error(f"Image file not found: {image}")
                 return None
@@ -95,15 +112,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        if using_filetype:
-            kind = filetype.guess(content_bytes)
-            if not kind:
-                log_error("Unable to determine image type")
-                return None
+        if not img_type:
+            if using_filetype:
+                kind = filetype.guess(content_bytes)
+                if not kind:
+                    log_error("Unable to determine image type")
+                    return None
 
-            img_type = kind.extension
-        else:
-            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+                img_type = kind.extension
+            else:
+                img_type = imghdr.what(None, h=content_bytes)  # type: ignore
 
         if not img_type:
             log_error("Unable to determine image type")
@@ -217,7 +235,8 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
     for message in messages:
         content = message.content or ""
-        if message.role == "system":
+        # Both "system" and "developer" roles should be extracted as system messages
+        if message.role in ("system", "developer"):
             if content is not None:
                 system_messages.append(content)  # type: ignore
             continue
@@ -279,6 +298,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+        elif message.role == "tool":
+            content = []
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(message.content),
+                }
+            )
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:

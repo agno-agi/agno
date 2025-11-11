@@ -9,7 +9,7 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reranker import CohereReranker
+from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -26,7 +26,9 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.add_contents_async(urls=["https://docs.agno.com/introduction/agents.md"])
+    knowledge.add_contents_async(
+        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+    )
 )
 
 agent = Agent(
@@ -49,5 +51,5 @@ if __name__ == "__main__":
         "What are Agents?",
         stream=True,
         show_full_reasoning=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

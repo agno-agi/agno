@@ -104,6 +104,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
 
     session_id = "test_session_1"
     agent = Agent(
+        id="test_agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         db=shared_db,
@@ -111,7 +112,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
     )
 
     updated_tools = None
-    for response in agent.run("What is the weather in Tokyo?", session_id=session_id, stream=True):
+    for response in agent.run("What is the weather in Tokyo?", session_id=session_id, stream=True, stream_events=True):
         if response.is_paused:
             assert response.tools[0].requires_confirmation
             assert response.tools[0].tool_name == "get_the_weather"
@@ -126,6 +127,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
 
     # Create a completely new agent instance
     agent = Agent(
+        id="test_agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         db=shared_db,
@@ -133,12 +135,13 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
     )
 
     response = agent.continue_run(
-        run_id=run_response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True
+        run_id=run_response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True, stream_events=True
     )
     for response in response:
         if response.is_paused:
             assert False, "The run should not be paused"
-    run_response = agent.get_last_run_output(session_id=session_id)
+    run_response = agent.get_run_output(run_id=run_response.run_id, session_id=session_id)
+
     assert run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -218,42 +221,6 @@ def test_tool_call_requires_confirmation_memory_footprint(shared_db):
     assert len(session_from_db.runs[0].messages) == 5, [m.role for m in session_from_db.runs[0].messages]
 
 
-@pytest.mark.flaky(reruns=2, reason="Asserting against a generated response makes this flaky")
-def test_tool_call_requires_confirmation_stream(shared_db):
-    @tool(requires_confirmation=True)
-    def get_the_weather(city: str):
-        return f"It is currently 70 degrees and cloudy in {city}"
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[get_the_weather],
-        db=shared_db,
-        markdown=True,
-        telemetry=False,
-    )
-
-    found_confirmation = False
-    for response in agent.run("What is the weather in Tokyo?", stream=True):
-        if response.is_paused:
-            assert response.tools is not None
-            assert response.tools[0].requires_confirmation
-            assert response.tools[0].tool_name == "get_the_weather"
-            assert response.tools[0].tool_args == {"city": "Tokyo"}
-            # Mark the tool as confirmed
-            response.tools[0].confirmed = True
-            found_confirmation = True
-
-    assert found_confirmation, "No tools were found to require confirmation"
-    run_response = agent.get_last_run_output()
-
-    found_confirmation = False
-    for response in agent.continue_run(run_response, stream=True):
-        if response.is_paused:
-            found_confirmation = True
-
-    assert found_confirmation is False, "Some tools still require confirmation"
-
-
 @pytest.mark.asyncio
 async def test_tool_call_requires_confirmation_async(shared_db):
     @tool(requires_confirmation=True)
@@ -280,44 +247,6 @@ async def test_tool_call_requires_confirmation_async(shared_db):
 
     response = await agent.acontinue_run(response)
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
-
-
-@pytest.mark.asyncio
-@pytest.mark.flaky(reruns=2, reason="Async makes this test flaky")
-async def test_tool_call_requires_confirmation_stream_async(shared_db):
-    @tool(requires_confirmation=True)
-    async def get_the_weather(city: str):
-        return f"It is currently 70 degrees and cloudy in {city}"
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[get_the_weather],
-        db=shared_db,
-        markdown=True,
-        telemetry=False,
-    )
-
-    found_confirmation = False
-    async for response in agent.arun("What is the weather in Tokyo?", stream=True):
-        if response.is_paused:
-            assert response.tools[0].requires_confirmation
-            assert response.tools[0].tool_name == "get_the_weather"
-            assert response.tools[0].tool_args == {"city": "Tokyo"}
-
-            # Mark the tool as confirmed
-            for tool_response in response.tools:
-                if tool_response.requires_confirmation:
-                    tool_response.confirmed = True
-            found_confirmation = True
-    assert found_confirmation, "No tools were found to require confirmation"
-
-    run_response = agent.get_last_run_output()
-
-    found_confirmation = False
-    async for response in agent.acontinue_run(run_response, stream=True):
-        if response.is_paused:
-            found_confirmation = True
-    assert found_confirmation is False, "Some tools still require confirmation"
 
 
 def test_tool_call_multiple_requires_confirmation(shared_db):

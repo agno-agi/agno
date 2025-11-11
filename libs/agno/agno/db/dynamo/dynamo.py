@@ -13,6 +13,7 @@ from agno.db.dynamo.utils import (
     build_topic_filter_expression,
     calculate_date_metrics,
     create_table_if_not_exists,
+    deserialize_cultural_knowledge_from_db,
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
@@ -23,15 +24,18 @@ from agno.db.dynamo.utils import (
     get_dates_to_calculate_metrics_for,
     merge_with_existing_session,
     prepare_session_data,
+    serialize_cultural_knowledge_for_db,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     import boto3  # type: ignore[import-untyped]
@@ -51,10 +55,12 @@ class DynamoDb(BaseDb):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a DynamoDB database.
@@ -65,13 +71,21 @@ class DynamoDb(BaseDb):
             aws_access_key_id: AWS access key ID.
             aws_secret_access_key: AWS secret access key.
             session_table: The name of the session table.
+            culture_table: The name of the culture table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
+            id: ID of the database.
         """
+        if id is None:
+            seed = str(db_client) if db_client else f"{region_name}_{aws_access_key_id}"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
+            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -98,27 +112,8 @@ class DynamoDb(BaseDb):
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
 
-    def _create_tables(self):
-        tables_to_create = [
-            (self.session_table_name, "sessions"),
-            (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
-            (self.eval_table_name, "evals"),
-            (self.knowledge_table_name, "knowledge_sources"),
-        ]
-
-        for table_name, table_type in tables_to_create:
-            if table_name:
-                try:
-                    schema = get_table_schema_definition(table_type)
-                    schema["TableName"] = table_name
-                    create_table_if_not_exists(self.client, table_name, schema)
-
-                except Exception as e:
-                    log_error(f"Failed to create table {table_name}: {e}")
-
-    def _table_exists(self, table_name: str) -> bool:
-        """Check if a DynamoDB table with the given name exists.
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a DynamoDB table exists.
 
         Args:
             table_name: The name of the table to check
@@ -131,9 +126,23 @@ class DynamoDb(BaseDb):
             return True
         except self.client.exceptions.ResourceNotFoundException:
             return False
-        except Exception as e:
-            log_error(f"Error checking if table {table_name} exists: {e}")
-            return False
+
+    def _create_all_tables(self):
+        """Create all configured DynamoDB tables if they don't exist."""
+        tables_to_create = [
+            ("sessions", self.session_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("culture", self.culture_table_name),
+        ]
+
+        for table_type, table_name in tables_to_create:
+            if not self.table_exists(table_name):
+                schema = get_table_schema_definition(table_type)
+                schema["TableName"] = table_name
+                create_table_if_not_exists(self.client, table_name, schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
@@ -160,11 +169,13 @@ class DynamoDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
+        elif table_type == "culture":
+            table_name = self.culture_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
         # Check if table exists, create if it doesn't
-        if not self._table_exists(table_name) and create_table_if_not_found:
+        if not self.table_exists(table_name) and create_table_if_not_found:
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
@@ -173,7 +184,7 @@ class DynamoDb(BaseDb):
 
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None, session_type: Optional[SessionType] = None) -> bool:
+    def delete_session(self, session_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
@@ -224,11 +235,12 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete sessions: {e}")
+            raise e
 
     def get_session(
         self,
         session_id: str,
-        session_type: Optional[SessionType] = None,
+        session_type: SessionType,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -237,7 +249,7 @@ class DynamoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (Optional[SessionType]): The type of session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -260,8 +272,6 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if session_type and session.get("session_type") != session_type.value:
-                return None
             if user_id and session.get("user_id") != user_id:
                 return None
 
@@ -275,12 +285,14 @@ class DynamoDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            else:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -400,7 +412,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get sessions: {e}")
-            return []
+            raise e
 
     def rename_session(
         self,
@@ -468,7 +480,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to rename session {session_id}: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -510,21 +522,72 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert session {session.session_id}: {e}")
-            return None
+            raise e
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            log_info(
+                f"DynamoDb doesn't support efficient bulk operations, falling back to individual upserts for {len(sessions)} sessions"
+            )
+
+            # Fall back to individual upserts
+            results = []
+            for session in sessions:
+                if session is not None:
+                    result = self.upsert_session(session, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {e}")
+            return []
 
     # --- User Memory ---
 
-    def delete_user_memory(self, memory_id: str) -> None:
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """
         Delete a user memory from the database.
 
         Args:
             memory_id: The ID of the memory to delete.
+            user_id: The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If any error occurs while deleting the user memory.
         """
         try:
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                response = self.client.get_item(
+                    TableName=self.memory_table_name,
+                    Key={"memory_id": {"S": memory_id}},
+                )
+                item = response.get("Item")
+                if item:
+                    memory_data = deserialize_from_dynamodb_item(item)
+                    if memory_data.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                        return
+
             self.client.delete_item(
                 TableName=self.memory_table_name,
                 Key={"memory_id": {"S": memory_id}},
@@ -533,19 +596,36 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete user memory {memory_id}: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """
         Delete user memories from the database in batches.
 
         Args:
             memory_ids: List of memory IDs to delete
+            user_id: The ID of the user (optional, for filtering).
 
         Raises:
             Exception: If any error occurs while deleting the user memories.
         """
 
         try:
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                filtered_memory_ids = []
+                for memory_id in memory_ids:
+                    response = self.client.get_item(
+                        TableName=self.memory_table_name,
+                        Key={"memory_id": {"S": memory_id}},
+                    )
+                    item = response.get("Item")
+                    if item:
+                        memory_data = deserialize_from_dynamodb_item(item)
+                        if memory_data.get("user_id") == user_id:
+                            filtered_memory_ids.append(memory_id)
+                memory_ids = filtered_memory_ids
+
             for i in range(0, len(memory_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = memory_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
@@ -557,9 +637,13 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id: The ID of the user (optional, for filtering).
 
         Returns:
             List[str]: List of unique memory topics.
@@ -569,13 +653,17 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            # Scan the entire table to get all memories
-            response = self.client.scan(TableName=table_name)
+            # Build filter expression for user_id if provided
+            scan_kwargs = {"TableName": table_name}
+
+            # Scan the table to get memories
+            response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
             # Extract topics from all memories
@@ -589,16 +677,21 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """
         Get a user memory from the database as a UserMemory object.
 
         Args:
             memory_id: The ID of the memory to get.
+            deserialize: Whether to deserialize the memory.
+            user_id: The ID of the user (optional, for filtering).
 
         Returns:
             Optional[UserMemory]: The user memory data if found, None otherwise.
@@ -615,6 +708,11 @@ class DynamoDb(BaseDb):
                 return None
 
             item = deserialize_from_dynamodb_item(item)
+
+            # Filter by user_id if provided
+            if user_id and item.get("user_id") != user_id:
+                return None
+
             if not deserialize:
                 return item
 
@@ -622,7 +720,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get user memory {memory_id}: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -742,7 +840,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get user memories: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -754,6 +852,7 @@ class DynamoDb(BaseDb):
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -773,29 +872,33 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("memories")
 
-            response = self.client.scan(TableName=table_name)
+            # Build filter expression for user_id if provided
+            scan_kwargs = {"TableName": table_name}
+
+            response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
             # Aggregate stats by user_id
             user_stats = {}
             for item in items:
                 memory_data = deserialize_from_dynamodb_item(item)
-                user_id = memory_data.get("user_id")
+                current_user_id = memory_data.get("user_id")
 
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            "user_id": user_id,
+                if current_user_id:
+                    if current_user_id not in user_stats:
+                        user_stats[current_user_id] = {
+                            "user_id": current_user_id,
                             "total_memories": 0,
                             "last_memory_updated_at": None,
                         }
 
-                    user_stats[user_id]["total_memories"] += 1
+                    user_stats[current_user_id]["total_memories"] += 1
 
                     updated_at = memory_data.get("updated_at")
                     if updated_at:
@@ -803,10 +906,10 @@ class DynamoDb(BaseDb):
                         updated_at_timestamp = int(updated_at_dt.timestamp())
 
                         if updated_at_timestamp and (
-                            user_stats[user_id]["last_memory_updated_at"] is None
-                            or updated_at_timestamp > user_stats[user_id]["last_memory_updated_at"]
+                            user_stats[current_user_id]["last_memory_updated_at"] is None
+                            or updated_at_timestamp > user_stats[current_user_id]["last_memory_updated_at"]
                         ):
-                            user_stats[user_id]["last_memory_updated_at"] = updated_at_timestamp
+                            user_stats[current_user_id]["last_memory_updated_at"] = updated_at_timestamp
 
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
@@ -828,7 +931,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -857,7 +960,44 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert user memory: {e}")
-            return None
+            raise e
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            log_info(
+                f"DynamoDb doesn't support efficient bulk operations, falling back to individual upserts for {len(memories)} memories"
+            )
+
+            # Fall back to individual upserts
+            results = []
+            for memory in memories:
+                if memory is not None:
+                    result = self.upsert_user_memory(memory, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {e}")
+            return []
 
     def clear_memories(self) -> None:
         """Delete all memories from the database.
@@ -898,6 +1038,7 @@ class DynamoDb(BaseDb):
             from agno.utils.log import log_warning
 
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # --- Metrics ---
 
@@ -975,7 +1116,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to calculate metrics: {e}")
-            return None
+            raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1061,7 +1202,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get metrics calculation starting date: {e}")
-            return None
+            raise e
 
     def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: int, end_timestamp: int
@@ -1119,7 +1260,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get sessions for metrics calculation: {e}")
-            return []
+            raise e
 
     def _bulk_upsert_metrics(self, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Bulk upsert metrics records into DynamoDB with proper deduplication.
@@ -1147,7 +1288,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to bulk upsert metrics: {e}")
-            return []
+            raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Upsert a single metrics record, checking for existing records with the same date.
@@ -1179,7 +1320,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert single metrics record: {e}")
-            return None
+            raise e
 
     def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
         """Get existing metrics record for a given date.
@@ -1212,7 +1353,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get existing metrics record for date {date_str}: {e}")
-            return None
+            raise e
 
     def _update_existing_metrics_record(
         self,
@@ -1246,7 +1387,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to update existing metrics record: {e}")
-            return None
+            raise e
 
     def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new metrics record.
@@ -1270,7 +1411,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to create new metrics record: {e}")
-            return None
+            raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare a metrics record for DynamoDB serialization by converting all data types properly.
@@ -1314,17 +1455,17 @@ class DynamoDb(BaseDb):
         """
         import json
 
-        item = {}
+        item: Dict[str, Any] = {}
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):
-                    item[key] = {"BOOL": str(value)}
+                    item[key] = {"BOOL": value}
                 elif isinstance(value, (int, float)):
                     item[key] = {"N": str(value)}
                 elif isinstance(value, str):
                     item[key] = {"S": str(value)}
                 elif isinstance(value, (dict, list)):
-                    item[key] = {"S": json.dumps(str(value))}
+                    item[key] = {"S": json.dumps(value)}
                 else:
                     item[key] = {"S": str(value)}
         return item
@@ -1393,7 +1534,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get metrics: {e}")
-            return [], 0
+            raise e
 
     # --- Knowledge methods ---
 
@@ -1415,6 +1556,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete knowledge content {id}: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1437,7 +1579,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get knowledge content {id}: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1509,7 +1651,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1530,7 +1672,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {e}")
-            return None
+            raise e
 
     # --- Eval ---
 
@@ -1560,7 +1702,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to create eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         if not eval_run_ids or not self.eval_table_name:
@@ -1578,6 +1720,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {e}")
+            raise e
 
     def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
         if not self.eval_table_name:
@@ -1593,7 +1736,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
         if not self.eval_table_name:
@@ -1609,7 +1752,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1661,14 +1804,16 @@ class DynamoDb(BaseDb):
 
             if filter_type is not None:
                 if filter_type == EvalFilterType.AGENT:
-                    filter_expressions.append("agent_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(agent_id)")
                 elif filter_type == EvalFilterType.TEAM:
-                    filter_expressions.append("team_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(team_id)")
                 elif filter_type == EvalFilterType.WORKFLOW:
-                    filter_expressions.append("workflow_id IS NOT NULL")
+                    filter_expressions.append("attribute_exists(workflow_id)")
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+
+            if expression_values:
                 scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
 
             # Execute scan
@@ -1708,7 +1853,7 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1740,4 +1885,158 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to rename eval run {eval_run_id}: {e}")
-            return None
+            raise e
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database."""
+        try:
+            table_name = self._get_table("culture")
+            response = self.client.scan(TableName=table_name, ProjectionExpression="id")
+
+            with self.client.batch_writer(table_name) as batch:
+                for item in response.get("Items", []):
+                    batch.delete_item(Key={"id": item["id"]})
+        except Exception as e:
+            log_error(f"Failed to clear cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from the database."""
+        try:
+            table_name = self._get_table("culture")
+            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+        except Exception as e:
+            log_error(f"Failed to delete cultural knowledge {id}: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from the database."""
+        try:
+            table_name = self._get_table("culture")
+            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
+
+            item = response.get("Item")
+            if not item:
+                return None
+
+            db_row = deserialize_from_dynamodb_item(item)
+            if not deserialize:
+                return db_row
+
+            return deserialize_cultural_knowledge_from_db(db_row)
+        except Exception as e:
+            log_error(f"Failed to get cultural knowledge {id}: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from the database."""
+        try:
+            table_name = self._get_table("culture")
+
+            # Build filter expression
+            filter_expressions = []
+            expression_values = {}
+
+            if name:
+                filter_expressions.append("#name = :name")
+                expression_values[":name"] = {"S": name}
+            if agent_id:
+                filter_expressions.append("agent_id = :agent_id")
+                expression_values[":agent_id"] = {"S": agent_id}
+            if team_id:
+                filter_expressions.append("team_id = :team_id")
+                expression_values[":team_id"] = {"S": team_id}
+
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            if filter_expressions:
+                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+                scan_kwargs["ExpressionAttributeValues"] = expression_values
+                if name:
+                    scan_kwargs["ExpressionAttributeNames"] = {"#name": "name"}
+
+            # Execute scan
+            response = self.client.scan(**scan_kwargs)
+            items = response.get("Items", [])
+
+            # Continue scanning if there's more data
+            while "LastEvaluatedKey" in response:
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+            # Deserialize items from DynamoDB format
+            db_rows = [deserialize_from_dynamodb_item(item) for item in items]
+
+            # Apply sorting
+            if sort_by:
+                reverse = sort_order == "desc" if sort_order else False
+                db_rows.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
+
+            # Apply pagination
+            total_count = len(db_rows)
+            if limit and page:
+                start = (page - 1) * limit
+                db_rows = db_rows[start : start + limit]
+            elif limit:
+                db_rows = db_rows[:limit]
+
+            if not deserialize:
+                return db_rows, total_count
+
+            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+        except Exception as e:
+            log_error(f"Failed to get all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into the database."""
+        try:
+            from uuid import uuid4
+
+            table_name = self._get_table("culture", create_table_if_not_found=True)
+
+            if not cultural_knowledge.id:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            item_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Convert to DynamoDB format
+            item = serialize_to_dynamo_item(item_dict)
+            self.client.put_item(TableName=table_name, Item=item)
+
+            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
+
+        except Exception as e:
+            log_error(f"Failed to upsert cultural knowledge: {e}")
+            raise e

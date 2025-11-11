@@ -37,8 +37,13 @@ python cookbook/models/nvidia/basic.py
 
 ### 5. Run Agent with Tools
 
+- Streaming on
 
-- DuckDuckGo search
+```shell
+python cookbook/models/nvidia/tool_use_stream.py
+```
+
+- Streaming off
 
 ```shell
 python cookbook/models/nvidia/tool_use.py

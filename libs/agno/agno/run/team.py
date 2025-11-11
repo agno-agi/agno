@@ -13,6 +13,117 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import log_error
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
+
+
+@dataclass
+class TeamRunInput:
+    """Container for the raw input data passed to Agent.run().
+    This captures the original input exactly as provided by the user,
+    separate from the processed messages that go to the model.
+    Attributes:
+        input_content: The literal input message/content passed to run()
+        images: Images directly passed to run()
+        videos: Videos directly passed to run()
+        audios: Audio files directly passed to run()
+        files: Files directly passed to run()
+    """
+
+    input_content: Union[str, List, Dict, Message, BaseModel, List[Message]]
+    images: Optional[Sequence[Image]] = None
+    videos: Optional[Sequence[Video]] = None
+    audios: Optional[Sequence[Audio]] = None
+    files: Optional[Sequence[File]] = None
+
+    def input_content_string(self) -> str:
+        import json
+
+        if isinstance(self.input_content, (str)):
+            return self.input_content
+        elif isinstance(self.input_content, BaseModel):
+            return self.input_content.model_dump_json(exclude_none=True)
+        elif isinstance(self.input_content, Message):
+            return json.dumps(self.input_content.to_dict())
+        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
+            return json.dumps([m.to_dict() for m in self.input_content])
+        else:
+            return str(self.input_content)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation"""
+        result: Dict[str, Any] = {}
+
+        if self.input_content is not None:
+            if isinstance(self.input_content, (str)):
+                result["input_content"] = self.input_content
+            elif isinstance(self.input_content, BaseModel):
+                result["input_content"] = self.input_content.model_dump(exclude_none=True)
+            elif isinstance(self.input_content, Message):
+                result["input_content"] = self.input_content.to_dict()
+
+            # Handle input_content provided as a list of Message objects
+            elif (
+                isinstance(self.input_content, list)
+                and self.input_content
+                and isinstance(self.input_content[0], Message)
+            ):
+                result["input_content"] = [m.to_dict() for m in self.input_content]
+
+            # Handle input_content provided as a list of dicts
+            elif (
+                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
+            ):
+                for content in self.input_content:
+                    # Handle media input
+                    if isinstance(content, dict):
+                        if content.get("images"):
+                            content["images"] = [
+                                img.to_dict() if isinstance(img, Image) else img for img in content["images"]
+                            ]
+                        if content.get("videos"):
+                            content["videos"] = [
+                                vid.to_dict() if isinstance(vid, Video) else vid for vid in content["videos"]
+                            ]
+                        if content.get("audios"):
+                            content["audios"] = [
+                                aud.to_dict() if isinstance(aud, Audio) else aud for aud in content["audios"]
+                            ]
+                        if content.get("files"):
+                            content["files"] = [
+                                file.to_dict() if isinstance(file, File) else file for file in content["files"]
+                            ]
+                result["input_content"] = self.input_content
+            else:
+                result["input_content"] = self.input_content
+
+        if self.images:
+            result["images"] = [img.to_dict() for img in self.images]
+        if self.videos:
+            result["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.audios:
+            result["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files:
+            result["files"] = [file.to_dict() for file in self.files]
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
+        """Create TeamRunInput from dictionary"""
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audios = reconstruct_audio_list(data.get("audios"))
+        files = reconstruct_files(data.get("files"))
+
+        return cls(
+            input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
+        )
 
 
 class TeamRunEvent(str, Enum):
@@ -21,9 +132,16 @@ class TeamRunEvent(str, Enum):
     run_started = "TeamRunStarted"
     run_content = "TeamRunContent"
     run_intermediate_content = "TeamRunIntermediateContent"
+    run_content_completed = "TeamRunContentCompleted"
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
+
+    pre_hook_started = "TeamPreHookStarted"
+    pre_hook_completed = "TeamPreHookCompleted"
+
+    post_hook_started = "TeamPostHookStarted"
+    post_hook_completed = "TeamPostHookCompleted"
 
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
@@ -34,6 +152,9 @@ class TeamRunEvent(str, Enum):
 
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
+
+    session_summary_started = "TeamSessionSummaryStarted"
+    session_summary_completed = "TeamSessionSummaryCompleted"
 
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
@@ -51,6 +172,7 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     team_id: str = ""
     team_name: str = ""
     run_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
 
     workflow_id: Optional[str] = None
@@ -98,6 +220,7 @@ class RunContentEvent(BaseTeamRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     citations: Optional[Citations] = None
     response_audio: Optional[Audio] = None  # Model audio response
     image: Optional[Image] = None  # Image attached to the response
@@ -115,12 +238,18 @@ class IntermediateRunContentEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class RunContentCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_content_completed.value
+
+
+@dataclass
 class RunCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.run_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
+    model_provider_data: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
@@ -132,12 +261,18 @@ class RunCompletedEvent(BaseTeamRunEvent):
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
 class RunErrorEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.run_error.value
     content: Optional[str] = None
+
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -151,6 +286,32 @@ class RunCancelledEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class PreHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.pre_hook_started.value
+    pre_hook_name: Optional[str] = None
+    run_input: Optional[TeamRunInput] = None
+
+
+@dataclass
+class PreHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.pre_hook_completed.value
+    pre_hook_name: Optional[str] = None
+    run_input: Optional[TeamRunInput] = None
+
+
+@dataclass
+class PostHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_started.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
+class PostHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_completed.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
 class MemoryUpdateStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_started.value
 
@@ -158,6 +319,17 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+
+
+@dataclass
+class SessionSummaryStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_started.value
+
+
+@dataclass
+class SessionSummaryCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_completed.value
+    session_summary: Optional[Any] = None
 
 
 @dataclass
@@ -220,19 +392,29 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 TeamRunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
     IntermediateRunContentEvent,
+    RunContentCompletedEvent,
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
+    PreHookStartedEvent,
+    PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
@@ -247,14 +429,21 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_started.value: RunStartedEvent,
     TeamRunEvent.run_content.value: RunContentEvent,
     TeamRunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
+    TeamRunEvent.run_content_completed.value: RunContentCompletedEvent,
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
+    TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
+    TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
+    TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    TeamRunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
@@ -277,81 +466,22 @@ def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
 
 
 @dataclass
-class TeamRunInput:
-    """Container for the raw input data passed to Agent.run().
-    This captures the original input exactly as provided by the user,
-    separate from the processed messages that go to the model.
-    Attributes:
-        input_content: The literal input message/content passed to run()
-        images: Images directly passed to run()
-        videos: Videos directly passed to run()
-        audios: Audio files directly passed to run()
-        files: Files directly passed to run()
-    """
-
-    input_content: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None
-    images: Optional[Sequence[Image]] = None
-    videos: Optional[Sequence[Video]] = None
-    audios: Optional[Sequence[Audio]] = None
-    files: Optional[Sequence[File]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation"""
-        result: Dict[str, Any] = {}
-
-        if self.input_content is not None:
-            if isinstance(self.input_content, (str)):
-                result["input_content"] = self.input_content
-            elif isinstance(self.input_content, BaseModel):
-                result["input_content"] = self.input_content.model_dump(exclude_none=True)
-            elif isinstance(self.input_content, Message):
-                result["input_content"] = self.input_content.to_dict()
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-            else:
-                result["input_content"] = self.input_content
-
-        if self.images:
-            result["images"] = [img.to_dict() for img in self.images]
-        if self.videos:
-            result["videos"] = [vid.to_dict() for vid in self.videos]
-        if self.audios:
-            result["audios"] = [aud.to_dict() for aud in self.audios]
-
-        return result
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
-        """Create TeamRunInput from dictionary"""
-        images = None
-        if data.get("images"):
-            images = [Image.model_validate(img_data) for img_data in data["images"]]
-
-        videos = None
-        if data.get("videos"):
-            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
-
-        audios = None
-        if data.get("audios"):
-            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
-
-        files = None
-        if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
-
-        return cls(input_content=data.get("input_content"), images=images, videos=videos, audios=audios, files=files)
-
-
-@dataclass
 class TeamRunOutput:
     """Response returned by Team.run() functions"""
 
+    run_id: Optional[str] = None
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+    session_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    # Input media and messages from user
+    input: Optional[TeamRunInput] = None
+
     content: Optional[Any] = None
     content_type: str = "str"
+
     messages: Optional[List[Message]] = None
     metrics: Optional[Metrics] = None
     model: Optional[str] = None
@@ -359,28 +489,21 @@ class TeamRunOutput:
 
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
 
-    run_id: Optional[str] = None
-    team_id: Optional[str] = None
-    team_name: Optional[str] = None
-    session_id: Optional[str] = None
-    parent_run_id: Optional[str] = None
-
     tools: Optional[List[ToolExecution]] = None
 
     images: Optional[List[Image]] = None  # Images from member runs
     videos: Optional[List[Video]] = None  # Videos from member runs
     audio: Optional[List[Audio]] = None  # Audio from member runs
+    files: Optional[List[File]] = None  # Files from member runs
 
     response_audio: Optional[Audio] = None  # Model audio response
-
-    # Input media and messages from user
-    input: Optional[TeamRunInput] = None
 
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
-
+    model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -419,6 +542,7 @@ class TeamRunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "citations",
                 "events",
@@ -460,6 +584,9 @@ class TeamRunOutput:
 
         if self.audio is not None:
             _dict["audio"] = [aud.to_dict() for aud in self.audio]
+
+        if self.files is not None:
+            _dict["files"] = [file.to_dict() for file in self.files]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
@@ -519,7 +646,7 @@ class TeamRunOutput:
         events = final_events
 
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = [Message.from_dict(message) for message in messages] if messages else None
 
         member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
@@ -532,7 +659,7 @@ class TeamRunOutput:
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
+            additional_input = [Message.from_dict(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -540,26 +667,21 @@ class TeamRunOutput:
 
         reasoning_messages = data.pop("reasoning_messages", None)
         if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+            reasoning_messages = [Message.from_dict(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
-
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        files = reconstruct_files(data.pop("files", []))
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
         input_obj = None
@@ -573,6 +695,12 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             messages=messages,
             metrics=metrics,
@@ -584,12 +712,13 @@ class TeamRunOutput:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             citations=citations,
             tools=tools,
             events=events,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:
@@ -618,3 +747,7 @@ class TeamRunOutput:
             if self.audio is None:
                 self.audio = []
             self.audio.extend(run_response.audio)
+        if run_response.files is not None:
+            if self.files is None:
+                self.files = []
+            self.files.extend(run_response.files)

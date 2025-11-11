@@ -42,9 +42,9 @@ agent_specific = Agent(
     tools=[
         Mem0Tools(
             enable_add_memory=True,
-            enable_search_memories=True,
+            enable_search_memory=True,
             enable_get_all_memories=False,
-            enable_delete_memory=False,
+            enable_delete_all_memories=False,
         )
     ],
     user_id=USER_ID,
@@ -64,9 +64,9 @@ agent = Agent(
     tools=[
         Mem0Tools(
             enable_add_memory=True,
-            enable_search_memories=True,
+            enable_search_memory=True,
             enable_get_all_memories=True,
-            enable_delete_memory=True,
+            enable_delete_all_memories=True,
         )
     ],
     user_id=USER_ID,

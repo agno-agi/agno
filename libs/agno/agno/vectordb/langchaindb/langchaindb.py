@@ -11,16 +11,23 @@ class LangChainVectorDb(VectorDb):
         vectorstore: Optional[Any] = None,
         search_kwargs: Optional[dict] = None,
         knowledge_retriever: Optional[Any] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         """
         Initialize LangChainVectorDb.
 
         Args:
             vectorstore: The LangChain vectorstore instance
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             search_kwargs: Additional search parameters for the retriever
             knowledge_retriever: An optional LangChain retriever instance
         """
         self.vectorstore = vectorstore
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.search_kwargs = search_kwargs
         self.knowledge_retriever = knowledge_retriever
 
@@ -63,9 +70,7 @@ class LangChainVectorDb(VectorDb):
         logger.warning("LangChainKnowledgeBase.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Returns relevant documents matching the query"""
 
         try:
@@ -79,7 +84,7 @@ class LangChainVectorDb(VectorDb):
         if self.vectorstore is not None and self.knowledge_retriever is None:
             log_debug("Creating knowledge retriever")
             if self.search_kwargs is None:
-                self.search_kwargs = {"k": num_documents}
+                self.search_kwargs = {"k": limit}
             if filters is not None:
                 self.search_kwargs.update(filters)
             self.knowledge_retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
@@ -91,7 +96,7 @@ class LangChainVectorDb(VectorDb):
         if not isinstance(self.knowledge_retriever, BaseRetriever):
             raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
 
-        log_debug(f"Getting {num_documents} relevant documents for query: {query}")
+        log_debug(f"Getting {limit} relevant documents for query: {query}")
         lc_documents: List[LangChainDocument] = self.knowledge_retriever.invoke(input=query)
         documents = []
         for lc_doc in lc_documents:
@@ -104,9 +109,9 @@ class LangChainVectorDb(VectorDb):
         return documents
 
     async def async_search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        return self.search(query, num_documents, filters)
+        return self.search(query, limit, filters)
 
     def drop(self) -> None:
         raise NotImplementedError
@@ -143,3 +148,7 @@ class LangChainVectorDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         raise NotImplementedError("update_metadata not supported for LangChain vectorstores")
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LangChainVectorDb doesn't use SearchType enum

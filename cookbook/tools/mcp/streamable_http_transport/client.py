@@ -15,33 +15,41 @@ server_url = "http://localhost:8000/mcp"
 
 
 async def run_agent(message: str) -> None:
-    async with MCPTools(transport="streamable-http", url=server_url) as mcp_tools:
-        agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
-            tools=[mcp_tools],
-            markdown=True,
-        )
-        await agent.aprint_response(input=message, stream=True, markdown=True)
+    mcp_tools = MCPTools(
+        transport="streamable-http",
+        url=server_url,
+        refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
+    )
+    await mcp_tools.connect()
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[mcp_tools],
+        markdown=True,
+    )
+    await agent.aprint_response(input=message, stream=True, markdown=True)
+    await mcp_tools.close()
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
 # In this example we connect to both our example server (Streamable HTTP transport), and a different server (stdio transport).
 async def run_agent_with_multimcp(message: str) -> None:
-    async with MultiMCPTools(
+    mcp_tools = MultiMCPTools(
         commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"],
         urls=[server_url],
         urls_transports=["streamable-http"],
-    ) as mcp_tools:
-        agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
-            tools=[mcp_tools],
-            markdown=True,
-        )
-        await agent.aprint_response(input=message, stream=True, markdown=True)
+        refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
+    )
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[mcp_tools],
+        markdown=True,
+    )
+    await agent.aprint_response(input=message, stream=True, markdown=True)
 
 
 if __name__ == "__main__":
     asyncio.run(run_agent("Do I have any birthdays this week?"))
+    asyncio.run(run_agent("What else is on my calendar this week?"))
     asyncio.run(
         run_agent_with_multimcp(
             "Can you check when is my mom's birthday, and if there are any AirBnb listings in SF for two people for that day?",

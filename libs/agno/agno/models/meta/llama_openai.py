@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -31,7 +31,7 @@ class LlamaOpenAI(OpenAILike):
     name: str = "LlamaOpenAI"
     provider: str = "LlamaOpenAI"
 
-    api_key: Optional[str] = getenv("LLAMA_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("LLAMA_API_KEY"))
     base_url: Optional[str] = "https://api.llama.com/compat/v1/"
 
     # Request parameters
@@ -62,6 +62,9 @@ class LlamaOpenAI(OpenAILike):
 
     def get_async_client(self):
         """Override to provide custom httpx client that properly handles redirects"""
+        if self.async_client and not self.async_client.is_closed():
+            return self.async_client
+
         client_params = self._get_client_params()
 
         # Llama gives a 307 redirect error, so we need to set up a custom client to allow redirects
@@ -71,4 +74,5 @@ class LlamaOpenAI(OpenAILike):
             timeout=httpx.Timeout(30.0),
         )
 
-        return AsyncOpenAIClient(**client_params)
+        self.async_client = AsyncOpenAIClient(**client_params)
+        return self.async_client

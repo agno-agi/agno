@@ -12,16 +12,20 @@ from agno.db.mysql.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import TEXT, and_, cast, func, update
@@ -41,10 +45,12 @@ class MySQLDb(BaseDb):
         db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -59,17 +65,27 @@ class MySQLDb(BaseDb):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
+            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        if id is None:
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
+            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -91,6 +107,18 @@ class MySQLDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the MySQL database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
@@ -175,12 +203,25 @@ class MySQLDb(BaseDb):
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {db_schema}.{table_name}")
+            log_debug(f"Successfully created table {db_schema}.{table_name}")
             return table
 
         except Exception as e:
             log_error(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
+
+    def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
@@ -227,6 +268,15 @@ class MySQLDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
+
+        if table_type == "culture":
+            self.culture_table = self._get_or_create_table(
+                table_name=self.culture_table_name,
+                table_type="culture",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.culture_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -340,8 +390,8 @@ class MySQLDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -362,9 +412,6 @@ class MySQLDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    stmt = stmt.where(table.c.session_type == session_type_value)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -405,6 +452,7 @@ class MySQLDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
+            session_type (Optional[SessionType]): The type of sessions to get.
             user_id (Optional[str]): The ID of the user to filter by.
             entity_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
@@ -488,8 +536,8 @@ class MySQLDb(BaseDb):
                     raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            log_error(f"Exception getting sessions: {e}")
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -694,9 +742,231 @@ class MySQLDb(BaseDb):
             log_error(f"Exception upserting into sessions table: {e}")
             return None
 
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                log_info("Sessions table not available, falling back to individual upserts")
+                return [
+                    result
+                    for session in sessions
+                    if session is not None
+                    for result in [self.upsert_session(session, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            # Group sessions by type for batch processing
+            agent_sessions = []
+            team_sessions = []
+            workflow_sessions = []
+
+            for session in sessions:
+                if isinstance(session, AgentSession):
+                    agent_sessions.append(session)
+                elif isinstance(session, TeamSession):
+                    team_sessions.append(session)
+                elif isinstance(session, WorkflowSession):
+                    workflow_sessions.append(session)
+
+            results: List[Union[Session, Dict[str, Any]]] = []
+
+            # Process each session type in bulk
+            with self.Session() as sess, sess.begin():
+                # Bulk upsert agent sessions
+                if agent_sessions:
+                    agent_data = []
+                    for session in agent_sessions:
+                        session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                        agent_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.AGENT.value,
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
+                            }
+                        )
+
+                    if agent_data:
+                        stmt = mysql.insert(table)
+                        stmt = stmt.on_duplicate_key_update(
+                            agent_id=stmt.inserted.agent_id,
+                            user_id=stmt.inserted.user_id,
+                            agent_data=stmt.inserted.agent_data,
+                            session_data=stmt.inserted.session_data,
+                            summary=stmt.inserted.summary,
+                            metadata=stmt.inserted.metadata,
+                            runs=stmt.inserted.runs,
+                            updated_at=stmt.inserted.updated_at,
+                        )
+                        sess.execute(stmt, agent_data)
+
+                        # Fetch the results for agent sessions
+                        agent_ids = [session.session_id for session in agent_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = dict(row._mapping)
+                            if deserialize:
+                                deserialized_agent_session = AgentSession.from_dict(session_dict)
+                                if deserialized_agent_session is None:
+                                    continue
+                                results.append(deserialized_agent_session)
+                            else:
+                                results.append(session_dict)
+
+                # Bulk upsert team sessions
+                if team_sessions:
+                    team_data = []
+                    for session in team_sessions:
+                        session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                        team_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.TEAM.value,
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
+                            }
+                        )
+
+                    if team_data:
+                        stmt = mysql.insert(table)
+                        stmt = stmt.on_duplicate_key_update(
+                            team_id=stmt.inserted.team_id,
+                            user_id=stmt.inserted.user_id,
+                            team_data=stmt.inserted.team_data,
+                            session_data=stmt.inserted.session_data,
+                            summary=stmt.inserted.summary,
+                            metadata=stmt.inserted.metadata,
+                            runs=stmt.inserted.runs,
+                            updated_at=stmt.inserted.updated_at,
+                        )
+                        sess.execute(stmt, team_data)
+
+                        # Fetch the results for team sessions
+                        team_ids = [session.session_id for session in team_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(team_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = dict(row._mapping)
+                            if deserialize:
+                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                if deserialized_team_session is None:
+                                    continue
+                                results.append(deserialized_team_session)
+                            else:
+                                results.append(session_dict)
+
+                # Bulk upsert workflow sessions
+                if workflow_sessions:
+                    workflow_data = []
+                    for session in workflow_sessions:
+                        session_dict = session.to_dict()
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                        workflow_data.append(
+                            {
+                                "session_id": session_dict.get("session_id"),
+                                "session_type": SessionType.WORKFLOW.value,
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "runs": session_dict.get("runs"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "summary": session_dict.get("summary"),
+                                "metadata": session_dict.get("metadata"),
+                                "created_at": session_dict.get("created_at"),
+                                "updated_at": updated_at,
+                            }
+                        )
+
+                    if workflow_data:
+                        stmt = mysql.insert(table)
+                        stmt = stmt.on_duplicate_key_update(
+                            workflow_id=stmt.inserted.workflow_id,
+                            user_id=stmt.inserted.user_id,
+                            workflow_data=stmt.inserted.workflow_data,
+                            session_data=stmt.inserted.session_data,
+                            summary=stmt.inserted.summary,
+                            metadata=stmt.inserted.metadata,
+                            runs=stmt.inserted.runs,
+                            updated_at=stmt.inserted.updated_at,
+                        )
+                        sess.execute(stmt, workflow_data)
+
+                        # Fetch the results for workflow sessions
+                        workflow_ids = [session.session_id for session in workflow_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(workflow_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = dict(row._mapping)
+                            if deserialize:
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_workflow_session is None:
+                                    continue
+                                results.append(deserialized_workflow_session)
+                            else:
+                                results.append(session_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            # Fallback to individual upserts
+            return [
+                result
+                for session in sessions
+                if session is not None
+                for result in [self.upsert_session(session, deserialize=deserialize)]
+                if result is not None
+            ]
+
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -711,6 +981,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -722,11 +994,12 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -738,6 +1011,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No user memories found with ids: {memory_ids}")
@@ -778,14 +1053,17 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -802,6 +1080,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = sess.execute(stmt).fetchone()
                 if not result:
@@ -900,7 +1180,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def clear_memories(self) -> None:
         """Clear all user memories from the database."""
@@ -1044,6 +1324,99 @@ class MySQLDb(BaseDb):
             log_error(f"Exception upserting user memory: {e}")
             return None
 
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                log_info("Memories table not available, falling back to individual upserts")
+                return [
+                    result
+                    for memory in memories
+                    if memory is not None
+                    for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            # Prepare bulk data
+            bulk_data = []
+            current_time = int(time.time())
+            for memory in memories:
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
+                bulk_data.append(
+                    {
+                        "memory_id": memory.memory_id,
+                        "memory": memory.memory,
+                        "input": memory.input,
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "team_id": memory.team_id,
+                        "topics": memory.topics,
+                        "updated_at": updated_at,
+                    }
+                )
+
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
+            with self.Session() as sess, sess.begin():
+                # Bulk upsert memories using MySQL ON DUPLICATE KEY UPDATE
+                stmt = mysql.insert(table)
+                stmt = stmt.on_duplicate_key_update(
+                    memory=stmt.inserted.memory,
+                    topics=stmt.inserted.topics,
+                    input=stmt.inserted.input,
+                    agent_id=stmt.inserted.agent_id,
+                    team_id=stmt.inserted.team_id,
+                    updated_at=stmt.inserted.updated_at,
+                )
+                sess.execute(stmt, bulk_data)
+
+                # Fetch results
+                memory_ids = [memory.memory_id for memory in memories if memory.memory_id]
+                select_stmt = select(table).where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(select_stmt).fetchall()
+
+                for row in result:
+                    memory_dict = dict(row._mapping)
+                    if deserialize:
+                        results.append(UserMemory.from_dict(memory_dict))
+                    else:
+                        results.append(memory_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            # Fallback to individual upserts
+            return [
+                result
+                for memory in memories
+                if memory is not None
+                for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                if result is not None
+            ]
+
     # -- Metrics methods --
     def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
@@ -1085,7 +1458,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1328,9 +1701,9 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                    result = sess.execute(stmt).fetchall()
-                    if not result:
-                        return [], 0
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
 
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
@@ -1622,7 +1995,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1659,6 +2032,222 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
             return None
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from the database.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
+                else:
+                    log_debug(f"No cultural knowledge found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from the database.
+
+        Args:
+            id (str): The ID of the cultural knowledge to get.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row or not deserialize:
+                    return db_row
+
+            return deserialize_cultural_knowledge_from_db(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from cultural knowledge table: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from the database as CulturalKnowledge objects.
+
+        Args:
+            name (Optional[str]): The name of the cultural knowledge to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                db_rows = [dict(record._mapping) for record in result]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from cultural knowledge table: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into the database.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            with self.Session() as sess, sess.begin():
+                stmt = mysql.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+                stmt = stmt.on_duplicate_key_update(
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+                sess.execute(stmt)
+
+            # Fetch the inserted/updated row
+            return self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
+            raise e
 
     # -- Migrations --
 
@@ -1701,17 +2290,17 @@ class MySQLDb(BaseDb):
         if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:

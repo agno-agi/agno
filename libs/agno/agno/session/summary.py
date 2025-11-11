@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
 from agno.models.base import Model
+from agno.models.utils import get_model
 from agno.run.agent import Message
 from agno.utils.log import log_debug, log_warning
 
@@ -66,6 +67,9 @@ class SessionSummaryManager:
     # Prompt used for session summary generation
     session_summary_prompt: Optional[str] = None
 
+    # User message prompt for requesting the summary
+    summary_request_message: str = "Provide the summary of the conversation."
+
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
 
@@ -90,20 +94,35 @@ class SessionSummaryManager:
         response_format: Union[Dict[str, Any], Type[BaseModel]],
     ) -> Message:
         if self.session_summary_prompt is not None:
-            return Message(role="system", content=self.session_summary_prompt)
-
-        system_prompt = dedent("""\
-        Analyze the following conversation between a user and an assistant, and extract the following details:
-          - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
-          - Topics (Optional[List[str]]): List the topics discussed in the session.
-        Keep the summary concise and to the point. Only include relevant information.
-
-        <conversation>
-        """)
+            system_prompt = self.session_summary_prompt
+        else:
+            system_prompt = dedent("""\
+            Analyze the following conversation between a user and an assistant, and extract the following details:
+            - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
+            - Topics (Optional[List[str]]): List the topics discussed in the session.
+            Keep the summary concise and to the point. Only include relevant information.
+            """)
         conversation_messages = []
+        system_prompt += "<conversation>"
         for message in conversation:
             if message.role == "user":
-                conversation_messages.append(f"User: {message.content}")
+                # Handle empty user messages with media - note what media was provided
+                if not message.content or (isinstance(message.content, str) and message.content.strip() == ""):
+                    media_types = []
+                    if hasattr(message, "images") and message.images:
+                        media_types.append(f"{len(message.images)} image(s)")
+                    if hasattr(message, "videos") and message.videos:
+                        media_types.append(f"{len(message.videos)} video(s)")
+                    if hasattr(message, "audio") and message.audio:
+                        media_types.append(f"{len(message.audio)} audio file(s)")
+                    if hasattr(message, "files") and message.files:
+                        media_types.append(f"{len(message.files)} file(s)")
+
+                    if media_types:
+                        conversation_messages.append(f"User: [Provided {', '.join(media_types)}]")
+                    # Skip empty messages with no media
+                else:
+                    conversation_messages.append(f"User: {message.content}")
             elif message.role in ["assistant", "model"]:
                 conversation_messages.append(f"Assistant: {message.content}\n")
         system_prompt += "\n".join(conversation_messages)
@@ -119,22 +138,29 @@ class SessionSummaryManager:
     def _prepare_summary_messages(
         self,
         session: Optional["Session"] = None,
-    ) -> List[Message]:
-        """Prepare messages for session summary generation"""
-        self.model = cast(Model, self.model)
+    ) -> Optional[List[Message]]:
+        """Prepare messages for session summary generation. Returns None if no meaningful messages to summarize."""
+        if not session:
+            return None
+
+        self.model = get_model(self.model)
+        if self.model is None:
+            return None
+
         response_format = self.get_response_format(self.model)
 
-        return (
-            [
-                self.get_system_message(
-                    conversation=session.get_messages_for_session(),  # type: ignore
-                    response_format=response_format,
-                ),
-                Message(role="user", content="Provide the summary of the conversation."),
-            ]
-            if session
-            else []
+        system_message = self.get_system_message(
+            conversation=session.get_messages_for_session(),  # type: ignore
+            response_format=response_format,
         )
+
+        if system_message is None:
+            return None
+
+        return [
+            system_message,
+            Message(role="user", content=self.summary_request_message),
+        ]
 
     def _process_summary_response(self, summary_response, session_summary_model: "Model") -> Optional[SessionSummary]:  # type: ignore
         """Process the model response into a SessionSummary"""
@@ -188,10 +214,17 @@ class SessionSummaryManager:
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
+        self.model = get_model(self.model)
         if self.model is None:
             return None
 
         messages = self._prepare_summary_messages(session)
+
+        # Skip summary generation if there are no meaningful messages
+        if messages is None:
+            log_debug("No meaningful messages to summarize, skipping session summary")
+            return None
+
         response_format = self.get_response_format(self.model)
 
         summary_response = self.model.response(messages=messages, response_format=response_format)
@@ -209,10 +242,17 @@ class SessionSummaryManager:
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
+        self.model = get_model(self.model)
         if self.model is None:
             return None
 
         messages = self._prepare_summary_messages(session)
+
+        # Skip summary generation if there are no meaningful messages
+        if messages is None:
+            log_debug("No meaningful messages to summarize, skipping session summary")
+            return None
+
         response_format = self.get_response_format(self.model)
 
         summary_response = await self.model.aresponse(messages=messages, response_format=response_format)

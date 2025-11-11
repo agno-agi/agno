@@ -30,12 +30,7 @@ async def run_agent(message: str) -> None:
         agent = Agent(
             tools=[
                 sequential_thinking_mcp_tools,
-                YFinanceTools(
-                    stock_price=True,
-                    analyst_recommendations=True,
-                    company_info=True,
-                    company_news=True,
-                ),
+                YFinanceTools(),
             ],
             instructions=dedent("""\
                 ## Using the think tool

@@ -10,7 +10,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    model=Claude(id="anthropic.claude-sonnet-4-20250514-v1:0"),
     db=db,
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,

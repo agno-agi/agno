@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -18,13 +18,14 @@ class CerebrasOpenAI(OpenAILike):
 
     parallel_tool_calls: Optional[bool] = None
     base_url: str = "https://api.cerebras.ai/v1"
-    api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
+    api_key: Optional[str] = field(default_factory=lambda: getenv("CEREBRAS_API_KEY", None))
 
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.

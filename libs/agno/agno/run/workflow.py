@@ -6,10 +6,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
-from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
-from agno.run.team import TeamRunOutput
-from agno.utils.log import log_error
+from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
+from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -25,6 +30,9 @@ class WorkflowRunEvent(str, Enum):
     workflow_completed = "WorkflowCompleted"
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
+
+    workflow_agent_started = "WorkflowAgentStarted"
+    workflow_agent_completed = "WorkflowAgentCompleted"
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
@@ -53,7 +61,7 @@ class WorkflowRunEvent(str, Enum):
 
 
 @dataclass
-class BaseWorkflowRunOutputEvent:
+class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     """Base class for all workflow run response events"""
 
     created_at: int = field(default_factory=lambda: int(time()))
@@ -75,35 +83,25 @@ class BaseWorkflowRunOutputEvent:
 
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:
-            _dict["step_results"] = [step.to_dict() for step in self.step_results]
+            _dict["step_results"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.step_results]
 
         if hasattr(self, "step_response") and self.step_response is not None:
-            _dict["step_response"] = self.step_response.to_dict()
+            _dict["step_response"] = (
+                self.step_response.to_dict() if hasattr(self.step_response, "to_dict") else self.step_response
+            )
 
         if hasattr(self, "iteration_results") and self.iteration_results is not None:
-            _dict["iteration_results"] = [step.to_dict() for step in self.iteration_results]
+            _dict["iteration_results"] = [
+                step.to_dict() if hasattr(step, "to_dict") else step for step in self.iteration_results
+            ]
 
         if hasattr(self, "all_results") and self.all_results is not None:
-            _dict["all_results"] = [[step.to_dict() for step in iteration] for iteration in self.all_results]
-
-        if hasattr(self, "step_results") and self.step_results is not None:
-            _dict["step_results"] = [step.to_dict() for step in self.step_results]
+            _dict["all_results"] = [
+                [step.to_dict() if hasattr(step, "to_dict") else step for step in iteration]
+                for iteration in self.all_results
+            ]
 
         return _dict
-
-    def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
-        import json
-
-        try:
-            _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
-            raise
-
-        if indent is None:
-            return json.dumps(_dict, separators=separators)
-        else:
-            return json.dumps(_dict, indent=indent, separators=separators)
 
     @property
     def is_cancelled(self):
@@ -132,6 +130,21 @@ class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class WorkflowAgentStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent starts (before deciding to run workflow or answer directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_started.value
+
+
+@dataclass
+class WorkflowAgentCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent completes (after running workflow or answering directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_completed.value
+    content: Optional[Any] = None
+
+
+@dataclass
 class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution completes"""
 
@@ -150,6 +163,11 @@ class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.workflow_error.value
     error: Optional[str] = None
+
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -394,10 +412,17 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.custom_event.value
 
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
+    WorkflowAgentStartedEvent,
+    WorkflowAgentCompletedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
     WorkflowCancelledEvent,
@@ -420,11 +445,52 @@ WorkflowRunOutputEvent = Union[
     CustomEvent,
 ]
 
+# Map event string to dataclass for workflow events
+WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
+    WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
+    WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
+    WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
+    WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
+    WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
+    WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
+    WorkflowRunEvent.step_started.value: StepStartedEvent,
+    WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_error.value: StepErrorEvent,
+    WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
+    WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
+    WorkflowRunEvent.loop_iteration_completed.value: LoopIterationCompletedEvent,
+    WorkflowRunEvent.loop_execution_completed.value: LoopExecutionCompletedEvent,
+    WorkflowRunEvent.parallel_execution_started.value: ParallelExecutionStartedEvent,
+    WorkflowRunEvent.parallel_execution_completed.value: ParallelExecutionCompletedEvent,
+    WorkflowRunEvent.condition_execution_started.value: ConditionExecutionStartedEvent,
+    WorkflowRunEvent.condition_execution_completed.value: ConditionExecutionCompletedEvent,
+    WorkflowRunEvent.router_execution_started.value: RouterExecutionStartedEvent,
+    WorkflowRunEvent.router_execution_completed.value: RouterExecutionCompletedEvent,
+    WorkflowRunEvent.steps_execution_started.value: StepsExecutionStartedEvent,
+    WorkflowRunEvent.steps_execution_completed.value: StepsExecutionCompletedEvent,
+    WorkflowRunEvent.step_output.value: StepOutputEvent,
+    WorkflowRunEvent.custom_event.value: CustomEvent,
+}
+
+
+def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEvent:
+    event_type = data.get("event", "")
+    if event_type in {e.value for e in RunEvent}:
+        return run_output_event_from_dict(data)  # type: ignore
+    elif event_type in {e.value for e in TeamRunEvent}:
+        return team_run_output_event_from_dict(data)  # type: ignore
+    else:
+        event_class = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not event_class:
+        raise ValueError(f"Unknown workflow event type: {event_type}")
+    return event_class.from_dict(data)  # type: ignore
+
 
 @dataclass
 class WorkflowRunOutput:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
 
@@ -446,6 +512,10 @@ class WorkflowRunOutput:
 
     # Store agent/team responses separately with parent_run_id references
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
+
+    # Workflow agent run - stores the full agent RunOutput when workflow agent is used
+    # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
+    workflow_agent_run: Optional[RunOutput] = None
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
@@ -478,6 +548,7 @@ class WorkflowRunOutput:
                 "step_executor_runs",
                 "events",
                 "metrics",
+                "workflow_agent_run",
             ]
         }
 
@@ -513,8 +584,17 @@ class WorkflowRunOutput:
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
+        if self.workflow_agent_run is not None:
+            _dict["workflow_agent_run"] = self.workflow_agent_run.to_dict()
+
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
+
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                _dict["input"] = self.input.model_dump(exclude_none=True)
+            else:
+                _dict["input"] = self.input
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -554,24 +634,51 @@ class WorkflowRunOutput:
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
+        workflow_agent_run_data = data.pop("workflow_agent_run", None)
+        workflow_agent_run = None
+        if workflow_agent_run_data:
+            if isinstance(workflow_agent_run_data, dict):
+                workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
+            elif isinstance(workflow_agent_run_data, RunOutput):
+                workflow_agent_run = workflow_agent_run_data
+
         metadata = data.pop("metadata", None)
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
+        events_data = data.pop("events", [])
+        final_events = []
+        for event in events_data or []:
+            if "agent_id" in event:
+                # Agent event from agent step
+                from agno.run.agent import run_output_event_from_dict
 
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
+                event = run_output_event_from_dict(event)
+            elif "team_id" in event:
+                # Team event from team step
+                from agno.run.team import team_run_output_event_from_dict
 
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+                event = team_run_output_event_from_dict(event)
+            else:
+                # Pure workflow event
+                event = workflow_run_output_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
 
-        events = data.pop("events", [])
+        input_data = data.pop("input", None)
+
+        # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
 
         return cls(
             step_results=parsed_step_results,
+            workflow_agent_run=workflow_agent_run,
             metadata=metadata,
             images=images,
             videos=videos,
@@ -580,7 +687,8 @@ class WorkflowRunOutput:
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
-            **data,
+            input=input_data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

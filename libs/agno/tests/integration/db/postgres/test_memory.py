@@ -241,3 +241,258 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
     assert retrieved.input == comprehensive_memory.input
     assert retrieved.agent_id == comprehensive_memory.agent_id
     assert retrieved.team_id == comprehensive_memory.team_id
+
+
+def test_upsert_memories(postgres_db_real: PostgresDb):
+    """Test upsert_memories for inserting new memories"""
+
+    # Create memories
+    memories = []
+    for i in range(5):
+        memory = UserMemory(
+            memory_id=f"bulk_memory_{i}",
+            memory=f"Bulk test memory {i} with user preferences and information",
+            topics=[f"topic_{i}", "bulk_test"],
+            user_id=f"user_{i}",
+            input=f"Input that generated memory {i}",
+            agent_id=f"agent_{i}",
+            updated_at=datetime.now(),
+        )
+        memories.append(memory)
+
+    # Bulk upsert memories
+    results = postgres_db_real.upsert_memories(memories)
+
+    # Verify results
+    assert len(results) == 5
+    for i, result in enumerate(results):
+        assert isinstance(result, UserMemory)
+        assert result.memory_id == f"bulk_memory_{i}"
+        assert result.user_id == f"user_{i}"
+        assert result.agent_id == f"agent_{i}"
+        assert result.topics is not None
+        assert f"topic_{i}" in result.topics
+        assert "bulk_test" in result.topics
+
+
+def test_upsert_memories_update(postgres_db_real: PostgresDb):
+    """Test upsert_memories for updating existing memories"""
+
+    # Create memories
+    initial_memories = []
+    for i in range(3):
+        memory = UserMemory(
+            memory_id=f"update_memory_{i}",
+            memory=f"Original memory {i}",
+            topics=["original"],
+            user_id=f"user_{i}",
+            input=f"Original input {i}",
+            updated_at=datetime.now(),
+        )
+        initial_memories.append(memory)
+    postgres_db_real.upsert_memories(initial_memories)
+
+    # Update memories
+    updated_memories = []
+    for i in range(3):
+        memory = UserMemory(
+            memory_id=f"update_memory_{i}",  # Same ID for update
+            memory=f"Updated memory {i} with more information",
+            topics=["updated", "enhanced"],
+            user_id=f"user_{i}",
+            input=f"Updated input {i}",
+            feedback="positive",
+            agent_id=f"new_agent_{i}",
+            updated_at=datetime.now(),
+        )
+        updated_memories.append(memory)
+    results = postgres_db_real.upsert_memories(updated_memories)
+    assert len(results) == 3
+
+    # Verify updates
+    for i, result in enumerate(results):
+        assert isinstance(result, UserMemory)
+        assert result.memory_id == f"update_memory_{i}"
+        assert "Updated memory" in result.memory
+        assert result.topics == ["updated", "enhanced"]
+        assert result.agent_id == f"new_agent_{i}"
+
+
+def test_upsert_memories_performance(postgres_db_real: PostgresDb):
+    """Ensure the bulk upsert method is considerably faster than individual upserts"""
+    import time as time_module
+
+    # Create memories
+    memories = []
+    for i in range(30):
+        memory = UserMemory(
+            memory_id=f"perf_memory_{i}",
+            memory=f"Performance test memory {i} with detailed information",
+            topics=["performance", "test"],
+            user_id="perf_user",
+            agent_id=f"perf_agent_{i}",
+            updated_at=datetime.now(),
+        )
+        memories.append(memory)
+
+    # Test individual upsert
+    start_time = time_module.time()
+    for memory in memories:
+        postgres_db_real.upsert_user_memory(memory)
+    individual_time = time_module.time() - start_time
+
+    # Clean up for bulk upsert
+    memory_ids = [m.memory_id for m in memories if m.memory_id]
+    postgres_db_real.delete_user_memories(memory_ids)
+
+    # Test bulk upsert
+    start_time = time_module.time()
+    postgres_db_real.upsert_memories(memories)
+    bulk_time = time_module.time() - start_time
+
+    # Verify all memories were created
+    all_memories = postgres_db_real.get_user_memories(user_id="perf_user")
+    assert len(all_memories) == 30
+
+    # Bulk should be at least 2x faster
+    assert bulk_time < individual_time / 2, (
+        f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    )
+
+
+def test_get_user_memory_with_user_id_filter(postgres_db_real: PostgresDb):
+    """Test get_user_memory with user_id filtering"""
+    # Create memories for different users
+    memory1 = UserMemory(
+        memory_id="memory_user1",
+        memory="Memory for user 1",
+        user_id="user1",
+        updated_at=datetime.now(),
+    )
+    memory2 = UserMemory(
+        memory_id="memory_user2",
+        memory="Memory for user 2",
+        user_id="user2",
+        updated_at=datetime.now(),
+    )
+
+    postgres_db_real.upsert_user_memory(memory1)
+    postgres_db_real.upsert_user_memory(memory2)
+
+    # Get memory with correct user_id
+    result = postgres_db_real.get_user_memory(memory_id="memory_user1", user_id="user1")
+    assert result is not None
+    assert isinstance(result, UserMemory)
+    assert result.memory_id == "memory_user1"
+    assert result.user_id == "user1"
+
+    # Get memory with wrong user_id should return None
+    result = postgres_db_real.get_user_memory(memory_id="memory_user1", user_id="user2")
+    assert result is None
+
+    # Get memory without user_id filter should work
+    result = postgres_db_real.get_user_memory(memory_id="memory_user1")
+    assert result is not None
+    assert result.user_id == "user1"
+
+
+def test_delete_user_memory_with_user_id_filter(postgres_db_real: PostgresDb):
+    """Test delete_user_memory with user_id filtering"""
+    # Create memories for different users
+    memory1 = UserMemory(
+        memory_id="del_memory_user1",
+        memory="Memory for user 1",
+        user_id="user1",
+        updated_at=datetime.now(),
+    )
+    memory2 = UserMemory(
+        memory_id="del_memory_user2",
+        memory="Memory for user 2",
+        user_id="user2",
+        updated_at=datetime.now(),
+    )
+
+    postgres_db_real.upsert_user_memory(memory1)
+    postgres_db_real.upsert_user_memory(memory2)
+
+    # Try to delete memory1 with wrong user_id (should not delete)
+    postgres_db_real.delete_user_memory(memory_id="del_memory_user1", user_id="user2")
+
+    # Verify memory1 still exists
+    result = postgres_db_real.get_user_memory(memory_id="del_memory_user1")
+    assert result is not None
+
+    # Delete memory1 with correct user_id (should delete)
+    postgres_db_real.delete_user_memory(memory_id="del_memory_user1", user_id="user1")
+
+    # Verify memory1 is deleted
+    result = postgres_db_real.get_user_memory(memory_id="del_memory_user1")
+    assert result is None
+
+    # Verify memory2 still exists
+    result = postgres_db_real.get_user_memory(memory_id="del_memory_user2")
+    assert result is not None
+
+
+def test_delete_user_memories_with_user_id_filter(postgres_db_real: PostgresDb):
+    """Test delete_user_memories with user_id filtering"""
+    # Create memories for different users
+    memories = [
+        UserMemory(memory_id="bulk_del_m1", memory="Memory 1", user_id="user1", updated_at=datetime.now()),
+        UserMemory(memory_id="bulk_del_m2", memory="Memory 2", user_id="user1", updated_at=datetime.now()),
+        UserMemory(memory_id="bulk_del_m3", memory="Memory 3", user_id="user2", updated_at=datetime.now()),
+        UserMemory(memory_id="bulk_del_m4", memory="Memory 4", user_id="user2", updated_at=datetime.now()),
+    ]
+
+    for memory in memories:
+        postgres_db_real.upsert_user_memory(memory)
+
+    # Try to delete user1's memories with user2's ID (should not delete user1's memories)
+    postgres_db_real.delete_user_memories(memory_ids=["bulk_del_m1", "bulk_del_m2"], user_id="user2")
+
+    # Verify user1's memories still exist
+    result1 = postgres_db_real.get_user_memory(memory_id="bulk_del_m1")
+    result2 = postgres_db_real.get_user_memory(memory_id="bulk_del_m2")
+    assert result1 is not None
+    assert result2 is not None
+
+    # Delete user1's memories with correct user_id
+    postgres_db_real.delete_user_memories(memory_ids=["bulk_del_m1", "bulk_del_m2"], user_id="user1")
+
+    # Verify user1's memories are deleted
+    result1 = postgres_db_real.get_user_memory(memory_id="bulk_del_m1")
+    result2 = postgres_db_real.get_user_memory(memory_id="bulk_del_m2")
+    assert result1 is None
+    assert result2 is None
+
+    # Verify user2's memories still exist
+    result3 = postgres_db_real.get_user_memory(memory_id="bulk_del_m3")
+    result4 = postgres_db_real.get_user_memory(memory_id="bulk_del_m4")
+    assert result3 is not None
+    assert result4 is not None
+
+
+def test_delete_user_memories_without_user_id_filter(postgres_db_real: PostgresDb):
+    """Test delete_user_memories without user_id filtering deletes all specified memories"""
+    # Create memories for different users
+    memories = [
+        UserMemory(memory_id="no_filter_m1", memory="Memory 1", user_id="user1", updated_at=datetime.now()),
+        UserMemory(memory_id="no_filter_m2", memory="Memory 2", user_id="user2", updated_at=datetime.now()),
+        UserMemory(memory_id="no_filter_m3", memory="Memory 3", user_id="user3", updated_at=datetime.now()),
+    ]
+
+    for memory in memories:
+        postgres_db_real.upsert_user_memory(memory)
+
+    # Delete memories without user_id filter (should delete all specified)
+    postgres_db_real.delete_user_memories(memory_ids=["no_filter_m1", "no_filter_m2"])
+
+    # Verify memories are deleted regardless of user_id
+    result1 = postgres_db_real.get_user_memory(memory_id="no_filter_m1")
+    result2 = postgres_db_real.get_user_memory(memory_id="no_filter_m2")
+    assert result1 is None
+    assert result2 is None
+
+    # Verify the third memory still exists
+    result3 = postgres_db_real.get_user_memory(memory_id="no_filter_m3")
+    assert result3 is not None

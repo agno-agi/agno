@@ -10,19 +10,23 @@ from agno.db.redis.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_index_entries,
+    deserialize_cultural_knowledge_from_db,
     deserialize_data,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
     remove_index_entries,
+    serialize_cultural_knowledge_for_db,
     serialize_data,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.string import generate_id
 
 try:
     from redis import Redis
@@ -43,6 +47,7 @@ class RedisDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a Redis database.
@@ -63,10 +68,16 @@ class RedisDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
+            culture_table (Optional[str]): Name of the table to store cultural knowledge
 
         Raises:
             ValueError: If neither redis_client nor db_url is provided.
         """
+        if id is None:
+            base_seed = db_url or str(redis_client)
+            seed = f"{base_seed}#{db_prefix}"
+            id = generate_id(seed)
+
         super().__init__(
             id=id,
             session_table=session_table,
@@ -74,6 +85,7 @@ class RedisDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            culture_table=culture_table,
         )
 
         self.db_prefix = db_prefix
@@ -87,6 +99,10 @@ class RedisDb(BaseDb):
             raise ValueError("One of redis_client or db_url must be provided")
 
     # -- DB methods --
+
+    def table_exists(self, table_name: str) -> bool:
+        """Redis implementation, always returns True."""
+        return True
 
     def _get_table_name(self, table_type: str) -> str:
         """Get the active table name for the given table type."""
@@ -104,6 +120,9 @@ class RedisDb(BaseDb):
 
         elif table_type == "knowledge":
             return self.knowledge_table_name
+
+        elif table_type == "culture":
+            return self.culture_table_name
 
         else:
             raise ValueError(f"Unknown table type: {table_type}")
@@ -258,7 +277,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from Redis.
@@ -282,6 +301,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -294,8 +314,8 @@ class RedisDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
-            session_type (Optional[SessionType]): The type of session to filter by.
 
         Returns:
             Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
@@ -310,8 +330,6 @@ class RedisDb(BaseDb):
 
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
-                return None
-            if session_type is not None and session.get("session_type") != session_type:
                 return None
 
             if not deserialize:
@@ -328,7 +346,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")
-            return None
+            raise e
 
     # TODO: optimizable
     def get_sessions(
@@ -409,7 +427,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading sessions: {e}")
-            return [], 0
+            raise e
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -459,7 +477,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -579,15 +597,53 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting session: {e}")
-            return None
+            raise e
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            log_info(
+                f"RedisDb doesn't support efficient bulk operations, falling back to individual upserts for {len(sessions)} sessions"
+            )
+
+            # Fall back to individual upserts
+            results = []
+            for session in sessions:
+                if session is not None:
+                    result = self.upsert_session(session, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {e}")
+            return []
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from Redis.
 
         Args:
             memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deleting.
 
         Returns:
             bool: True if the memory was deleted, False otherwise.
@@ -596,6 +652,16 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while deleting the memory.
         """
         try:
+            # If user_id is provided, verify ownership before deleting
+            if user_id is not None:
+                memory = self._get_record("memories", memory_id)
+                if memory is None:
+                    log_debug(f"No user memory found with id: {memory_id}")
+                    return
+                if memory.get("user_id") != user_id:
+                    log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                    return
+
             if self._delete_record(
                 "memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             ):
@@ -605,16 +671,27 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from Redis.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes memories belonging to this user.
         """
         try:
             # TODO: cant we optimize this?
             for memory_id in memory_ids:
+                # If user_id is provided, verify ownership before deleting
+                if user_id is not None:
+                    memory = self._get_record("memories", memory_id)
+                    if memory is None:
+                        continue
+                    if memory.get("user_id") != user_id:
+                        log_debug(f"Memory {memory_id} does not belong to user {user_id}, skipping deletion")
+                        continue
+
                 self._delete_record(
                     "memories",
                     memory_id,
@@ -623,6 +700,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from Redis.
@@ -643,15 +721,17 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading memory topics: {e}")
-            return []
+            raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from Redis.
 
         Args:
             memory_id (str): The ID of the memory to get.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user. If provided, only returns the memory if it belongs to this user.
 
         Returns:
             Optional[UserMemory]: The memory data if found, None otherwise.
@@ -661,6 +741,10 @@ class RedisDb(BaseDb):
             if memory_raw is None:
                 return None
 
+            # Filter by user_id if provided
+            if user_id is not None and memory_raw.get("user_id") != user_id:
+                return None
+
             if not deserialize:
                 return memory_raw
 
@@ -668,7 +752,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading memory: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -741,7 +825,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading memories: {e}")
-            return [] if deserialize else ([], 0)
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -766,21 +850,21 @@ class RedisDb(BaseDb):
             # Group by user_id
             user_stats = {}
             for memory in all_memories:
-                user_id = memory.get("user_id")
-                if user_id is None:
+                memory_user_id = memory.get("user_id")
+                if memory_user_id is None:
                     continue
 
-                if user_id not in user_stats:
-                    user_stats[user_id] = {
-                        "user_id": user_id,
+                if memory_user_id not in user_stats:
+                    user_stats[memory_user_id] = {
+                        "user_id": memory_user_id,
                         "total_memories": 0,
                         "last_memory_updated_at": 0,
                     }
 
-                user_stats[user_id]["total_memories"] += 1
+                user_stats[memory_user_id]["total_memories"] += 1
                 updated_at = memory.get("updated_at", 0)
-                if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                    user_stats[user_id]["last_memory_updated_at"] = updated_at
+                if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                    user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
 
@@ -795,7 +879,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -836,7 +920,44 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
-            return None
+            raise e
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            log_info(
+                f"RedisDb doesn't support efficient bulk operations, falling back to individual upserts for {len(memories)} memories"
+            )
+
+            # Fall back to individual upserts
+            results = []
+            for memory in memories:
+                if memory is not None:
+                    result = self.upsert_user_memory(memory, deserialize=deserialize)
+                    if result is not None:
+                        results.append(result)
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {e}")
+            return []
 
     def clear_memories(self) -> None:
         """Delete all memories from the database.
@@ -853,9 +974,8 @@ class RedisDb(BaseDb):
                 self.redis_client.delete(*keys)
 
         except Exception as e:
-            from agno.utils.log import log_warning
-
-            log_warning(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
 
@@ -893,7 +1013,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error reading sessions for metrics: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
         """Get the first date for which metrics calculation is needed.
@@ -930,7 +1050,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics starting date: {e}")
-            return None
+            raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
@@ -1037,7 +1157,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -1055,6 +1175,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1077,7 +1198,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1120,7 +1241,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1142,7 +1263,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge content: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -1175,7 +1296,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from Redis.
@@ -1250,7 +1371,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1326,7 +1447,7 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return []
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1365,3 +1486,175 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
             raise
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")
+
+            if keys:
+                self.redis_client.delete(*keys)
+
+        except Exception as e:
+            log_error(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            if self._delete_record("culture", id, index_fields=["name", "agent_id", "team_id"]):
+                log_debug(f"Successfully deleted cultural knowledge id: {id}")
+            else:
+                log_debug(f"No cultural knowledge found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cultural_knowledge = self._get_record("culture", id)
+
+            if cultural_knowledge is None:
+                return None
+
+            if not deserialize:
+                return cultural_knowledge
+
+            return deserialize_cultural_knowledge_from_db(cultural_knowledge)
+
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            all_cultural_knowledge = self._get_all_records("culture")
+
+            # Apply filters
+            filtered_items = []
+            for item in all_cultural_knowledge:
+                if agent_id is not None and item.get("agent_id") != agent_id:
+                    continue
+                if team_id is not None and item.get("team_id") != team_id:
+                    continue
+                if name is not None and name.lower() not in item.get("name", "").lower():
+                    continue
+
+                filtered_items.append(item)
+
+            sorted_items = apply_sorting(records=filtered_items, sort_by=sort_by, sort_order=sort_order)
+            paginated_items = apply_pagination(records=sorted_items, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_items, len(filtered_items)
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
+
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in Redis.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+            item_id = cultural_knowledge.id or str(uuid4())
+
+            # Create the item dict with serialized content
+            data = {
+                "id": item_id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            success = self._store_record("culture", item_id, data, index_fields=["name", "agent_id", "team_id"])
+
+            if not success:
+                return None
+
+            if not deserialize:
+                return data
+
+            return deserialize_cultural_knowledge_from_db(data)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
+            raise e

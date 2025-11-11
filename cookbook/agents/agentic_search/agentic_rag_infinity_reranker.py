@@ -50,7 +50,7 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reranker import InfinityReranker
+from agno.knowledge.reranker.infinity import InfinityReranker
 from agno.models.anthropic import Claude
 from agno.vectordb.lancedb import LanceDb, SearchType
 

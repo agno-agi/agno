@@ -1,10 +1,11 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -13,17 +14,20 @@ from agno.db.sqlite.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
+    from sqlalchemy import Column, MetaData, Table, and_, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -35,14 +39,16 @@ except ImportError:
 class SqliteDb(BaseDb):
     def __init__(
         self,
+        db_file: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
-        db_file: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a SQLite database.
@@ -54,20 +60,28 @@ class SqliteDb(BaseDb):
             4. Create a new database in the current directory
 
         Args:
+            db_file (Optional[str]): The database file to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
-            db_file (Optional[str]): The database file to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
+            culture_table (Optional[str]): Name of the table to store cultural notions.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If none of the tables are provided.
         """
+        if id is None:
+            seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite:///agno.db"
+            id = generate_id(seed)
+
         super().__init__(
+            id=id,
             session_table=session_table,
+            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -99,6 +113,30 @@ class SqliteDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the SQLite database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name)
+
+    def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            self._create_table(table_name=table_name, table_type=table_type)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -172,12 +210,12 @@ class SqliteDb(BaseDb):
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table '{table_name}'")
+            log_debug(f"Successfully created table '{table_name}'")
             return table
 
         except Exception as e:
             log_error(f"Could not create table '{table_name}': {e}")
-            raise
+            raise e
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
@@ -221,11 +259,22 @@ class SqliteDb(BaseDb):
             )
             return self.knowledge_table
 
+        elif table_type == "culture":
+            self.culture_table = self._get_or_create_table(
+                table_name=self.culture_table_name,
+                table_type="culture",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.culture_table
+
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
     def _get_or_create_table(
-        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+        self,
+        table_name: str,
+        table_type: str,
+        create_table_if_not_found: Optional[bool] = False,
     ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
@@ -256,7 +305,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error loading existing table {table_name}: {e}")
-            raise
+            raise e
 
     # -- Session methods --
 
@@ -287,7 +336,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-            return False
+            raise e
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
@@ -312,6 +361,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
+            raise e
 
     def get_session(
         self,
@@ -325,8 +375,8 @@ class SqliteDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -348,8 +398,6 @@ class SqliteDb(BaseDb):
                 # Filtering
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    stmt = stmt.where(table.c.session_type == session_type)
 
                 result = sess.execute(stmt).fetchone()
                 if result is None:
@@ -370,7 +418,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
-            return None
+            raise e
 
     def get_sessions(
         self,
@@ -433,11 +481,7 @@ class SqliteDb(BaseDb):
                 if end_timestamp is not None:
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
-                    stmt = stmt.where(
-                        func.coalesce(func.json_extract(table.c.session_data, "$.session_name"), "").like(
-                            f"%{session_name}%"
-                        )
-                    )
+                    stmt = stmt.where(table.c.session_data.like(f"%{session_name}%"))
                 if session_type is not None:
                     stmt = stmt.where(table.c.session_type == session_type.value)
 
@@ -459,8 +503,10 @@ class SqliteDb(BaseDb):
                     return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
-                if not sessions_raw or not deserialize:
+                if not deserialize:
                     return sessions_raw, total_count
+                if not sessions_raw:
+                    return []
 
             if session_type == SessionType.AGENT:
                 return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
@@ -473,10 +519,14 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
-            return []
+            raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -496,47 +546,24 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
+            # Get the current session as a deserialized object
+            # Get the session record
+            session = self.get_session(session_id, session_type, deserialize=True)
+            if session is None:
                 return None
 
-            with self.Session() as sess, sess.begin():
-                # Update session_name inside the session_data JSON field
-                stmt = (
-                    update(table)
-                    .where(table.c.session_id == session_id)
-                    .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
-                )
-                result = sess.execute(stmt)
+            session = cast(Session, session)
+            # Update the session name
+            if session.session_data is None:
+                session.session_data = {}
+            session.session_data["session_name"] = session_name
 
-                # Check if any rows were affected
-                if result.rowcount == 0:
-                    return None
-
-                # Fetch the updated row
-                select_stmt = select(table).where(table.c.session_id == session_id)
-                row = sess.execute(select_stmt).fetchone()
-
-                if not row:
-                    return None
-
-            session_raw = deserialize_session_json_fields(dict(row._mapping))
-            if not session_raw or not deserialize:
-                return session_raw
-
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session_raw)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session_raw)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session_raw)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            # Upsert the updated session back to the database
+            return self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
-            return None
+            raise e
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -677,12 +704,245 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception upserting into table: {e}")
-            return None
+            raise e
+
+    def upsert_sessions(
+        self,
+        sessions: List[Session],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple sessions for improved performance on large datasets.
+
+        Args:
+            sessions (List[Session]): List of sessions to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not sessions:
+            return []
+
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                log_info("Sessions table not available, falling back to individual upserts")
+                return [
+                    result
+                    for session in sessions
+                    if session is not None
+                    for result in [self.upsert_session(session, deserialize=deserialize)]
+                    if result is not None
+                ]
+
+            # Group sessions by type for batch processing
+            agent_sessions = []
+            team_sessions = []
+            workflow_sessions = []
+
+            for session in sessions:
+                if isinstance(session, AgentSession):
+                    agent_sessions.append(session)
+                elif isinstance(session, TeamSession):
+                    team_sessions.append(session)
+                elif isinstance(session, WorkflowSession):
+                    workflow_sessions.append(session)
+
+            results: List[Union[Session, Dict[str, Any]]] = []
+
+            with self.Session() as sess, sess.begin():
+                # Bulk upsert agent sessions
+                if agent_sessions:
+                    agent_data = []
+                    for session in agent_sessions:
+                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        agent_data.append(
+                            {
+                                "session_id": serialized_session.get("session_id"),
+                                "session_type": SessionType.AGENT.value,
+                                "agent_id": serialized_session.get("agent_id"),
+                                "user_id": serialized_session.get("user_id"),
+                                "agent_data": serialized_session.get("agent_data"),
+                                "session_data": serialized_session.get("session_data"),
+                                "metadata": serialized_session.get("metadata"),
+                                "runs": serialized_session.get("runs"),
+                                "summary": serialized_session.get("summary"),
+                                "created_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
+                            }
+                        )
+
+                    if agent_data:
+                        stmt = sqlite.insert(table)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=["session_id"],
+                            set_=dict(
+                                agent_id=stmt.excluded.agent_id,
+                                user_id=stmt.excluded.user_id,
+                                agent_data=stmt.excluded.agent_data,
+                                session_data=stmt.excluded.session_data,
+                                metadata=stmt.excluded.metadata,
+                                runs=stmt.excluded.runs,
+                                summary=stmt.excluded.summary,
+                                updated_at=stmt.excluded.updated_at,
+                            ),
+                        )
+                        sess.execute(stmt, agent_data)
+
+                        # Fetch the results for agent sessions
+                        agent_ids = [session.session_id for session in agent_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            if deserialize:
+                                deserialized_agent_session = AgentSession.from_dict(session_dict)
+                                if deserialized_agent_session is None:
+                                    continue
+                                results.append(deserialized_agent_session)
+                            else:
+                                results.append(session_dict)
+
+                # Bulk upsert team sessions
+                if team_sessions:
+                    team_data = []
+                    for session in team_sessions:
+                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        team_data.append(
+                            {
+                                "session_id": serialized_session.get("session_id"),
+                                "session_type": SessionType.TEAM.value,
+                                "team_id": serialized_session.get("team_id"),
+                                "user_id": serialized_session.get("user_id"),
+                                "runs": serialized_session.get("runs"),
+                                "summary": serialized_session.get("summary"),
+                                "created_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
+                                "team_data": serialized_session.get("team_data"),
+                                "session_data": serialized_session.get("session_data"),
+                                "metadata": serialized_session.get("metadata"),
+                            }
+                        )
+
+                    if team_data:
+                        stmt = sqlite.insert(table)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=["session_id"],
+                            set_=dict(
+                                team_id=stmt.excluded.team_id,
+                                user_id=stmt.excluded.user_id,
+                                team_data=stmt.excluded.team_data,
+                                session_data=stmt.excluded.session_data,
+                                metadata=stmt.excluded.metadata,
+                                runs=stmt.excluded.runs,
+                                summary=stmt.excluded.summary,
+                                updated_at=stmt.excluded.updated_at,
+                            ),
+                        )
+                        sess.execute(stmt, team_data)
+
+                        # Fetch the results for team sessions
+                        team_ids = [session.session_id for session in team_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(team_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            if deserialize:
+                                deserialized_team_session = TeamSession.from_dict(session_dict)
+                                if deserialized_team_session is None:
+                                    continue
+                                results.append(deserialized_team_session)
+                            else:
+                                results.append(session_dict)
+
+                # Bulk upsert workflow sessions
+                if workflow_sessions:
+                    workflow_data = []
+                    for session in workflow_sessions:
+                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        workflow_data.append(
+                            {
+                                "session_id": serialized_session.get("session_id"),
+                                "session_type": SessionType.WORKFLOW.value,
+                                "workflow_id": serialized_session.get("workflow_id"),
+                                "user_id": serialized_session.get("user_id"),
+                                "runs": serialized_session.get("runs"),
+                                "summary": serialized_session.get("summary"),
+                                "created_at": serialized_session.get("created_at"),
+                                "updated_at": updated_at,
+                                "workflow_data": serialized_session.get("workflow_data"),
+                                "session_data": serialized_session.get("session_data"),
+                                "metadata": serialized_session.get("metadata"),
+                            }
+                        )
+
+                    if workflow_data:
+                        stmt = sqlite.insert(table)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=["session_id"],
+                            set_=dict(
+                                workflow_id=stmt.excluded.workflow_id,
+                                user_id=stmt.excluded.user_id,
+                                workflow_data=stmt.excluded.workflow_data,
+                                session_data=stmt.excluded.session_data,
+                                metadata=stmt.excluded.metadata,
+                                runs=stmt.excluded.runs,
+                                summary=stmt.excluded.summary,
+                                updated_at=stmt.excluded.updated_at,
+                            ),
+                        )
+                        sess.execute(stmt, workflow_data)
+
+                        # Fetch the results for workflow sessions
+                        workflow_ids = [session.session_id for session in workflow_sessions]
+                        select_stmt = select(table).where(table.c.session_id.in_(workflow_ids))
+                        result = sess.execute(select_stmt).fetchall()
+
+                        for row in result:
+                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            if deserialize:
+                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                                if deserialized_workflow_session is None:
+                                    continue
+                                results.append(deserialized_workflow_session)
+                            else:
+                                results.append(session_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            # Fallback to individual upserts
+            return [
+                result
+                for session in sessions
+                if session is not None
+                for result in [self.upsert_session(session, deserialize=deserialize)]
+                if result is not None
+            ]
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -697,6 +957,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -707,12 +969,14 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
+            raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -724,12 +988,15 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
+            raise e
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
@@ -743,23 +1010,28 @@ class SqliteDb(BaseDb):
                 return []
 
             with self.Session() as sess, sess.begin():
-                stmt = select(func.json_array_elements_text(table.c.topics))
+                # Select topics from all results
+                stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
                 result = sess.execute(stmt).fetchall()
 
                 return list(set([record[0] for record in result]))
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -776,6 +1048,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -788,7 +1062,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading from memorytable: {e}")
-            return None
+            raise e
 
     def get_user_memories(
         self,
@@ -872,7 +1146,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error reading from memory table: {e}")
-            return []
+            raise e
 
     def get_user_memory_stats(
         self,
@@ -941,7 +1215,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting user memory stats: {e}")
-            return [], 0
+            raise e
 
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
@@ -1003,7 +1277,105 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
-            return None
+            raise e
+
+    def upsert_memories(
+        self,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk upsert multiple user memories for improved performance on large datasets.
+
+        Args:
+            memories (List[UserMemory]): List of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        if not memories:
+            return []
+
+        try:
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                log_info("Memories table not available, falling back to individual upserts")
+                return [
+                    result
+                    for memory in memories
+                    if memory is not None
+                    for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                    if result is not None
+                ]
+            # Prepare bulk data
+            bulk_data = []
+            current_time = int(time.time())
+            for memory in memories:
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+
+                # Use preserved updated_at if flag is set and value exists, otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
+                bulk_data.append(
+                    {
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "team_id": memory.team_id,
+                        "memory_id": memory.memory_id,
+                        "memory": memory.memory,
+                        "topics": memory.topics,
+                        "updated_at": updated_at,
+                    }
+                )
+
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
+            with self.Session() as sess, sess.begin():
+                # Bulk upsert memories using SQLite ON CONFLICT DO UPDATE
+                stmt = sqlite.insert(table)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["memory_id"],
+                    set_=dict(
+                        memory=stmt.excluded.memory,
+                        topics=stmt.excluded.topics,
+                        input=stmt.excluded.input,
+                        agent_id=stmt.excluded.agent_id,
+                        team_id=stmt.excluded.team_id,
+                        updated_at=stmt.excluded.updated_at,
+                    ),
+                )
+                sess.execute(stmt, bulk_data)
+
+                # Fetch results
+                memory_ids = [memory.memory_id for memory in memories if memory.memory_id]
+                select_stmt = select(table).where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(select_stmt).fetchall()
+
+                for row in result:
+                    memory_dict = dict(row._mapping)
+                    if deserialize:
+                        results.append(UserMemory.from_dict(memory_dict))
+                    else:
+                        results.append(memory_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+
+            # Fallback to individual upserts
+            return [
+                result
+                for memory in memories
+                if memory is not None
+                for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                if result is not None
+            ]
 
     def clear_memories(self) -> None:
         """Delete all memories from the database.
@@ -1023,6 +1395,7 @@ class SqliteDb(BaseDb):
             from agno.utils.log import log_warning
 
             log_warning(f"Exception deleting all memories: {e}")
+            raise e
 
     # -- Metrics methods --
 
@@ -1066,7 +1439,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error reading from sessions table: {e}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -1139,7 +1512,9 @@ class SqliteDb(BaseDb):
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
             all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
+                sessions=sessions,
+                dates_to_process=dates_to_process,
+                start_timestamp=start_timestamp,
             )
             if not all_sessions_data:
                 log_info("No new session data found. Won't calculate metrics.")
@@ -1211,7 +1586,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {e}")
-            return [], None
+            raise e
 
     # -- Knowledge methods --
 
@@ -1235,6 +1610,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
+            raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1263,7 +1639,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
-            return None
+            raise e
 
     def get_knowledge_contents(
         self,
@@ -1313,7 +1689,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
-            return [], 0
+            raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1341,6 +1717,7 @@ class SqliteDb(BaseDb):
                         "linked_to": knowledge_row.linked_to,
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
+                        "status_message": knowledge_row.status_message,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
@@ -1360,7 +1737,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge content: {e}")
-            return None
+            raise e
 
     # -- Eval methods --
 
@@ -1384,7 +1761,11 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
                 stmt = sqlite.insert(table).values(
-                    {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
+                    {
+                        "created_at": current_time,
+                        "updated_at": current_time,
+                        **eval_run.model_dump(),
+                    }
                 )
                 sess.execute(stmt)
                 sess.commit()
@@ -1395,7 +1776,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
-            return None
+            raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database.
@@ -1418,7 +1799,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {e}")
-            raise
+            raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -1441,7 +1822,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise
+            raise e
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1479,7 +1860,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
+            raise e
 
     def get_eval_runs(
         self,
@@ -1573,7 +1954,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            return []
+            raise e
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
@@ -1615,7 +1996,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
-            raise
+            raise e
 
     # -- Migrations --
 
@@ -1658,19 +2039,250 @@ class SqliteDb(BaseDb):
         if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:
                 self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural artifacts from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            from agno.utils.log import log_warning
+
+            log_warning(f"Exception deleting all cultural artifacts: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural artifact from the database.
+
+        Args:
+            id (str): The ID of the cultural artifact to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted cultural artifact id: {id}")
+                else:
+                    log_debug(f"No cultural artifact found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural artifact: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural artifact from the database.
+
+        Args:
+            id (str): The ID of the cultural artifact to get.
+            deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
+
+        Returns:
+            Optional[CulturalKnowledge]: The cultural artifact, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row or not deserialize:
+                    return db_row
+
+            return deserialize_cultural_knowledge_from_db(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from cultural artifacts table: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural artifacts from the database as CulturalNotion objects.
+
+        Args:
+            name (Optional[str]): The name of the cultural artifact to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            limit (Optional[int]): The maximum number of cultural artifacts to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to serialize the cultural artifacts. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalNotion objects
+                - When deserialize=False: List of CulturalNotion dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                db_rows = [dict(record._mapping) for record in result]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from cultural artifacts table: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural artifact into the database.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural artifact to upsert.
+            deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalNotion, Dict[str, Any]]]:
+                - When deserialize=True: CulturalNotion object
+                - When deserialize=False: CulturalNotion dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON string for DB storage (SQLite requires strings)
+            content_json_str = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_json_str,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        name=cultural_knowledge.name,
+                        summary=cultural_knowledge.summary,
+                        content=content_json_str,
+                        metadata=cultural_knowledge.metadata,
+                        input=cultural_knowledge.input,
+                        updated_at=int(time.time()),
+                        agent_id=cultural_knowledge.agent_id,
+                        team_id=cultural_knowledge.team_id,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+            db_row: Dict[str, Any] = dict(row._mapping)
+            if not db_row or not deserialize:
+                return db_row
+
+            return deserialize_cultural_knowledge_from_db(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
+            raise e

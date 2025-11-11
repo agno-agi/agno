@@ -8,7 +8,7 @@ agent = Agent(
     model=LiteLLM(
         id="gpt-4o",
     ),
-    tools=[YFinanceTools(stock_price=True)],
+    tools=[YFinanceTools()],
     markdown=True,
 )
 

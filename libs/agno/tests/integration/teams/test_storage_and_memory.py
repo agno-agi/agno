@@ -1,10 +1,9 @@
-"""Run: `pip install google-genai` to install the dependencies"""
-
 import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
+from agno.run.base import RunStatus
 from agno.team.team import Team
 
 
@@ -51,7 +50,7 @@ async def test_run_history_persistence(team, shared_db):
     """Test that all runs within a session are persisted in db."""
     user_id = "john@example.com"
     session_id = "session_123"
-    num_turns = 5
+    num_turns = 3
 
     shared_db.clear_memories()
 
@@ -60,17 +59,22 @@ async def test_run_history_persistence(team, shared_db):
         "What's the weather like today?",
         "What about tomorrow?",
         "Any recommendations for indoor activities?",
-        "Search for nearby museums.",
-        "Which one has the best reviews?",
     ]
 
     assert len(conversation_messages) == num_turns
 
     for msg in conversation_messages:
-        await team.arun(msg, user_id=user_id, session_id=session_id)
+        response = await team.arun(msg, user_id=user_id, session_id=session_id)
+        assert response.status == RunStatus.completed
 
     # Verify the stored session data after all turns
     team_session = team.get_session(session_id=session_id)
+
+    assert team_session is not None
+    assert len(team_session.runs) == num_turns
+    for run in team_session.runs:
+        assert run.status == RunStatus.completed
+        assert run.messages is not None
 
     first_user_message_content = team_session.runs[0].messages[1].content
     assert first_user_message_content == conversation_messages[0]

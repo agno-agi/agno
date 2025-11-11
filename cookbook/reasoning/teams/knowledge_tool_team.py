@@ -19,9 +19,9 @@ agno_docs.add_content(url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
-    think=True,
-    search=True,
-    analyze=True,
+    enable_think=True,
+    enable_search=True,
+    enable_analyze=True,
     add_few_shot=True,
 )
 
@@ -38,7 +38,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools(search=True)],
+    tools=[DuckDuckGoTools(enable_search=True)],
     add_datetime_to_context=True,
 )
 
@@ -64,7 +64,7 @@ def run_team(task: str):
     team_leader.print_response(
         task,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         show_full_reasoning=True,
     )
 

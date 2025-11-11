@@ -7,8 +7,8 @@ reasoning_agent = Agent(
     model=Ollama(id="llama3.2:latest"),
     tools=[
         ReasoningTools(
-            think=True,
-            analyze=True,
+            enable_think=True,
+            enable_analyze=True,
             add_instructions=True,
             add_few_shot=True,
         ),
@@ -21,5 +21,5 @@ reasoning_agent.print_response(
     "Write a report comparing NVDA to TSLA",
     stream=True,
     show_full_reasoning=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )

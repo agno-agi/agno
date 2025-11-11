@@ -1,6 +1,6 @@
 from agno.knowledge.embedder.aws_bedrock import AwsBedrockEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.pdf_reader import PDFUrlReader
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.vectordb.pgvector import PgVector
 
 embeddings = AwsBedrockEmbedder().get_embedding(
@@ -21,7 +21,7 @@ knowledge = Knowledge(
 
 knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    reader=PDFUrlReader(
+    reader=PDFReader(
         chunk_size=2048
     ),  # Required because cohere has a fixed size of 2048
 )

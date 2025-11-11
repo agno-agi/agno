@@ -273,7 +273,7 @@ def test_delete_knowledge_content(postgres_db_real: PostgresDb, sample_knowledge
 
 def test_knowledge_table_creation_and_structure(postgres_db_real: PostgresDb):
     """Test that the knowledge table is created with the correct structure"""
-    knowledge_table = postgres_db_real._get_table("knowledge")
+    knowledge_table = postgres_db_real._get_table("knowledge", create_table_if_not_found=True)
 
     assert knowledge_table is not None
     assert knowledge_table.name == "test_knowledge"

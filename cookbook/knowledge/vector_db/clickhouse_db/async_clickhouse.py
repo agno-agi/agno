@@ -7,7 +7,7 @@ from agno.vectordb.clickhouse import Clickhouse
 agent = Agent(
     knowledge=Knowledge(
         vector_db=Clickhouse(
-            table_name="recipe_documents",
+            table_name="documentss",
             host="localhost",
             port=8123,
             username="ai",
@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
         agent.knowledge.add_content_async(
-            url="https://docs.agno.com/introduction/agents.md"
+            url="https://docs.agno.com/concepts/agents/introduction.md"
         )
     )
 

@@ -96,7 +96,7 @@ class WebSearchReader(Reader):
                     results.append(
                         {
                             "title": result.get("title", ""),
-                            "url": result.get("link", ""),
+                            "url": result.get("href", ""),
                             "description": result.get("body", ""),
                         }
                     )
@@ -136,14 +136,20 @@ class WebSearchReader(Reader):
                 self._respect_rate_limits()
 
                 results = []
-                search_results = search(query, num_results=self.max_results, stop=self.max_results)
+                # Use the basic search function without unsupported parameters
+                # The googlesearch-python library's search function only accepts basic parameters
+                search_results = search(query)
 
-                for result in search_results:
+                # Convert iterator to list and limit results
+                result_list = list(search_results)[: self.max_results]
+
+                for result in result_list:
+                    # The search function returns URLs as strings
                     results.append(
                         {
-                            "title": getattr(result, "title", ""),
-                            "url": getattr(result, "url", ""),
-                            "description": getattr(result, "description", ""),
+                            "title": "",  # Google search doesn't provide titles directly
+                            "url": result,
+                            "description": "",  # Google search doesn't provide descriptions directly
                         }
                     )
 

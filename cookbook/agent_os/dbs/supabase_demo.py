@@ -1,3 +1,5 @@
+"""Example showing how to use AgentOS with Supabase as our database provider"""
+
 from os import getenv
 
 from agno.agent import Agent
@@ -14,7 +16,7 @@ SUPABASE_DB_URL = (
     f"postgresql://postgres:{SUPABASE_PASSWORD}@db.{SUPABASE_PROJECT}:5432/postgres"
 )
 
-# Setup the Redis database
+# Setup the Postgres database
 db = PostgresDb(db_url=SUPABASE_DB_URL)
 
 # Setup a basic agent and a basic team

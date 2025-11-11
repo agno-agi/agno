@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -42,7 +42,7 @@ class Perplexity(OpenAILike):
     name: str = "Perplexity"
     provider: str = "Perplexity"
 
-    api_key: Optional[str] = getenv("PERPLEXITY_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("PERPLEXITY_API_KEY"))
     base_url: str = "https://api.perplexity.ai/"
     max_tokens: int = 1024
     top_k: Optional[float] = None
@@ -53,8 +53,7 @@ class Perplexity(OpenAILike):
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.

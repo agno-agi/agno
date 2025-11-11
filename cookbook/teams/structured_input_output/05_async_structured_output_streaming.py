@@ -47,8 +47,7 @@ stock_searcher = Agent(
     role="Searches the web for information on a stock.",
     tools=[
         YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
+            include_tools=["get_current_stock_price", "get_analyst_recommendations"],
         )
     ],
 )
@@ -61,9 +60,7 @@ company_info_agent = Agent(
     output_schema=CompanyAnalysis,
     tools=[
         YFinanceTools(
-            stock_price=False,
-            company_info=True,
-            company_news=True,
+            include_tools=["get_company_info", "get_company_news"],
         )
     ],
 )
@@ -83,7 +80,7 @@ async def test_structured_streaming():
     """Test async structured output streaming."""
     # Run with streaming and consume the async generator to get the final response
     async_stream = team.arun(
-        "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
+        "Give me a stock report for NVDA", stream=True, stream_events=True
     )
 
     # Consume the async streaming events and get the final response
@@ -103,7 +100,7 @@ async def test_structured_streaming_with_arun():
         team.arun(
             input="Give me a stock report for AAPL",
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
     )
 

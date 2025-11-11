@@ -7,7 +7,7 @@ from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -25,6 +25,8 @@ from agno.run.workflow import (
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
     StepStartedEvent,
+    WorkflowAgentCompletedEvent,
+    WorkflowAgentStartedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
     WorkflowRunOutput,
@@ -48,6 +50,7 @@ def print_response(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     markdown: bool = True,
     show_time: bool = True,
     show_step_details: bool = True,
@@ -76,6 +79,8 @@ def print_response(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -126,12 +131,22 @@ def print_response(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )  # type: ignore
 
             response_timer.stop()
 
-            if show_step_details and workflow_response.step_results:
+            # Check if this is a workflow agent direct response
+            if workflow_response.workflow_agent_run is not None and not workflow_response.workflow_agent_run.tools:
+                # Agent answered directly from history without executing workflow
+                agent_response_panel = create_panel(
+                    content=Markdown(str(workflow_response.content)) if markdown else str(workflow_response.content),
+                    title="Workflow Agent Response",
+                    border_style="green",
+                )
+                console.print(agent_response_panel)  # type: ignore
+            elif show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):
                     print_step_output_recursive(step_output, i + 1, markdown, console)  # type: ignore
 
@@ -186,6 +201,8 @@ def print_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
     show_time: bool = True,
@@ -199,7 +216,7 @@ def print_response_stream(
 
         console = Console()
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     # Show workflow info (same as before)
     media_info = []
@@ -209,6 +226,8 @@ def print_response_stream(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -252,10 +271,17 @@ def print_response_stream(
     step_results = []
     step_started_printed = False
     is_callable_function = callable(workflow.steps)
+    workflow_started = False  # Track if workflow has actually started
+    is_workflow_agent_response = False  # Track if this is a workflow agent direct response
 
     # Smart step hierarchy tracking
     current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
     step_display_cache = {}  # type: ignore
+
+    # Parallel-aware tracking for simultaneous steps
+    parallel_step_states: Dict[
+        Any, Dict[str, Any]
+    ] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
 
     def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
         """Generate clean two-level step numbering: x.y format only"""
@@ -308,21 +334,38 @@ def print_response_stream(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 **kwargs,
             ):  # type: ignore
                 # Handle the new event types
                 if isinstance(response, WorkflowStartedEvent):
+                    workflow_started = True
                     status.update("Workflow started...")
                     if is_callable_function:
                         current_step_name = "Custom Function"
                         current_step_index = 0
                     live_log.update(status)
 
+                elif isinstance(response, WorkflowAgentStartedEvent):
+                    # Workflow agent is starting to process
+                    status.update("Workflow agent processing...")
+                    live_log.update(status)
+                    continue
+
+                elif isinstance(response, WorkflowAgentCompletedEvent):
+                    # Workflow agent has completed
+                    status.update("Workflow agent completed")
+                    live_log.update(status)
+                    continue
+
                 elif isinstance(response, StepStartedEvent):
-                    current_step_name = response.step_name or "Unknown"
-                    current_step_index = response.step_index or 0  # type: ignore
+                    step_name = response.step_name or "Unknown"
+                    step_index = response.step_index or 0  # type: ignore
+
+                    current_step_name = step_name
+                    current_step_index = step_index  # type: ignore
                     current_step_content = ""
                     step_started_printed = False
 
@@ -334,6 +377,14 @@ def print_response_stream(
                 elif isinstance(response, StepCompletedEvent):
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0
+
+                    # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent (avoid duplication)
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(step_index, tuple)
+                    ):
+                        continue
 
                     # Generate smart step number for completion (will use cached value)
                     step_display = get_step_display_number(step_index, step_name)
@@ -376,7 +427,8 @@ def print_response_stream(
                         "max_iterations": response.max_iterations,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     status.update(f"Starting loop: {current_step_name} (max {response.max_iterations} iterations)...")
@@ -442,7 +494,8 @@ def print_response_stream(
                         "total_steps": response.parallel_step_count,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     # Print parallel execution summary panel
@@ -468,8 +521,30 @@ def print_response_stream(
 
                     status.update(f"Completed parallel execution: {step_name}")
 
+                    # Display individual parallel step results immediately
+                    if show_step_details and response.step_results:
+                        live_log.update(status, refresh=True)
+
+                        # Get the parallel container's display number for consistent numbering
+                        parallel_step_display = get_step_display_number(step_index, step_name)
+
+                        # Show each parallel step with the same number (1.1, 1.1)
+                        for step_result in response.step_results:
+                            if step_result.content:
+                                step_result_name = step_result.step_name or "Parallel Step"
+                                formatted_content = format_step_content_for_display(step_result.content)  # type: ignore
+
+                                # All parallel sub-steps get the same number
+                                parallel_step_panel = create_panel(
+                                    content=Markdown(formatted_content) if markdown else formatted_content,
+                                    title=f"{parallel_step_display}: {step_result_name} (Completed)",
+                                    border_style="orange3",
+                                )
+                                console.print(parallel_step_panel)  # type: ignore
+
                     # Reset context
                     current_primitive_context = None
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                 elif isinstance(response, ConditionExecutionStartedEvent):
@@ -486,7 +561,8 @@ def print_response_stream(
                         "condition_result": response.condition_result,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     condition_text = "met" if response.condition_result else "not met"
@@ -517,7 +593,8 @@ def print_response_stream(
                         "selected_steps": response.selected_steps,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     selected_steps_text = ", ".join(response.selected_steps) if response.selected_steps else "none"
@@ -595,8 +672,23 @@ def print_response_stream(
                 elif isinstance(response, WorkflowCompletedEvent):
                     status.update("Workflow completed!")
 
+                    # Check if this is an agent direct response
+                    if response.metadata and response.metadata.get("agent_direct_response"):
+                        is_workflow_agent_response = True
+                        # Print the agent's direct response from history
+                        if show_step_details:
+                            live_log.update(status, refresh=True)
+                            agent_response_panel = create_panel(
+                                content=Markdown(str(response.content)) if markdown else str(response.content),
+                                title="Workflow Agent Response",
+                                border_style="green",
+                            )
+                            console.print(agent_response_panel)  # type: ignore
+                            step_started_printed = True
                     # For callable functions, print the final content block here since there are no step events
-                    if is_callable_function and show_step_details and current_step_content and not step_started_printed:
+                    elif (
+                        is_callable_function and show_step_details and current_step_content and not step_started_printed
+                    ):
                         final_step_panel = create_panel(
                             content=Markdown(current_step_content) if markdown else current_step_content,
                             title="Custom Function (Completed)",
@@ -607,8 +699,8 @@ def print_response_stream(
 
                     live_log.update(status, refresh=True)
 
-                    # Show final summary
-                    if response.metadata:
+                    # Show final summary (skip for agent responses)
+                    if response.metadata and not is_workflow_agent_response:
                         status = response.status
                         summary_content = ""
                         summary_content += f"""\n\n**Status:** {status}"""
@@ -659,13 +751,29 @@ def print_response_stream(
                                 and response.content_type != ""
                             )
                             response_str = response.content  # type: ignore
+
+                            if isinstance(response, RunContentEvent) and not workflow_started:
+                                is_workflow_agent_response = True
+                                continue
+
                         elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
                             response_str = response.content  # type: ignore
+                            # If we get RunContentEvent BEFORE workflow starts, it's an agent direct response
+                            if not workflow_started and not is_workflow_agent_response:
+                                is_workflow_agent_response = True
                         else:
                             continue
 
                     # Use the unified formatting function for consistency
                     response_str = format_step_content_for_display(response_str)  # type: ignore
+
+                    # Skip streaming content from parallel sub-steps - they're handled in ParallelExecutionCompletedEvent
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(current_step_index, tuple)
+                    ):
+                        continue
 
                     # Filter out empty responses and add to current step content
                     if response_str and response_str.strip():
@@ -675,8 +783,8 @@ def print_response_stream(
                         else:
                             current_step_content += response_str
 
-                        # Live update the step panel with streaming content
-                        if show_step_details and not step_started_printed:
+                        # Live update the step panel with streaming content (skip for workflow agent responses)
+                        if show_step_details and not step_started_printed and not is_workflow_agent_response:
                             # Generate smart step number for streaming title (will use cached value)
                             step_display = get_step_display_number(current_step_index, current_step_name)
                             title = f"{step_display}: {current_step_name} (Streaming...)"
@@ -698,8 +806,8 @@ def print_response_stream(
 
             live_log.update("")
 
-            # Final completion message
-            if show_time:
+            # Final completion message (skip for agent responses)
+            if show_time and not is_workflow_agent_response:
                 completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
                 console.print(completion_text)  # type: ignore
 
@@ -781,6 +889,7 @@ async def aprint_response(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
     markdown: bool = True,
     show_time: bool = True,
     show_step_details: bool = True,
@@ -809,6 +918,8 @@ async def aprint_response(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -859,12 +970,22 @@ async def aprint_response(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )  # type: ignore
 
             response_timer.stop()
 
-            if show_step_details and workflow_response.step_results:
+            # Check if this is a workflow agent direct response
+            if workflow_response.workflow_agent_run is not None and not workflow_response.workflow_agent_run.tools:
+                # Agent answered directly from history without executing workflow
+                agent_response_panel = create_panel(
+                    content=Markdown(str(workflow_response.content)) if markdown else str(workflow_response.content),
+                    title="Workflow Agent Response",
+                    border_style="green",
+                )
+                console.print(agent_response_panel)  # type: ignore
+            elif show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):
                     print_step_output_recursive(step_output, i + 1, markdown, console)  # type: ignore
 
@@ -919,6 +1040,8 @@ async def aprint_response_stream(
     audio: Optional[List[Audio]] = None,
     images: Optional[List[Image]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[File]] = None,
+    stream_events: bool = False,
     stream_intermediate_steps: bool = False,
     markdown: bool = True,
     show_time: bool = True,
@@ -932,7 +1055,7 @@ async def aprint_response_stream(
 
         console = Console()
 
-    stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+    stream_events = True  # With streaming print response, we need to stream intermediate steps
 
     # Show workflow info (same as before)
     media_info = []
@@ -942,6 +1065,8 @@ async def aprint_response_stream(
         media_info.append(f"Images: {len(images)}")
     if videos:
         media_info.append(f"Videos: {len(videos)}")
+    if files:
+        media_info.append(f"Files: {len(files)}")
 
     workflow_info = f"""**Workflow:** {workflow.name}"""
     if workflow.description:
@@ -985,10 +1110,17 @@ async def aprint_response_stream(
     step_results = []
     step_started_printed = False
     is_callable_function = callable(workflow.steps)
+    workflow_started = False  # Track if workflow has actually started
+    is_workflow_agent_response = False  # Track if this is a workflow agent direct response
 
     # Smart step hierarchy tracking
     current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
     step_display_cache = {}  # type: ignore
+
+    # Parallel-aware tracking for simultaneous steps
+    parallel_step_states: Dict[
+        Any, Dict[str, Any]
+    ] = {}  # track state of each parallel step: {step_index: {"name": str, "content": str, "started": bool, "completed": bool}}
 
     def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
         """Generate clean two-level step numbering: x.y format only"""
@@ -1033,7 +1165,7 @@ async def aprint_response_stream(
         live_log.update(status)
 
         try:
-            async for response in await workflow.arun(
+            async for response in workflow.arun(
                 input=input,
                 additional_data=additional_data,
                 user_id=user_id,
@@ -1041,21 +1173,42 @@ async def aprint_response_stream(
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
+                stream_events=stream_events,
                 **kwargs,
             ):  # type: ignore
                 # Handle the new event types
                 if isinstance(response, WorkflowStartedEvent):
+                    workflow_started = True
                     status.update("Workflow started...")
                     if is_callable_function:
                         current_step_name = "Custom Function"
                         current_step_index = 0
                     live_log.update(status)
 
+                elif isinstance(response, WorkflowAgentStartedEvent):
+                    # Workflow agent is starting to process
+                    status.update("Workflow agent processing...")
+                    live_log.update(status)
+                    continue
+
+                elif isinstance(response, WorkflowAgentCompletedEvent):
+                    # Workflow agent has completed
+                    status.update("Workflow agent completed")
+                    live_log.update(status)
+                    continue
+
                 elif isinstance(response, StepStartedEvent):
-                    current_step_name = response.step_name or "Unknown"
-                    current_step_index = response.step_index or 0  # type: ignore
+                    # Skip step events if workflow hasn't started (agent direct response)
+                    if not workflow_started:
+                        continue
+
+                    step_name = response.step_name or "Unknown"
+                    step_index = response.step_index or 0  # type: ignore
+
+                    current_step_name = step_name
+                    current_step_index = step_index  # type: ignore
                     current_step_content = ""
                     step_started_printed = False
 
@@ -1067,6 +1220,14 @@ async def aprint_response_stream(
                 elif isinstance(response, StepCompletedEvent):
                     step_name = response.step_name or "Unknown"
                     step_index = response.step_index or 0
+
+                    # Skip parallel sub-step completed events - they're handled in ParallelExecutionCompletedEvent (avoid duplication)
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(step_index, tuple)
+                    ):
+                        continue
 
                     # Generate smart step number for completion (will use cached value)
                     step_display = get_step_display_number(step_index, step_name)
@@ -1109,7 +1270,8 @@ async def aprint_response_stream(
                         "max_iterations": response.max_iterations,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     status.update(f"Starting loop: {current_step_name} (max {response.max_iterations} iterations)...")
@@ -1175,7 +1337,8 @@ async def aprint_response_stream(
                         "total_steps": response.parallel_step_count,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     # Print parallel execution summary panel
@@ -1201,8 +1364,30 @@ async def aprint_response_stream(
 
                     status.update(f"Completed parallel execution: {step_name}")
 
+                    # Display individual parallel step results immediately
+                    if show_step_details and response.step_results:
+                        live_log.update(status, refresh=True)
+
+                        # Get the parallel container's display number for consistent numbering
+                        parallel_step_display = get_step_display_number(step_index, step_name)
+
+                        # Show each parallel step with the same number (1.1, 1.1)
+                        for step_result in response.step_results:
+                            if step_result.content:
+                                step_result_name = step_result.step_name or "Parallel Step"
+                                formatted_content = format_step_content_for_display(step_result.content)  # type: ignore
+
+                                # All parallel sub-steps get the same number
+                                parallel_step_panel = create_panel(
+                                    content=Markdown(formatted_content) if markdown else formatted_content,
+                                    title=f"{parallel_step_display}: {step_result_name} (Completed)",
+                                    border_style="orange3",
+                                )
+                                console.print(parallel_step_panel)  # type: ignore
+
                     # Reset context
                     current_primitive_context = None
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                 elif isinstance(response, ConditionExecutionStartedEvent):
@@ -1219,7 +1404,8 @@ async def aprint_response_stream(
                         "condition_result": response.condition_result,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     condition_text = "met" if response.condition_result else "not met"
@@ -1250,7 +1436,8 @@ async def aprint_response_stream(
                         "selected_steps": response.selected_steps,
                     }
 
-                    # Clear cache for this primitive's sub-steps
+                    # Initialize parallel step tracking - clear previous states
+                    parallel_step_states.clear()
                     step_display_cache.clear()
 
                     selected_steps_text = ", ".join(response.selected_steps) if response.selected_steps else "none"
@@ -1328,8 +1515,23 @@ async def aprint_response_stream(
                 elif isinstance(response, WorkflowCompletedEvent):
                     status.update("Workflow completed!")
 
+                    # Check if this is an agent direct response
+                    if response.metadata and response.metadata.get("agent_direct_response"):
+                        is_workflow_agent_response = True
+                        # Print the agent's direct response from history
+                        if show_step_details:
+                            live_log.update(status, refresh=True)
+                            agent_response_panel = create_panel(
+                                content=Markdown(str(response.content)) if markdown else str(response.content),
+                                title="Workflow Agent Response",
+                                border_style="green",
+                            )
+                            console.print(agent_response_panel)  # type: ignore
+                            step_started_printed = True
                     # For callable functions, print the final content block here since there are no step events
-                    if is_callable_function and show_step_details and current_step_content and not step_started_printed:
+                    elif (
+                        is_callable_function and show_step_details and current_step_content and not step_started_printed
+                    ):
                         final_step_panel = create_panel(
                             content=Markdown(current_step_content) if markdown else current_step_content,
                             title="Custom Function (Completed)",
@@ -1340,8 +1542,8 @@ async def aprint_response_stream(
 
                     live_log.update(status, refresh=True)
 
-                    # Show final summary
-                    if response.metadata:
+                    # Show final summary (skip for agent responses)
+                    if response.metadata and not is_workflow_agent_response:
                         status = response.status
                         summary_content = ""
                         summary_content += f"""\n\n**Status:** {status}"""
@@ -1389,6 +1591,11 @@ async def aprint_response_stream(
                                 # Extract the content from the streaming event
                                 response_str = response.content  # type: ignore
 
+                                # If we get RunContentEvent BEFORE workflow starts, it's an agent direct response
+                                if isinstance(response, RunContentEvent) and not workflow_started:
+                                    is_workflow_agent_response = True
+                                    continue  # Skip ALL agent direct response content
+
                                 # Check if this is a team's final structured output
                                 is_structured_output = (
                                     isinstance(response, TeamRunContentEvent)
@@ -1398,11 +1605,22 @@ async def aprint_response_stream(
                                 )
                         elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
                             response_str = response.content  # type: ignore
+                            # If we get RunContentEvent BEFORE workflow starts, it's an agent direct response
+                            if not workflow_started and not is_workflow_agent_response:
+                                is_workflow_agent_response = True
                         else:
                             continue
 
                     # Use the unified formatting function for consistency
                     response_str = format_step_content_for_display(response_str)  # type: ignore
+
+                    # Skip streaming content from parallel sub-steps - they're handled in ParallelExecutionCompletedEvent
+                    if (
+                        current_primitive_context
+                        and current_primitive_context["type"] == "parallel"
+                        and isinstance(current_step_index, tuple)
+                    ):
+                        continue
 
                     # Filter out empty responses and add to current step content
                     if response_str and response_str.strip():
@@ -1412,8 +1630,8 @@ async def aprint_response_stream(
                         else:
                             current_step_content += response_str
 
-                        # Live update the step panel with streaming content
-                        if show_step_details and not step_started_printed:
+                        # Live update the step panel with streaming content (skip for workflow agent responses)
+                        if show_step_details and not step_started_printed and not is_workflow_agent_response:
                             # Generate smart step number for streaming title (will use cached value)
                             step_display = get_step_display_number(current_step_index, current_step_name)
                             title = f"{step_display}: {current_step_name} (Streaming...)"
@@ -1435,8 +1653,7 @@ async def aprint_response_stream(
 
             live_log.update("")
 
-            # Final completion message
-            if show_time:
+            if show_time and not is_workflow_agent_response:
                 completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
                 console.print(completion_text)  # type: ignore
 

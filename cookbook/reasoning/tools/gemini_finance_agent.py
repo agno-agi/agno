@@ -18,16 +18,11 @@ thinking_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        YFinanceTools(),
     ],
     instructions="Use tables where possible",
     markdown=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 thinking_agent.print_response(
     "Write a report comparing NVDA to TSLA in detail", stream=True, show_reasoning=True

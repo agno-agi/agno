@@ -8,7 +8,8 @@ from shutil import rmtree
 import httpx
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.llamaindex import LlamaIndexVectorDb
+from agno.models.openai import OpenAIChat
+from agno.vectordb.llamaindex.llamaindexdb import LlamaIndexVectorDb
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -22,7 +23,7 @@ if data_dir.is_dir():
     rmtree(path=data_dir, ignore_errors=True)
 data_dir.mkdir(parents=True, exist_ok=True)
 
-url = "https://raw.githubusercontent.com/run-llama/llama_index/main/docs/docs/examples/data/paul_graham/paul_graham_essay.txt"
+url = "https://raw.githubusercontent.com/run-llama/llama_index/main/docs/examples/data/paul_graham/paul_graham_essay.txt"
 file_path = data_dir.joinpath("paul_graham_essay.txt")
 response = httpx.get(url)
 if response.status_code == 200:
@@ -52,6 +53,7 @@ knowledge = Knowledge(
 
 # Create an agent with the knowledge instance
 agent = Agent(
+    model=OpenAIChat("gpt-5-mini"),
     knowledge=knowledge,
     search_knowledge=True,
     debug_mode=True,

@@ -6,7 +6,7 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-    tools=[YFinanceTools(stock_price=True)],
+    tools=[YFinanceTools()],
     markdown=True,
 )
 

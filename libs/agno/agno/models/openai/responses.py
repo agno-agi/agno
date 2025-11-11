@@ -8,7 +8,7 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model
+from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -19,10 +19,7 @@ from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
-    from openai.types.responses.response import Response
-    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
-    from openai.types.responses.response_stream_event import ResponseStreamEvent
-    from openai.types.responses.response_usage import ResponseUsage
+    from openai.types.responses import Response, ResponseReasoningItem, ResponseStreamEvent, ResponseUsage
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
@@ -48,7 +45,7 @@ class OpenAIResponses(Model):
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
     verbosity: Optional[Literal["low", "medium", "high"]] = None
-    reasoning_effort: Optional[Literal["minimal", "medium", "high"]] = None
+    reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = None
     reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
@@ -56,6 +53,10 @@ class OpenAIResponses(Model):
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
+    extra_headers: Optional[Any] = None
+    extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -66,7 +67,7 @@ class OpenAIResponses(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Dict[str, str]] = None
     default_query: Optional[Dict[str, str]] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Parameters affecting built-in tools
@@ -148,8 +149,11 @@ class OpenAIResponses(Model):
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_debug("http_client is not an instance of httpx.Client.")
 
         self.client = OpenAI(**client_params)
         return self.client
@@ -161,13 +165,15 @@ class OpenAIResponses(Model):
         Returns:
             AsyncOpenAI: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
         else:
+            if self.http_client:
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
@@ -202,6 +208,9 @@ class OpenAIResponses(Model):
             "truncation": self.truncation,
             "user": self.user,
             "service_tier": self.service_tier,
+            "extra_headers": self.extra_headers,
+            "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
         }
         # Populate the reasoning parameter
         base_params = self._set_reasoning_request_param(base_params)
@@ -221,7 +230,7 @@ class OpenAIResponses(Model):
                     "type": "json_schema",
                     "name": response_format.__name__,
                     "schema": schema,
-                    "strict": True,
+                    "strict": self.strict_output,
                 }
             else:
                 # JSON mode
@@ -401,21 +410,28 @@ class OpenAIResponses(Model):
         """
         formatted_messages: List[Union[Dict[str, Any], ResponseReasoningItem]] = []
 
-        if self._using_reasoning_model():
+        messages_to_format = messages
+        previous_response_id: Optional[str] = None
+
+        if self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
-            previous_response_id: Optional[str] = None
-            if self.store is not False:
-                for msg in reversed(messages):
-                    if (
-                        msg.role == "assistant"
-                        and hasattr(msg, "provider_data")
-                        and msg.provider_data
-                        and "response_id" in msg.provider_data
-                    ):
-                        previous_response_id = msg.provider_data["response_id"]
-                        break
+
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant"
+                    and hasattr(msg, "provider_data")
+                    and msg.provider_data
+                    and "response_id" in msg.provider_data
+                ):
+                    previous_response_id = msg.provider_data["response_id"]
+                    msg_index = messages.index(msg)
+
+                    # Include messages after this assistant message
+                    messages_to_format = messages[msg_index + 1 :]
+
+                    break
 
         # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
         fc_id_to_call_id: Dict[str, str] = {}
@@ -428,7 +444,7 @@ class OpenAIResponses(Model):
                     if isinstance(fc_id, str) and isinstance(call_id, str):
                         fc_id_to_call_id[fc_id] = call_id
 
-        for message in messages:
+        for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
@@ -795,63 +811,6 @@ class OpenAIResponses(Model):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
 
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        for model_response_delta in self.invoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            )
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
-
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        async for model_response_delta in self.ainvoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            ):
-                yield model_response
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
-
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
@@ -1081,5 +1040,11 @@ class OpenAIResponses(Model):
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0
         metrics.total_tokens = response_usage.total_tokens or 0
+
+        if input_tokens_details := response_usage.input_tokens_details:
+            metrics.cache_read_tokens = input_tokens_details.cached_tokens
+
+        if output_tokens_details := response_usage.output_tokens_details:
+            metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
 
         return metrics

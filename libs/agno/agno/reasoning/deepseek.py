@@ -20,7 +20,7 @@ def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(messages=messages)
+        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -46,7 +46,7 @@ async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Messa
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None

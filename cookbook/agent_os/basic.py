@@ -9,7 +9,7 @@ from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
@@ -42,11 +42,12 @@ basic_workflow = Workflow(
             agent=basic_agent,
         )
     ],
+    add_workflow_history_to_steps=True,
 )
 
 # Setup our AgentOS app
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
+    description="Example app for basic agent, team and workflow",
     agents=[basic_agent],
     teams=[basic_team],
     workflows=[basic_workflow],
@@ -55,7 +56,7 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    """Run your AgentOS.
 
     You can see the configuration and available apps at:
     http://localhost:7777/config

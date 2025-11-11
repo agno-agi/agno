@@ -23,16 +23,7 @@ from agno.tools.yfinance import YFinanceTools
 
 finance_agent = Agent(
     model=xAI(id="grok-3-mini-beta"),
-    tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            stock_fundamentals=True,
-            historical_prices=True,
-            company_info=True,
-            company_news=True,
-        )
-    ],
+    tools=[YFinanceTools()],
     instructions=dedent("""\
         You are a seasoned Wall Street analyst with deep expertise in market analysis! 📊
 
@@ -74,7 +65,7 @@ finance_agent = Agent(
 finance_agent.print_response(
     "Write a comprehensive report on TSLA",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 )
 
 # # Semiconductor market analysis example

@@ -14,21 +14,18 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.reasoning import extract_thinking_content
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
     from openai.types import CompletionUsage
-    from openai.types.chat import ChatCompletionAudio
-    from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-    )
+    from openai.types.chat import ChatCompletion, ChatCompletionAudio, ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import ChoiceDelta, ChoiceDeltaToolCall
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -68,8 +65,10 @@ class OpenAIChat(Model):
     user: Optional[str] = None
     top_p: Optional[float] = None
     service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
     role_map: Optional[Dict[str, str]] = None
 
@@ -83,6 +82,10 @@ class OpenAIChat(Model):
     default_query: Optional[Any] = None
     http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
+
+    # OpenAI clients
+    client: Optional[OpenAIClient] = None
+    async_client: Optional[AsyncOpenAIClient] = None
 
     # The role to map the message role to.
     default_role_map = {
@@ -126,13 +129,18 @@ class OpenAIChat(Model):
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
+        if self.client and not self.client.is_closed():
+            return self.client
+
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client.")
-        return OpenAIClient(**client_params)
+                log_debug("http_client is not an instance of httpx.Client.")
+
+        self.client = OpenAIClient(**client_params)
+        return self.client
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
@@ -141,28 +149,28 @@ class OpenAIChat(Model):
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
+        if self.async_client and not self.async_client.is_closed():
+            return self.async_client
+
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
-                # Create a new async HTTP client with custom limits
-                client_params["http_client"] = httpx.AsyncClient(
-                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-                )
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
+            client_params["http_client"] = self.http_client
         else:
+            if self.http_client:
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
             )
-        return AsyncOpenAIClient(**client_params)
+        self.async_client = AsyncOpenAIClient(**client_params)
+        return self.async_client
 
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -191,6 +199,7 @@ class OpenAIChat(Model):
             "top_p": self.top_p,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
             "metadata": self.metadata,
             "service_tier": self.service_tier,
         }
@@ -207,7 +216,7 @@ class OpenAIChat(Model):
                     "json_schema": {
                         "name": response_format.__name__,
                         "schema": schema,
-                        "strict": True,
+                        "strict": self.strict_output,
                     },
                 }
             else:
@@ -270,6 +279,7 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "extra_body": self.extra_body,
                 "service_tier": self.service_tier,
             }
         )
@@ -347,7 +357,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API and parse the response.
@@ -371,7 +381,9 @@ class OpenAIChat(Model):
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
             assistant_message.metrics.stop_timer()
 
@@ -425,7 +437,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -448,7 +460,9 @@ class OpenAIChat(Model):
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
             assistant_message.metrics.stop_timer()
 
@@ -502,7 +516,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
@@ -525,7 +539,9 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             ):
                 yield self._parse_provider_response_delta(chunk)
 
@@ -576,7 +592,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
@@ -599,7 +615,9 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(
+                    response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+                ),
             )
 
             async for chunk in async_stream:
@@ -713,6 +731,12 @@ class OpenAIChat(Model):
         if response_message.content is not None:
             model_response.content = response_message.content
 
+            # Extract thinking content before any structured parsing
+            if model_response.content:
+                reasoning_content, output_content = extract_thinking_content(model_response.content)
+                if reasoning_content:
+                    model_response.reasoning_content = reasoning_content
+                    model_response.content = output_content
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:

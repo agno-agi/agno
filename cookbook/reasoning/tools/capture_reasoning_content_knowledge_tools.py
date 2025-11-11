@@ -39,15 +39,15 @@ agent = Agent(
     tools=[
         KnowledgeTools(
             knowledge=agno_docs,
-            think=True,
-            search=True,
-            analyze=True,
+            enable_think=True,
+            enable_search=True,
+            enable_analyze=True,
             add_instructions=True,
         )
     ],
     instructions=dedent("""\
         You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use the knowledge tools to organize your thoughts, search for information, 
+        Use the knowledge tools to organize your thoughts, search for information,
         and analyze results step-by-step.
         \
     """),
@@ -82,15 +82,15 @@ streaming_agent = Agent(
     tools=[
         KnowledgeTools(
             knowledge=agno_docs,
-            think=True,
-            search=True,
-            analyze=True,
+            enable_think=True,
+            enable_search=True,
+            enable_analyze=True,
             add_instructions=True,
         )
     ],
     instructions=dedent("""\
         You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use the knowledge tools to organize your thoughts, search for information, 
+        Use the knowledge tools to organize your thoughts, search for information,
         and analyze results step-by-step.
         \
     """),
@@ -103,7 +103,7 @@ final_response = None
 for event in streaming_agent.run(
     "What does Paul Graham explain here with respect to need to read?",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 ):
     # Print content as it streams (optional)
     if hasattr(event, "content") and event.content:
