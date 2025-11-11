@@ -20,7 +20,7 @@ agent = Agent(
     model=Claude(
         id="claude-sonnet-4-5",
         # Activate and configure the context management feature
-        default_headers={"anthropic-beta": "context-management-2025-06-27"},
+        betas=["context-management-2025-06-27"],
         context_management={
             "edits": [
                 {
