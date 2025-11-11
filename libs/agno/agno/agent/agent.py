@@ -5763,6 +5763,8 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             log_warning(f"Error getting session from db: {e}")
             return None
 
