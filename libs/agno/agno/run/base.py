@@ -16,6 +16,7 @@ class RunContext:
     run_id: str
     session_id: str
     user_id: Optional[str] = None
+    tool_call_id: Optional[str] = None # only tool call use it.
 
     dependencies: Optional[Dict[str, Any]] = None
     knowledge_filters: Optional[Dict[str, Any]] = None
