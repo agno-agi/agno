@@ -764,12 +764,11 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                # If it's a dict (legacy), keep old behavior
+                # Handle dict filters
                 if isinstance(filters, dict):
                     stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle FilterExpr DSL
                 else:
-                    log_debug("Using Filters DSL")
-                    # Assume it's a list of DSL expressions
                     # Convert each DSL expression to SQLAlchemy and AND them together
                     sqlalchemy_conditions = [
                         self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
@@ -884,8 +883,17 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
-                stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle dict filters
+                if isinstance(filters, dict):
+                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle FilterExpr DSL
+                else:
+                    # Convert each DSL expression to SQLAlchemy and AND them together
+                    sqlalchemy_conditions = [
+                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
+                        for f in filters
+                    ]
+                    stmt = stmt.where(and_(*sqlalchemy_conditions))
 
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
@@ -1006,7 +1014,17 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle dict filters
+                if isinstance(filters, dict):
+                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle FilterExpr DSL
+                else:
+                    # Convert each DSL expression to SQLAlchemy and AND them together
+                    sqlalchemy_conditions = [
+                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
+                        for f in filters
+                    ]
+                    stmt = stmt.where(and_(*sqlalchemy_conditions))
 
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))

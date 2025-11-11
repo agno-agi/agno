@@ -5,11 +5,14 @@ Tests cover:
 - Logical operators (AND, OR, NOT)
 - Operator overloading (&, |, ~)
 - Serialization (to_dict)
+- Deserialization (from_dict)
 - Complex nested expressions
 - Edge cases
 """
 
-from agno.filters import AND, EQ, GT, IN, LT, NOT, OR, FilterExpr
+import pytest
+
+from agno.filters import AND, EQ, GT, IN, LT, NOT, OR, FilterExpr, from_dict
 
 
 class TestBasicOperators:
@@ -351,6 +354,165 @@ class TestSerialization:
         assert isinstance(result["conditions"], list)
         assert result["conditions"][0]["op"] == "AND"
         assert result["conditions"][1]["op"] == "NOT"
+
+
+class TestDeserialization:
+    """Test from_dict deserialization of FilterExpr objects."""
+
+    def test_eq_deserialization(self):
+        """Test EQ filter deserialization."""
+        original = EQ("status", "published")
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, EQ)
+        assert deserialized.key == "status"
+        assert deserialized.value == "published"
+
+    def test_in_deserialization(self):
+        """Test IN filter deserialization."""
+        original = IN("category", ["tech", "science", "engineering"])
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, IN)
+        assert deserialized.key == "category"
+        assert deserialized.values == ["tech", "science", "engineering"]
+
+    def test_gt_deserialization(self):
+        """Test GT filter deserialization."""
+        original = GT("age", 18)
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, GT)
+        assert deserialized.key == "age"
+        assert deserialized.value == 18
+
+    def test_lt_deserialization(self):
+        """Test LT filter deserialization."""
+        original = LT("price", 100.0)
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, LT)
+        assert deserialized.key == "price"
+        assert deserialized.value == 100.0
+
+    def test_and_deserialization(self):
+        """Test AND filter deserialization."""
+        original = AND(EQ("status", "published"), GT("views", 1000))
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, AND)
+        assert len(deserialized.expressions) == 2
+        assert isinstance(deserialized.expressions[0], EQ)
+        assert isinstance(deserialized.expressions[1], GT)
+
+    def test_or_deserialization(self):
+        """Test OR filter deserialization."""
+        original = OR(EQ("priority", "high"), EQ("urgent", True))
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, OR)
+        assert len(deserialized.expressions) == 2
+
+    def test_not_deserialization(self):
+        """Test NOT filter deserialization."""
+        original = NOT(EQ("status", "archived"))
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, NOT)
+        assert isinstance(deserialized.expression, EQ)
+
+    def test_complex_nested_deserialization(self):
+        """Test complex nested filter deserialization."""
+        original = (EQ("type", "article") & GT("word_count", 500)) | (
+            EQ("type", "tutorial") & ~EQ("difficulty", "beginner")
+        )
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, OR)
+        assert len(deserialized.expressions) == 2
+        assert isinstance(deserialized.expressions[0], AND)
+        assert isinstance(deserialized.expressions[1], AND)
+
+    def test_operator_overload_deserialization(self):
+        """Test deserialization of filters created with operator overloads."""
+        # Using & operator
+        filter1 = EQ("status", "published") & GT("views", 1000)
+        deserialized1 = from_dict(filter1.to_dict())
+        assert isinstance(deserialized1, AND)
+
+        # Using | operator
+        filter2 = EQ("priority", "high") | EQ("urgent", True)
+        deserialized2 = from_dict(filter2.to_dict())
+        assert isinstance(deserialized2, OR)
+
+        # Using ~ operator
+        filter3 = ~EQ("status", "draft")
+        deserialized3 = from_dict(filter3.to_dict())
+        assert isinstance(deserialized3, NOT)
+
+    def test_invalid_dict_missing_op(self):
+        """Test from_dict with missing 'op' key raises ValueError."""
+        with pytest.raises(ValueError, match="must contain 'op' key"):
+            from_dict({"key": "status", "value": "published"})
+
+    def test_invalid_dict_unknown_op(self):
+        """Test from_dict with unknown operator raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown filter operator"):
+            from_dict({"op": "UNKNOWN", "key": "status", "value": "published"})
+
+    def test_invalid_eq_missing_fields(self):
+        """Test EQ deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="EQ filter requires"):
+            from_dict({"op": "EQ", "key": "status"})
+
+    def test_invalid_in_missing_fields(self):
+        """Test IN deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="IN filter requires"):
+            from_dict({"op": "IN", "key": "category"})
+
+    def test_invalid_and_missing_conditions(self):
+        """Test AND deserialization with missing conditions raises ValueError."""
+        with pytest.raises(ValueError, match="AND filter requires 'conditions' field"):
+            from_dict({"op": "AND"})
+
+    def test_invalid_or_missing_conditions(self):
+        """Test OR deserialization with missing conditions raises ValueError."""
+        with pytest.raises(ValueError, match="OR filter requires 'conditions' field"):
+            from_dict({"op": "OR"})
+
+    def test_invalid_not_missing_condition(self):
+        """Test NOT deserialization with missing condition raises ValueError."""
+        with pytest.raises(ValueError, match="NOT filter requires 'condition' field"):
+            from_dict({"op": "NOT"})
+
+    def test_roundtrip_preserves_semantics(self):
+        """Test that serialization -> deserialization preserves filter semantics."""
+        filters = [
+            EQ("status", "published"),
+            IN("category", ["tech", "science"]),
+            GT("views", 1000),
+            LT("age", 65),
+            EQ("active", True) & GT("score", 80),
+            EQ("priority", "high") | EQ("urgent", True),
+            ~EQ("status", "archived"),
+            (EQ("type", "article") & GT("word_count", 500)) | (EQ("type", "tutorial")),
+        ]
+
+        for original in filters:
+            serialized = original.to_dict()
+            deserialized = from_dict(serialized)
+
+            # Re-serialize to compare structure
+            reserialized = deserialized.to_dict()
+            assert serialized == reserialized, f"Roundtrip failed for {original}"
 
 
 class TestEdgeCases:

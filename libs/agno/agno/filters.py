@@ -279,3 +279,90 @@ class NOT(FilterExpr):
 
     def to_dict(self) -> dict:
         return {"op": "NOT", "condition": self.expression.to_dict()}
+
+
+# ============================================================
+# Deserialization
+# ============================================================
+
+
+def from_dict(filter_dict: dict) -> FilterExpr:
+    """Reconstruct a FilterExpr object from its dictionary representation.
+
+    This function deserializes filter expressions that were serialized using the
+    to_dict() method, enabling filters to be passed through JSON APIs and reconstructed
+    on the server side.
+
+    Args:
+        filter_dict: Dictionary representation of a filter expression with an "op" key
+
+    Returns:
+        FilterExpr: The reconstructed filter expression object
+
+    Raises:
+        ValueError: If the filter dictionary has an invalid structure or unknown operator
+
+    Example:
+        >>> # Serialize and deserialize a simple filter
+        >>> original = EQ("status", "published")
+        >>> serialized = original.to_dict()
+        >>> # {"op": "EQ", "key": "status", "value": "published"}
+        >>> reconstructed = from_dict(serialized)
+        >>>
+        >>> # Complex filter with nested expressions
+        >>> complex_filter = (EQ("type", "article") & GT("views", 1000)) | IN("priority", ["high", "urgent"])
+        >>> serialized = complex_filter.to_dict()
+        >>> reconstructed = from_dict(serialized)
+        >>>
+        >>> # From JSON API
+        >>> import json
+        >>> json_str = '{"op": "AND", "conditions": [{"op": "EQ", "key": "status", "value": "active"}, {"op": "GT", "key": "age", "value": 18}]}'
+        >>> filter_dict = json.loads(json_str)
+        >>> filter_expr = from_dict(filter_dict)
+    """
+    if not isinstance(filter_dict, dict) or "op" not in filter_dict:
+        raise ValueError(f"Invalid filter dictionary: must contain 'op' key. Got: {filter_dict}")
+
+    op = filter_dict["op"]
+
+    # Comparison and inclusion operators
+    if op == "EQ":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"EQ filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return EQ(filter_dict["key"], filter_dict["value"])
+
+    elif op == "IN":
+        if "key" not in filter_dict or "values" not in filter_dict:
+            raise ValueError(f"IN filter requires 'key' and 'values' fields. Got: {filter_dict}")
+        return IN(filter_dict["key"], filter_dict["values"])
+
+    elif op == "GT":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"GT filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return GT(filter_dict["key"], filter_dict["value"])
+
+    elif op == "LT":
+        if "key" not in filter_dict or "value" not in filter_dict:
+            raise ValueError(f"LT filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        return LT(filter_dict["key"], filter_dict["value"])
+
+    # Logical operators
+    elif op == "AND":
+        if "conditions" not in filter_dict:
+            raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
+        conditions = [from_dict(cond) for cond in filter_dict["conditions"]]
+        return AND(*conditions)
+
+    elif op == "OR":
+        if "conditions" not in filter_dict:
+            raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
+        conditions = [from_dict(cond) for cond in filter_dict["conditions"]]
+        return OR(*conditions)
+
+    elif op == "NOT":
+        if "condition" not in filter_dict:
+            raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
+        return NOT(from_dict(filter_dict["condition"]))
+
+    else:
+        raise ValueError(f"Unknown filter operator: {op}")
