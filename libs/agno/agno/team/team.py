@@ -7002,12 +7002,11 @@ class Team:
                 )
                 member_agent_run_response = None
                 for member_agent_run_output_event in member_agent_run_response_stream:
-                    # If we get the final response, we can break out of the loop
+                    # Do NOT break out of the loop, Iterator need to exit properly
                     if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
                         member_agent_run_output_event, RunOutput
                     ):
                         member_agent_run_response = member_agent_run_output_event  # type: ignore
-                        break
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_output_event)
@@ -7132,12 +7131,12 @@ class Team:
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
-                    # If we get the final response, we can break out of the loop
+                    # Do NOT break out of the loop, AsyncIterator need to exit properly
                     if isinstance(member_agent_run_response_event, TeamRunOutput) or isinstance(
                         member_agent_run_response_event, RunOutput
                     ):
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
-                        break
+
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_event)
@@ -7248,12 +7247,11 @@ class Team:
                     )
                     member_agent_run_response = None
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
-                        # If we get the final response, we can break out of the loop
+                        # Do NOT break out of the loop, Iterator need to exit properly
                         if isinstance(member_agent_run_response_chunk, TeamRunOutput) or isinstance(
                             member_agent_run_response_chunk, RunOutput
                         ):
                             member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                            break
 
                         # Check if the run is cancelled
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -7365,11 +7363,12 @@ class Team:
                     member_agent_run_response = None
                     try:
                         async for member_agent_run_output_event in member_stream:
+                            # Do NOT break out of the loop, Iterator need to exit properly
                             if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
                                 member_agent_run_output_event, RunOutput
                             ):
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                break
+                                
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id or run_response.run_id
