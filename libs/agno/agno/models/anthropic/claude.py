@@ -134,7 +134,12 @@ class Claude(Model):
 
     def _has_beta_features(self) -> bool:
         """Check if the model has any Anthropic beta features enabled."""
-        return self.mcp_servers is not None or self.context_management is not None or self.skills is not None
+        return (
+            self.mcp_servers is not None
+            or self.context_management is not None
+            or self.skills is not None
+            or self.betas is not None
+        )
 
     def get_client(self) -> AnthropicClient:
         """
@@ -215,6 +220,8 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.betas:
+            _request_params["betas"] = self.betas
         if self.context_management:
             _request_params["context_management"] = self.context_management
         if self.mcp_servers:
