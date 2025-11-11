@@ -1,14 +1,17 @@
+"""JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
+
 import fnmatch
+import jwt
 from enum import Enum
 from os import getenv
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
-import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.utils.log import log_debug
+from agno.os.scopes import AgentOSScope
+from agno.utils.log import log_debug, log_warning
 
 
 class TokenSource(str, Enum):
@@ -21,25 +24,49 @@ class TokenSource(str, Enum):
 
 class JWTMiddleware(BaseHTTPMiddleware):
     """
-    JWT Middleware for validating tokens and storing JWT claims in request state.
+    JWT Authentication Middleware with optional RBAC (Role-Based Access Control).
 
     This middleware:
-    1. Extracts JWT token from Authorization header, cookies, or both
+    1. Extracts JWT token from Authorization header or cookies
     2. Decodes and validates the token
-    3. Stores JWT claims in request.state for easy access in endpoints
+    3. Stores JWT claims (user_id, session_id, scopes) in request.state
+    4. Optionally checks if the request path requires specific scopes (if scope_mappings provided)
+    5. Validates that the authenticated user has the required scopes
+    6. Returns 401 for invalid tokens, 403 for insufficient scopes
+
+    RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
+    Without authorization enabled, the middleware only extracts and validates JWT tokens.
+
+    Scope Resolution (when RBAC enabled):
+    - Supports wildcard scopes (e.g., "agents:*" matches "agents:read", "agents:run")
+    - Supports hierarchical scopes (e.g., "admin" grants all permissions)
+    - Custom scope mappings are ADDITIVE to defaults (override on conflict)
+    - Empty list [] means "no scopes required" for that route
+    - Use AgentOSScope enum for type-safe scope definitions
 
     Token Sources:
     - "header": Extract from Authorization header (default)
     - "cookie": Extract from HTTP cookie
     - "both": Try header first, then cookie as fallback
-
-    Claims are stored as:
-    - request.state.user_id: User ID from configured claim
-    - request.state.session_id: Session ID from configured claim
-    - request.state.dependencies: Dictionary of dependency claims
-    - request.state.session_state: Dictionary of session state claims
-    - request.state.authenticated: Boolean authentication status
-
+    
+    Example:
+        from agno.os.middleware import JWTMiddleware
+        from agno.os.scopes import AgentOSScope
+        
+        # Additive scope mappings (adds to defaults)
+        app.add_middleware(
+            JWTMiddleware,
+            secret_key="your-secret",
+            authorization=True,
+            scope_mappings={
+                # Override default scope for this endpoint
+                "GET /agents": [AgentOSScope.AGENTS_READ.value],
+                # Add new endpoint mapping
+                "POST /custom/endpoint": [AgentOSScope.AGENTS_RUN.value],
+                # Allow access without scopes
+                "GET /public/stats": [],
+            }
+        )
     """
 
     def __init__(
@@ -50,47 +77,302 @@ class JWTMiddleware(BaseHTTPMiddleware):
         token_source: TokenSource = TokenSource.HEADER,
         token_header_key: str = "Authorization",
         cookie_name: str = "access_token",
-        validate: bool = True,
-        excluded_route_paths: Optional[List[str]] = None,
-        scopes_claim: Optional[str] = None,
+        scopes_claim: str = "scopes",
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
+        authorization: Optional[bool] = None,
+        scope_mappings: Optional[Dict[str, List[str]]] = None,
+        excluded_route_paths: Optional[List[str]] = None,
+        admin_scope: Optional[str] = None,
     ):
         """
         Initialize the JWT middleware.
 
         Args:
             app: The FastAPI app instance
-            secret_key: The secret key to use for JWT validation (optional, will use JWT_SECRET_KEY environment variable if not provided)
-            algorithm: The algorithm to use for JWT validation
-            token_header_key: The key to use for the Authorization header (only used when token_source is header)
-            token_source: Where to extract the JWT token from (header, cookie, or both)
-            cookie_name: The name of the cookie containing the JWT token (only used when token_source is cookie/both)
-            validate: Whether to validate the JWT token
-            excluded_route_paths: A list of route paths to exclude from JWT validation
-            scopes_claim: The claim to use for scopes extraction
-            user_id_claim: The claim to use for user ID extraction
-            session_id_claim: The claim to use for session ID extraction
+            secret_key: JWT secret key (will use JWT_SECRET_KEY env var if not provided)
+            algorithm: JWT algorithm (default: HS256)
+            token_source: Where to extract JWT token from (header, cookie, or both)
+            token_header_key: Header key for Authorization (default: "Authorization")
+            cookie_name: Cookie name for JWT token (default: "access_token")
+            authorization: Whether to add validation/authorization checks to the request
+            scopes_claim: JWT claim name for scopes (default: "scopes")
+            user_id_claim: JWT claim name for user ID (default: "sub")
+            session_id_claim: JWT claim name for session ID (default: "session_id")
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
+            scope_mappings: Optional dictionary mapping route patterns to required scopes.
+                           If None, RBAC is disabled and only JWT extraction/validation happens.
+                           If provided, mappings are ADDITIVE to default scope mappings (overrides on conflict).
+                           Use empty list [] to explicitly allow access without scopes for a route.
+                           Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
+            excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
+            admin_scope: The scope that grants admin access (default: "admin")
         """
         super().__init__(app)
+        
+        # JWT configuration
         self.secret_key = secret_key or getenv("JWT_SECRET_KEY")
         if not self.secret_key:
-            raise ValueError("Secret key is required")
+            raise ValueError("JWT secret key is required. Set via secret_key parameter or JWT_SECRET_KEY environment variable.")
         self.algorithm = algorithm
-        self.token_header_key = token_header_key
         self.token_source = token_source
+        self.token_header_key = token_header_key
         self.cookie_name = cookie_name
-        self.validate = validate
-        self.excluded_route_paths = excluded_route_paths
         self.scopes_claim = scopes_claim
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
-        self.dependencies_claims = dependencies_claims or []
-        self.session_state_claims = session_state_claims or []
+        self.dependencies_claims = dependencies_claims or {}
+        self.session_state_claims = session_state_claims or {}
+        
+        # RBAC configuration (opt-in via scope_mappings)
+        self.authorization = authorization
+        
+        # If scope_mappings are provided, enable authorization
+        if scope_mappings is not None and self.authorization is None:
+            self.authorization = True
+        
+        # Build final scope mappings (additive approach)
+        if self.authorization:
+            # Start with default scope mappings
+            self.scope_mappings = self._get_default_scope_mappings()
+            
+            # Merge user-provided scope mappings (overrides defaults)
+            if scope_mappings is not None:
+                self.scope_mappings.update(scope_mappings)
+        else:
+            self.scope_mappings = scope_mappings
+            
+        self.excluded_route_paths = excluded_route_paths or self._get_default_excluded_routes()
+        self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+
+    def _get_default_excluded_routes(self) -> List[str]:
+        """Get default routes that should be excluded from RBAC checks."""
+        return [
+            "/",
+            "/health",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/docs/oauth2-redirect",
+        ]
+
+    def _get_default_scope_mappings(self) -> Dict[str, List[str]]:
+        """
+        Get default scope mappings for AgentOS endpoints.
+
+        Returns a dictionary mapping route patterns (with HTTP methods) to required scopes.
+        Format: "METHOD /path/pattern": ["scope1", "scope2"]
+        """
+        return {
+            # System endpoints
+            "GET /config": [AgentOSScope.SYSTEM_READ.value],
+            "GET /models": [AgentOSScope.SYSTEM_READ.value],
+            # Agent endpoints
+            "GET /agents": [AgentOSScope.AGENTS_READ.value],
+            "GET /agents/*": [AgentOSScope.AGENTS_READ.value],
+            "POST /agents/*/runs": [AgentOSScope.AGENTS_RUN.value],
+            "POST /agents/*/runs/*/continue": [AgentOSScope.AGENTS_RUN.value],
+            "POST /agents/*/runs/*/cancel": [AgentOSScope.AGENTS_RUN.value],
+            # Team endpoints
+            "GET /teams": [AgentOSScope.TEAMS_READ.value],
+            "GET /teams/*": [AgentOSScope.TEAMS_READ.value],
+            "POST /teams/*/runs": [AgentOSScope.TEAMS_RUN.value],
+            "POST /teams/*/runs/*/cancel": [AgentOSScope.TEAMS_RUN.value],
+            # Workflow endpoints
+            "GET /workflows": [AgentOSScope.WORKFLOWS_READ.value],
+            "GET /workflows/*": [AgentOSScope.WORKFLOWS_READ.value],
+            "POST /workflows/*/runs": [AgentOSScope.WORKFLOWS_RUN.value],
+            "POST /workflows/*/runs/*/cancel": [AgentOSScope.WORKFLOWS_RUN.value],
+            # Session endpoints
+            "GET /sessions": [AgentOSScope.SESSIONS_READ.value],
+            "GET /sessions/*": [AgentOSScope.SESSIONS_READ.value],
+            "POST /sessions": [AgentOSScope.SESSIONS_WRITE.value],
+            "POST /sessions/*/rename": [AgentOSScope.SESSIONS_WRITE.value],
+            "PATCH /sessions/*": [AgentOSScope.SESSIONS_WRITE.value],
+            "DELETE /sessions": [AgentOSScope.SESSIONS_DELETE.value],
+            "DELETE /sessions/*": [AgentOSScope.SESSIONS_DELETE.value],
+            # Memory endpoints
+            "GET /memories": [AgentOSScope.MEMORIES_READ.value],
+            "GET /memories/*": [AgentOSScope.MEMORIES_READ.value],
+            "GET /memory_topics": [AgentOSScope.MEMORIES_READ.value],
+            "GET /user_memory_stats": [AgentOSScope.MEMORIES_READ.value],
+            "POST /memories": [AgentOSScope.MEMORIES_WRITE.value],
+            "PATCH /memories/*": [AgentOSScope.MEMORIES_WRITE.value],
+            "DELETE /memories": [AgentOSScope.MEMORIES_DELETE.value],
+            "DELETE /memories/*": [AgentOSScope.MEMORIES_DELETE.value],
+            # Knowledge endpoints
+            "GET /knowledge/content": [AgentOSScope.KNOWLEDGE_READ.value],
+            "GET /knowledge/content/*": [AgentOSScope.KNOWLEDGE_READ.value],
+            "GET /knowledge/config": [AgentOSScope.KNOWLEDGE_READ.value],
+            "POST /knowledge/content": [AgentOSScope.KNOWLEDGE_WRITE.value],
+            "PATCH /knowledge/content/*": [AgentOSScope.KNOWLEDGE_WRITE.value],
+            "POST /knowledge/search": [AgentOSScope.KNOWLEDGE_READ.value],
+            "DELETE /knowledge/content": [AgentOSScope.KNOWLEDGE_DELETE.value],
+            "DELETE /knowledge/content/*": [AgentOSScope.KNOWLEDGE_DELETE.value],
+            # Metrics endpoints
+            "GET /metrics": [AgentOSScope.METRICS_READ.value],
+            "POST /metrics/refresh": [AgentOSScope.METRICS_WRITE.value],
+            # Evaluation endpoints
+            "GET /eval-runs": [AgentOSScope.EVALS_READ.value],
+            "GET /eval-runs/*": [AgentOSScope.EVALS_READ.value],
+            "POST /eval-runs": [AgentOSScope.EVALS_WRITE.value],
+            "PATCH /eval-runs/*": [AgentOSScope.EVALS_WRITE.value],
+            "DELETE /eval-runs": [AgentOSScope.EVALS_DELETE.value],
+        }
+
+    def _is_route_excluded(self, path: str) -> bool:
+        """Check if a route path matches any of the excluded patterns."""
+        if not self.excluded_route_paths:
+            return False
+
+        for excluded_path in self.excluded_route_paths:
+            # Support both exact matches and wildcard patterns
+            if fnmatch.fnmatch(path, excluded_path):
+                return True
+            # Also check without trailing slash
+            if fnmatch.fnmatch(path.rstrip("/"), excluded_path):
+                return True
+
+        return False
+
+    def _get_required_scopes(self, method: str, path: str) -> List[str]:
+        """
+        Get required scopes for a given method and path.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            path: Request path
+
+        Returns:
+            List of required scopes. Empty list [] means no scopes required (allow access).
+            Routes not in scope_mappings also return [], allowing access.
+        """
+        route_key = f"{method} {path}"
+
+        # First, try exact match
+        if route_key in self.scope_mappings:
+            return self.scope_mappings[route_key]
+
+        # Then try pattern matching
+        for pattern, scopes in self.scope_mappings.items():
+            pattern_method, pattern_path = pattern.split(" ", 1)
+
+            # Check if method matches
+            if pattern_method != method:
+                continue
+
+            # Convert pattern to fnmatch pattern (replace {param} with *)
+            # This handles both /agents/* and /agents/{agent_id} style patterns
+            normalized_pattern = pattern_path
+            if "{" in normalized_pattern:
+                # Replace {param} with * for pattern matching
+                import re
+
+                normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
+
+            if fnmatch.fnmatch(path, normalized_pattern):
+                return scopes
+
+        return []
+
+    def _expand_wildcard_scope(self, scope: str) -> Set[str]:
+        """
+        Expand a wildcard scope to all matching specific scopes.
+
+        Args:
+            scope: Scope to expand (e.g., "agents:*")
+
+        Returns:
+            Set of all matching specific scopes
+        """
+        if not scope.endswith(":*"):
+            return {scope}
+
+        # Extract the prefix (e.g., "agents" from "agents:*")
+        prefix = scope[:-2]  # Remove ":*"
+
+        # Special case: "read:*" expands to all ":read" scopes
+        if prefix == "read":
+            return {
+                AgentOSScope.SYSTEM_READ.value,
+                AgentOSScope.AGENTS_READ.value,
+                AgentOSScope.TEAMS_READ.value,
+                AgentOSScope.WORKFLOWS_READ.value,
+                AgentOSScope.SESSIONS_READ.value,
+                AgentOSScope.MEMORIES_READ.value,
+                AgentOSScope.KNOWLEDGE_READ.value,
+                AgentOSScope.METRICS_READ.value,
+                AgentOSScope.EVALS_READ.value,
+            }
+
+        # Special case: "execute:*" expands to all run scopes
+        if prefix == "execute":
+            return {
+                AgentOSScope.AGENTS_RUN.value,
+                AgentOSScope.TEAMS_RUN.value,
+                AgentOSScope.WORKFLOWS_RUN.value,
+            }
+
+        # Special case: "user:*" expands to user-focused scopes
+        if prefix == "user":
+            return {
+                AgentOSScope.AGENTS_RUN.value,
+                AgentOSScope.TEAMS_RUN.value,
+                AgentOSScope.WORKFLOWS_RUN.value,
+                AgentOSScope.SESSIONS_READ.value,
+                AgentOSScope.SESSIONS_WRITE.value,
+                AgentOSScope.SESSIONS_DELETE.value,
+                AgentOSScope.MEMORIES_READ.value,
+                AgentOSScope.MEMORIES_WRITE.value,
+                AgentOSScope.MEMORIES_DELETE.value,
+            }
+
+        # Default: expand prefix:* to all scopes starting with prefix:
+        expanded = set()
+        all_possible_scopes = [
+            f"{prefix}:read",
+            f"{prefix}:write",
+            f"{prefix}:delete",
+            f"{prefix}:run",
+            f"{prefix}:run:continue",
+            f"{prefix}:run:cancel",
+            f"{prefix}:search",
+        ]
+
+        for possible_scope in all_possible_scopes:
+            expanded.add(possible_scope)
+
+        return expanded
+
+    def _has_required_scopes(self, user_scopes: List[str], required_scopes: List[str]) -> bool:
+        """
+        Check if user has all required scopes.
+
+        Args:
+            user_scopes: List of scopes the user has
+            required_scopes: List of scopes required for the endpoint
+
+        Returns:
+            True if user has all required scopes, False otherwise
+        """
+        # Admin scope grants access to everything
+        if self.admin_scope in user_scopes:
+            return True
+
+        # Expand user's wildcard scopes
+        expanded_user_scopes = set()
+        for scope in user_scopes:
+            expanded_user_scopes.update(self._expand_wildcard_scope(scope))
+
+        # Check if all required scopes are present
+        for required_scope in required_scopes:
+            if required_scope not in expanded_user_scopes:
+                return False
+
+        return True
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
@@ -98,19 +380,17 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if not authorization:
             return None
 
-        try:
-            # Remove the "Bearer " prefix (if present)
-            _, token = authorization.split(" ", 1)
-            return token
-        except ValueError:
-            return None
+        # Support both "Bearer <token>" and just "<token>"
+        if authorization.lower().startswith("bearer "):
+            return authorization[7:].strip()
+        return authorization.strip()
 
     def _extract_token_from_cookie(self, request: Request) -> Optional[str]:
         """Extract JWT token from cookie."""
         return request.cookies.get(self.cookie_name)
 
     def _extract_token(self, request: Request) -> Optional[str]:
-        """Extract JWT token based on configured token source."""
+        """Extract JWT token based on configured source."""
         if self.token_source == TokenSource.HEADER:
             return self._extract_token_from_header(request)
         elif self.token_source == TokenSource.COOKIE:
@@ -118,13 +398,21 @@ class JWTMiddleware(BaseHTTPMiddleware):
         elif self.token_source == TokenSource.BOTH:
             # Try header first, then cookie
             token = self._extract_token_from_header(request)
-            if token is None:
-                token = self._extract_token_from_cookie(request)
-            return token
-        else:
-            log_debug(f"Unknown token source: {self.token_source}")
-            return None
+            if token:
+                return token
+            return self._extract_token_from_cookie(request)
+        return None
 
+    def _validate(self, token: str) -> Optional[Dict]:
+        """
+        Validate JWT token and extract claims.
+
+        Returns:
+            Dictionary of claims if valid, None otherwise
+        """
+        payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+        return payload
+        
     def _get_missing_token_error_message(self) -> str:
         """Get appropriate error message for missing token based on token source."""
         if self.token_source == TokenSource.HEADER:
@@ -136,65 +424,55 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             return "JWT token missing"
 
-    def _is_route_excluded(self, path: str) -> bool:
-        """Check if a route path matches any of the excluded patterns."""
-        if not self.excluded_route_paths:
-            return False
-
-        for excluded_path in self.excluded_route_paths:
-            # Support both exact matches and wildcard patterns
-            if fnmatch.fnmatch(path, excluded_path):
-                return True
-
-        return False
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if self._is_route_excluded(request.url.path):
+        """Process the request: extract JWT, validate, and check RBAC scopes."""
+        path = request.url.path
+        method = request.method
+
+        # Skip excluded routes
+        if self._is_route_excluded(path):
             return await call_next(request)
 
-        # Extract JWT token from configured source (header, cookie, or both)
+        # Extract JWT token
         token = self._extract_token(request)
-
         if not token:
-            if self.validate:
+            if self.authorization:
                 error_msg = self._get_missing_token_error_message()
                 return JSONResponse(status_code=401, content={"detail": error_msg})
-            return await call_next(request)
 
-        # Decode JWT token
         try:
-            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])  # type: ignore
+            # Validate token and extract claims
+            payload = self._validate(token)
 
-            # Extract scopes claims
-            scopes = []
-            if self.scopes_claim in payload:
-                extracted_scopes = payload[self.scopes_claim]
-                if isinstance(extracted_scopes, str):
-                    scopes = extracted_scopes.split(" ")
-                else:
-                    scopes = extracted_scopes
-            if scopes:
-                request.state.scopes = scopes
+            # Extract standard claims and store in request.state
+            user_id = payload.get(self.user_id_claim)
+            session_id = payload.get(self.session_id_claim)
+            scopes = payload.get(self.scopes_claim, [])
 
-            # Extract user information
-            if self.user_id_claim in payload:
-                user_id = payload[self.user_id_claim]
-                request.state.user_id = user_id
-            if self.session_id_claim in payload:
-                session_id = payload[self.session_id_claim]
-                request.state.session_id = session_id
-            else:
-                session_id = None
+            
+            # Ensure scopes is a list
+            if isinstance(scopes, str):
+                scopes = [scopes]
+            elif not isinstance(scopes, list):
+                scopes = []
 
-            # Extract dependency claims
+            # Store claims in request.state
+            request.state.authenticated = True
+            request.state.user_id = user_id
+            request.state.session_id = session_id
+            request.state.scopes = scopes
+            
+            # Extract dependencies claims
             dependencies = {}
             for claim in self.dependencies_claims:
                 if claim in payload:
                     dependencies[claim] = payload[claim]
 
             if dependencies:
+                log_debug(f"Extracted dependencies: {dependencies}")
                 request.state.dependencies = dependencies
-
+                
             # Extract session state claims
             session_state = {}
             for claim in self.session_state_claims:
@@ -202,32 +480,52 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     session_state[claim] = payload[claim]
 
             if session_state:
+                log_debug(f"Extracted session state: {session_state}")
                 request.state.session_state = session_state
 
+            # RBAC scope checking (only if enabled)
+            if self.authorization:
+                required_scopes = self._get_required_scopes(method, path)
+
+                # Empty list [] means no scopes required (allow access)
+                if required_scopes:
+                    if not self._has_required_scopes(scopes, required_scopes):
+                        log_warning(
+                            f"Insufficient scopes for {method} {path}. "
+                            f"Required: {required_scopes}, User has: {scopes}"
+                        )
+                        return JSONResponse(
+                            status_code=403,
+                            content={
+                                "detail": "Insufficient permissions"
+                            },
+                        )
+                    log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
+                else:
+                    log_debug(f"No scopes required for {method} {path}")
+            
+            log_debug(f"JWT decoded successfully for user: {user_id}")
+            
             request.state.token = token
             request.state.authenticated = True
 
-            log_debug(f"JWT decoded successfully for user: {user_id}")
-            if dependencies:
-                log_debug(f"Extracted dependencies: {dependencies}")
-            if session_state:
-                log_debug(f"Extracted session state: {session_state}")
 
         except jwt.ExpiredSignatureError:
-            if self.validate:
+            if self.authorization:
                 return JSONResponse(status_code=401, content={"detail": "Token has expired"})
             request.state.authenticated = False
             request.state.token = token
 
         except jwt.InvalidTokenError as e:
-            if self.validate:
+            if self.authorization:
                 return JSONResponse(status_code=401, content={"detail": f"Invalid token: {str(e)}"})
             request.state.authenticated = False
             request.state.token = token
         except Exception as e:
-            if self.validate:
+            if self.authorization:
                 return JSONResponse(status_code=401, content={"detail": f"Error decoding token: {str(e)}"})
             request.state.authenticated = False
             request.state.token = token
-
+            
         return await call_next(request)
+

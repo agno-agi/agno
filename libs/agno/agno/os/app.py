@@ -46,7 +46,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning, log_info
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -108,12 +108,14 @@ class AgentOS:
         enable_mcp_server: bool = False,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
-        telemetry: bool = True,
         auto_provision_dbs: bool = True,
+        authorization: bool = False,
+        authorization_secret: Optional[str] = None,
         os_id: Optional[str] = None,  # Deprecated
         enable_mcp: bool = False,  # Deprecated
         fastapi_app: Optional[FastAPI] = None,  # Deprecated
         replace_routes: Optional[bool] = None,  # Deprecated
+        telemetry: bool = True,
     ):
         """Initialize AgentOS.
 
@@ -134,6 +136,9 @@ class AgentOS:
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
+            auto_provision_dbs: Whether to automatically provision databases
+            authorization: Whether to enable authorization
+            authorization_secret: The secret key for authorization
             telemetry: Whether to enable telemetry
 
         """
@@ -183,6 +188,19 @@ class AgentOS:
 
         self.enable_mcp_server = enable_mcp or enable_mcp_server
         self.lifespan = lifespan
+        
+        # RBAC
+        self.authorization = authorization
+        self.authorization_secret = authorization_secret
+        if self.authorization and not self.authorization_secret:
+            log_info("No authorization secret provided, generating a new 256-bit authorization secret")
+
+            import secrets
+            # Generate 256 bits (32 bytes) of entropy, then encode as hex for JWT secret.
+            self.authorization_secret = secrets.token_hex(32)  # 32 bytes = 256 bits
+
+            log_info(f"Authorization secret generated (256-bit, hex): {self.authorization_secret}")
+            
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -474,6 +492,16 @@ class AgentOS:
 
         # Update CORS middleware
         update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
+
+        # Add JWT middleware if authorization is enabled
+        if self.authorization:
+            from agno.os.middleware.jwt import JWTMiddleware
+            log_info("Adding JWT middleware for authorization")
+            fastapi_app.add_middleware(
+                JWTMiddleware,
+                secret_key=self.authorization_secret,
+                authorization=self.authorization,
+            )
 
         return fastapi_app
 

@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: agentos_test
+      POSTGRES_USER: agno
+      POSTGRES_PASSWORD: agno
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agno"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  agentos-1:
+    build:
+      dockerfile: os.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg_async://agno:agno@postgres:5432/agentos_test
+      CONTAINER_ID: agentos-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./test_app.py:/app/test_app.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  agentos-2:
+    build:
+      dockerfile: os.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg_async://agno:agno@postgres:5432/agentos_test
+      CONTAINER_ID: agentos-2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./test_app.py:/app/test_app.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  agentos-3:
+    build:
+      dockerfile: os.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg_async://agno:agno@postgres:5432/agentos_test
+      CONTAINER_ID: agentos-3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./test_app.py:/app/test_app.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      agentos-1:
+        condition: service_healthy
+      agentos-2:
+        condition: service_healthy
+      agentos-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+

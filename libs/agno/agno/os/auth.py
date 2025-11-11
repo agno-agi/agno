@@ -1,4 +1,6 @@
-from fastapi import Depends, HTTPException
+from typing import List
+
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from agno.os.settings import AgnoAPISettings
@@ -55,3 +57,52 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
 
     # Verify the token matches the configured security key
     return token == settings.os_security_key
+
+
+def require_scopes(required_scopes: List[str]):
+    """
+    Create a FastAPI dependency that checks for required scopes.
+
+    This is a helper function for future use when you want to add
+    scope requirements directly to specific endpoints using FastAPI's
+    Depends() mechanism.
+
+    Usage:
+        @router.get("/endpoint", dependencies=[Depends(require_scopes(["scope:read"]))])
+        async def my_endpoint():
+            ...
+
+    Args:
+        required_scopes: List of scopes required to access the endpoint
+
+    Returns:
+        A dependency function that validates scopes
+    """
+
+    def scope_checker(request: Request) -> bool:
+        # Check if user is authenticated
+        if not getattr(request.state, "authenticated", False):
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required",
+            )
+
+        # Get user's scopes from request state (set by JWT middleware)
+        user_scopes = getattr(request.state, "scopes", [])
+
+        # Check for admin scope (grants all permissions)
+        if "admin" in user_scopes:
+            return True
+
+        # Check if user has all required scopes
+        for scope in required_scopes:
+            if scope not in user_scopes:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Insufficient permissions. Required scopes: {required_scopes}",
+                )
+
+        return True
+
+    return scope_checker
+

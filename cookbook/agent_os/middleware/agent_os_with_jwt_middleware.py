@@ -54,24 +54,22 @@ agent_os = AgentOS(
 # Get the final app
 app = agent_os.get_app()
 
-# Add JWT middleware to the app
-# This middleware will automatically inject JWT values into request.state and is used in the relevant endpoints.
+# Add RBAC middleware to the app
+# This middleware will automatically extract JWT values into request.state
+# Since we're not providing scope_mappings, no scope checking will be enforced
+# This is useful if you just want JWT extraction without RBAC
 app.add_middleware(
     JWTMiddleware,
     secret_key=JWT_SECRET,
     algorithm="HS256",
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
-    dependencies_claims=["name", "email", "roles"],
-    # In this example, we want this middleware to demonstrate parameter injection, not token validation.
-    # In production scenarios, you will probably also want token validation. Be careful setting this to False.
-    validate=False,
 )
 
 if __name__ == "__main__":
     """
     Run your AgentOS with JWT parameter injection.
-    
+
     Test by calling /agents/user-agent/runs with a message: "What do you know about me?"
     """
     # Test token with user_id and session_id:
