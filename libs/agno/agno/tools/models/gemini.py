@@ -5,8 +5,9 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -27,9 +28,18 @@ class GeminiTools(Toolkit):
         location: Optional[str] = None,
         image_generation_model: str = "imagen-3.0-generate-002",
         video_generation_model: str = "veo-2.0-generate-001",
+        enable_generate_image: bool = True,
+        enable_generate_video: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="gemini_tools", tools=[self.generate_image, self.generate_video], **kwargs)
+        tools = []
+        if all or enable_generate_image:
+            tools.append(self.generate_image)
+        if all or enable_generate_video:
+            tools.append(self.generate_video)
+
+        super().__init__(name="gemini_tools", tools=tools, **kwargs)
 
         # Set mode and credentials: use only provided vertexai parameter
         self.vertexai = vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI") == "true"
@@ -67,13 +77,13 @@ class GeminiTools(Toolkit):
         self,
         agent: Agent,
         prompt: str,
-    ) -> str:
+    ) -> ToolResult:
         """Generate images based on a text prompt using Google Imagen.
 
         Args:
             prompt (str): The text prompt to generate the image from.
         Returns:
-            str: A message indicating success (including media ID) or failure.
+            ToolResult: A ToolResult containing the generated images or error message.
         """
 
         try:
@@ -87,47 +97,55 @@ class GeminiTools(Toolkit):
             # Extract image bytes
             if response.generated_images is None or not response.generated_images:
                 log_info("No images were generated.")
-                return "Failed to generate image: No images were generated."
+                return ToolResult(content="Failed to generate image: No images were generated.")
 
+            generated_images = []
             for generated_image in response.generated_images:
                 if generated_image.image is None or not generated_image.image.image_bytes:
                     continue
-                image_bytes = generated_image.image.image_bytes
-                base64_encoded_image_bytes = base64.b64encode(image_bytes)
-                actual_mime_type = "image/png"
 
+                image_bytes = generated_image.image.image_bytes
+                actual_mime_type = "image/png"
                 media_id = str(uuid4())
-                agent.add_image(
-                    ImageArtifact(
-                        id=media_id,
-                        content=base64_encoded_image_bytes,
-                        original_prompt=prompt,
-                        mime_type=actual_mime_type,
-                    )
+
+                # Create ImageArtifact with raw bytes (not base64 encoded)
+                image_artifact = Image(
+                    id=media_id,
+                    content=image_bytes,
+                    original_prompt=prompt,
+                    mime_type=actual_mime_type,
                 )
+                generated_images.append(image_artifact)
                 log_debug(f"Successfully generated image {media_id} with model {self.image_model}")
-            return "Image generated successfully"
+
+            if generated_images:
+                return ToolResult(
+                    content="Image generated successfully",
+                    images=generated_images,
+                )
+            else:
+                return ToolResult(content="Failed to generate image: No valid images were generated.")
 
         except Exception as e:
             log_error(f"Failed to generate image: Client or method not available ({e})")
-            return f"Failed to generate image: Client or method not available ({e})"
+            return ToolResult(content=f"Failed to generate image: Client or method not available ({e})")
 
     def generate_video(
         self,
         agent: Agent,
         prompt: str,
-    ) -> str:
+    ) -> ToolResult:
         """Generate a video based on a text prompt.
         Args:
             prompt (str): The text prompt to generate the video from.
         Returns:
-            str: A message indicating success or failure.
+            ToolResult: A ToolResult containing the generated video or error message.
         """
         # Video generation requires Vertex AI mode.
         if not self.vertexai:
             log_error("Video generation requires Vertex AI mode. Please enable Vertex AI mode.")
-            return (
-                "Video generation requires Vertex AI mode. "
+            return ToolResult(
+                content="Video generation requires Vertex AI mode. "
                 "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`."
             )
 
@@ -149,28 +167,37 @@ class GeminiTools(Toolkit):
             result = operation.result
             if result is None or result.generated_videos is None or not result.generated_videos:
                 log_error("No videos were generated.")
-                return "Failed to generate video: No videos were generated."
+                return ToolResult(content="Failed to generate video: No videos were generated.")
 
+            generated_videos = []
             for video in result.generated_videos:
                 if video.video is None or not video.video.video_bytes:
                     continue
+
                 generated_video = video.video
                 if generated_video.video_bytes is None:
                     continue
 
                 media_id = str(uuid4())
-                encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
 
-                agent.add_video(
-                    VideoArtifact(
-                        id=media_id,
-                        content=encoded_video,
-                        original_prompt=prompt,
-                        mime_type=generated_video.mime_type or "video/mp4",
-                    )
+                # Create VideoArtifact with base64 encoded content
+                video_artifact = Video(
+                    id=media_id,
+                    content=base64.b64encode(generated_video.video_bytes).decode("utf-8"),
+                    original_prompt=prompt,
+                    mime_type=generated_video.mime_type or "video/mp4",
                 )
+                generated_videos.append(video_artifact)
                 log_debug(f"Successfully generated video {media_id} with model {self.video_model}")
-            return "Video generated successfully"
+
+            if generated_videos:
+                return ToolResult(
+                    content="Video generated successfully",
+                    videos=generated_videos,
+                )
+            else:
+                return ToolResult(content="Failed to generate video: No valid videos were generated.")
+
         except Exception as e:
             log_error(f"Failed to generate video: {e}")
-            return f"Failed to generate video: {e}"
+            return ToolResult(content=f"Failed to generate video: {e}")

@@ -49,4 +49,8 @@ python cookbook/models/openrouter/tool_use.py
 python cookbook/models/openrouter/structured_output.py
 ```
 
+### 7. Run Agent with dynamic model router
 
+```shell
+python cookbook/models/openrouter/dynamic_model_router.py
+```

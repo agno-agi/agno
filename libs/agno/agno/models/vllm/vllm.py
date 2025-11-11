@@ -9,7 +9,7 @@ from agno.utils.log import log_debug
 
 
 @dataclass
-class vLLM(OpenAILike):
+class VLLM(OpenAILike):
     """
     Class for interacting with vLLM models via OpenAI-compatible API.
 
@@ -26,8 +26,8 @@ class vLLM(OpenAILike):
     """
 
     id: str = "not-set"
-    name: str = "vLLM"
-    provider: str = "vLLM"
+    name: str = "VLLM"
+    provider: str = "VLLM"
 
     api_key: Optional[str] = getenv("VLLM_API_KEY") or "EMPTY"
     base_url: Optional[str] = getenv("VLLM_BASE_URL", "http://localhost:8000/v1/")
@@ -57,6 +57,7 @@ class vLLM(OpenAILike):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         request_kwargs = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice

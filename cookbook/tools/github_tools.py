@@ -29,13 +29,51 @@ GitHub Authentication Setup Guide
 from agno.agent import Agent
 from agno.tools.github import GithubTools
 
+# Example 1: Include specific GitHub functions
 agent = Agent(
     instructions=[
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "Do not create any issues or pull requests unless explicitly asked to do so",
     ],
+    tools=[
+        GithubTools(
+            include_tools=[
+                "search_repositories",
+                "get_repository",
+                "list_repositories",
+                "get_pull_requests",
+                "list_issues",
+            ]
+        )
+    ],
+)
+
+# Example 2: Exclude dangerous functions
+agent_safe = Agent(
+    instructions=[
+        "Use your tools to answer questions about the repo: agno-agi/agno",
+        "You can only read repository data, not modify anything",
+    ],
+    tools=[
+        GithubTools(
+            exclude_tools=[
+                "delete_repository",
+                "create_repository",
+                "create_issue",
+                "create_pull_request",
+                "delete_file",
+            ]
+        )
+    ],
+)
+
+# Example 3: Include all functions (default behavior)
+agent_full = Agent(
+    instructions=[
+        "Use your tools to answer questions about the repo: agno-agi/agno",
+        "You have full access to GitHub repository management",
+    ],
     tools=[GithubTools()],
-    show_tool_calls=True,
 )
 
 # Basic repository listing

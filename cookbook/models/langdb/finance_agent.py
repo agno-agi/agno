@@ -5,13 +5,8 @@ from agno.models.langdb import LangDB
 from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=LangDB(id="gpt-4o"),
-    tools=[
-        YFinanceTools(
-            stock_price=True, analyst_recommendations=True, stock_fundamentals=True
-        )
-    ],
-    show_tool_calls=True,
+    model=LangDB(id="llama3-1-70b-instruct-v1.0"),
+    tools=[YFinanceTools()],
     description="You are an investment analyst that researches stocks and helps users make informed decisions.",
     instructions=["Use tables to display data where possible."],
     markdown=True,

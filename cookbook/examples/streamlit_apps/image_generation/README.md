@@ -1,7 +1,6 @@
 # Recipe Image Generator 🍳
 
-Recipe Image Generator is an interactive Streamlit application that leverages Agno to generate step-by-step cooking images from recipes. Upload your own recipe PDF or use the built-in sample recipe book, then ask for a recipe (e.g., "Recipe for Pad Thai") and watch the app generate visual cooking instructions.
-
+A Streamlit application that transforms recipes into visual step-by-step cooking guides. Upload your own recipe PDFs or use the built-in Thai recipe collection, then ask for any recipe and receive detailed instructions with generated cooking images.
 
 ---
 
@@ -13,7 +12,8 @@ Recipe Image Generator is an interactive Streamlit application that leverages Ag
 
 ```shell
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  
+# On Windows: .venv\Scripts\activate
 ```
 
 ### 2. Install dependencies
@@ -24,13 +24,30 @@ pip install -r cookbook/examples/streamlit_apps/image_generation/requirements.tx
 
 ### 3. Export API Keys
 
-This app uses the Llama family of models offer via Groq
+This app requires OpenAI API access for both language models and image generation:
 
 ```shell
-export GROQ_API_KEY=***       # for Groq models
+export OPENAI_API_KEY=***       
 ```
 
-### 4. Run the Recipe Image Generator
+### 4. Setup Database (Optional but Recommended)
+
+The app uses PostgreSQL with pgvector for knowledge base storage:
+
+```shell
+# Using Docker
+docker run -d \
+  --name pgvector-db \
+  -e POSTGRES_DB=ai \
+  -e POSTGRES_USER=ai \
+  -e POSTGRES_PASSWORD=ai \
+  -p 5532:5432 \
+  phidata/pgvector:16
+```
+
+Or update the `db_url` in `agents.py` to use your existing PostgreSQL instance.
+
+### 5. Run the Recipe Image Generator
 
 ```shell
 streamlit run cookbook/examples/streamlit_apps/image_generation/app.py
@@ -38,30 +55,34 @@ streamlit run cookbook/examples/streamlit_apps/image_generation/app.py
 
 - Open [http://localhost:8501](http://localhost:8501) in your browser to view the app.
 
----
-
 ## 🎯 Features
 
-- **Recipe Upload**: Upload a PDF of your favorite recipes or use the default sample recipe book.
-- **Interactive Chat**: Ask for a recipe by name and receive a streamed, step-by-step visual guide.
-- **Example Recipes**: Quick-start buttons for common recipes like Pad Thai, Som Tum, Massaman Curry, and Tom Kha Gai.
-- **Tool Call Visualization**: View intermediate tool calls and results within the chat interface.
-- **Image Rendering**: Inline display of generated images or fallback on URLs.
-
----
+- **Recipe Upload**: Upload PDF files containing your favorite recipes
+- **Default Collection**: Built-in Thai recipe collection for immediate use
+- **Visual Generation**: Creates step-by-step cooking images showing the entire process
+- **Knowledge Base**: Vector-powered recipe search and retrieval
+- **Session Management**: Save and resume cooking conversations
+- **Export Functionality**: Download chat history with recipes and images
 
 ## 🛠 How to Use
 
-1. **Select Model**: Use the sidebar dropdown to pick a model.
-2. **Load Recipes**: Click "Load recipes" (optional) to preload sample recipes.
-3. **Try Examples**: Click an example recipe in the sidebar under "Try an example recipe".
-4. **Upload PDF**: Upload your own recipe PDF file or check "Use default sample recipe book".
-5. **Chat**: Type your request in the chat input (e.g., "Recipe for Pad Thai").
-6. **View Images**: Scroll through the chat to see the generated images and instructions.
+1. **Select Model**: Choose your preferred AI model from the sidebar dropdown
+2. **Load Recipes**: Upload your own PDF files
+3. **Try Sample Recipes**: Use the quick buttons for Pad Thai, Som Tum, Massaman Curry, or Tom Kha Gai
+4. **Custom Requests**: Type natural language requests like:
+   - "Recipe for Pad Thai with visual steps"
+   - "Show me how to make a vegetarian curry"
+   - "I want a quick 30-minute Thai recipe"
+5. **View Results**: Get formatted ingredient lists, step-by-step directions, and cooking images
+6. **Continue Conversation**: Ask follow-up questions or request recipe modifications
 
----
+## 📚 Documentation
 
-## 💬 Support
+For more detailed information:
 
-Join our [Discord community](https://agno.link/discord) for questions and discussion.
+- [Agno Documentation](https://docs.agno.com)
+- [Streamlit Documentation](https://docs.streamlit.io)
 
+## 🤝 Support
+
+Need help? Join our [Discord community](https://agno.link/discord)

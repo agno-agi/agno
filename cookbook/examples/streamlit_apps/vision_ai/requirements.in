@@ -1,11 +1,9 @@
-agno
-openai
+agno==2.0.0
+anthropic
+ddgs
 google-genai
-mistralai
-pgvector
+groq
+openai
 psycopg[binary]
-simplejson
 sqlalchemy
 streamlit
-ddgs
-nest_asyncio

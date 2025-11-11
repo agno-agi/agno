@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cohere import Cohere
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -28,9 +28,9 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=Cohere(id="command-a-03-2025"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable
-response: RunResponse = structured_output_agent.run("New York")
+response: RunOutput = structured_output_agent.run("New York")
 pprint(response.content)

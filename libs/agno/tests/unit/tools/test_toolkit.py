@@ -2,7 +2,7 @@
 
 import pytest
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 
 
 def example_func(a: int, b: int) -> int:

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -21,5 +21,5 @@ class LiteLLMOpenAI(OpenAILike):
     name: str = "LiteLLM"
     provider: str = "LiteLLM"
 
-    api_key: Optional[str] = getenv("LITELLM_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("LITELLM_API_KEY"))
     base_url: str = "http://0.0.0.0:4000"

@@ -1,4 +1,3 @@
-import json
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -9,13 +8,12 @@ agent = Agent(
     instructions=dedent("""
         You are an expert research analyst with access to advanced research tools.
 
-        When you are given a schema to use, pass it to the research tool as output_schema parameter to research tool. 
+        When you are given a schema to use, pass it to the research tool as output_schema parameter to research tool.
 
         The research tool has two parameters:
         - instructions (str): The research topic/question
         - output_schema (dict, optional): A JSON schema for structured output
     """),
-    show_tool_calls=True,
 )
 
 agent.print_response(

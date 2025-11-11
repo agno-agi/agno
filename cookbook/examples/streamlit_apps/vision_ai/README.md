@@ -1,15 +1,9 @@
-# VisionAI 🖼️
-VisionAI is a **smart image analysis agent** that extracts structured insights from images using AI-powered **object detection, OCR, and scene recognition**.
+# Vision AI Agent
 
-The system is designed with two separate agents:
-- **Image Processing Agent**: Extracts structured insights based on the uploaded image and user instructions.
-- **Chat Agent**: Answers follow-up questions using the last extracted insights from image and (optionally) web search via DuckDuckGo.
+**Vision AI** is a smart image analysis application that combines computer vision with large language models to provide intelligent visual understanding and interactive Q&A about images.
+It allows users to upload images, get comprehensive analysis, and ask follow-up questions with session persistence and chat history.
 
----
-
-## 🚀 **Setup Instructions**
-
-> Note: Fork and clone the repository if needed
+> Note: Fork and clone this repository if needed
 
 ### 1. Create a virtual environment
 
@@ -18,63 +12,91 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Install libraries
+### 2. Install dependencies
 
 ```shell
 pip install -r cookbook/examples/streamlit_apps/vision_ai/requirements.txt
 ```
 
-### 3. Export API Keys
+### 3. Configure API Keys
 
-We recommend using gpt-4o for this task, but you can use any Model you like.
+Required:
 
-```shell
-export OPENAI_API_KEY=***
+```bash
+export OPENAI_API_KEY=your_openai_key_here
 ```
 
-Other API keys are optional, but if you'd like to test:
+Optional (for additional models):
 
-```shell
-export GOOGLE_API_KEY=***
-export MISTRAL_API_KEY=***
+```bash
+export ANTHROPIC_API_KEY=your_anthropic_key_here
+export GOOGLE_API_KEY=your_google_key_here
+export GROQ_API_KEY=your_groq_key_here
 ```
 
-### 4. Run VisionAI Agent
+### 4. Run PgVector
+
+> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
+
+- Run using a helper script
+
+```shell
+./cookbook/scripts/run_pgvector.sh
+```
+
+- OR run using the docker run command
+
+```shell
+docker run -d \
+  -e POSTGRES_DB=ai \
+  -e POSTGRES_USER=ai \
+  -e POSTGRES_PASSWORD=ai \
+  -e PGDATA=/var/lib/postgresql/data/pgdata \
+  -v pgvolume:/var/lib/postgresql/data \
+  -p 5532:5432 \
+  --name pgvector \
+  agnohq/pgvector:16
+```
+
+### 5. Run Vision AI App
 
 ```shell
 streamlit run cookbook/examples/streamlit_apps/vision_ai/app.py
 ```
 
-- Open [localhost:8501](http://localhost:8501) to view the VisionAI Agent.
+## 🔧 Customization
 
-### 5. Features
+### Model Selection
 
-### Image Processing Modes
-- **Auto**: Extracts the image automatically without any extra information from users
-- **Manual**: User provide specific instructions for image extraction
-- **Hybrid**: Combined auto-processing mode with user-defined instructions
+The application supports multiple model providers:
 
-### Smart Chat Agent for Follow-up Queries
-- Interactive follow-up questions on extracted image data
-- Optional web search integration via **DuckDuckGo**
-- Seamless switching between different AI models
+- OpenAI (gpt-4o, o3-mini)
+- Anthropic (claude-4-sonnet)
+- Google (gemini-2.5-pro)
+- Groq (llama-3.3-70b-versatile)
 
-### Enable/Disable Web Search
-- Users can easily toggle web search capability (DuckDuckGo) on/off using a convenient radio button in the sidebar
-- When enabled, the chat agent leverages web search results to enhance responses specifically when users request the agent to search online
+### How to Use
 
----
+- Open [localhost:8501](http://localhost:8501) in your browser.
+- Upload an image (PNG, JPG, JPEG) for analysis.
+- Choose analysis mode: Auto, Manual, or Hybrid.
+- Get comprehensive image analysis results.
+- Ask follow-up questions using the chat interface.
+- Sessions are automatically saved with chat history.
 
-### 6. How to Use 🛠
+### Troubleshooting
 
-- **Upload Image**: Support for PNG, JPG, and JPEG (up to 20MB)
-- **Select Model**: Choose between OpenAI, Gemini, or Mistral
-- **Configure Mode**: Set processing approach (Auto/Manual/Hybrid)
-- **Enter Instructions** *(if required for Manual/Hybrid Mode).
-- **Toggle Search**: Enable/disable DuckDuckGo web search
-- **Process Image**: Extract structured insights from your image
-- **Ask Follow-Up Questions**: Chat with VisionAI about the extracted image data
+- **Docker Connection Refused**: Ensure `pgvector` containers are running (`docker ps`).
+- **OpenAI API Errors**: Verify that the `OPENAI_API_KEY` is set and valid.
+- **Image Upload Issues**: Check file format (PNG, JPG, JPEG) and size limits.
 
-### 7. Message us on [discord](https://agno.link/discord) if you have any questions
+## 📚 Documentation
 
+For more detailed information:
 
+- [Agno Documentation](https://docs.agno.com)
+- [Streamlit Documentation](https://docs.streamlit.io)
+
+## 🤝 Support
+
+Need help? Join our [Discord community](https://agno.link/discord)

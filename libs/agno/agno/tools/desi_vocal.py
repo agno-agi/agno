@@ -5,9 +5,10 @@ from uuid import uuid4
 import requests
 
 from agno.agent import Agent
-from agno.media import AudioArtifact
+from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import logger
 
 
@@ -16,6 +17,9 @@ class DesiVocalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         voice_id: Optional[str] = "f27d74e5-ea71-4697-be3e-f04bbd80c1a8",
+        enable_get_voices: bool = True,
+        enable_text_to_speech: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
@@ -25,8 +29,10 @@ class DesiVocalTools(Toolkit):
         self.voice_id = voice_id
 
         tools: List[Any] = []
-        tools.append(self.get_voices)
-        tools.append(self.text_to_speech)
+        if all or enable_get_voices:
+            tools.append(self.get_voices)
+        if all or enable_text_to_speech:
+            tools.append(self.text_to_speech)
 
         super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
 
@@ -63,13 +69,13 @@ class DesiVocalTools(Toolkit):
             logger.error(f"Failed to get voices: {e}")
             return f"Error: {e}"
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> str:
+    def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> ToolResult:
         """
         Use this function to generate audio from text.
         Args:
             prompt (str): The text to generate audio from.
         Returns:
-            result (str): The URL of the generated audio.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
         try:
             url = "https://prod-api2.desivocal.com/dv/api/v0/tts_api/generate"
@@ -91,9 +97,12 @@ class DesiVocalTools(Toolkit):
             response_json = response.json()
             audio_url = response_json["s3_path"]
 
-            agent.add_audio(AudioArtifact(id=str(uuid4()), url=audio_url))
+            audio_artifact = Audio(id=str(uuid4()), url=audio_url)
 
-            return audio_url
+            return ToolResult(
+                content=f"Audio generated successfully: {audio_url}",
+                audios=[audio_artifact],
+            )
         except Exception as e:
             logger.error(f"Failed to generate audio: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")

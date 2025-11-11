@@ -33,9 +33,9 @@ competitor_analysis_agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     tools=[
         FirecrawlTools(
-            search=True,
-            crawl=True,
-            mapping=True,
+            enable_search=True,
+            enable_crawl=True,
+            enable_mapping=True,
             formats=["markdown", "links", "html"],
             search_params={
                 "limit": 2,
@@ -189,9 +189,8 @@ competitor_analysis_agent = Agent(
     {Summary of competitive position and strategic imperatives}
     """),
     markdown=True,
-    show_tool_calls=True,
-    add_datetime_to_instructions=True,
-    stream_intermediate_steps=True,
+    add_datetime_to_context=True,
+    stream_events=True,
 )
 
 competitor_analysis_agent.print_response(
@@ -201,4 +200,5 @@ competitor_analysis_agent.print_response(
     """,
     stream=True,
     show_full_reasoning=True,
+    debug_mode=True,
 )

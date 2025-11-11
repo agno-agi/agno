@@ -10,8 +10,10 @@ def run_agent():
         model=OpenAIChat(id="gpt-4o-mini"),
         system_message="Be concise, reply with one sentence.",
     )
+
     response = agent.run("What is the capital of France?")
-    print(response.content)
+    print(f"Agent response: {response.content}")
+
     return response
 
 

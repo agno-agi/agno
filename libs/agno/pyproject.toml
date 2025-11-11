@@ -1,10 +1,10 @@
 [project]
 name = "agno"
-version = "1.8.1"
+version = "2.2.10"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
@@ -33,6 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
+  "h11>=0.16.0",
   "httpx",
   "packaging",
   "pydantic-settings",
@@ -41,13 +42,14 @@ dependencies = [
   "python-multipart",
   "pyyaml",
   "rich",
-  "tomli",
   "typer",
   "typing-extensions",
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
+dev = ["mypy==1.18.2", "ruff==0.14.3", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
+
+os = ["fastapi", "uvicorn", "PyJWT"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -55,7 +57,8 @@ integration-tests = [
     "ddgs",
     "yfinance",
     "sqlalchemy",
-    "Pillow"
+    "Pillow",
+    "fastmcp"
 ]
 
 # Dependencies for Telemetry
@@ -98,6 +101,7 @@ evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+tavily = ["tavily-python"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -108,8 +112,11 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+notion = ["notion-client"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
+reportlab = ["reportlab"]
+scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -124,15 +131,17 @@ neo4j = ["neo4j"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
+async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
-redis = ["redis"]
+redis = ["redis", "redisvl"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb==0.20.0", "tantivy"]
+lancedb = ["lancedb>=0.24.0", "tantivy"]
+pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
 cassandra = ["cassio"]
@@ -143,16 +152,22 @@ milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
+upstash = ["upstash-vector"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
+chonkie = ["chonkie[st]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
+
+# Dependencies for A2A integration
+a2a = ["a2a-sdk"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -166,10 +181,12 @@ performance = ["memory_profiler"]
 cookbooks = ["inquirer", "email_validator"]
 
 # Dependencies for Docker
-docker = ["agno-docker"]
+docker = ["agno-infra[docker]"]
 
 # Dependencies for AWS
-aws = ["agno-aws", "agno-docker"]
+aws = ["agno-infra[aws]", "agno-infra[docker]"]
+
+infra = ["agno-infra"]
 
 # All models
 models = [
@@ -178,7 +195,6 @@ models = [
   "agno[azure]",
   "agno[cerebras]",
   "agno[cohere]",
-  "agno[infinity]",
   "agno[google]",
   "agno[groq]",
   "agno[ibm]",
@@ -203,6 +219,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
@@ -217,15 +234,18 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
   "agno[opencv]",
+  "agno[scrapegraph]",
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
   "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[reportlab]",
   "agno[trafilatura]",
   "agno[neo4j]",
 ]
@@ -234,6 +254,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[async_postgres]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
@@ -254,21 +275,25 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[clickhouse]",
   "agno[pinecone]",
-  "agno[surrealdb]"
+  "agno[surrealdb]",
+  "agno[upstash]",
 ]
 
 # All knowledge
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[pptx]",
   "agno[text]",
   "agno[csv]",
-  "agno[markdown]"
+  "agno[markdown]",
+  "agno[chonkie]"
 ]
 
 # All embedders
 embedders = [
-  "agno[huggingface]"
+  "agno[huggingface]",
+  "agno[vllm]"
 ]
 
 # All libraries for testing
@@ -286,10 +311,6 @@ tests = [
     "twine",
     "build",
 ]
-
-[project.scripts]
-ag = "agno.cli.entrypoint:agno_cli"
-agno = "agno.cli.entrypoint:agno_cli"
 
 [project.urls]
 homepage = "https://agno.com"
@@ -328,9 +349,11 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "a2a.*",
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
+  "aiohttp.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
@@ -367,6 +390,7 @@ module = [
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
+  "fastmcp.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",
@@ -383,6 +407,7 @@ module = [
   "imghdr.*",
   "infinity_client.*",
   "jira.*",
+  "jwt.*",
   "kubernetes.*",
   "lancedb.*",
   "langchain_core.*",
@@ -395,6 +420,7 @@ module = [
   "mem0.*",
   "memori.*",
   "mcp.*",
+  "notion_client.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
@@ -422,6 +448,7 @@ module = [
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
   "redis.*",
+  "redisvl.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",
@@ -461,6 +488,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
+  "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"
 ]

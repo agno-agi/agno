@@ -17,13 +17,19 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 3. Install libraries
+### 3. Export your `OLLAMA_API_KEY` if using Ollama Cloud
+
+```shell
+export OLLAMA_API_KEY=***
+```
+
+### 4. Install libraries
 
 ```shell
 pip install -U ollama ddgs duckdb yfinance agno
 ```
 
-### 4. Run basic Agent
+### 5. Run basic Agent
 
 - Streaming on
 
@@ -37,7 +43,7 @@ python cookbook/models/ollama/basic_stream.py
 python cookbook/models/ollama/basic.py
 ```
 
-### 5. Run Agent with Tools
+### 6. Run Agent with Tools
 
 - DuckDuckGo Search
 
@@ -45,31 +51,31 @@ python cookbook/models/ollama/basic.py
 python cookbook/models/ollama/tool_use.py
 ```
 
-### 6. Run Agent that returns structured output
+### 7. Run Agent that returns structured output
 
 ```shell
 python cookbook/models/ollama/structured_output.py
 ```
 
-### 7. Run Agent that uses storage
+### 8. Run Agent that uses storage
 
 ```shell
 python cookbook/models/ollama/storage.py
 ```
 
-### 8. Run Agent that uses knowledge
+### 9. Run Agent that uses knowledge
 
 ```shell
 python cookbook/models/ollama/knowledge.py
 ```
 
-### 9. Run Agent that uses memory
+### 10. Run Agent that uses memory
 
 ```shell
 python cookbook/models/ollama/memory.py
 ```
 
-### 10. Run Agent that interprets an image
+### 11. Run Agent that interprets an image
 
 Pull the llama3.2 vision model
 
@@ -81,20 +87,22 @@ ollama pull llama3.2-vision
 python cookbook/models/ollama/image_agent.py
 ```
 
-### 11. Run Agent that manually sets the Ollama client
+### 12. Run Agent that manually sets the Ollama client
 
 ```shell
 python cookbook/models/ollama/set_client.py
 ```
 
-### 12. See demos of some well-known Ollama models
+### 13. See demos of some widely used models used via Ollama
 
 ```shell
 python cookbook/models/ollama/demo_deepseek_r1.py
 ```
+
 ```shell
 python cookbook/models/ollama/demo_qwen.py
 ```
+
 ```shell
 python cookbook/models/ollama/demo_phi4.py
 ```

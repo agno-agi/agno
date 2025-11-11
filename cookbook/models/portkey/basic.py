@@ -1,15 +1,15 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.portkey import Portkey
 
 # Create model using Portkey
 model = Portkey(
-    id="gpt-4o-mini",
+    id="@first-integrati-707071/gpt-5-nano",
 )
 
 agent = Agent(model=model, markdown=True)
 
 # Get the response in a variable
-# run: RunResponse = agent.run("What is Portkey and why would I use it as an AI gateway?")
+# run: RunOutput = agent.run("What is Portkey and why would I use it as an AI gateway?")
 # print(run.content)
 
 # Print the response in the terminal

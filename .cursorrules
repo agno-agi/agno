@@ -1,0 +1,182 @@
+You are an expert in Python, Agno framework, and AI agent development.
+
+Core Rules
+- NEVER create agents in loops - reuse them for performance
+- Always use output_schema for structured responses
+- PostgreSQL in production, SQLite for dev only
+- Start with single agent, scale up only when needed
+
+Basic Agent (start here):
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="You are a helpful assistant",
+    markdown=True,
+)
+agent.print_response("Your query", stream=True)
+```
+
+Agent with Tools:
+```python
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    instructions="Search the web for information",
+)
+```
+
+CRITICAL: Agent Reuse Performance
+```python
+# WRONG - Recreates agent every time (significant overhead)
+for query in queries:
+    agent = Agent(...)  # DON'T DO THIS
+    
+# CORRECT - Create once, reuse
+agent = Agent(...)
+for query in queries:
+    agent.run(query)
+```
+
+When to Use Each Pattern
+
+Single Agent (90% of use cases):
+- One clear task or domain
+- Can be solved with tools + instructions
+- Example: Search, analyze, generate content
+
+Team (autonomous coordination):
+- Multiple specialized agents with different expertise
+- Agents decide who does what via LLM
+- Complex tasks requiring multiple perspectives
+- Example: Research + Analysis + Writing
+
+Workflow (programmatic control):
+- Sequential steps with clear flow
+- Need conditional logic or branching
+- Full control over execution order
+- Example: Extract → Transform → Load pipelines
+
+Team Pattern:
+```python
+from agno.team.team import Team
+
+web_agent = Agent(
+    name="Researcher",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+)
+
+writer_agent = Agent(
+    name="Writer",
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+team = Team(
+    members=[web_agent, writer_agent],
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="Research and write articles",
+)
+```
+
+Workflow Pattern:
+```python
+from agno.workflow.workflow import Workflow
+from agno.db.sqlite import SqliteDb
+
+# Define agents first (researcher, writer)
+async def blog_workflow(session_state, topic: str):
+    # Step 1: Research
+    research = await researcher.arun(topic)
+    
+    # Step 2: Write
+    article = await writer.arun(research.content)
+    
+    return article
+
+workflow = Workflow(
+    name="Blog Generator",
+    steps=blog_workflow,
+    db=SqliteDb(db_file="tmp/workflow.db"),
+)
+```
+
+Knowledge/RAG:
+```python
+from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.lancedb import LanceDb, SearchType
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+
+knowledge = Knowledge(
+    vector_db=LanceDb(
+        uri="tmp/lancedb",
+        table_name="knowledge_base",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    knowledge=knowledge,
+    search_knowledge=True,  # Critical: enables agentic RAG
+    instructions="Use knowledge base, cite sources"
+)
+```
+
+Chat History:
+```python
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    db=SqliteDb(db_file="tmp/agents.db"),
+    user_id="user-123",
+    add_history_to_context=True,  # Adds previous messages
+    num_history_runs=3,
+)
+```
+
+Structured Output:
+```python
+from pydantic import BaseModel
+
+class Result(BaseModel):
+    summary: str
+    findings: list[str]
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    output_schema=Result,
+)
+result: Result = agent.run(query).content
+```
+
+AgentOS Production:
+```python
+from agno.os import AgentOS
+from agno.db.postgres import PostgresDb
+
+agent_os = AgentOS(
+    agents=[agent],
+    db=PostgresDb(db_url=os.getenv("DATABASE_URL")),
+)
+app = agent_os.get_app()
+```
+
+Common Mistakes
+- Creating agents in loops (massive performance hit)
+- Using Team when single agent would work
+- Forgetting search_knowledge=True with knowledge
+- Using SQLite in production
+- Not adding history when context matters
+- Missing output_schema validation
+
+Production
+- Use PostgresDb not SqliteDb
+- Set show_tool_calls=False, debug_mode=False
+- Wrap agent.run() in try-except
+
+Docs: https://docs.agno.com

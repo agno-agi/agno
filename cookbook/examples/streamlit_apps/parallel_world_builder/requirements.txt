@@ -1,5 +1,0 @@
-agno
-openai
-streamlit
-google-generativeai
-anthropic

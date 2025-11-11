@@ -31,12 +31,38 @@ You can help users by:
 """
 
 
+# Example 1: Include specific Cal.com functions for booking management
+booking_agent = Agent(
+    name="Booking Assistant",
+    instructions=[INSTRUCTONS],
+    model=OpenAIChat(id="gpt-4"),
+    tools=[
+        CalComTools(
+            user_timezone="America/New_York",
+        )
+    ],
+    markdown=True,
+)
+
+# Example 2: Exclude cancellation functions for safety
+safe_calendar_agent = Agent(
+    name="Safe Calendar Assistant",
+    instructions=[INSTRUCTONS],
+    model=OpenAIChat(id="gpt-4"),
+    tools=[
+        CalComTools(
+            user_timezone="America/New_York",
+        )
+    ],
+    markdown=True,
+)
+
+# Example 3: Full Cal.com functionality (default)
 agent = Agent(
-    name="Calendar Assistant",
+    name="Full Calendar Assistant",
     instructions=[INSTRUCTONS],
     model=OpenAIChat(id="gpt-4"),
     tools=[CalComTools(user_timezone="America/New_York")],
-    show_tool_calls=True,
     markdown=True,
 )
 

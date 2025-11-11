@@ -1,13 +1,7 @@
-# Deep Researcher Agent
+# Deep Researcher
 
-A multi-stage AI-powered research workflow agent that automates comprehensive web research, analysis, and report generation using Agno, Scrapegraph, and Nebius AI.
-
-1. **Searcher**: Finds and extracts high-quality, up-to-date information from the web using Scrapegraph and Nebius AI.
-2. **Analyst**: Synthesizes, interprets, and organizes the research findings, highlighting key insights and trends.
-3. **Writer**: Crafts a clear, structured, and actionable report, including references and recommendations.
-
-
-## Installation
+**Deep Researcher** is an AI-powered research assistant that uses a multi-agent workflow to conduct comprehensive research, analysis, and report generation.
+The system automates the entire research process from web scraping to final report creation using specialized AI agents.
 
 > Note: Fork and clone this repository if needed
 
@@ -27,62 +21,64 @@ pip install -r cookbook/examples/streamlit_apps/deep_researcher/requirements.txt
 ### 3. Configure API Keys
 
 Required:
+
 ```bash
-export OPENAI_API_KEY=your_openai_key_here
 export NEBIUS_API_KEY=your_nebius_api_key_here
 export SGAI_API_KEY=your_scrapegraph_api_key_here
 ```
 
-
-## Usage
-
-You can use the Deep Researcher Agent in three ways. Each method below includes a demo image so you know what to expect.
-
-### Web Interface
-
-Run the Streamlit app:
+Optional (for additional models):
 
 ```bash
+export OPENAI_API_KEY=your_openai_key_here
+export ANTHROPIC_API_KEY=your_anthropic_key_here
+export GOOGLE_API_KEY=your_google_key_here
+```
+
+### 4. Run Deep Researcher App
+
+```shell
 streamlit run cookbook/examples/streamlit_apps/deep_researcher/app.py
 ```
 
-Open your browser at [http://localhost:8501](http://localhost:8501)
+## 🔧 How It Works
 
-### MCP Server
+### Multi-Agent Workflow
 
-Add the following configuration to your .cursor/mcp.json or Claude/claude_desktop_config.json file (adjust paths and API keys as needed):
+The Deep Researcher uses a three-stage workflow:
 
-```json
-{
-  "mcpServers": {
-    "deep_researcher_agent": {
-      "command": "python",
-      "args": [
-        "--directory",
-        "/Your/Path/to/directory/cookbook/examples/streamlit_apps/deep_researcher/server.py",
-        "run",
-        "server.py"
-      ],
-      "env": {
-        "NEBIUS_API_KEY": "your_nebius_api_key_here",
-        "SGAI_API_KEY": "your_scrapegraph_api_key_here"
-      }
-    }
-  }
-}
-```
+1. **🔍 Searcher Agent**: Finds and extracts high-quality, up-to-date information from the web using ScrapeGraph
+2. **🔬 Analyst Agent**: Synthesizes and interprets research findings, identifying key insights and trends
+3. **✍️ Writer Agent**: Crafts clear, structured reports with actionable recommendations
 
-This allows tools like Claude Desktop to manage and launch the MCP server automatically.
+### How to Use
 
-## Contributing
+- Open [localhost:8501](http://localhost:8501) in your browser.
+- Configure your Nebius and ScrapeGraph API keys in the sidebar.
+- Enter your research topic in the chat interface or click on example topics:
+  - "Latest developments in AI and machine learning in 2024"
+  - "Current trends in sustainable energy technologies"
+  - "Recent breakthroughs in personalized medicine and genomics"
+  - "Impact of quantum computing on cybersecurity"
+- Watch the multi-agent workflow execute in real-time with streaming results.
 
-Contributions are welcome! Please feel free to submit a Pull Request or open an issue.
+### Key Features
+
+- **Multi-Agent Pipeline**: Specialized agents for research, analysis, and writing
+- **Real-Time Web Scraping**: Uses ScrapeGraph for comprehensive content extraction
+- **Streaming Results**: See research progress and results in real-time
+- **Structured Reports**: Professional formatting with references and recommendations
+- **Example Topics**: Quick-start buttons for common research areas
+
 
 ## 📚 Documentation
 
 For more detailed information:
+
 - [Agno Documentation](https://docs.agno.com)
 - [Streamlit Documentation](https://docs.streamlit.io)
+- [ScrapeGraph Documentation](https://scrapegraphai.com)
+- [Nebius AI Documentation](https://nebius.ai)
 
 ## 🤝 Support
 

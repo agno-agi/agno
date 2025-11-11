@@ -1,6 +1,6 @@
 """Run `pip install yfinance` to install dependencies."""
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama
 from ollama import Client as OllamaClient
 

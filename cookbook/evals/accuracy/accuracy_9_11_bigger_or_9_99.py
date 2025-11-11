@@ -10,7 +10,7 @@ evaluation = AccuracyEval(
     model=OpenAIChat(id="o4-mini"),
     agent=Agent(
         model=OpenAIChat(id="gpt-4o"),
-        tools=[CalculatorTools(enable_all=True)],
+        tools=[CalculatorTools()],
         instructions="You must use the calculator tools for comparisons.",
     ),
     input="9.11 and 9.9 -- which is bigger?",

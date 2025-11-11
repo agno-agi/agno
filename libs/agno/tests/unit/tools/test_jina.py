@@ -128,7 +128,7 @@ def test_init_with_custom_config():
 def test_init_tools_selection_read_only():
     """Test initialization with only read_url tool"""
     with patch("agno.tools.jina.JinaReaderTools"):
-        tools = JinaReaderTools(api_key="test_key", read_url=True, search_query=False)
+        tools = JinaReaderTools(api_key="test_key", enable_read_url=True, enable_search_query=False)
         assert len(tools.tools) == 1
         assert tools.tools[0].__name__ == "read_url"
 
@@ -136,7 +136,7 @@ def test_init_tools_selection_read_only():
 def test_init_tools_selection_search_only():
     """Test initialization with only search_query tool"""
     with patch("agno.tools.jina.JinaReaderTools"):
-        tools = JinaReaderTools(api_key="test_key", read_url=False, search_query=True)
+        tools = JinaReaderTools(api_key="test_key", enable_read_url=False, enable_search_query=True)
         assert len(tools.tools) == 1
         assert tools.tools[0].__name__ == "search_query"
 
@@ -144,7 +144,7 @@ def test_init_tools_selection_search_only():
 def test_init_tools_selection_both():
     """Test initialization with both tools"""
     with patch("agno.tools.jina.JinaReaderTools"):
-        tools = JinaReaderTools(api_key="test_key", read_url=True, search_query=True)
+        tools = JinaReaderTools(api_key="test_key", enable_read_url=True, enable_search_query=True)
         assert len(tools.tools) == 2
         tool_names = [tool.__name__ for tool in tools.tools]
         assert "read_url" in tool_names
@@ -153,7 +153,7 @@ def test_init_tools_selection_both():
 
 def test_init_tools_selection_none():
     """Test initialization with no tools"""
-    tools = JinaReaderTools(api_key="test_key", read_url=False, search_query=False)
+    tools = JinaReaderTools(api_key="test_key", enable_read_url=False, enable_search_query=False)
     assert len(tools.tools) == 0
 
 
@@ -236,7 +236,7 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
     mock_httpx_post.return_value = mock_response
 
     with patch("agno.tools.jina.JinaReaderTools"):
-        tools = JinaReaderTools(api_key="test_key", search_query=True)
+        tools = JinaReaderTools(api_key="test_key", enable_search_query=True)
         result = tools.search_query("test query")
 
         # Verify the call
@@ -260,7 +260,7 @@ def test_search_query_http_error(mock_logger, mock_httpx_post):
     mock_httpx_post.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
     with patch("agno.tools.jina.JinaReaderTools"):
-        tools = JinaReaderTools(api_key="test_key", search_query=True)
+        tools = JinaReaderTools(api_key="test_key", enable_search_query=True)
         result = tools.search_query("test query")
 
         assert "Error performing search" in result
@@ -279,7 +279,7 @@ def test_search_query_with_truncation(mock_httpx_post):
     mock_httpx_post.return_value = mock_response
 
     with patch("agno.tools.jina.JinaReaderTools"):
-        tools = JinaReaderTools(api_key="test_key", search_query=True, max_content_length=1000)
+        tools = JinaReaderTools(api_key="test_key", enable_search_query=True, max_content_length=1000)
         result = tools.search_query("test query")
 
         assert len(result) <= 1000 + len("... (content truncated)")

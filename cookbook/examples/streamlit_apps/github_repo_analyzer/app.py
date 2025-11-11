@@ -1,108 +1,193 @@
-from os import getenv
-
 import nest_asyncio
 import streamlit as st
 from agents import get_github_agent
-from agno.agent import Agent
-from agno.utils.log import logger
-from utils import (
-    CUSTOM_CSS,
-    about_widget,
+from agno.utils.streamlit import (
+    COMMON_CSS,
+    MODELS,
+    about_section,
     add_message,
-    display_tool_calls,
-    sidebar_widget,
+    display_chat_messages,
+    display_response,
+    export_chat_history,
+    initialize_agent,
+    reset_session_state,
 )
 
 nest_asyncio.apply()
 st.set_page_config(
-    page_title="GitHub Repo Analyzer",
+    page_title="GitHub Repository Analyzer",
     page_icon="👨‍💻",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-# Load custom CSS with dark mode support
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+# Add custom CSS
+st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 
-def main() -> None:
-    #####################################################################
+def restart_agent(model_id: str = None):
+    target_model = model_id or st.session_state.get("current_model", MODELS[0])
+
+    new_agent = get_github_agent(model_id=target_model, session_id=None)
+
+    st.session_state["agent"] = new_agent
+    st.session_state["session_id"] = new_agent.session_id
+    st.session_state["messages"] = []
+    st.session_state["current_model"] = target_model
+    st.session_state["is_new_session"] = True
+
+
+def on_model_change():
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in MODELS:
+            new_model_id = selected_model
+            current_model = st.session_state.get("current_model")
+
+            if current_model and current_model != new_model_id:
+                try:
+                    st.session_state["is_loading_session"] = False
+                    # Start new chat
+                    restart_agent(model_id=new_model_id)
+
+                except Exception as e:
+                    st.sidebar.error(f"Error switching to {selected_model}: {str(e)}")
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
+
+
+def main():
+    ####################################################################
     # App header
     ####################################################################
     st.markdown(
-        "<h1 class='main-header'>👨‍💻 GitHub Repo Analyzer</h1>", unsafe_allow_html=True
+        "<h1 class='main-title'>GitHub Repository Analyzer</h1>", unsafe_allow_html=True
     )
-    st.markdown("Analyze GitHub repositories")
+    st.markdown(
+        "<p class='subtitle'>Your intelligent GitHub analysis assistant powered by Agno</p>",
+        unsafe_allow_html=True,
+    )
 
     ####################################################################
-    # Initialize Agent
+    # Model selector
     ####################################################################
-    github_agent: Agent
-    if (
-        "github_agent" not in st.session_state
-        or st.session_state["github_agent"] is None
-    ):
-        logger.info("---*--- Creating new Github agent ---*---")
-        github_agent = get_github_agent()
-        st.session_state["github_agent"] = github_agent
-        st.session_state["messages"] = []
-        st.session_state["github_token"] = getenv("GITHUB_ACCESS_TOKEN")
-    else:
-        github_agent = st.session_state["github_agent"]
+    selected_model = st.sidebar.selectbox(
+        "Select Model",
+        options=MODELS,
+        index=0,
+        key="model_selector",
+        on_change=on_model_change,
+    )
 
     ####################################################################
-    # Load Agent Session from the database
+    # Initialize Agent and Session
     ####################################################################
-    try:
-        st.session_state["github_agent_session_id"] = github_agent.load_session()
-    except Exception:
-        st.warning("Could not create Agent session, is the database running?")
-        return
+    github_analyzer_agent = initialize_agent(selected_model, get_github_agent)
+    reset_session_state(github_analyzer_agent)
 
-    ####################################################################
-    # Load runs from memory (v2 Memory) only on initial load
-    ####################################################################
-    if github_agent.memory is not None and not st.session_state.get("messages"):
-        session_id = st.session_state.get("github_agent_session_id")
-        # Fetch stored runs for this session
-        agent_runs = github_agent.memory.get_runs(session_id)
-        if agent_runs:
-            logger.debug("Loading run history")
-            st.session_state["messages"] = []
-            for run_response in agent_runs:
-                # Iterate through stored messages in the run
-                for msg in run_response.messages or []:
-                    if msg.role in ["user", "assistant"] and msg.content is not None:
-                        # Include any tool calls attached to this message
-                        add_message(
-                            msg.role, msg.content, getattr(msg, "tool_calls", None)
-                        )
-        else:
-            logger.debug("No run history found")
-            st.session_state["messages"] = []
-
-    ####################################################################
-    # Sidebar
-    ####################################################################
-    sidebar_widget()
-
-    ####################################################################
-    # Get user input
-    ####################################################################
-    if prompt := st.chat_input("👋 Ask me about GitHub repositories!"):
+    if prompt := st.chat_input("👨‍💻 Ask me about GitHub repositories!"):
         add_message("user", prompt)
 
     ####################################################################
-    # Display chat history
+    # GitHub Configuration
     ####################################################################
-    for message in st.session_state["messages"]:
-        if message["role"] in ["user", "assistant"]:
-            _content = message["content"]
-            if _content is not None:
-                with st.chat_message(message["role"]):
-                    # Display tool calls if they exist in the message
-                    if "tool_calls" in message and message["tool_calls"]:
-                        display_tool_calls(st.empty(), message["tool_calls"])
-                    st.markdown(_content)
+    st.sidebar.markdown("#### 🔑 Configuration")
+
+    github_token = st.sidebar.text_input(
+        "GitHub Personal Access Token",
+        type="password",
+        help="Optional: Provides access to private repositories and higher rate limits",
+        placeholder="ghp_xxxxxxxxxxxx",
+    )
+
+    if github_token:
+        st.sidebar.success("✅ GitHub token configured")
+    else:
+        st.sidebar.info("💡 Add your GitHub token for enhanced access")
+
+    st.sidebar.markdown(
+        "[How to create a GitHub PAT?](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic)"
+    )
+
+    ###############################################################
+    # Sample Questions
+    ###############################################################
+    st.sidebar.markdown("#### ❓ Sample Questions")
+
+    if st.sidebar.button("📊 Analyze agno-agi/agno"):
+        add_message(
+            "user",
+            "Analyze the repository 'agno-agi/agno' - show me the structure, main languages, and recent activity",
+        )
+
+    if st.sidebar.button("🔍 Latest Issues"):
+        add_message(
+            "user",
+            "Show me the latest issues in 'microsoft/vscode'",
+        )
+
+    if st.sidebar.button("📝 Review Latest PR"):
+        add_message(
+            "user",
+            "Find and review the latest pull request in 'facebook/react'",
+        )
+
+    if st.sidebar.button("📚 Repository Stats"):
+        add_message(
+            "user",
+            "What are the repository statistics for 'tensorflow/tensorflow'?",
+        )
+
+    ###############################################################
+    # Utility buttons
+    ###############################################################
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns([1, 1])
+    with col1:
+        if st.sidebar.button("🔄 New Chat", use_container_width=True):
+            restart_agent()
+            st.rerun()
+
+    with col2:
+        has_messages = (
+            st.session_state.get("messages") and len(st.session_state["messages"]) > 0
+        )
+
+        if has_messages:
+            session_id = st.session_state.get("session_id")
+            if session_id:
+                try:
+                    session_name = github_analyzer_agent.get_session_name()
+                    if session_name:
+                        filename = f"github_analyzer_chat_{session_name}.md"
+                    else:
+                        filename = f"github_analyzer_chat_{session_id}.md"
+                except Exception:
+                    filename = f"github_analyzer_chat_{session_id}.md"
+            else:
+                filename = "github_analyzer_chat_new.md"
+
+            if st.sidebar.download_button(
+                "💾 Export Chat",
+                export_chat_history("GitHub Repository Analyzer"),
+                file_name=filename,
+                mime="text/markdown",
+                use_container_width=True,
+                help=f"Export {len(st.session_state['messages'])} messages",
+            ):
+                st.sidebar.success("Chat history exported!")
+        else:
+            st.sidebar.button(
+                "💾 Export Chat",
+                disabled=True,
+                use_container_width=True,
+                help="No messages to export",
+            )
+
+    ####################################################################
+    # Display Chat Messages
+    ####################################################################
+    display_chat_messages()
 
     ####################################################################
     # Generate response for user message
@@ -112,41 +197,14 @@ def main() -> None:
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        with st.chat_message("assistant"):
-            # Create container for tool calls
-            tool_calls_container = st.empty()
-            resp_container = st.empty()
-            with st.spinner("🤔 Thinking..."):
-                response = ""
-                try:
-                    # Run the agent and stream the response
-                    run_response = github_agent.run(
-                        question, stream=True, stream_intermediate_steps=True
-                    )
-                    for _resp_chunk in run_response:
-                        # Display tool calls if available
-                        if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
-                            display_tool_calls(tool_calls_container, [_resp_chunk.tool])
-
-                        # Display response if available and event is RunResponse
-                        if (
-                            _resp_chunk.event == "RunResponse"
-                            and _resp_chunk.content is not None
-                        ):
-                            response += _resp_chunk.content
-                            resp_container.markdown(response)
-
-                    add_message("assistant", response, github_agent.run_response.tools)
-                except Exception as e:
-                    logger.exception(e)
-                    error_message = f"Sorry, I encountered an error: {str(e)}"
-                    add_message("assistant", error_message)
-                    st.error(error_message)
+        display_response(github_analyzer_agent, question)
 
     ####################################################################
     # About section
     ####################################################################
-    about_widget()
+    about_section(
+        "This GitHub Repository Analyzer helps you analyze code repositories, review pull requests, and understand project structures using natural language queries."
+    )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Optional
 
@@ -22,7 +22,7 @@ class Nvidia(OpenAILike):
     name: str = "Nvidia"
     provider: str = "Nvidia"
 
-    api_key: Optional[str] = getenv("NVIDIA_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("NVIDIA_API_KEY"))
     base_url: str = "https://integrate.api.nvidia.com/v1"
 
     supports_native_structured_outputs: bool = False
