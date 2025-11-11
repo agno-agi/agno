@@ -1110,10 +1110,7 @@ class Gemini(Model):
             config["display_name"] = display_name
 
         try:
-            if config:
-                store = self.get_client().file_search_stores.create(config=config)  # type: ignore[arg-type]
-            else:
-                store = self.get_client().file_search_stores.create()
+            store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception as e:
@@ -1133,10 +1130,7 @@ class Gemini(Model):
             config["display_name"] = display_name
 
         try:
-            if config:
-                store = await self.get_client().aio.file_search_stores.create(config=config)  # type: ignore[arg-type]
-            else:
-                store = await self.get_client().aio.file_search_stores.create()
+            store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception as e:
@@ -1344,16 +1338,11 @@ class Gemini(Model):
 
         try:
             log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
-            if config:
-                operation = self.get_client().file_search_stores.upload_to_file_search_store(
-                    file=file_path,
-                    file_search_store_name=store_name,
-                    config=config,  # type: ignore[arg-type]
-                )
-            else:
-                operation = self.get_client().file_search_stores.upload_to_file_search_store(
-                    file=file_path, file_search_store_name=store_name
-                )
+            operation = self.get_client().file_search_stores.upload_to_file_search_store(
+                file=file_path,
+                file_search_store_name=store_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
             log_info(f"Upload initiated for {file_path.name}")
             return operation
         except Exception as e:
@@ -1394,16 +1383,11 @@ class Gemini(Model):
 
         try:
             log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
-            if config:
-                operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
-                    file=file_path,
-                    file_search_store_name=store_name,
-                    config=config,  # type: ignore[arg-type]
-                )
-            else:
-                operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
-                    file=file_path, file_search_store_name=store_name
-                )
+            operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
+                file=file_path,
+                file_search_store_name=store_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
             log_info(f"Upload initiated for {file_path.name}")
             return operation
         except Exception as e:
@@ -1437,16 +1421,11 @@ class Gemini(Model):
 
         try:
             log_info(f"Importing file {file_name} to File Search store {store_name}")
-            if config:
-                operation = self.get_client().file_search_stores.import_file(
-                    file_search_store_name=store_name,
-                    file_name=file_name,
-                    config=config,  # type: ignore[arg-type]
-                )
-            else:
-                operation = self.get_client().file_search_stores.import_file(
-                    file_search_store_name=store_name, file_name=file_name
-                )
+            operation = self.get_client().file_search_stores.import_file(
+                file_search_store_name=store_name,
+                file_name=file_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
             log_info(f"Import initiated for {file_name}")
             return operation
         except Exception as e:
@@ -1478,16 +1457,11 @@ class Gemini(Model):
 
         try:
             log_info(f"Importing file {file_name} to File Search store {store_name}")
-            if config:
-                operation = await self.get_client().aio.file_search_stores.import_file(
-                    file_search_store_name=store_name,
-                    file_name=file_name,
-                    config=config,  # type: ignore[arg-type]
-                )
-            else:
-                operation = await self.get_client().aio.file_search_stores.import_file(
-                    file_search_store_name=store_name, file_name=file_name
-                )
+            operation = await self.get_client().aio.file_search_stores.import_file(
+                file_search_store_name=store_name,
+                file_name=file_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
             log_info(f"Import initiated for {file_name}")
             return operation
         except Exception as e:
