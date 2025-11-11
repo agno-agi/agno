@@ -102,7 +102,6 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
-        health_endpoint: Optional[str] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -129,7 +128,6 @@ class AgentOS:
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
-            health_endpoint: Optional health endpoint to use for the AgentOS. If not provided, the default /health endpoint will be used.
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
@@ -150,7 +148,6 @@ class AgentOS:
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
-        self.health_endpoint = health_endpoint or "/health"
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
@@ -267,7 +264,7 @@ class AgentOS:
         if not self.enable_mcp_server:
             self._add_router(app, get_home_router(self))
 
-        self._add_router(app, get_health_router(self.health_endpoint))
+        self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
