@@ -255,6 +255,7 @@ storage = [
   "agno[sql]",
   "agno[postgres]",
   "agno[async_postgres]",
+  "agno[async_mongo]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
