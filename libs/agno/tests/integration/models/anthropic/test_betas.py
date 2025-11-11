@@ -1,6 +1,8 @@
 """Tests for Anthropic beta features support."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
@@ -51,6 +53,12 @@ def mock_anthropic_client():
         mock_client_class.return_value = mock_client
 
         yield mock_client
+
+
+@pytest.fixture(scope="module")
+def claude_model():
+    """Fixture that provides a Claude model and reuses it across all tests in the module."""
+    return Claude(id="claude-sonnet-4-5-20250929", betas=["context-1m-2025-08-07"])
 
 
 def test_betas_parameter_in_request_params():
@@ -145,7 +153,7 @@ def test_betas_with_skills():
     model = Claude(
         id="claude-sonnet-4-5-20250929",
         betas=betas,
-        skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+        skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
     )
 
     # Skills automatically add required betas
@@ -158,6 +166,21 @@ def test_betas_with_skills():
     assert "custom-beta" in request_params["betas"]
     assert "code-execution-2025-08-25" in request_params["betas"]
     assert "skills-2025-10-02" in request_params["betas"]
+
+
+@pytest.mark.integration
+def test_betas_with_real_client(claude_model):
+    """Test that betas work with a real client"""
+    agent = Agent(model=claude_model, telemetry=False)
+
+    # Assert betas are present
+    assert agent.model.betas is not None  # type: ignore
+
+    response = agent.run("What is 2+2? Answer in one sentence.")
+
+    # Verify the response was correctly generated
+    assert response is not None, "Response should not be None"
+    assert response.content is not None, "Response content should not be None"
 
 
 @pytest.mark.asyncio
@@ -196,3 +219,40 @@ async def test_async_beta_client_used_when_betas_provided():
         call_kwargs = mock_async_client.beta.messages.create.call_args[1]
         assert "betas" in call_kwargs
         assert call_kwargs["betas"] == betas
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not pytest.importorskip("os").getenv("ANTHROPIC_API_KEY"),
+    reason="ANTHROPIC_API_KEY not set - skipping real API test",
+)
+async def test_betas_with_real_client_async(claude_model):
+    """Test that betas work with a real async client.
+
+    This integration test makes a real async API call to Anthropic to verify that:
+    1. The beta API endpoint is successfully invoked asynchronously
+    2. The response is properly formatted
+    3. No errors occur when using beta features with async operations
+
+    Note: Requires ANTHROPIC_API_KEY to be set in environment.
+    """
+    agent = Agent(model=claude_model, telemetry=False)
+
+    # Use a simple message to minimize token usage
+    response = await agent.arun("What is 2+2? Answer in one sentence.")
+
+    # Verify response structure
+    assert response is not None, "Response should not be None"
+    assert response.content is not None, "Response content should not be None"
+    assert len(response.content) > 0, "Response content should not be empty"
+
+    # Verify we got a meaningful response
+    assert isinstance(response.content, str), "Response content should be a string"
+    assert len(response.content.strip()) > 0, "Response should contain non-empty content"
+
+    # Verify the model was set correctly
+    assert response.model is not None, "Response model should not be None"
+    assert response.model == "claude-sonnet-4-5-20250929" or response.model.startswith("claude-"), (
+        f"Expected Claude model, got {response.model}"
+    )
