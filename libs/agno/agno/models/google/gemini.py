@@ -25,9 +25,7 @@ try:
     from google.genai import Client as GeminiClient
     from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
-        ChunkingConfig,
         Content,
-        CustomMetadata,
         DynamicRetrievalConfig,
         FileSearch,
         FunctionCallingConfigMode,
@@ -1107,13 +1105,13 @@ class Gemini(Model):
         Returns:
             FileSearchStore: The created File Search store object
         """
-        config = {}
+        config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
 
         try:
             if config:
-                store = self.get_client().file_search_stores.create(config=config)
+                store = self.get_client().file_search_stores.create(config=config)  # type: ignore[arg-type]
             else:
                 store = self.get_client().file_search_stores.create()
             log_info(f"Created File Search store: {store.name}")
@@ -1130,13 +1128,13 @@ class Gemini(Model):
         Returns:
             FileSearchStore: The created File Search store object
         """
-        config = {}
+        config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
 
         try:
             if config:
-                store = await self.get_client().aio.file_search_stores.create(config=config)
+                store = await self.get_client().aio.file_search_stores.create(config=config)  # type: ignore[arg-type]
             else:
                 store = await self.get_client().aio.file_search_stores.create()
             log_info(f"Created File Search store: {store.name}")
@@ -1177,7 +1175,7 @@ class Gemini(Model):
         """
         try:
             stores = []
-            async for store in self.get_client().aio.file_search_stores.list(config={"page_size": page_size}):
+            async for store in await self.get_client().aio.file_search_stores.list(config={"page_size": page_size}):
                 stores.append(store)
             log_debug(f"Found {len(stores)} File Search stores")
             return stores
@@ -1336,7 +1334,7 @@ class Gemini(Model):
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        config = {}
+        config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
         if chunking_config:
@@ -1348,7 +1346,9 @@ class Gemini(Model):
             log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
             if config:
                 operation = self.get_client().file_search_stores.upload_to_file_search_store(
-                    file=file_path, file_search_store_name=store_name, config=config
+                    file=file_path,
+                    file_search_store_name=store_name,
+                    config=config,  # type: ignore[arg-type]
                 )
             else:
                 operation = self.get_client().file_search_stores.upload_to_file_search_store(
@@ -1384,7 +1384,7 @@ class Gemini(Model):
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        config = {}
+        config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
         if chunking_config:
@@ -1396,7 +1396,9 @@ class Gemini(Model):
             log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
             if config:
                 operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
-                    file=file_path, file_search_store_name=store_name, config=config
+                    file=file_path,
+                    file_search_store_name=store_name,
+                    config=config,  # type: ignore[arg-type]
                 )
             else:
                 operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
@@ -1427,7 +1429,7 @@ class Gemini(Model):
         Returns:
             Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
         """
-        config = {}
+        config: Dict[str, Any] = {}
         if chunking_config:
             config["chunking_config"] = chunking_config
         if custom_metadata:
@@ -1437,7 +1439,9 @@ class Gemini(Model):
             log_info(f"Importing file {file_name} to File Search store {store_name}")
             if config:
                 operation = self.get_client().file_search_stores.import_file(
-                    file_search_store_name=store_name, file_name=file_name, config=config
+                    file_search_store_name=store_name,
+                    file_name=file_name,
+                    config=config,  # type: ignore[arg-type]
                 )
             else:
                 operation = self.get_client().file_search_stores.import_file(
@@ -1466,7 +1470,7 @@ class Gemini(Model):
         Returns:
             Operation: Long-running operation object
         """
-        config = {}
+        config: Dict[str, Any] = {}
         if chunking_config:
             config["chunking_config"] = chunking_config
         if custom_metadata:
@@ -1476,7 +1480,9 @@ class Gemini(Model):
             log_info(f"Importing file {file_name} to File Search store {store_name}")
             if config:
                 operation = await self.get_client().aio.file_search_stores.import_file(
-                    file_search_store_name=store_name, file_name=file_name, config=config
+                    file_search_store_name=store_name,
+                    file_name=file_name,
+                    config=config,  # type: ignore[arg-type]
                 )
             else:
                 operation = await self.get_client().aio.file_search_stores.import_file(
@@ -1604,52 +1610,6 @@ class Gemini(Model):
             log_error(f"Error deleting document {document_name}: {e}")
             raise
 
-    def update_document_metadata(self, document_name: str, metadata: List[Dict[str, Any]]) -> Any:
-        """
-        Update metadata for a document.
-
-        Args:
-            document_name: Full name of the document
-            metadata: List of metadata dicts to update
-                Example: [
-                    {"key": "reviewed", "string_value": "true"},
-                    {"key": "priority", "numeric_value": 5}
-                ]
-
-        Returns:
-            Updated document object
-        """
-        try:
-            updated_doc = self.get_client().file_search_stores.documents.update(
-                name=document_name, config={"custom_metadata": metadata}
-            )
-            log_info(f"Updated metadata for document: {document_name}")
-            return updated_doc
-        except Exception as e:
-            log_error(f"Error updating document metadata for {document_name}: {e}")
-            raise
-
-    async def async_update_document_metadata(self, document_name: str, metadata: List[Dict[str, Any]]) -> Any:
-        """
-        Async version of update_document_metadata.
-
-        Args:
-            document_name: Full name of the document
-            metadata: List of metadata dicts to update
-
-        Returns:
-            Updated document object
-        """
-        try:
-            updated_doc = await self.get_client().aio.file_search_stores.documents.update(
-                name=document_name, config={"custom_metadata": metadata}
-            )
-            log_info(f"Updated metadata for document: {document_name}")
-            return updated_doc
-        except Exception as e:
-            log_error(f"Error updating document metadata for {document_name}: {e}")
-            raise
-
     def extract_file_search_citations(self, response: Optional[ModelResponse] = None) -> Dict[str, Any]:
         """
         Extract File Search citations from a model response.
@@ -1667,7 +1627,7 @@ class Gemini(Model):
             log_warning("No response provided for citation extraction")
             return {"sources": [], "grounding_chunks": [], "raw_metadata": None}
 
-        citations_data = {"sources": set(), "grounding_chunks": [], "raw_metadata": None}
+        citations_data: Dict[str, Any] = {"sources": set(), "grounding_chunks": [], "raw_metadata": None}
 
         # Check if response has citations with grounding metadata
         if hasattr(response, "citations") and response.citations and response.citations.raw:
