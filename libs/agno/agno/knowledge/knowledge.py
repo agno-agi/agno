@@ -1475,9 +1475,6 @@ class Knowledge:
         invalid_keys = []
 
         if isinstance(filters, dict):
-            if not filters:
-                return None, []
-
             # If no metadata filters tracked yet, all keys are considered invalid
             if self.valid_metadata_filters is None:
                 invalid_keys = list(filters.keys())
