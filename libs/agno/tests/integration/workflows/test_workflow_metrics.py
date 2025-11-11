@@ -327,12 +327,12 @@ def test_workflow_duration_parallel_with_agent(shared_db, test_agent):
         assert response.metrics.steps["agent_step"].metrics.duration > 0
 
 
-def test_workflow_duration_condition_with_agent(shared_db, test_agent):
-    """Test duration with condition and agent steps."""
+def test_workflow_duration_condition_true_with_agent(shared_db, test_agent):
+    """Test duration with condition that evaluates to true."""
     test_agent.instructions = "Respond with analysis"
 
     workflow = Workflow(
-        name="Condition Agent Duration Test",
+        name="Condition True Duration Test",
         db=shared_db,
         steps=[
             Condition(
@@ -354,6 +354,33 @@ def test_workflow_duration_condition_with_agent(shared_db, test_agent):
     if "agent_step" in response.metrics.steps:
         assert response.metrics.steps["agent_step"].metrics.duration is not None
         assert response.metrics.steps["agent_step"].metrics.duration > 0
+
+
+def test_workflow_duration_condition_false_with_agent(shared_db, test_agent):
+    """Test duration with condition that evaluates to false."""
+    test_agent.instructions = "Respond with analysis"
+
+    workflow = Workflow(
+        name="Condition False Duration Test",
+        db=shared_db,
+        steps=[
+            Condition(
+                evaluator=condition_false,
+                steps=[Step(name="skipped_agent_step", agent=test_agent)],
+            )
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    # Verify workflow-level duration still tracked
+    assert response.metrics is not None
+    assert isinstance(response.metrics, WorkflowMetrics)
+    assert response.metrics.duration is not None
+    assert response.metrics.duration >= 0
+
+    # Agent step should not be in metrics since condition was false
+    assert "skipped_agent_step" not in response.metrics.steps
 
 
 def test_workflow_metrics_serialization(shared_db, test_agent):

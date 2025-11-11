@@ -17,10 +17,8 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
-    from agno.models.metrics import Metrics
     from agno.workflow.types import StepOutput, WorkflowMetrics
 else:
-    Metrics = Any
     StepOutput = Any
     WorkflowMetrics = Any
 
@@ -523,8 +521,7 @@ class WorkflowRunOutput:
     events: Optional[List[WorkflowRunOutputEvent]] = None
 
     # Workflow metrics aggregated from all steps
-    # During execution, this temporarily holds Metrics() for timing, then converts to WorkflowMetrics
-    metrics: Optional[Union[Metrics, WorkflowMetrics]] = None
+    metrics: Optional[WorkflowMetrics] = None
 
     metadata: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))

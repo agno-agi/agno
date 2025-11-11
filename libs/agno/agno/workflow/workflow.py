@@ -1139,7 +1139,7 @@ class Workflow:
     def _aggregate_workflow_metrics(
         self,
         step_results: List[Union[StepOutput, List[StepOutput]]],
-        current_workflow_metrics: Optional[Metrics] = None,
+        current_workflow_metrics: Optional[WorkflowMetrics] = None,
     ) -> WorkflowMetrics:
         """Aggregate metrics from all step responses into structured workflow metrics"""
         steps_dict = {}
@@ -1327,7 +1327,7 @@ class Workflow:
                 if collected_step_outputs:
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()  # type: ignore[union-attr]
+                        workflow_run_response.metrics.stop_timer()
 
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
@@ -1377,14 +1377,9 @@ class Workflow:
                 raise e
 
             finally:
-                # Stop timer and convert Metrics
-                if workflow_run_response.metrics and isinstance(workflow_run_response.metrics, Metrics):
-                    # If metrics is still Metrics (error case), stop the timer and we will convert to WorkflowMetrics
+                # Stop timer on error
+                if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
-                    workflow_run_response.metrics = WorkflowMetrics(
-                        steps={},  # No steps on error
-                        duration=workflow_run_response.metrics.duration,
-                    )
 
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
@@ -1578,7 +1573,7 @@ class Workflow:
                 if collected_step_outputs:
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()  # type: ignore[union-attr]
+                        workflow_run_response.metrics.stop_timer()
 
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
@@ -1652,7 +1647,7 @@ class Workflow:
                     workflow_run_response.step_results = collected_step_outputs
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()  # type: ignore[union-attr]
+                        workflow_run_response.metrics.stop_timer()
 
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
@@ -1699,14 +1694,9 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
-        # Stop timer and convert Metrics
-        if workflow_run_response.metrics and isinstance(workflow_run_response.metrics, Metrics):
-            # If metrics is still Metrics (error case), stop the timer and we will convert to WorkflowMetrics
+        # Stop timer on error
+        if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
-            workflow_run_response.metrics = WorkflowMetrics(
-                steps={},  # No steps on error
-                duration=workflow_run_response.metrics.duration,
-            )
 
         # Store the completed workflow response
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
@@ -1913,7 +1903,7 @@ class Workflow:
                 if collected_step_outputs:
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()  # type: ignore[union-attr]
+                        workflow_run_response.metrics.stop_timer()
 
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
@@ -1958,14 +1948,9 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
                 raise e
 
-        # Stop timer and convert Metrics
-        if workflow_run_response.metrics and isinstance(workflow_run_response.metrics, Metrics):
-            # If metrics is still Metrics (error case), stop the timer and we will convert to WorkflowMetrics
+        # Stop timer on error
+        if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
-            workflow_run_response.metrics = WorkflowMetrics(
-                steps={},  # No steps on error
-                duration=workflow_run_response.metrics.duration,
-            )
 
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
@@ -2180,7 +2165,7 @@ class Workflow:
                 if collected_step_outputs:
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()  # type: ignore[union-attr]
+                        workflow_run_response.metrics.stop_timer()
 
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
@@ -2254,7 +2239,7 @@ class Workflow:
                     workflow_run_response.step_results = collected_step_outputs
                     # Stop the timer for the Run duration
                     if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()  # type: ignore[union-attr]
+                        workflow_run_response.metrics.stop_timer()
 
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
@@ -2305,14 +2290,9 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
-        # Stop timer and convert Metrics
-        if workflow_run_response.metrics and isinstance(workflow_run_response.metrics, Metrics):
-            # If metrics is still Metrics (error case), stop the timer and we will convert to WorkflowMetrics
+        # Stop timer on error
+        if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
-            workflow_run_response.metrics = WorkflowMetrics(
-                steps={},  # No steps on error
-                duration=workflow_run_response.metrics.duration,
-            )
 
         # Store the completed workflow response
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
@@ -2376,7 +2356,7 @@ class Workflow:
         )
 
         # Start the run metrics timer
-        workflow_run_response.metrics = Metrics()
+        workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
         # Store PENDING response immediately
@@ -2494,7 +2474,7 @@ class Workflow:
         )
 
         # Start the run metrics timer
-        workflow_run_response.metrics = Metrics()
+        workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
         # Prepare execution input
@@ -3541,7 +3521,7 @@ class Workflow:
         )
 
         # Start the run metrics timer
-        workflow_run_response.metrics = Metrics()
+        workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
         if stream:
@@ -3732,7 +3712,7 @@ class Workflow:
         )
 
         # Start the run metrics timer
-        workflow_run_response.metrics = Metrics()
+        workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
         if stream:
