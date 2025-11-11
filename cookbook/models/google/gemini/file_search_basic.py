@@ -1,17 +1,3 @@
-"""
-Basic File Search example using Gemini File Search Tool.
-
-This example demonstrates:
-1. Creating a File Search store
-2. Uploading a file directly
-3. Querying with File Search
-4. Extracting citations
-
-Requirements:
-- Set GOOGLE_API_KEY environment variable
-- Have a text file to upload (e.g., sample.txt)
-"""
-
 from pathlib import Path
 
 from agno.agent import Agent
@@ -45,19 +31,23 @@ model.file_search_store_names = [store.name]
 
 # Query the documents
 print("\nQuerying documents...")
-run = agent.run("Can you tell me about the content in the uploaded document? Specifically, what are the main safety guidelines mentioned?")
+run = agent.run(
+    "Can you tell me about the content in the uploaded document? Specifically, what are the main safety guidelines mentioned?"
+)
 print(f"\nResponse:\n{run.content}")
 
 # Extract and display citations
 print("\n" + "=" * 50)
 if run.citations:
-    print(f"Citations found: {len(run.citations.urls) if run.citations.urls else 0} sources")
+    print(
+        f"Citations found: {len(run.citations.urls) if run.citations.urls else 0} sources"
+    )
     if run.citations.raw:
         # Use our custom citation formatter
         citations_dict = {
             "sources": [],
             "grounding_chunks": [],
-            "raw_metadata": run.citations.raw.get("grounding_metadata", {})
+            "raw_metadata": run.citations.raw.get("grounding_metadata", {}),
         }
 
         # Extract from grounding metadata
@@ -69,15 +59,19 @@ if run.citations:
                 if isinstance(retrieved_context, dict):
                     title = retrieved_context.get("title", "Unknown")
                     citations_dict["sources"].append(title)
-                    citations_dict["grounding_chunks"].append({
-                        "title": title,
-                        "uri": retrieved_context.get("uri", ""),
-                        "text": retrieved_context.get("text", ""),
-                        "type": "file_search"
-                    })
+                    citations_dict["grounding_chunks"].append(
+                        {
+                            "title": title,
+                            "uri": retrieved_context.get("uri", ""),
+                            "text": retrieved_context.get("text", ""),
+                            "type": "file_search",
+                        }
+                    )
 
         if citations_dict["sources"]:
-            formatted_citations = model.format_citations(citations_dict, include_text=True)
+            formatted_citations = model.format_citations(
+                citations_dict, include_text=True
+            )
             print(formatted_citations)
         else:
             print("Citations metadata found but no File Search sources detected")

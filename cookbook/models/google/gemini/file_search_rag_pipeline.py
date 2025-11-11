@@ -5,7 +5,9 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 
 # Configuration
-DOCUMENTS_DIR = Path(__file__).parent / "documents"  # Use documents directory in same folder
+DOCUMENTS_DIR = (
+    Path(__file__).parent / "documents"
+)  # Use documents directory in same folder
 STORE_NAME = "RAG Pipeline Demo"
 
 
@@ -17,7 +19,11 @@ async def create_and_populate_store(model: Gemini, documents_dir: Path):
 
     # Find all supported documents
     supported_extensions = [".txt", ".pdf", ".md", ".json", ".py", ".js", ".ts"]
-    files = [f for f in documents_dir.glob("**/*") if f.suffix.lower() in supported_extensions]
+    files = [
+        f
+        for f in documents_dir.glob("**/*")
+        if f.suffix.lower() in supported_extensions
+    ]
 
     print(f"\nFound {len(files)} documents to upload")
 
@@ -30,10 +36,20 @@ async def create_and_populate_store(model: Gemini, documents_dir: Path):
         chunking_config = None
         if file_path.suffix in [".py", ".js", ".ts"]:
             # Code files - smaller chunks for precise retrieval
-            chunking_config = {"white_space_config": {"max_tokens_per_chunk": 150, "max_overlap_tokens": 30}}
+            chunking_config = {
+                "white_space_config": {
+                    "max_tokens_per_chunk": 150,
+                    "max_overlap_tokens": 30,
+                }
+            }
         else:
             # Documentation files - larger chunks for context
-            chunking_config = {"white_space_config": {"max_tokens_per_chunk": 300, "max_overlap_tokens": 50}}
+            chunking_config = {
+                "white_space_config": {
+                    "max_tokens_per_chunk": 300,
+                    "max_overlap_tokens": 50,
+                }
+            }
 
         # Metadata based on file properties
         metadata = [
@@ -89,13 +105,15 @@ async def query_with_citations(model: Gemini, query: str, store_name: str):
 
         if citations["grounding_chunks"]:
             print(f"\nCitations ({len(citations['grounding_chunks'])} chunks):")
-            for i, chunk in enumerate(citations["grounding_chunks"][:3], 1):  # Show first 3
+            for i, chunk in enumerate(
+                citations["grounding_chunks"][:3], 1
+            ):  # Show first 3
                 print(f"\n  [{i}] {chunk['title']}")
                 if chunk.get("text"):
                     text = chunk["text"]
                     if len(text) > 150:
                         text = text[:150] + "..."
-                    print(f"      \"{text}\"")
+                    print(f'      "{text}"')
     else:
         print("\nNo citations found")
 

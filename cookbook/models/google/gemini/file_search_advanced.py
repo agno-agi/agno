@@ -93,11 +93,17 @@ print("=" * 60)
 model.file_search_store_names = [technical_store.name]
 model.file_search_metadata_filter = 'type="technical" AND version=2'
 
-run1 = agent.run("What are the technical specifications mentioned in the documentation?")
+run1 = agent.run(
+    "What are the technical specifications mentioned in the documentation?"
+)
 print(f"\nResponse:\n{run1.content}")
 
 if run1.citations and run1.citations.raw:
-    citations_dict = {"sources": [], "grounding_chunks": [], "raw_metadata": run1.citations.raw}
+    citations_dict = {
+        "sources": [],
+        "grounding_chunks": [],
+        "raw_metadata": run1.citations.raw,
+    }
     grounding_metadata = run1.citations.raw.get("grounding_metadata", {})
     for chunk in grounding_metadata.get("grounding_chunks", []) or []:
         if isinstance(chunk, dict) and chunk.get("retrieved_context"):
@@ -117,18 +123,24 @@ run2 = agent.run("What are the key product features and how do they work?")
 print(f"\nResponse:\n{run2.content}")
 
 if run2.citations and run2.citations.raw:
-    citations_dict = {"sources": [], "grounding_chunks": [], "raw_metadata": run2.citations.raw}
+    citations_dict = {
+        "sources": [],
+        "grounding_chunks": [],
+        "raw_metadata": run2.citations.raw,
+    }
     grounding_metadata = run2.citations.raw.get("grounding_metadata", {})
     for chunk in grounding_metadata.get("grounding_chunks", []) or []:
         if isinstance(chunk, dict) and chunk.get("retrieved_context"):
             rc = chunk["retrieved_context"]
             citations_dict["sources"].append(rc.get("title", "Unknown"))
-            citations_dict["grounding_chunks"].append({
-                "title": rc.get("title", "Unknown"),
-                "uri": rc.get("uri", ""),
-                "text": rc.get("text", ""),
-                "type": "file_search"
-            })
+            citations_dict["grounding_chunks"].append(
+                {
+                    "title": rc.get("title", "Unknown"),
+                    "uri": rc.get("uri", ""),
+                    "text": rc.get("text", ""),
+                    "type": "file_search",
+                }
+            )
     print("\n" + model.format_citations(citations_dict, include_text=True))
 
 # Update document metadata (API not yet available)

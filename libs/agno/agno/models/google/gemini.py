@@ -25,8 +25,11 @@ try:
     from google.genai import Client as GeminiClient
     from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
+        ChunkingConfig,
         Content,
+        CustomMetadata,
         DynamicRetrievalConfig,
+        FileSearch,
         FunctionCallingConfigMode,
         GenerateContentConfig,
         GenerateContentResponse,
@@ -42,12 +45,6 @@ try:
     )
     from google.genai.types import (
         File as GeminiFile,
-    )
-    # File Search imports
-    from google.genai.types import (
-        FileSearch,
-        ChunkingConfig,
-        CustomMetadata,
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
@@ -1279,9 +1276,7 @@ class Gemini(Model):
         log_info("Operation completed successfully")
         return operation
 
-    async def async_wait_for_operation(
-        self, operation: Any, poll_interval: int = 5, max_wait: int = 600
-    ) -> Any:
+    async def async_wait_for_operation(self, operation: Any, poll_interval: int = 5, max_wait: int = 600) -> Any:
         """
         Async version of wait_for_operation.
 
@@ -1492,7 +1487,6 @@ class Gemini(Model):
         except Exception as e:
             log_error(f"Error importing file to File Search store: {e}")
             raise
-
 
     def list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
         """
