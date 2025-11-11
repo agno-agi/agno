@@ -32,7 +32,7 @@ def _get_interleaved_thinking_agent(**kwargs):
         "model": Claude(
             id="claude-sonnet-4-20250514",
             thinking={"type": "enabled", "budget_tokens": 2048},
-            default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
+            betas=["interleaved-thinking-2025-05-14"],
         ),
         "markdown": True,
         "telemetry": False,
@@ -331,7 +331,7 @@ async def test_interleaved_thinking_with_storage():
             model=Claude(
                 id="claude-sonnet-4-20250514",
                 thinking={"type": "enabled", "budget_tokens": 2048},
-                default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
+                betas=["interleaved-thinking-2025-05-14"],
             ),
             db=JsonDb(db_path=storage_dir, session_table="test_session_interleaved"),
             user_id="test_user_interleaved",
@@ -377,7 +377,7 @@ async def test_interleaved_thinking_streaming_with_storage():
             model=Claude(
                 id="claude-sonnet-4-20250514",
                 thinking={"type": "enabled", "budget_tokens": 2048},
-                default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
+                betas=["interleaved-thinking-2025-05-14"],
             ),
             db=JsonDb(db_path=storage_dir, session_table="test_session_interleaved_stream"),
             user_id="test_user_interleaved_stream",
