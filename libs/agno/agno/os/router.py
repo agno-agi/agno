@@ -1,5 +1,4 @@
 import json
-from itertools import chain
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -73,32 +72,51 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     form_data = await request.form()
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
-    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
 
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):
         try:
-            session_state_dict = json.loads(session_state)  # type: ignore
-            kwargs["session_state"] = session_state_dict
+            if isinstance(session_state, str):
+                session_state_dict = json.loads(session_state)  # type: ignore
+                kwargs["session_state"] = session_state_dict
         except json.JSONDecodeError:
             kwargs.pop("session_state")
             log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
 
     if dependencies := kwargs.get("dependencies"):
         try:
-            dependencies_dict = json.loads(dependencies)  # type: ignore
-            kwargs["dependencies"] = dependencies_dict
+            if isinstance(dependencies, str):
+                dependencies_dict = json.loads(dependencies)  # type: ignore
+                kwargs["dependencies"] = dependencies_dict
         except json.JSONDecodeError:
             kwargs.pop("dependencies")
             log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
 
     if metadata := kwargs.get("metadata"):
         try:
-            metadata_dict = json.loads(metadata)  # type: ignore
-            kwargs["metadata"] = metadata_dict
+            if isinstance(metadata, str):
+                metadata_dict = json.loads(metadata)  # type: ignore
+                kwargs["metadata"] = metadata_dict
         except json.JSONDecodeError:
             kwargs.pop("metadata")
             log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+
+    if knowledge_filters := kwargs.get("knowledge_filters"):
+        try:
+            if isinstance(knowledge_filters, str):
+                knowledge_filters_dict = json.loads(knowledge_filters)  # type: ignore
+                kwargs["knowledge_filters"] = knowledge_filters_dict
+        except json.JSONDecodeError:
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+
+    # Parse boolean and null values
+    for key, value in kwargs.items():
+        if isinstance(value, str) and value.lower() in ["true", "false"]:
+            kwargs[key] = value.lower() == "true"
+        elif isinstance(value, str) and value.lower() in ["null", "none"]:
+            kwargs[key] = None
 
     return kwargs
 
@@ -652,7 +670,7 @@ def get_base_router(
             os_id=os.id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=list({db.id for db in chain(os.dbs.values(), os.knowledge_dbs.values())}),
+            databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
@@ -1082,7 +1100,8 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
-            agents.append(AgentResponse.from_agent(agent=agent))
+            agent_response = await AgentResponse.from_agent(agent=agent)
+            agents.append(agent_response)
 
         return agents
 
@@ -1129,7 +1148,7 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return AgentResponse.from_agent(agent)
+        return await AgentResponse.from_agent(agent)
 
     # -- Team routes ---
 
@@ -1414,7 +1433,8 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
-            teams.append(TeamResponse.from_team(team=team))
+            team_response = await TeamResponse.from_team(team=team)
+            teams.append(team_response)
 
         return teams
 
@@ -1507,7 +1527,7 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamResponse.from_team(team)
+        return await TeamResponse.from_team(team)
 
     # -- Workflow routes ---
 
@@ -1580,7 +1600,7 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowResponse.from_workflow(workflow)
+        return await WorkflowResponse.from_workflow(workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",

@@ -45,6 +45,8 @@ except ImportError as e:
 # Import Beta types
 try:
     from anthropic.types.beta import BetaRawContentBlockDeltaEvent, BetaTextDelta
+    from anthropic.types.beta.beta_message import BetaMessage
+    from anthropic.types.beta.beta_usage import BetaUsage
 except ImportError as e:
     raise ImportError(
         "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
@@ -75,7 +77,7 @@ class Claude(Model):
     provider: str = "Anthropic"
 
     # Request parameters
-    max_tokens: Optional[int] = 4096
+    max_tokens: Optional[int] = 8192
     thinking: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
@@ -84,7 +86,14 @@ class Claude(Model):
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
     request_params: Optional[Dict[str, Any]] = None
+
+    # Anthropic beta and experimental features
+    betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
+    context_management: Optional[Dict[str, Any]] = None
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
+    skills: Optional[List[Dict[str, str]]] = (
+        None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+    )
 
     # Client parameters
     api_key: Optional[str] = None
@@ -92,7 +101,6 @@ class Claude(Model):
     timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
 
@@ -101,6 +109,9 @@ class Claude(Model):
         # Validate thinking support immediately at model creation
         if self.thinking:
             self._validate_thinking_support()
+        # Set up skills configuration if skills are enabled
+        if self.skills:
+            self._setup_skills_configuration()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -121,6 +132,10 @@ class Claude(Model):
             client_params["default_headers"] = self.default_headers
         return client_params
 
+    def _has_beta_features(self) -> bool:
+        """Check if the model has any Anthropic beta features enabled."""
+        return self.mcp_servers is not None or self.context_management is not None or self.skills is not None
+
     def get_client(self) -> AnthropicClient:
         """
         Returns an instance of the Anthropic client.
@@ -136,7 +151,7 @@ class Claude(Model):
         """
         Returns an instance of the async Anthropic client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params = self._get_client_params()
@@ -159,6 +174,26 @@ class Claude(Model):
                 f"For more information, see: https://docs.anthropic.com/en/docs/about-claude/models/overview"
             )
 
+    def _setup_skills_configuration(self) -> None:
+        """
+        Set up configuration for Claude Agent Skills.
+        Automatically configures betas array with required values.
+
+        Skills enable document creation capabilities (PowerPoint, Excel, Word, PDF).
+        For more information, see: https://docs.claude.com/en/docs/agents-and-tools/agent-skills/quickstart
+        """
+        # Required betas for skills
+        required_betas = ["code-execution-2025-08-25", "skills-2025-10-02"]
+
+        # Initialize or merge betas
+        if self.betas is None:
+            self.betas = required_betas
+        else:
+            # Add required betas if not present
+            for beta in required_betas:
+                if beta not in self.betas:
+                    self.betas.append(beta)
+
     def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
@@ -180,10 +215,15 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.context_management:
+            _request_params["context_management"] = self.context_management
         if self.mcp_servers:
             _request_params["mcp_servers"] = [
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
+        if self.skills:
+            _request_params["betas"] = self.betas
+            _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
 
@@ -213,6 +253,15 @@ class Claude(Model):
             else:
                 request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
+        # Add code execution tool if skills are enabled
+        if self.skills:
+            code_execution_tool = {"type": "code_execution_20250825", "name": "code_execution"}
+            if tools:
+                # Add code_execution to existing tools, code execution is needed for generating and processing files
+                tools = tools + [code_execution_tool]
+            else:
+                tools = [code_execution_tool]
+
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
 
@@ -239,12 +288,12 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.get_request_params(),
+                    **request_kwargs,
                 )
             else:
                 assistant_message.metrics.start_timer()
@@ -306,7 +355,8 @@ class Claude(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            if self.mcp_servers is not None:
+            # Beta features
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 with self.get_client().beta.messages.stream(
                     model=self.id,
@@ -361,12 +411,13 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            # Beta features
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.get_request_params(),
+                    **request_kwargs,
                 )
             else:
                 assistant_message.metrics.start_timer()
@@ -425,7 +476,7 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if self.mcp_servers is not None:
+            if self._has_beta_features():
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
@@ -467,7 +518,7 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    def _parse_provider_response(self, response: AnthropicMessage, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Union[AnthropicMessage, BetaMessage], **kwargs) -> ModelResponse:
         """
         Parse the Claude response into a ModelResponse.
 
@@ -541,6 +592,30 @@ class Claude(Model):
         # Add usage metrics
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
+
+        # Capture context management information if present
+        if self.context_management is not None and hasattr(response, "context_management"):
+            if response.context_management is not None:  # type: ignore
+                model_response.provider_data = model_response.provider_data or {}
+                if hasattr(response.context_management, "model_dump"):
+                    model_response.provider_data["context_management"] = response.context_management.model_dump()  # type: ignore
+                else:
+                    model_response.provider_data["context_management"] = response.context_management  # type: ignore
+        # Extract file IDs if skills are enabled
+        if self.skills and response.content:
+            file_ids: List[str] = []
+            for block in response.content:
+                if block.type == "bash_code_execution_tool_result":
+                    if hasattr(block, "content") and hasattr(block.content, "content"):
+                        if isinstance(block.content.content, list):
+                            for output_block in block.content.content:
+                                if hasattr(output_block, "file_id"):
+                                    file_ids.append(output_block.file_id)
+
+            if file_ids:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["file_ids"] = file_ids
 
         return model_response
 
@@ -620,6 +695,16 @@ class Claude(Model):
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
+            # Capture context management information if present
+            if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
+                context_mgmt = response.message.context_management  # type: ignore
+                if context_mgmt is not None:
+                    model_response.provider_data = model_response.provider_data or {}
+                    if hasattr(context_mgmt, "model_dump"):
+                        model_response.provider_data["context_management"] = context_mgmt.model_dump()
+                    else:
+                        model_response.provider_data["context_management"] = context_mgmt
+
         if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
 
@@ -636,7 +721,7 @@ class Claude(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> Metrics:
         """
         Parse the given Anthropic-specific usage into an Agno Metrics object.
 
@@ -656,7 +741,7 @@ class Claude(Model):
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
-            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use}
+            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use.model_dump()}
         if isinstance(response_usage, Usage):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}

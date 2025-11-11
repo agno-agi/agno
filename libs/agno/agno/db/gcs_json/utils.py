@@ -5,32 +5,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from agno.db.base import SessionType
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.run.agent import RunOutput
-from agno.run.team import TeamRunOutput
-from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug
-
-
-def hydrate_session(session: dict) -> dict:
-    """Convert nested dictionaries to their corresponding object types.
-
-    Args:
-        session (dict): The session dictionary to hydrate.
-
-    Returns:
-        dict: The hydrated session dictionary.
-    """
-    if session.get("summary") is not None:
-        session["summary"] = SessionSummary.from_dict(session["summary"])
-    if session.get("runs") is not None:
-        if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
-        elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
-
-    return session
 
 
 def apply_sorting(
@@ -102,7 +78,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
@@ -123,7 +99,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
 
     model_metrics = []
     for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
+        model_id, model_provider = model.rsplit(":", 1)
         model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
     metrics["users_count"] = len(all_user_ids)

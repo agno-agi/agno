@@ -1,9 +1,10 @@
 import json
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_info, log_warning
 
@@ -24,12 +25,10 @@ class CustomerDBTools(Toolkit):
         return "This should not be seen."
 
 
-def customer_management_hook(
-    session_state,
-    function_name: str,
-    function_call: Callable,
-    arguments: Dict[str, Any],
-):
+def customer_management_hook(run_context: RunContext, arguments: Dict[str, Any]):
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     action = arguments.get("action", "retrieve")
     cust_id = arguments.get("customer_id")
     name = arguments.get("name", None)
@@ -38,19 +37,19 @@ def customer_management_hook(
         raise ValueError("customer_id is required.")
 
     if action == "create":
-        session_state["customer_profiles"][cust_id] = {"name": name}
+        run_context.session_state["customer_profiles"][cust_id] = {"name": name}
         log_info(f"Hook: UPDATED session_state for customer '{cust_id}'.")
         return f"Success! Customer {cust_id} has been created."
 
     if action == "retrieve":
-        profile = session_state.get("customer_profiles", {}).get(cust_id)
+        profile = run_context.session_state.get("customer_profiles", {}).get(cust_id)
         if profile:
             log_info(f"Hook: FOUND customer '{cust_id}' in session_state.")
             return f"Profile for {cust_id}: {json.dumps(profile)}"
         else:
             raise ValueError(f"Customer '{cust_id}' not found.")
 
-    log_info(f"Session state: {session_state}")
+    log_info(f"Session state: {run_context.session_state}")
 
 
 def run_test():

@@ -10,12 +10,12 @@ from agno.db.postgres.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
-    deserialize_cultural_knowledge_from_db,
+    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
-    serialize_cultural_knowledge_for_db,
+    serialize_cultural_knowledge,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -106,6 +106,31 @@ class PostgresDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the Postgres database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+    def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
@@ -184,7 +209,7 @@ class PostgresDb(BaseDb):
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {table_name} in schema {db_schema}")
+            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
             return table
 
         except Exception as e:
@@ -383,9 +408,6 @@ class PostgresDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    stmt = stmt.where(table.c.session_type == session_type_value)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2030,7 +2052,7 @@ class PostgresDb(BaseDb):
                 if not db_row or not deserialize:
                     return db_row
 
-            return deserialize_cultural_knowledge_from_db(db_row)
+            return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
             log_error(f"Exception reading from cultural knowledge table: {e}")
@@ -2104,7 +2126,7 @@ class PostgresDb(BaseDb):
                 if not deserialize:
                     return db_rows, total_count
 
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+            return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
             log_error(f"Error reading from cultural knowledge table: {e}")
@@ -2134,7 +2156,7 @@ class PostgresDb(BaseDb):
                 cultural_knowledge.id = str(uuid4())
 
             # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+            content_dict = serialize_cultural_knowledge(cultural_knowledge)
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -2149,7 +2171,7 @@ class PostgresDb(BaseDb):
                     agent_id=cultural_knowledge.agent_id,
                     team_id=cultural_knowledge.team_id,
                 )
-                stmt = stmt.on_conflict_do_update(
+                stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["id"],
                     set_=dict(
                         name=cultural_knowledge.name,
@@ -2173,7 +2195,7 @@ class PostgresDb(BaseDb):
             if not db_row or not deserialize:
                 return db_row
 
-            return deserialize_cultural_knowledge_from_db(db_row)
+            return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")

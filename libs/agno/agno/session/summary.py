@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
 from agno.models.base import Model
+from agno.models.utils import get_model
 from agno.run.agent import Message
 from agno.utils.log import log_debug, log_warning
 
@@ -65,6 +66,9 @@ class SessionSummaryManager:
 
     # Prompt used for session summary generation
     session_summary_prompt: Optional[str] = None
+
+    # User message prompt for requesting the summary
+    summary_request_message: str = "Provide the summary of the conversation."
 
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
@@ -139,7 +143,10 @@ class SessionSummaryManager:
         if not session:
             return None
 
-        self.model = cast(Model, self.model)
+        self.model = get_model(self.model)
+        if self.model is None:
+            return None
+
         response_format = self.get_response_format(self.model)
 
         system_message = self.get_system_message(
@@ -152,7 +159,7 @@ class SessionSummaryManager:
 
         return [
             system_message,
-            Message(role="user", content="Provide the summary of the conversation."),
+            Message(role="user", content=self.summary_request_message),
         ]
 
     def _process_summary_response(self, summary_response, session_summary_model: "Model") -> Optional[SessionSummary]:  # type: ignore
@@ -207,6 +214,7 @@ class SessionSummaryManager:
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
+        self.model = get_model(self.model)
         if self.model is None:
             return None
 
@@ -234,6 +242,7 @@ class SessionSummaryManager:
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
+        self.model = get_model(self.model)
         if self.model is None:
             return None
 
