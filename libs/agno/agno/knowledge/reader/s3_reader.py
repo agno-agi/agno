@@ -10,7 +10,7 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.knowledge.reader.text_reader import TextReader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     from agno.aws.resource.s3.object import S3Object  # type: ignore
@@ -51,7 +51,7 @@ class S3Reader(Reader):
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
-            log_info(f"Reading S3 file: {s3_object.uri}")
+            log_debug(f"Reading S3 file: {s3_object.uri}")
 
             # Read PDF files
             if s3_object.uri.endswith(".pdf"):
@@ -80,7 +80,7 @@ class S3Reader(Reader):
                 return documents
 
         except Exception as e:
-            logger.error(f"Error reading: {s3_object.uri}: {e}")
+            log_error(f"Error reading: {s3_object.uri}: {e}")
 
         return []
 

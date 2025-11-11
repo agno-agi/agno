@@ -8,7 +8,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     from pptx import Presentation  # type: ignore
@@ -43,11 +43,11 @@ class PPTXReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                log_info(f"Reading: {file}")
+                log_debug(f"Reading: {file}")
                 presentation = Presentation(str(file))
                 doc_name = name or file.stem
             else:
-                log_info(f"Reading uploaded file: {getattr(file, 'name', 'pptx_file')}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'pptx_file')}")
                 presentation = Presentation(file)
                 doc_name = name or (
                     getattr(file, "name", "pptx_file").split(".")[0] if hasattr(file, "name") else "pptx_file"
@@ -89,7 +89,7 @@ class PPTXReader(Reader):
             return documents
 
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {e}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -97,5 +97,5 @@ class PPTXReader(Reader):
         try:
             return await asyncio.to_thread(self.read, file, name)
         except Exception as e:
-            logger.error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {e}")
             return []

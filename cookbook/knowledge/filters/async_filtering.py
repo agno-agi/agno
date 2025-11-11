@@ -31,7 +31,7 @@ db = AsyncSqliteDb(
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
 vector_db = LanceDb(
-    table_name="recipes",
+    table_name="CVs",
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
 
@@ -103,7 +103,6 @@ agent = Agent(
     db=db,
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
 if __name__ == "__main__":

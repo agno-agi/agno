@@ -1,5 +1,4 @@
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
@@ -27,10 +26,6 @@ vector_db = LanceDb(
 knowledge = Knowledge(
     vector_db=vector_db,
     max_results=5,
-    contents_db=PostgresDb(
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        knowledge_table="knowledge_contents",
-    ),
 )
 
 knowledge.add_content(

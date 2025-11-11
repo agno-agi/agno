@@ -10,7 +10,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info
+from agno.utils.log import log_debug, log_error
 
 
 class JSONReader(Reader):
@@ -41,13 +41,13 @@ class JSONReader(Reader):
             if isinstance(path, Path):
                 if not path.exists():
                     raise FileNotFoundError(f"Could not find file: {path}")
-                log_info(f"Reading: {path}")
+                log_debug(f"Reading: {path}")
                 json_name = name or path.name.split(".")[0]
                 json_contents = json.loads(path.read_text(self.encoding or "utf-8"))
 
             elif isinstance(path, BytesIO):
                 json_name = name or path.name.split(".")[0]
-                log_info(f"Reading uploaded file: {json_name}")
+                log_debug(f"Reading uploaded file: {json_name}")
                 path.seek(0)
                 json_contents = json.load(path)
 
@@ -72,7 +72,8 @@ class JSONReader(Reader):
                     chunked_documents.extend(self.chunk_document(document))
                 return chunked_documents
             return documents
-        except Exception:
+        except Exception as e:
+            log_error(f"Error reading: {path}: {e}")
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
