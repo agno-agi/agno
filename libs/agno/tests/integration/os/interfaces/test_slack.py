@@ -47,7 +47,7 @@ def test_slack_message_event(test_agent: Agent, test_client: TestClient, slack_s
     # Use current timestamp for the request
     current_timestamp = str(int(time.time()))
     ts_value = f"{current_timestamp}.123456"
-    
+
     mock_output = RunOutput(
         run_id="test-run-123",
         session_id=ts_value,
@@ -62,7 +62,7 @@ def test_slack_message_event(test_agent: Agent, test_client: TestClient, slack_s
                 # Mock SlackTools to avoid requiring SLACK_TOKEN
                 mock_slack_instance = MagicMock()
                 mock_slack_tools.return_value = mock_slack_instance
-                
+
                 with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
                     mock_arun.return_value = mock_output
 
@@ -115,7 +115,7 @@ def test_slack_app_mention_event(test_agent: Agent, test_client: TestClient, sla
     # Use current timestamp for the request
     current_timestamp = str(int(time.time()))
     ts_value = f"{current_timestamp}.654321"
-    
+
     mock_output = RunOutput(
         run_id="test-run-456",
         session_id=ts_value,
@@ -130,7 +130,7 @@ def test_slack_app_mention_event(test_agent: Agent, test_client: TestClient, sla
                 # Mock SlackTools to avoid requiring SLACK_TOKEN
                 mock_slack_instance = MagicMock()
                 mock_slack_tools.return_value = mock_slack_instance
-                
+
                 with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
                     mock_arun.return_value = mock_output
 
@@ -184,7 +184,7 @@ def test_slack_message_event_with_thread(test_agent: Agent, test_client: TestCli
     current_timestamp = str(int(time.time()))
     thread_ts = f"{current_timestamp}.111111"
     ts_value = f"{current_timestamp}.222222"
-    
+
     mock_output = RunOutput(
         run_id="test-run-789",
         session_id=thread_ts,
@@ -199,7 +199,7 @@ def test_slack_message_event_with_thread(test_agent: Agent, test_client: TestCli
                 # Mock SlackTools to avoid requiring SLACK_TOKEN
                 mock_slack_instance = MagicMock()
                 mock_slack_tools.return_value = mock_slack_instance
-                
+
                 with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
                     mock_arun.return_value = mock_output
 
@@ -249,7 +249,7 @@ def test_slack_bot_event_ignored(test_client: TestClient, slack_signing_secret: 
     # Use current timestamp for the request
     current_timestamp = str(int(time.time()))
     ts_value = f"{current_timestamp}.333333"
-    
+
     with patch("agno.os.interfaces.slack.security.SLACK_SIGNING_SECRET", slack_signing_secret):
         with patch("agno.os.interfaces.slack.security.time.time", return_value=int(current_timestamp)):
             event_data = {
@@ -294,7 +294,7 @@ def test_slack_app_mention_with_event_ts_fallback(
     # Use current timestamp for the request
     current_timestamp = str(int(time.time()))
     event_ts_value = f"{current_timestamp}.999999"
-    
+
     mock_output = RunOutput(
         run_id="test-run-999",
         session_id=event_ts_value,
@@ -309,7 +309,7 @@ def test_slack_app_mention_with_event_ts_fallback(
                 # Mock SlackTools to avoid requiring SLACK_TOKEN
                 mock_slack_instance = MagicMock()
                 mock_slack_tools.return_value = mock_slack_instance
-                
+
                 with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
                     mock_arun.return_value = mock_output
 
