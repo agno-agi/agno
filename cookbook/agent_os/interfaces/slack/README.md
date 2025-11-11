@@ -60,11 +60,6 @@ You can find these values in your Slack App settings:
    ngrok http --url=your-url.ngrok-free.app http://localhost:8000
    ```
    3. Run your app locally with `python <my-app>.py`
-   4. Subscribe to the following events:
-      - `app_mention`
-      - `message.im`
-      - `message.channels`
-      - `message.groups`
 
 
 ### 6. Configure Event Subscriptions
@@ -74,7 +69,19 @@ You can find these values in your Slack App settings:
 3. Add your ngrok URL + "/slack/events" to the Request URL (or with a custom prefix)
    - Example: `https://your-ngrok-url.ngrok.io/slack/events` (or with a custom prefix: `https://your-ngrok-url.ngrok.io/custom-prefix/events`)
 4. Make sure your app is running with ngrok, then verify the request URL
-5. Reinstall the app to your workspace to apply the changes
+5. Subscribe to events based on your use case:
+   
+   **Option 1: Only respond to mentions (recommended for most bots)**
+   - Subscribe to: `app_mention`
+   - The bot will only respond when explicitly mentioned with `@YourAppName`
+   - This prevents the bot from responding to all messages in channels
+   
+   **Option 2: Respond to all messages (use with caution)**
+   - Subscribe to: `app_mention`, `message.im`, `message.channels`, `message.groups`
+   - The bot will respond to all messages in channels where it's a member
+   - Note: If you subscribe to `message.channels`, the bot will respond to all channel messages, not just mentions
+   
+6. Reinstall the app to your workspace to apply the changes
 
 ### 7. Enable Direct Messages
 
@@ -91,7 +98,9 @@ To allow users to send messages to the bot:
 1. Start your application locally with `python <my-app>.py` (ensure ngrok is running)
 2. Invite the bot to a channel using `/invite @YourAppName`
 3. Try mentioning the bot in the channel: `@YourAppName hello`
-4. Test direct messages by opening a DM with the bot.
+   - If you've subscribed only to `app_mention`, the bot will respond only when mentioned
+   - If you've subscribed to `message.channels`, the bot will respond to all messages in the channel
+4. Test direct messages by opening a DM with the bot (requires `message.im` subscription)
 
 ## Troubleshooting
 
@@ -99,6 +108,8 @@ To allow users to send messages to the bot:
 - Check that all required environment variables are set
 - Ensure the bot has been invited to the channels where you're testing
 - Verify that the correct events are subscribed in Event Subscriptions
+- **Bot not responding to mentions**: Ensure `app_mention` is subscribed in Event Subscriptions
+- **Bot responding to all messages**: If you only want mentions, subscribe only to `app_mention` and remove `message.channels`, `message.groups`, and `message.im` subscriptions
 
 ## Support
 

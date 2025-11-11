@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -53,7 +54,8 @@ def attach_routes(
         if not verify_slack_signature(body, timestamp, slack_signature):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
-        data = await request.json()
+        # Parse JSON from body bytes since we already read the body
+        data = json.loads(body.decode("utf-8"))
 
         # Handle URL verification
         if data.get("type") == "url_verification":
@@ -71,15 +73,55 @@ def attach_routes(
         return SlackEventResponse(status="ok")
 
     async def _process_slack_event(event: dict):
-        if event.get("type") == "message":
-            user = None
+        event_type = event.get("type")
+
+        if event_type == "app_mention":
+            # Process app_mention events - these are triggered when the bot is mentioned
             message_text = event.get("text", "")
             channel_id = event.get("channel", "")
             user = event.get("user")
-            if event.get("thread_ts"):
-                ts = event.get("thread_ts", "")
-            else:
-                ts = event.get("ts", "")
+            # Use thread_ts if present (reply in thread), otherwise use ts (start new thread)
+            ts = event.get("thread_ts") or event.get("ts") or event.get("event_ts", "")
+
+            # Use the timestamp as the session id, so that each thread is a separate session
+            session_id = ts
+
+            if agent:
+                response = await agent.arun(message_text, user_id=user if user else None, session_id=session_id)
+            elif team:
+                response = await team.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+            elif workflow:
+                response = await workflow.arun(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+
+            if response:
+                if hasattr(response, "reasoning_content") and response.reasoning_content:
+                    _send_slack_message(
+                        channel=channel_id,
+                        message=f"Reasoning: \n{response.reasoning_content}",
+                        thread_ts=ts,
+                        italics=True,
+                    )
+
+                _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
+
+        elif event_type == "message":
+            channel_id = event.get("channel", "")
+
+            print(f"channel_id: {channel_id}")
+            # Only process direct messages (DMs) - channel IDs starting with 'D' indicate DMs
+            # Skip all channel/group messages - those should only be processed via app_mention events
+            # This ensures the bot only responds to mentions in channels, not all messages
+            if not channel_id.startswith("D"):
+                # This is a channel or group message, not a DM
+                # Skip it - channel mentions are handled by app_mention events
+                print(f"Skipping channel or group message: {channel_id}")
+                return
+
+            # Process direct message events (DMs don't generate app_mention events)
+            message_text = event.get("text", "")
+            user = event.get("user")
+            # Use thread_ts if present (reply in thread), otherwise use ts (start new thread)
+            ts = event.get("thread_ts") or event.get("ts") or event.get("event_ts", "")
 
             # Use the timestamp as the session id, so that each thread is a separate session
             session_id = ts
