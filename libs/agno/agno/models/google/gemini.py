@@ -245,10 +245,10 @@ class Gemini(Model):
 
         if self.file_search_store_names:
             log_info("File Search enabled.")
-            file_search_config = {"file_search_store_names": self.file_search_store_names}
+            file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
             if self.file_search_metadata_filter:
                 file_search_config["metadata_filter"] = self.file_search_metadata_filter
-            builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))
+            builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
 
         # Set tools in config
         if builtin_tools:
