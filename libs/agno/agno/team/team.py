@@ -7007,6 +7007,7 @@ class Team:
                         member_agent_run_output_event, RunOutput
                     ):
                         member_agent_run_response = member_agent_run_output_event  # type: ignore
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_output_event)
@@ -7136,6 +7137,7 @@ class Team:
                         member_agent_run_response_event, RunOutput
                     ):
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
 
                     # Check if the run is cancelled
@@ -7363,12 +7365,13 @@ class Team:
                     member_agent_run_response = None
                     try:
                         async for member_agent_run_output_event in member_stream:
-                            # Do NOT break out of the loop, Iterator need to exit properly
+                            # Do NOT break out of the loop, AsyncIterator need to exit properly
                             if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
                                 member_agent_run_output_event, RunOutput
                             ):
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                
+                                continue # Don't yield TeamRunOutput or RunOutput, only yield events
+
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id or run_response.run_id
