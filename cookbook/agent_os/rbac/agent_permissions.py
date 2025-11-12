@@ -64,12 +64,11 @@ app.add_middleware(
     scope_mappings={
       # Define the scopes for the agents
       # Other scopes will remain the same
-      "POST agents/web-search-agent/runs": ["agents:web-search-agent"],
-      "POST agents/agno-agent/runs": ["agents:agno-agent"],
-      "POST agents/*/runs": []
+      "POST /agents/web-search-agent/runs": ["agents:web-search-agent"],
+      "POST /agents/agno-agent/runs": ["agents:agno-agent"],
+      "POST /agents/*/runs": []
     },
     admin_scope="admin",  # Admin can bypass all checks
-    enable_wildcard_scopes=True,  # Support wildcards like "app:*"
 )
 
 if __name__ == "__main__":
