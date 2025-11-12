@@ -12,7 +12,6 @@ You can read more in Anthropic docs: https://docs.claude.com/en/docs/build-with-
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -20,7 +19,7 @@ agent = Agent(
     model=Claude(
         id="claude-sonnet-4-5",
         # Activate and configure the context management feature
-        default_headers={"anthropic-beta": "context-management-2025-06-27"},
+        betas=["context-management-2025-06-27"],
         context_management={
             "edits": [
                 {
@@ -33,7 +32,6 @@ agent = Agent(
     ),
     instructions="You are a helpful assistant with access to the web.",
     tools=[DuckDuckGoTools()],
-    db=SqliteDb(db_file="tmp/context_management.db"),
     session_id="context-editing",
     add_history_to_context=True,
     markdown=True,
