@@ -6278,7 +6278,7 @@ class Agent:
 
         gen_session_name_prompt = "Conversation\n"
 
-        messages_for_generating_session_name = session.get_messages_for_session()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -6512,6 +6512,24 @@ class Agent:
             skip_statuses=skip_statuses,
             skip_history_messages=skip_history_messages,
         )
+
+    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return self.get_session_messages(session_id=session_id, skip_roles=["system", "tool"])
+
+    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return await self.aget_session_messages(session_id=session_id, skip_roles=["system", "tool"])
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for the given session ID and user ID
@@ -7630,10 +7648,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7843,10 +7861,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -9410,7 +9428,7 @@ class Agent:
             import json
 
             history: List[Dict[str, Any]] = []
-            all_chats = session.get_messages_for_session()
+            all_chats = session.get_messages()
 
             if len(all_chats) == 0:
                 return ""

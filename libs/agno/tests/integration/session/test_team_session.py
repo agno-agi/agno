@@ -1144,7 +1144,7 @@ def test_get_messages_for_session_basic(shared_db):
     team_session = create_session_with_runs(shared_db, session_id, runs)
 
     # Get messages for session
-    messages = team_session.get_messages_for_session()
+    messages = team_session.get_messages()
 
     # Should get 4 messages (2 user + 2 assistant), no system
     assert len(messages) == 4
@@ -1177,7 +1177,7 @@ def test_get_messages_for_session_custom_roles(shared_db):
     team_session = create_session_with_runs(shared_db, session_id, runs)
 
     # Get messages with custom assistant role
-    messages = team_session.get_messages_for_session(assistant_role=["model"])
+    messages = team_session.get_messages(assistant_role=["model"])
 
     assert len(messages) == 2
     assert messages[0].role == "user"
@@ -1212,7 +1212,7 @@ def test_get_messages_for_session_skip_history(shared_db):
     team_session = create_session_with_runs(shared_db, session_id, runs)
 
     # Get messages, skipping history
-    messages = team_session.get_messages_for_session(skip_history_messages=True)
+    messages = team_session.get_messages(skip_history_messages=True)
 
     # Should only get new messages
     assert len(messages) == 2
@@ -1257,7 +1257,7 @@ def test_get_messages_for_session_incomplete_pairs(shared_db):
     team_session = create_session_with_runs(shared_db, session_id, runs)
 
     # Get messages - only complete pairs
-    messages = team_session.get_messages_for_session()
+    messages = team_session.get_messages()
 
     # Should only get the complete pair from run3
     assert len(messages) == 2
