@@ -38,6 +38,15 @@ def mock_agent():
 
 
 @pytest.fixture
+def mock_team(mock_agent):
+    """Create a mock agent for testing"""
+    return Team(
+        name="Test Team",
+        members=[mock_agent],
+    )
+
+
+@pytest.fixture
 def agent_with_db(tmp_path):
     """Create a simple Agent with a db for testing"""
     db = JsonDb(session_table="workflow_session", db_path=str(tmp_path / "workflow_bg_test"))

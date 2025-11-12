@@ -847,7 +847,9 @@ class Workflow:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
-        session = self.get_session(session_id=session_id)
+        session = self.get_session(
+            session_id=session_id,
+        )
         if session is None:
             raise Exception("Session not found")
 

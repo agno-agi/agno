@@ -219,14 +219,17 @@ class AgentSession:
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
-    def get_chat_history(self) -> List[Message]:
+    def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:
         """Return the chat history (user and assistant messages) for the session.
         Use get_messages() for more filtering options.
+
+        Args:
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
 
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(skip_roles=["system", "tool"])
+        return self.get_messages(skip_roles=["system", "tool"], last_n_runs=last_n_runs)
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""

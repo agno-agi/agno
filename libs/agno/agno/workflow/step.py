@@ -1,7 +1,7 @@
 import inspect
 from copy import copy
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -1154,14 +1154,23 @@ class Step:
             if not session:
                 log_warning("Session not found")
                 return []
-            return session.get_chat_history(last_n_runs=last_n_runs)  # type: ignore
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            session = cast(WorkflowSession, session)
+            return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
 
         if self.team:
             session = self.team.get_session(session_id=session_id)
             if not session:
                 log_warning("Session not found")
                 return []
-            return session.get_chat_history(last_n_runs=last_n_runs)  # type: ignore
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            return session.get_messages(last_n_runs=last_n_runs, team_id=self.team.id)
 
         return []
 
@@ -1182,14 +1191,23 @@ class Step:
             if not session:
                 log_warning("Session not found")
                 return []
-            return session.get_chat_history(last_n_runs=last_n_runs)  # type: ignore
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            session = cast(WorkflowSession, session)
+            return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
 
         if self.team:
             session = await self.team.aget_session(session_id=session_id)
             if not session:
                 log_warning("Session not found")
                 return []
-            return session.get_chat_history(last_n_runs=last_n_runs)  # type: ignore
+
+            if not isinstance(session, WorkflowSession):
+                raise ValueError("The provided session is not a WorkflowSession")
+
+            return session.get_messages(last_n_runs=last_n_runs, team_id=self.team.id)
 
         return []
 
