@@ -66,6 +66,10 @@ class JsonDb(BaseDb):
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
 
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
+
     def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
 

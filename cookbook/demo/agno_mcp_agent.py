@@ -3,7 +3,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.mcp import MCPTools
-from db import db
+from db import demo_db
 
 # ============================================================================
 # Description & Instructions
@@ -68,5 +68,5 @@ agno_mcp_agent = Agent(
     enable_agentic_memory=True,
     num_history_runs=5,
     markdown=True,
-    db=db,
+    db=demo_db,
 )

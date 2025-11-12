@@ -43,6 +43,7 @@ class MCPTools(Toolkit):
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
+        tool_name_prefix: Optional[str] = "",
         **kwargs,
     ):
         """
@@ -71,6 +72,7 @@ class MCPTools(Toolkit):
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
         self.refresh_connection = refresh_connection
+        self.tool_name_prefix = tool_name_prefix
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -279,6 +281,11 @@ class MCPTools(Toolkit):
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)
 
+            # Get tool name prefix if available
+            tool_name_prefix = ""
+            if self.tool_name_prefix is not None:
+                tool_name_prefix = self.tool_name_prefix + "_"
+
             # Register the tools with the toolkit
             for tool in filtered_tools:
                 try:
@@ -286,7 +293,7 @@ class MCPTools(Toolkit):
                     entrypoint = get_entrypoint_for_tool(tool, self.session)  # type: ignore
                     # Create a Function for the tool
                     f = Function(
-                        name=tool.name,
+                        name=tool_name_prefix + tool.name,
                         description=tool.description,
                         parameters=tool.inputSchema,
                         entrypoint=entrypoint,
