@@ -145,7 +145,7 @@ class GmailTools(Toolkit):
             self.list_custom_labels,
             self.apply_label,
             self.remove_label,
-            self.delete_label,
+            self.delete_custom_label,
         ]
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
@@ -739,7 +739,7 @@ class GmailTools(Toolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def delete_label(self, label_name: str, confirm: bool = False) -> str:
+    def delete_custom_label(self, label_name: str, confirm: bool = False) -> str:
         """
         Delete a custom label (with safety confirmation).
 
