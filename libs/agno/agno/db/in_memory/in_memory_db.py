@@ -34,6 +34,10 @@ class InMemoryDb(BaseDb):
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
 
+    def table_exists(self, table_name: str) -> bool:
+        """In-memory implementation, always returns True."""
+        return True
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:

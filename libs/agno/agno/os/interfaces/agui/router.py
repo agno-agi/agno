@@ -19,6 +19,7 @@ from agno.agent.agent import Agent
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
     convert_agui_messages_to_agno_messages,
+    validate_agui_state,
 )
 from agno.team.team import Team
 
@@ -39,6 +40,9 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
             user_id = run_input.forwarded_props.get("user_id")
 
+        # Validating the session state is of the expected type (dict)
+        session_state = validate_agui_state(run_input.state, run_input.thread_id)
+
         # Request streaming response from agent
         response_stream = agent.arun(
             input=messages,
@@ -46,6 +50,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
             stream=True,
             stream_events=True,
             user_id=user_id,
+            session_state=session_state,
         )
 
         # Stream the response content in AG-UI format
@@ -75,6 +80,9 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         if input.forwarded_props and isinstance(input.forwarded_props, dict):
             user_id = input.forwarded_props.get("user_id")
 
+        # Validating the session state is of the expected type (dict)
+        session_state = validate_agui_state(input.state, input.thread_id)
+
         # Request streaming response from team
         response_stream = team.arun(
             input=messages,
@@ -82,6 +90,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
             stream=True,
             stream_steps=True,
             user_id=user_id,
+            session_state=session_state,
         )
 
         # Stream the response content in AG-UI format

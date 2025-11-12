@@ -100,6 +100,10 @@ class RedisDb(BaseDb):
 
     # -- DB methods --
 
+    def table_exists(self, table_name: str) -> bool:
+        """Redis implementation, always returns True."""
+        return True
+
     def _get_table_name(self, table_type: str) -> str:
         """Get the active table name for the given table type."""
         if table_type == "sessions":

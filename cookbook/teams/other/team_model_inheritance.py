@@ -1,5 +1,5 @@
 """
-This example demonstrates how agents automatically inherit the model from their Team when not explicitly set.
+This example demonstrates how agents automatically inherit models from their Team.
 
 This is particularly useful when:
 - Using non-OpenAI models (Claude, Ollama, VLLM, etc.) to avoid manual model configuration on every agent
@@ -7,14 +7,12 @@ This is particularly useful when:
 - Simplifying code by setting the model once on the team instead of on each agent
 
 Key behaviors:
-1. Agents without explicit models inherit from their team
-2. Agents with explicit models keep their own configuration
-3. Nested teams and their members inherit from their immediate parent team
-4. All model types are inherited: model, reasoning_model, parser_model, output_model
+1. Primary model is always inherited by agents without explicit models
+2. Members with explicit models keep their own configuration
+3. Nested team members inherit from their immediate parent team
 """
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -47,7 +45,7 @@ analyst = Agent(
 
 sub_team = Team(
     name="Analysis Team",
-    model=Claude(id="claude-3-5-haiku-20241022"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[analyst],
 )
 
@@ -55,7 +53,7 @@ sub_team = Team(
 # Main team with all members
 team = Team(
     name="Content Production Team",
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=OpenAIChat(id="gpt-4o"),
     members=[researcher, writer, editor, sub_team],
     instructions=[
         "Research the topic thoroughly",
@@ -68,14 +66,12 @@ team = Team(
 if __name__ == "__main__":
     team.initialize_team()
 
-    # researcher and writer inherit Claude Sonnet from team
-    print(f"Researcher: {researcher.model.id}")
-    print(f"Writer: {writer.model.id}")
-
+    # researcher and writer inherit gpt-4o from team
+    print(f"Researcher model: {researcher.model.id}")
+    print(f"Writer model: {writer.model.id}")
     # editor keeps its explicit model
-    print(f"Editor: {editor.model.id}")
-
-    # analyst inherits Claude Haiku from its sub-team
-    print(f"Analyst: {analyst.model.id}")
+    print(f"Editor model: {editor.model.id}")
+    # analyst inherits gpt-4o-mini from its sub-team
+    print(f"Analyst model: {analyst.model.id}")
 
     team.print_response("Write a brief article about AI", stream=True)

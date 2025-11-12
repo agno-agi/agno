@@ -1,7 +1,8 @@
+# ============================================================================
+# Configure database for storing sessions, memories, metrics, evals and knowledge
+# ============================================================================
 from agno.db.postgres import PostgresDb
 
-# ============================================================================
-# Configure database for storing session, memory and knowledge
-# ============================================================================
+# Used for Knowledge VectorDB
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url, session_table="agent_sessions")
+demo_db = PostgresDb(id="agno-demo-db", db_url=db_url)

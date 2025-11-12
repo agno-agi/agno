@@ -292,7 +292,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
@@ -313,7 +313,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
 
     model_metrics = []
     for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
+        model_id, model_provider = model.rsplit(":", 1)
         model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
     metrics["users_count"] = len(all_user_ids)

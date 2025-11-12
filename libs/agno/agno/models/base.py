@@ -31,7 +31,8 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutputEvent
+from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
@@ -51,6 +52,8 @@ class MessageData:
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
+
+    response_metrics: Optional[Metrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -307,7 +310,7 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
@@ -481,6 +484,7 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> ModelResponse:
         """
@@ -516,6 +520,7 @@ class Model(ABC):
                 response_format=response_format,
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
             )
 
             # Add assistant message to messages
@@ -643,7 +648,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -687,6 +692,8 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
+        if provider_response.provider_data is not None:
+            model_response.provider_data = provider_response.provider_data
 
     async def _aprocess_model_response(
         self,
@@ -696,7 +703,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -740,6 +747,8 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
+        if provider_response.provider_data is not None:
+            model_response.provider_data = provider_response.provider_data
 
     def _populate_assistant_message(
         self,
@@ -756,7 +765,6 @@ class Model(ABC):
         Returns:
             Message: The populated assistant message
         """
-        # Add role to assistant message
         if provider_response.role is not None:
             assistant_message.role = provider_response.role
 
@@ -820,7 +828,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -834,14 +842,14 @@ class Model(ABC):
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
         ):
-            yield from self._populate_stream_data_and_assistant_message(
+            for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
-                assistant_message=assistant_message,
                 model_response_delta=response_delta,
-            )
+            ):
+                yield model_response_delta
 
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
+        # Populate assistant message from stream data after the stream ends
+        self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
     def response_stream(
         self,
@@ -851,7 +859,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -904,22 +912,6 @@ class Model(ABC):
                     if self.cache_response and isinstance(response, ModelResponse):
                         streaming_responses.append(response)
                     yield response
-
-                # Populate assistant message from stream data
-                if stream_data.response_content:
-                    assistant_message.content = stream_data.response_content
-                if stream_data.response_reasoning_content:
-                    assistant_message.reasoning_content = stream_data.response_reasoning_content
-                if stream_data.response_redacted_reasoning_content:
-                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
-                if stream_data.response_provider_data:
-                    assistant_message.provider_data = stream_data.response_provider_data
-                if stream_data.response_citations:
-                    assistant_message.citations = stream_data.response_citations
-                if stream_data.response_audio:
-                    assistant_message.audio_output = stream_data.response_audio
-                if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                    assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
                 self._process_model_response(
@@ -1019,7 +1011,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -1032,15 +1024,14 @@ class Model(ABC):
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
         ):  # type: ignore
-            for model_response in self._populate_stream_data_and_assistant_message(
+            for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
-                assistant_message=assistant_message,
                 model_response_delta=response_delta,
             ):
-                yield model_response
+                yield model_response_delta
 
-        # Populate the assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
+        # Populate assistant message from stream data after the stream ends
+        self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
     async def aresponse_stream(
         self,
@@ -1050,7 +1041,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1103,20 +1094,6 @@ class Model(ABC):
                     if self.cache_response and isinstance(model_response, ModelResponse):
                         streaming_responses.append(model_response)
                     yield model_response
-
-                # Populate assistant message from stream data
-                if stream_data.response_content:
-                    assistant_message.content = stream_data.response_content
-                if stream_data.response_reasoning_content:
-                    assistant_message.reasoning_content = stream_data.response_reasoning_content
-                if stream_data.response_redacted_reasoning_content:
-                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
-                if stream_data.response_provider_data:
-                    assistant_message.provider_data = stream_data.response_provider_data
-                if stream_data.response_audio:
-                    assistant_message.audio_output = stream_data.response_audio
-                if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                    assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
             else:
                 await self._aprocess_model_response(
@@ -1209,15 +1186,51 @@ class Model(ABC):
         if self.cache_response and cache_key and streaming_responses:
             self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
-    def _populate_stream_data_and_assistant_message(
-        self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
+    def _populate_assistant_message_from_stream_data(
+        self, assistant_message: Message, stream_data: MessageData
+    ) -> None:
+        """
+        Populate an assistant message with the stream data.
+        """
+        if stream_data.response_role is not None:
+            assistant_message.role = stream_data.response_role
+        if stream_data.response_metrics is not None:
+            assistant_message.metrics = stream_data.response_metrics
+        if stream_data.response_content:
+            assistant_message.content = stream_data.response_content
+        if stream_data.response_reasoning_content:
+            assistant_message.reasoning_content = stream_data.response_reasoning_content
+        if stream_data.response_redacted_reasoning_content:
+            assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
+        if stream_data.response_provider_data:
+            assistant_message.provider_data = stream_data.response_provider_data
+        if stream_data.response_citations:
+            assistant_message.citations = stream_data.response_citations
+        if stream_data.response_audio:
+            assistant_message.audio_output = stream_data.response_audio
+        if stream_data.response_image:
+            assistant_message.image_output = stream_data.response_image
+        if stream_data.response_video:
+            assistant_message.video_output = stream_data.response_video
+        if stream_data.response_file:
+            assistant_message.file_output = stream_data.response_file
+        if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
+            assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+
+    def _populate_stream_data(
+        self, stream_data: MessageData, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
-        # Add role to assistant message
-        if model_response_delta.role is not None:
-            assistant_message.role = model_response_delta.role
 
         should_yield = False
+        if model_response_delta.role is not None:
+            stream_data.response_role = model_response_delta.role  # type: ignore
+
+        if model_response_delta.response_usage is not None:
+            if stream_data.response_metrics is None:
+                stream_data.response_metrics = Metrics()
+            stream_data.response_metrics += model_response_delta.response_usage
+
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
@@ -1440,11 +1453,13 @@ class Model(ABC):
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_execution_result.result:
-                # This function yields agent/team run events
-                if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                    item, tuple(get_args(TeamRunOutputEvent))
+                # This function yields agent/team/workflow run events
+                if (
+                    isinstance(item, tuple(get_args(RunOutputEvent)))
+                    or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
+                    or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
                 ):
-                    # We only capture content events
+                    # We only capture content events for output accumulation
                     if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                         if item.content is not None and isinstance(item.content, BaseModel):
                             function_call_output += item.content.model_dump_json()
@@ -1457,6 +1472,16 @@ class Model(ABC):
 
                     if isinstance(item, CustomEvent):
                         function_call_output += str(item)
+
+                    # For WorkflowCompletedEvent, extract content for final output
+                    from agno.run.workflow import WorkflowCompletedEvent
+
+                    if isinstance(item, WorkflowCompletedEvent):
+                        if item.content is not None:
+                            if isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                function_call_output += str(item.content)
 
                     # Yield the event itself to bubble it up
                     yield item
@@ -1829,9 +1854,12 @@ class Model(ABC):
 
             try:
                 async for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
@@ -1847,6 +1875,16 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+
+                            # For WorkflowCompletedEvent, extract content for final output
+                            from agno.run.workflow import WorkflowCompletedEvent
+
+                            if isinstance(item, WorkflowCompletedEvent):
+                                if item.content is not None:
+                                    if isinstance(item.content, BaseModel):
+                                        function_call_output += item.content.model_dump_json()
+                                    else:
+                                        function_call_output += str(item.content)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
@@ -1938,9 +1976,12 @@ class Model(ABC):
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
                 for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
@@ -2115,9 +2156,13 @@ class Model(ABC):
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model
 
-        # Deep copy all attributes
+        # Deep copy all attributes except client objects
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
+                continue
+            # Skip client objects
+            if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
+                setattr(new_model, k, None)
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))

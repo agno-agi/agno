@@ -72,5 +72,21 @@ if __name__ == "__main__":
         print("WORKFLOW METRICS")
         print("-" * 60)
         print(json.dumps(workflow_run_response.metrics.to_dict(), indent=2))
+
+        # Access individual metrics
+        print("\nWORKFLOW DURATION")
+        if workflow_run_response.metrics.duration:
+            print(
+                f"Total execution time: {workflow_run_response.metrics.duration:.2f} seconds"
+            )
+
+        # Access step-level metrics
+        print("\nSTEP-LEVEL METRICS")
+        for step_name, step_metrics in workflow_run_response.metrics.steps.items():
+            print(f"\nStep: {step_name}")
+            if step_metrics.metrics and step_metrics.metrics.duration:
+                print(f"  Duration: {step_metrics.metrics.duration:.2f} seconds")
+            if step_metrics.metrics and step_metrics.metrics.total_tokens:
+                print(f"  Tokens: {step_metrics.metrics.total_tokens}")
     else:
         print("\nNo workflow metrics available")

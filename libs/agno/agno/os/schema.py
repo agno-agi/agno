@@ -13,14 +13,18 @@ from agno.os.utils import (
     extract_input_media,
     format_team_tools,
     format_tools,
+    get_agent_input_schema_dict,
     get_run_input,
     get_session_name,
+    get_team_input_schema_dict,
     get_workflow_input_schema_dict,
 )
+from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
 
@@ -166,21 +170,22 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the agent")
-    name: Optional[str] = Field(None, description="Name of the agent")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    model: Optional[ModelResponse] = Field(None, description="Model configuration")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
-    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
-    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
-    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
-    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
-    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
-    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
-    extra_messages: Optional[Dict[str, Any]] = Field(None, description="Extra message configurations")
-    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
-    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: Optional[str] = None
+    name: Optional[str] = None
+    db_id: Optional[str] = None
+    model: Optional[ModelResponse] = None
+    tools: Optional[Dict[str, Any]] = None
+    sessions: Optional[Dict[str, Any]] = None
+    knowledge: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    default_tools: Optional[Dict[str, Any]] = None
+    system_message: Optional[Dict[str, Any]] = None
+    extra_messages: Optional[Dict[str, Any]] = None
+    response_settings: Optional[Dict[str, Any]] = None
+    streaming: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
@@ -243,9 +248,12 @@ class AgentResponse(BaseModel):
             "stream_intermediate_steps": False,
         }
 
+        session_id = str(uuid4())
+        run_id = str(uuid4())
         agent_tools = await agent.aget_tools(
-            session=AgentSession(session_id=str(uuid4()), session_data={}),
-            run_response=RunOutput(run_id=str(uuid4())),
+            session=AgentSession(session_id=session_id, session_data={}),
+            run_response=RunOutput(run_id=run_id, session_id=session_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, user_id=agent.user_id),
             check_mcp_tools=False,
         )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
@@ -375,6 +383,7 @@ class AgentResponse(BaseModel):
             "stream_events": agent.stream_events,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
+
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -391,28 +400,28 @@ class AgentResponse(BaseModel):
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             metadata=agent.metadata,
+            input_schema=get_agent_input_schema_dict(agent),
         )
 
 
 class TeamResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the team")
-    name: Optional[str] = Field(None, description="Name of the team")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    description: Optional[str] = Field(None, description="Description of the team")
-    model: Optional[ModelResponse] = Field(None, description="Model configuration")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
-    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
-    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
-    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
-    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
-    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
-    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
-    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
-    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(
-        None, description="List of team members (agents or teams)"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: Optional[str] = None
+    name: Optional[str] = None
+    db_id: Optional[str] = None
+    description: Optional[str] = None
+    model: Optional[ModelResponse] = None
+    tools: Optional[Dict[str, Any]] = None
+    sessions: Optional[Dict[str, Any]] = None
+    knowledge: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    default_tools: Optional[Dict[str, Any]] = None
+    system_message: Optional[Dict[str, Any]] = None
+    response_settings: Optional[Dict[str, Any]] = None
+    streaming: Optional[Dict[str, Any]] = None
+    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
     @classmethod
     async def from_team(cls, team: Team) -> "TeamResponse":
@@ -466,12 +475,14 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
+        run_id = str(uuid4())
+        session_id = str(uuid4())
         _tools = team._determine_tools_for_model(
             model=team.model,  # type: ignore
-            session=TeamSession(session_id=str(uuid4()), session_data={}),
-            run_response=TeamRunOutput(run_id=str(uuid4())),
+            session=TeamSession(session_id=session_id, session_data={}),
+            run_response=TeamRunOutput(run_id=run_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, session_state={}),
             async_mode=True,
-            session_state={},
             team_run_context={},
             check_mcp_tools=False,
         )
@@ -621,6 +632,7 @@ class TeamResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=members if members else None,
             metadata=team.metadata,
+            input_schema=get_team_input_schema_dict(team),
         )
 
 
@@ -634,6 +646,7 @@ class WorkflowResponse(BaseModel):
     agent: Optional[AgentResponse] = Field(None, description="Agent configuration if used")
     team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
 
     @classmethod
     async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -685,6 +698,7 @@ class WorkflowResponse(BaseModel):
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
             metadata=workflow.metadata,
+            workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
         )
 
 
@@ -870,6 +884,7 @@ class RunSchema(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
@@ -897,6 +912,7 @@ class RunSchema(BaseModel):
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
@@ -925,6 +941,7 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
@@ -954,6 +971,7 @@ class TeamRunSchema(BaseModel):
             else None,
             references=run_dict.get("references", []),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),

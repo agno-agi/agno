@@ -3,6 +3,7 @@ from typing import List
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
@@ -10,45 +11,52 @@ from agno.workflow.workflow import Workflow
 
 
 # Define tools to manage a task list in workflow session state
-def add_task(session_state, task: str, priority: str = "medium") -> str:
+def add_task(run_context: RunContext, task: str, priority: str = "medium") -> str:
     """Add a task to the task list in workflow session state.
 
     Args:
         task (str): The task to add to the list
         priority (str): Priority level (low, medium, high)
     """
-    if "task_list" not in session_state:
-        session_state["task_list"] = []
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if "task_list" not in run_context.session_state:
+        run_context.session_state["task_list"] = []
 
     # Check if task already exists (case-insensitive)
     existing_tasks = [
-        existing_task["name"].lower() for existing_task in session_state["task_list"]
+        existing_task["name"].lower()
+        for existing_task in run_context.session_state["task_list"]
     ]
     if task.lower() not in existing_tasks:
         task_item = {
             "name": task,
             "priority": priority,
             "status": "pending",
-            "id": len(session_state["task_list"]) + 1,
+            "id": len(run_context.session_state["task_list"]) + 1,
         }
-        session_state["task_list"].append(task_item)
+        run_context.session_state["task_list"].append(task_item)
         return f"Added task '{task}' with {priority} priority to the task list."
     else:
         return f"Task '{task}' already exists in the task list."
 
 
-def complete_task(session_state, task_name: str) -> str:
+def complete_task(run_context: RunContext, task_name: str) -> str:
     """Mark a task as completed in workflow session state.
 
     Args:
         task_name (str): The name of the task to mark as completed
     """
-    if "task_list" not in session_state:
-        session_state["task_list"] = []
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if "task_list" not in run_context.session_state:
+        run_context.session_state["task_list"] = []
         return f"Task list is empty. Cannot complete '{task_name}'."
 
     # Find and complete task (case-insensitive)
-    for task in session_state["task_list"]:
+    for task in run_context.session_state["task_list"]:
         if task["name"].lower() == task_name.lower():
             task["status"] = "completed"
             return f"Marked task '{task['name']}' as completed."
@@ -56,15 +64,18 @@ def complete_task(session_state, task_name: str) -> str:
     return f"Task '{task_name}' not found in the task list."
 
 
-def set_task_priority(session_state, task_name: str, priority: str) -> str:
+def set_task_priority(run_context: RunContext, task_name: str, priority: str) -> str:
     """Update the priority of a task in workflow session state.
 
     Args:
         task_name (str): The name of the task to update
         priority (str): New priority level (low, medium, high)
     """
-    if "task_list" not in session_state:
-        session_state["task_list"] = []
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if "task_list" not in run_context.session_state:
+        run_context.session_state["task_list"] = []
         return f"Task list is empty. Cannot update priority for '{task_name}'."
 
     valid_priorities = ["low", "medium", "high"]
@@ -72,7 +83,7 @@ def set_task_priority(session_state, task_name: str, priority: str) -> str:
         return f"Invalid priority '{priority}'. Must be one of: {', '.join(valid_priorities)}"
 
     # Find and update task priority (case-insensitive)
-    for task in session_state["task_list"]:
+    for task in run_context.session_state["task_list"]:
         if task["name"].lower() == task_name.lower():
             old_priority = task["priority"]
             task["priority"] = priority.lower()
@@ -81,16 +92,22 @@ def set_task_priority(session_state, task_name: str, priority: str) -> str:
     return f"Task '{task_name}' not found in the task list."
 
 
-def list_tasks(session_state, status_filter: str = "all") -> str:
+def list_tasks(run_context: RunContext, status_filter: str = "all") -> str:
     """List tasks from workflow session state with optional status filtering.
 
     Args:
         status_filter (str): Filter by status - 'all', 'pending', 'completed'
     """
-    if "task_list" not in session_state or not session_state["task_list"]:
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if (
+        "task_list" not in run_context.session_state
+        or not run_context.session_state["task_list"]
+    ):
         return "Task list is empty."
 
-    tasks = session_state["task_list"]
+    tasks = run_context.session_state["task_list"]
 
     if status_filter != "all":
         tasks = [task for task in tasks if task["status"] == status_filter]
@@ -110,17 +127,22 @@ def list_tasks(session_state, status_filter: str = "all") -> str:
     return f"Task list ({status_filter}):\n{tasks_str}"
 
 
-def clear_completed_tasks(session_state) -> str:
+def clear_completed_tasks(run_context: RunContext) -> str:
     """Remove all completed tasks from the task list."""
-    if "task_list" not in session_state:
-        session_state["task_list"] = []
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    if "task_list" not in run_context.session_state:
+        run_context.session_state["task_list"] = []
         return "Task list is empty."
 
-    original_count = len(session_state["task_list"])
-    session_state["task_list"] = [
-        task for task in session_state["task_list"] if task["status"] != "completed"
+    original_count = len(run_context.session_state["task_list"])
+    run_context.session_state["task_list"] = [
+        task
+        for task in run_context.session_state["task_list"]
+        if task["status"] != "completed"
     ]
-    completed_count = original_count - len(session_state["task_list"])
+    completed_count = original_count - len(run_context.session_state["task_list"])
 
     return f"Removed {completed_count} completed tasks from the list."
 

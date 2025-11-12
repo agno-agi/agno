@@ -1,12 +1,13 @@
 import json
 from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Union
+from typing import AsyncIterator, List, Union
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.run import RunContext
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -233,16 +234,19 @@ task_recommender_agent = Agent(
 
 
 def set_session_state_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, run_context: RunContext
 ) -> StepOutput:
     """
     Initialize session state for customer research workflow
     """
     customer_query = step_input.input
 
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
     # Initialize comprehensive session state structure
-    if "customer_research" not in session_state:
-        session_state["customer_research"] = {
+    if "customer_research" not in run_context.session_state:
+        run_context.session_state["customer_research"] = {
             "workflow_id": f"research_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             "customer_query": str(customer_query),
             "research_phases": {
@@ -260,7 +264,7 @@ def set_session_state_step(
         }
 
     # Set workflow configuration
-    session_state["workflow_config"] = {
+    run_context.session_state["workflow_config"] = {
         "research_depth": "comprehensive",
         "focus_areas": ["customer_profile", "business_goals", "web_intelligence"],
         "output_format": "detailed_report",
@@ -268,26 +272,28 @@ def set_session_state_step(
     }
 
     # Set research preferences
-    session_state["research_preferences"] = {
+    run_context.session_state["research_preferences"] = {
         "analysis_style": "data_driven",
         "recommendation_type": "actionable_tasks",
         "reporting_level": "executive_summary",
     }
 
-    session_state["customer_research"]["research_metadata"]["total_research_steps"] += 1
+    run_context.session_state["customer_research"]["research_metadata"][
+        "total_research_steps"
+    ] += 1
 
     return StepOutput(
         content=f"""
         ## Customer Research Session Initialized
 
         **Research Query:** {customer_query}
-        **Workflow ID:** {session_state["customer_research"]["workflow_id"]}
-        **Research Phases:** {len(session_state["customer_research"]["research_phases"])} phases planned
+        **Workflow ID:** {run_context.session_state["customer_research"]["workflow_id"]}
+        **Research Phases:** {len(run_context.session_state["customer_research"]["research_phases"])} phases planned
 
         **Session Configuration:**
-        - Research Depth: {session_state["workflow_config"]["research_depth"]}
-        - Focus Areas: {", ".join(session_state["workflow_config"]["focus_areas"])}
-        - Analysis Style: {session_state["research_preferences"]["analysis_style"]}
+        - Research Depth: {run_context.session_state["workflow_config"]["research_depth"]}
+        - Focus Areas: {", ".join(run_context.session_state["workflow_config"]["focus_areas"])}
+        - Analysis Style: {run_context.session_state["research_preferences"]["analysis_style"]}
 
         Session state has been initialized and is ready for comprehensive customer research.
         """.strip()
@@ -295,7 +301,7 @@ def set_session_state_step(
 
 
 async def customer_profile_research_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, session_state: dict
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Conduct customer profile research with session state tracking
@@ -365,7 +371,7 @@ async def customer_profile_research_step(
 
 
 async def customer_biz_goals_research_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, session_state: dict
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Conduct business goals research with session state tracking
@@ -434,7 +440,7 @@ async def customer_biz_goals_research_step(
 
 
 async def web_intelligence_research_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, session_state: dict
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Conduct web intelligence research with session state tracking
@@ -503,7 +509,7 @@ async def web_intelligence_research_step(
 
 
 async def customer_report_consolidation_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, session_state: dict
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Consolidate all research findings into comprehensive customer report
@@ -603,7 +609,7 @@ async def customer_report_consolidation_step(
 
 
 async def task_recommender_step(
-    step_input: StepInput, session_state: Dict[str, Any]
+    step_input: StepInput, session_state: dict
 ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Generate actionable task recommendations based on consolidated research
@@ -753,7 +759,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="test:app", reload=True)
+    agent_os.serve(app="customer_research_workflow_parallel:app", reload=True)
 
 # # Example usage
 # async def main():
