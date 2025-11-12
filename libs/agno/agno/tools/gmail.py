@@ -141,6 +141,11 @@ class GmailTools(Toolkit):
             self.create_draft_email,
             self.send_email,
             self.send_email_reply,
+            # Label management
+            self.list_custom_labels,
+            self.apply_label,
+            self.remove_label,
+            self.delete_custom_label,
         ]
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
@@ -161,6 +166,7 @@ class GmailTools(Toolkit):
             "get_emails_by_date",
             "get_emails_by_thread",
             "search_emails",
+            "list_custom_labels",
         ]
         modify_operations = ["mark_email_as_read", "mark_email_as_unread"]
         if any(read_operation in self.functions for read_operation in read_operations):
@@ -599,6 +605,179 @@ class GmailTools(Toolkit):
             return f"HTTP Error marking email {message_id} as unread: {error}"
         except Exception as error:
             return f"Error marking email {message_id} as unread: {type(error).__name__}: {error}"
+
+    @authenticate
+    def list_custom_labels(self) -> str:
+        """
+        List only user-created custom labels (filters out system labels) in a numbered format.
+
+        Returns:
+            str: A numbered list of custom labels only
+        """
+        try:
+            results = self.service.users().labels().list(userId="me").execute()  # type: ignore
+            labels = results.get("labels", [])
+
+            # Filter out only user-created labels
+            custom_labels = [label["name"] for label in labels if label.get("type") == "user"]
+
+            if not custom_labels:
+                return "No custom labels found.\nCreate labels using apply_label function!"
+
+            # Create numbered list
+            numbered_labels = [f"{i}. {name}" for i, name in enumerate(custom_labels, 1)]
+            return f"Your Custom Labels ({len(custom_labels)} total):\n\n" + "\n".join(numbered_labels)
+
+        except HttpError as e:
+            return f"Error fetching labels: {e}"
+        except Exception as e:
+            return f"Unexpected error: {type(e).__name__}: {e}"
+
+    @authenticate
+    def apply_label(self, context: str, label_name: str, count: int = 10) -> str:
+        """
+        Find emails matching a context (search query) and apply a label, creating it if necessary.
+
+        Args:
+            context (str): Gmail search query (e.g., 'is:unread category:promotions')
+            label_name (str): Name of the label to apply
+            count (int): Maximum number of emails to process
+        Returns:
+            str: Summary of labeled emails
+        """
+        try:
+            # Fetch messages matching context
+            results = self.service.users().messages().list(userId="me", q=context, maxResults=count).execute()  # type: ignore
+
+            messages = results.get("messages", [])
+            if not messages:
+                return f"No emails found matching: '{context}'"
+
+            # Check if label exists, create if not
+            labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+            label_id = None
+            for label in labels:
+                if label["name"].lower() == label_name.lower():
+                    label_id = label["id"]
+                    break
+
+            if not label_id:
+                label = (
+                    self.service.users()  # type: ignore
+                    .labels()
+                    .create(
+                        userId="me",
+                        body={"name": label_name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+                    )
+                    .execute()
+                )
+                label_id = label["id"]
+
+            # Apply label to all matching messages
+            for msg in messages:
+                self.service.users().messages().modify(  # type: ignore
+                    userId="me", id=msg["id"], body={"addLabelIds": [label_id]}
+                ).execute()  # type: ignore
+
+            return f"Applied label '{label_name}' to {len(messages)} emails matching '{context}'."
+
+        except HttpError as e:
+            return f"Error applying label '{label_name}': {e}"
+        except Exception as e:
+            return f"Unexpected error: {type(e).__name__}: {e}"
+
+    @authenticate
+    def remove_label(self, context: str, label_name: str, count: int = 10) -> str:
+        """
+        Remove a label from emails matching a context (search query).
+
+        Args:
+            context (str): Gmail search query (e.g., 'is:unread category:promotions')
+            label_name (str): Name of the label to remove
+            count (int): Maximum number of emails to process
+        Returns:
+            str: Summary of emails with label removed
+        """
+        try:
+            # Get all labels to find the target label
+            labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+            label_id = None
+
+            for label in labels:
+                if label["name"].lower() == label_name.lower():
+                    label_id = label["id"]
+                    break
+
+            if not label_id:
+                return f"Label '{label_name}' not found."
+
+            # Fetch messages matching context that have this label
+            results = (
+                self.service.users()  # type: ignore
+                .messages()
+                .list(userId="me", q=f"{context} label:{label_name}", maxResults=count)
+                .execute()
+            )
+
+            messages = results.get("messages", [])
+            if not messages:
+                return f"No emails found matching: '{context}' with label '{label_name}'"
+
+            # Remove label from all matching messages
+            removed_count = 0
+            for msg in messages:
+                self.service.users().messages().modify(  # type: ignore
+                    userId="me", id=msg["id"], body={"removeLabelIds": [label_id]}
+                ).execute()  # type: ignore
+                removed_count += 1
+
+            return f"Removed label '{label_name}' from {removed_count} emails matching '{context}'."
+
+        except HttpError as e:
+            return f"Error removing label '{label_name}': {e}"
+        except Exception as e:
+            return f"Unexpected error: {type(e).__name__}: {e}"
+
+    @authenticate
+    def delete_custom_label(self, label_name: str, confirm: bool = False) -> str:
+        """
+        Delete a custom label (with safety confirmation).
+
+        Args:
+            label_name (str): Name of the label to delete
+            confirm (bool): Must be True to actually delete the label
+        Returns:
+            str: Confirmation message or warning
+        """
+        if not confirm:
+            return f"LABEL DELETION REQUIRES CONFIRMATION. This will permanently delete the label '{label_name}' from all emails. Set confirm=True to proceed."
+
+        try:
+            # Get all labels to find the target label
+            labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
+            target_label = None
+
+            for label in labels:
+                if label["name"].lower() == label_name.lower():
+                    target_label = label
+                    break
+
+            if not target_label:
+                return f"Label '{label_name}' not found."
+
+            # Check if it's a system label using the type field
+            if target_label.get("type") != "user":
+                return f"Cannot delete system label '{label_name}'. Only user-created labels can be deleted."
+
+            # Delete the label
+            self.service.users().labels().delete(userId="me", id=target_label["id"]).execute()  # type: ignore
+
+            return f"Successfully deleted label '{label_name}'. This label has been removed from all emails."
+
+        except HttpError as e:
+            return f"Error deleting label '{label_name}': {e}"
+        except Exception as e:
+            return f"Unexpected error: {type(e).__name__}: {e}"
 
     def _validate_email_params(self, to: str, subject: str, body: str) -> None:
         """Validate email parameters."""

@@ -84,7 +84,7 @@ class OllamaEmbedder(Embedder):
         kwargs: Dict[str, Any] = {}
         if self.options is not None:
             kwargs["options"] = self.options
-            
+
         # Add dimensions parameter for models that support it
         if self.dimensions is not None:
             kwargs["dimensions"] = self.dimensions

@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_eval_router(
-    dbs: dict[str, Union[BaseDb, AsyncBaseDb]],
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
     agents: Optional[List[Agent]] = None,
     teams: Optional[List[Team]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -56,7 +56,7 @@ def get_eval_router(
 
 def attach_routes(
     router: APIRouter,
-    dbs: dict[str, Union[BaseDb, AsyncBaseDb]],
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
     agents: Optional[List[Agent]] = None,
     teams: Optional[List[Team]] = None,
 ) -> APIRouter:
@@ -115,8 +115,9 @@ def attach_routes(
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -198,8 +199,9 @@ def attach_routes(
     async def get_eval_run(
         eval_run_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
@@ -224,9 +226,10 @@ def attach_routes(
     async def delete_eval_runs(
         request: DeleteEvalRunsRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         try:
-            db = get_db(dbs, db_id)
+            db = await get_db(dbs, db_id, table)
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 await db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
@@ -277,9 +280,10 @@ def attach_routes(
         eval_run_id: str,
         request: UpdateEvalRunRequest,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> EvalSchema:
         try:
-            db = get_db(dbs, db_id)
+            db = await get_db(dbs, db_id, table)
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 eval_run = await db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
@@ -336,8 +340,9 @@ def attach_routes(
     async def run_eval(
         eval_run_input: EvalRunInput,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
+        table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
@@ -356,10 +361,10 @@ def attach_routes(
             ):
                 default_model = deepcopy(agent.model)
                 if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     agent.model = model
 
             team = None
@@ -378,10 +383,10 @@ def attach_routes(
             ):
                 default_model = deepcopy(team.model)
                 if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     team.model = model
 
             agent = None

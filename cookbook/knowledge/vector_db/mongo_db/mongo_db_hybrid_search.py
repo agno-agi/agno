@@ -1,7 +1,7 @@
 import typer
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.mongodb import MongoDb
+from agno.vectordb.mongodb import MongoVectorDb
 from agno.vectordb.search import SearchType
 from rich.prompt import Prompt
 
@@ -13,7 +13,7 @@ Example connection strings:
 """
 mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
-vector_db = MongoDb(
+vector_db = MongoVectorDb(
     collection_name="recipes",
     db_url=mdb_connection_string,
     search_index_name="recipes",

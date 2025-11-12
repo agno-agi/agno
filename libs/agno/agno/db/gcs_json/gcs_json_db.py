@@ -83,6 +83,10 @@ class GcsJsonDb(BaseDb):
         self.client = gcs.Client(project=project, credentials=credentials)
         self.bucket = self.client.bucket(self.bucket_name)
 
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
+
     def _get_blob_name(self, filename: str) -> str:
         """Get the full blob name including prefix for a given filename."""
         return f"{self.prefix}{filename}.json"
