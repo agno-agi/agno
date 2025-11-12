@@ -46,7 +46,7 @@ Example:
 
 # Create context manager with custom compression
 context_manager = ContextManager(
-    model=OpenAIChat(id="gpt-4o-mini"),  # Use mini model for compression to save costs
+    model=OpenAIChat(id="gpt-4o-mini"), 
     compress_tool_calls_limit=1,
     tool_compression_instructions=custom_compression_prompt,  # Custom prompt!
 )
