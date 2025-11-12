@@ -1,7 +1,7 @@
 """
 Basic RBAC Example with AgentOS
 
-This example demonstrates how to enable RBAC (Role-Based Access Control) 
+This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
 Prerequisites:
@@ -92,9 +92,12 @@ if __name__ == "__main__":
     print(admin_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
-    print(f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents')
-    print(f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions')
+    print(
+        f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
+    )
+    print(
+        f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
+    )
     print("\n" + "=" * 60 + "\n")
 
     agent_os.serve(app="basic:app", port=7777, reload=True)
-

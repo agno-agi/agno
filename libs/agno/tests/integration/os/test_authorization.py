@@ -59,6 +59,7 @@ def test_valid_scope_grants_access(test_agent):
 
     assert response.status_code == 200, response.text
 
+
 def test_missing_scope_denies_access(test_agent):
     """Test that missing required scope denies access."""
     agent_os = AgentOS(
@@ -81,7 +82,6 @@ def test_missing_scope_denies_access(test_agent):
     assert response.status_code == 403
     assert response.json()["error_code"] == "FORBIDDEN"
     assert "agents:read" in str(response.json()["required_scopes"])
-
 
 
 def test_admin_scope_grants_full_access(test_agent):
@@ -111,6 +111,7 @@ def test_admin_scope_grants_full_access(test_agent):
         data={"message": "test"},
     )
     assert response.status_code in [200, 201], response.text
+
 
 def test_wildcard_grants_all_actions(test_agent):
     """Test that agents:* grants all agent permissions."""
@@ -178,6 +179,7 @@ def test_custom_scope_mapping(test_agent):
     )
     assert response.status_code == 403
 
+
 def test_endpoint_without_mapping(test_agent):
     """Test that unmapped endpoints are accessible with valid JWT."""
     agent_os = AgentOS(
@@ -207,6 +209,7 @@ def test_endpoint_without_mapping(test_agent):
     )
     assert response.status_code == 200
 
+
 def test_excluded_routes_skip_jwt(test_agent):
     """Test that excluded routes don't require JWT."""
     agent_os = AgentOS(
@@ -234,6 +237,7 @@ def test_excluded_routes_skip_jwt(test_agent):
 
     response = client.get("/agents")
     assert response.status_code == 200
+
 
 def test_expired_token_rejected(test_agent):
     """Test that expired tokens are rejected."""
@@ -267,4 +271,3 @@ def test_expired_token_rejected(test_agent):
 
     assert response.status_code == 401
     assert "expired" in response.json()["detail"].lower()
-

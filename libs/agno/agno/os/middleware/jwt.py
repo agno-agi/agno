@@ -1,11 +1,11 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
-import jwt
 from enum import Enum
 from os import getenv
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
+import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -48,11 +48,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
     - "header": Extract from Authorization header (default)
     - "cookie": Extract from HTTP cookie
     - "both": Try header first, then cookie as fallback
-    
+
     Example:
         from agno.os.middleware import JWTMiddleware
         from agno.os.scopes import AgentOSScope
-        
+
         # Additive scope mappings (adds to defaults)
         app.add_middleware(
             JWTMiddleware,
@@ -112,11 +112,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
             admin_scope: The scope that grants admin access (default: "admin")
         """
         super().__init__(app)
-        
+
         # JWT configuration
-        self.secret_key = secret_key or getenv("JWT_SECRET_KEY")
+        self.secret_key = secret_key or getenv("JWT_SECRET_KEY", "")
         if not self.secret_key:
-            raise ValueError("JWT secret key is required. Set via secret_key parameter or JWT_SECRET_KEY environment variable.")
+            raise ValueError(
+                "JWT secret key is required. Set via secret_key parameter or JWT_SECRET_KEY environment variable."
+            )
         self.algorithm = algorithm
         self.token_source = token_source
         self.token_header_key = token_header_key
@@ -124,27 +126,27 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.scopes_claim = scopes_claim
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
-        self.dependencies_claims = dependencies_claims or {}
-        self.session_state_claims = session_state_claims or {}
-        
+        self.dependencies_claims: List[str] = dependencies_claims or []
+        self.session_state_claims: List[str] = session_state_claims or []
+
         # RBAC configuration (opt-in via scope_mappings)
         self.authorization = authorization
-        
+
         # If scope_mappings are provided, enable authorization
         if scope_mappings is not None and self.authorization is None:
             self.authorization = True
-        
+
         # Build final scope mappings (additive approach)
         if self.authorization:
             # Start with default scope mappings
             self.scope_mappings = self._get_default_scope_mappings()
-            
+
             # Merge user-provided scope mappings (overrides defaults)
             if scope_mappings is not None:
                 self.scope_mappings.update(scope_mappings)
         else:
-            self.scope_mappings = scope_mappings
-            
+            self.scope_mappings = scope_mappings or {}
+
         self.excluded_route_paths = excluded_route_paths or self._get_default_excluded_routes()
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
 
@@ -403,16 +405,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
             return self._extract_token_from_cookie(request)
         return None
 
-    def _validate(self, token: str) -> Optional[Dict]:
+    def _validate(self, token: str) -> Dict[str, Any]:
         """
         Validate JWT token and extract claims.
 
         Returns:
             Dictionary of claims if valid, None otherwise
         """
-        payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+        payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])  # type: ignore
         return payload
-        
+
     def _get_missing_token_error_message(self) -> str:
         """Get appropriate error message for missing token based on token source."""
         if self.token_source == TokenSource.HEADER:
@@ -423,7 +425,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             return f"JWT token missing from both Authorization header and '{self.cookie_name}' cookie"
         else:
             return "JWT token missing"
-
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
@@ -443,14 +444,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         try:
             # Validate token and extract claims
-            payload = self._validate(token)
+            payload: Dict[str, Any] = self._validate(token)  # type: ignore
 
             # Extract standard claims and store in request.state
             user_id = payload.get(self.user_id_claim)
             session_id = payload.get(self.session_id_claim)
             scopes = payload.get(self.scopes_claim, [])
 
-            
             # Ensure scopes is a list
             if isinstance(scopes, str):
                 scopes = [scopes]
@@ -462,7 +462,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
-            
+
             # Extract dependencies claims
             dependencies = {}
             for claim in self.dependencies_claims:
@@ -472,7 +472,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if dependencies:
                 log_debug(f"Extracted dependencies: {dependencies}")
                 request.state.dependencies = dependencies
-                
+
             # Extract session state claims
             session_state = {}
             for claim in self.session_state_claims:
@@ -491,24 +491,20 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 if required_scopes:
                     if not self._has_required_scopes(scopes, required_scopes):
                         log_warning(
-                            f"Insufficient scopes for {method} {path}. "
-                            f"Required: {required_scopes}, User has: {scopes}"
+                            f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
                         )
                         return JSONResponse(
                             status_code=403,
-                            content={
-                                "detail": "Insufficient permissions"
-                            },
+                            content={"detail": "Insufficient permissions"},
                         )
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
                 else:
                     log_debug(f"No scopes required for {method} {path}")
-            
+
             log_debug(f"JWT decoded successfully for user: {user_id}")
-            
+
             request.state.token = token
             request.state.authenticated = True
-
 
         except jwt.ExpiredSignatureError:
             if self.authorization:
@@ -526,6 +522,5 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=401, content={"detail": f"Error decoding token: {str(e)}"})
             request.state.authenticated = False
             request.state.token = token
-            
-        return await call_next(request)
 
+        return await call_next(request)

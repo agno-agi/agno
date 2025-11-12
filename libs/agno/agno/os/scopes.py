@@ -9,13 +9,13 @@ from enum import Enum
 class AgentOSScope(str, Enum):
     """
     Enum of all available AgentOS permission scopes.
-    
+
     These scopes are used with JWT middleware to control access to AgentOS endpoints.
     Scopes follow the pattern: resource:action
-    
+
     Special Scopes:
     - ADMIN: Grants full access to all endpoints
-    
+
     Resource Scopes:
     - system:read - System configuration and model information
     - agents:read - List and view agents
@@ -39,44 +39,44 @@ class AgentOSScope(str, Enum):
     - evals:write - Create and update evaluation runs
     - evals:delete - Delete evaluation runs
     """
-    
+
     # Special scopes
     ADMIN = "admin"
-    
+
     # System scopes
     SYSTEM_READ = "system:read"
-    
+
     # Agent scopes
     AGENTS_READ = "agents:read"
     AGENTS_RUN = "agents:run"
-    
+
     # Team scopes
     TEAMS_READ = "teams:read"
     TEAMS_RUN = "teams:run"
-    
+
     # Workflow scopes
     WORKFLOWS_READ = "workflows:read"
     WORKFLOWS_RUN = "workflows:run"
-    
+
     # Session scopes
     SESSIONS_READ = "sessions:read"
     SESSIONS_WRITE = "sessions:write"
     SESSIONS_DELETE = "sessions:delete"
-    
+
     # Memory scopes
     MEMORIES_READ = "memories:read"
     MEMORIES_WRITE = "memories:write"
     MEMORIES_DELETE = "memories:delete"
-    
+
     # Knowledge scopes
     KNOWLEDGE_READ = "knowledge:read"
     KNOWLEDGE_WRITE = "knowledge:write"
     KNOWLEDGE_DELETE = "knowledge:delete"
-    
+
     # Metrics scopes
     METRICS_READ = "metrics:read"
     METRICS_WRITE = "metrics:write"
-    
+
     # Evaluation scopes
     EVALS_READ = "evals:read"
     EVALS_WRITE = "evals:write"
@@ -86,13 +86,13 @@ class AgentOSScope(str, Enum):
 def get_scope_value(scope: AgentOSScope) -> str:
     """
     Get the string value of a scope.
-    
+
     Args:
         scope: The AgentOSScope enum value
-        
+
     Returns:
         The string value of the scope
-        
+
     Example:
         >>> get_scope_value(AgentOSScope.AGENTS_READ)
         'agents:read'
@@ -103,14 +103,13 @@ def get_scope_value(scope: AgentOSScope) -> str:
 def get_all_scopes() -> list[str]:
     """
     Get a list of all available scope strings.
-    
+
     Returns:
         List of all scope string values
-        
+
     Example:
         >>> scopes = get_all_scopes()
         >>> 'agents:read' in scopes
         True
     """
     return [scope.value for scope in AgentOSScope]
-

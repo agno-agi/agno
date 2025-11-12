@@ -46,7 +46,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_error, log_warning, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -188,7 +188,7 @@ class AgentOS:
 
         self.enable_mcp_server = enable_mcp or enable_mcp_server
         self.lifespan = lifespan
-        
+
         # RBAC
         self.authorization = authorization
         self.authorization_secret = authorization_secret
@@ -196,11 +196,11 @@ class AgentOS:
             log_info("No authorization secret provided, generating a new 256-bit authorization secret")
 
             import secrets
+
             # Generate 256 bits (32 bytes) of entropy, then encode as hex for JWT secret.
             self.authorization_secret = secrets.token_hex(32)  # 32 bytes = 256 bits
 
             log_info(f"Authorization secret generated (256-bit, hex): {self.authorization_secret}")
-            
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -496,6 +496,7 @@ class AgentOS:
         # Add JWT middleware if authorization is enabled
         if self.authorization:
             from agno.os.middleware.jwt import JWTMiddleware
+
             log_info("Adding JWT middleware for authorization")
             fastapi_app.add_middleware(
                 JWTMiddleware,

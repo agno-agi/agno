@@ -1,7 +1,7 @@
 """
 Basic RBAC Example with AgentOS
 
-This example demonstrates how to enable RBAC (Role-Based Access Control) 
+This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
 Prerequisites:
@@ -16,9 +16,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.middleware import JWTMiddleware
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
-from agno.os.middleware import JWTMiddleware
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = "your-secret-key-at-least-256-bits-long"
@@ -62,11 +62,11 @@ app.add_middleware(
     secret_key=JWT_SECRET,
     algorithm="HS256",
     scope_mappings={
-      # Define the scopes for the agents
-      # Other scopes will remain the same
-      "POST /agents/web-search-agent/runs": ["agents:web-search-agent"],
-      "POST /agents/agno-agent/runs": ["agents:agno-agent"],
-      "POST /agents/*/runs": []
+        # Define the scopes for the agents
+        # Other scopes will remain the same
+        "POST /agents/web-search-agent/runs": ["agents:web-search-agent"],
+        "POST /agents/agno-agent/runs": ["agents:agno-agent"],
+        "POST /agents/*/runs": [],
     },
     admin_scope="admin",  # Admin can bypass all checks
 )
@@ -95,7 +95,9 @@ if __name__ == "__main__":
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
     }
-    web_search_user_token = jwt.encode(web_search_user_token_payload, JWT_SECRET, algorithm="HS256")
+    web_search_user_token = jwt.encode(
+        web_search_user_token_payload, JWT_SECRET, algorithm="HS256"
+    )
 
     agno_user_token_payload = {
         "sub": "user_456",
@@ -114,9 +116,12 @@ if __name__ == "__main__":
     print(agno_user_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
-    print(f'\ncurl -H "Authorization: Bearer {web_search_user_token}" http://localhost:7777/agents/web-search-agent/runs')
-    print(f'\ncurl -H "Authorization: Bearer {agno_user_token}" http://localhost:7777/agents/agno-agent/runs')
+    print(
+        f'\ncurl -H "Authorization: Bearer {web_search_user_token}" http://localhost:7777/agents/web-search-agent/runs'
+    )
+    print(
+        f'\ncurl -H "Authorization: Bearer {agno_user_token}" http://localhost:7777/agents/agno-agent/runs'
+    )
     print("\n" + "=" * 60 + "\n")
 
     agent_os.serve(app="agent_permissions:app", port=7777, reload=True)
-

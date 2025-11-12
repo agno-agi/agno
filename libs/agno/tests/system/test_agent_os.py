@@ -1,4 +1,5 @@
 """System tests for AgentOS stateless deployment."""
+
 import time
 from typing import Set
 
@@ -35,11 +36,13 @@ def wait_for_services():
 
     pytest.fail("Services did not become healthy in time")
 
+
 def test_health_check():
     """Test that the health check endpoint returns a 200 status code."""
     response = requests.get(f"{BASE_URL}/health", timeout=REQUEST_TIMEOUT)
     assert response.status_code == 200, f"Health check failed: {response.status_code}"
     assert response.json().get("status") == "ok", f"Health check returned unhealthy status: {response.json()}"
+
 
 def test_multiple_containers_responding():
     """Test that requests are distributed across multiple containers."""
@@ -69,6 +72,7 @@ def test_multiple_containers_responding():
         f"Expected at least 2 different containers, but only saw {len(containers_seen)}: {containers_seen}"
     )
     print(f"✓ Requests distributed across {len(containers_seen)} containers: {containers_seen}")
+
 
 def test_create_and_retrieve_session_stateless():
     """Test creating a session on one container and retrieving it from another."""
@@ -103,8 +107,7 @@ def test_create_and_retrieve_session_stateless():
         )
 
         assert retrieve_response.status_code == 200, (
-            f"Failed to retrieve session on attempt {i + 1}: "
-            f"{retrieve_response.status_code} - {retrieve_response.text}"
+            f"Failed to retrieve session on attempt {i + 1}: {retrieve_response.status_code} - {retrieve_response.text}"
         )
 
         retrieved_data = retrieve_response.json()
@@ -128,6 +131,7 @@ def test_create_and_retrieve_session_stateless():
     assert delete_response.status_code == 204, f"Failed to delete session: {delete_response.status_code}"
     print(f"✓ Cleaned up session: {session_id}")
 
+
 def test_run_agent_creates_session_stateless():
     """Test running an agent creates a session that can be accessed from any container."""
     # Step 1: Run the agent with a specific session_id
@@ -144,9 +148,7 @@ def test_run_agent_creates_session_stateless():
         timeout=REQUEST_TIMEOUT,
     )
 
-    assert run_response.status_code == 200, (
-        f"Failed to run agent: {run_response.status_code} - {run_response.text}"
-    )
+    assert run_response.status_code == 200, f"Failed to run agent: {run_response.status_code} - {run_response.text}"
 
     run_data = run_response.json()
     assert "content" in run_data, f"No content in run response: {run_data}"
@@ -168,8 +170,7 @@ def test_run_agent_creates_session_stateless():
         )
 
         assert session_response.status_code == 200, (
-            f"Failed to retrieve session on attempt {i + 1}: "
-            f"{session_response.status_code} - {session_response.text}"
+            f"Failed to retrieve session on attempt {i + 1}: {session_response.status_code} - {session_response.text}"
         )
 
         session_data = session_response.json()
@@ -206,7 +207,7 @@ def test_run_agent_creates_session_stateless():
     second_run_data = second_run_response.json()
     assert "content" in second_run_data
 
-    print(f"✓ Second message processed successfully")
+    print("✓ Second message processed successfully")
     print(f"  Response: {second_run_data['content'][:100]}...")
 
     # Step 4: Verify session now has history from both runs
@@ -223,9 +224,7 @@ def test_run_agent_creates_session_stateless():
     chat_history = final_session_data.get("chat_history", [])
     user_messages = [msg for msg in chat_history if msg.get("role") == "user"]
 
-    assert len(user_messages) >= 2, (
-        f"Expected at least 2 user messages in history, got {len(user_messages)}"
-    )
+    assert len(user_messages) >= 2, f"Expected at least 2 user messages in history, got {len(user_messages)}"
 
     print(f"✓ Session history preserved across runs: {len(chat_history)} total messages")
 
@@ -236,6 +235,7 @@ def test_run_agent_creates_session_stateless():
     )
     assert delete_response.status_code == 204
     print(f"✓ Cleaned up session: {session_id}")
+
 
 def test_concurrent_sessions_across_containers():
     """Test that multiple concurrent sessions work correctly across containers."""
@@ -286,6 +286,7 @@ def test_concurrent_sessions_across_containers():
 
     print(f"✓ Cleaned up all {len(sessions_created)} sessions")
 
+
 def test_health_check_all_containers():
     """Test that health check works and returns from all containers."""
     containers_seen: Set[str] = set()
@@ -306,4 +307,3 @@ def test_health_check_all_containers():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
-

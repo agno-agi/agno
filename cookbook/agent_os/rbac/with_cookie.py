@@ -1,7 +1,7 @@
 """
 Basic RBAC Example with AgentOS
 
-This example demonstrates how to enable RBAC (Role-Based Access Control) 
+This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
 Prerequisites:
@@ -39,6 +39,7 @@ research_agent = Agent(
 
 
 app = FastAPI()
+
 
 # Add a simple endpoint to set the JWT authentication cookie
 @app.get("/set-auth-cookie")
@@ -85,7 +86,6 @@ async def clear_auth_cookie(response: Response):
     return {"message": "Authentication cookie cleared successfully"}
 
 
-
 # Add RBAC middleware configured for cookie-based authentication
 app.add_middleware(
     JWTMiddleware,
@@ -112,9 +112,6 @@ agent_os = AgentOS(
 
 # Get the app and add RBAC middleware
 app = agent_os.get_app()
-
-
-
 
 
 if __name__ == "__main__":
@@ -162,9 +159,12 @@ if __name__ == "__main__":
     print(admin_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
-    print(f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents')
-    print(f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions')
+    print(
+        f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
+    )
+    print(
+        f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
+    )
     print("\n" + "=" * 60 + "\n")
 
     agent_os.serve(app="with_cookie:app", port=7777, reload=True)
-

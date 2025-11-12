@@ -105,4 +105,3 @@ def require_scopes(required_scopes: List[str]):
         return True
 
     return scope_checker
-

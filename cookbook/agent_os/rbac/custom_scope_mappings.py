@@ -62,7 +62,6 @@ app.add_middleware(
     algorithm="HS256",
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="admin",  # Admin can bypass all checks
-    enable_wildcard_scopes=True,  # Support wildcards like "app:*"
 )
 
 if __name__ == "__main__":
@@ -117,23 +116,24 @@ if __name__ == "__main__":
     print(admin_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
-    print(f'\n# Basic user can read agents:')
-    print(f'curl -H "Authorization: Bearer {basic_user_token}" http://localhost:7777/agents')
-    print(f'\n# But cannot run them (missing app:run and app:execute):')
+    print("\n# Basic user can read agents:")
+    print(
+        f'curl -H "Authorization: Bearer {basic_user_token}" http://localhost:7777/agents'
+    )
+    print("\n# But cannot run them (missing app:run and app:execute):")
     print(
         f'curl -X POST -H "Authorization: Bearer {basic_user_token}" '
         f'-H "Content-Type: application/json" '
         f'-d \'{{"message": "test"}}\' '
-        f'http://localhost:7777/agents/research-agent/runs'
+        f"http://localhost:7777/agents/research-agent/runs"
     )
-    print(f'\n# Power user can do both:')
+    print("\n# Power user can do both:")
     print(
         f'curl -X POST -H "Authorization: Bearer {power_user_token}" '
         f'-H "Content-Type: application/json" '
         f'-d \'{{"message": "test"}}\' '
-        f'http://localhost:7777/agents/research-agent/runs'
+        f"http://localhost:7777/agents/research-agent/runs"
     )
     print("\n" + "=" * 60 + "\n")
 
     agent_os.serve(app="custom_scope_mappings:app", port=7777, reload=True)
-

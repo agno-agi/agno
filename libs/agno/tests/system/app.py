@@ -1,4 +1,5 @@
 """Test AgentOS application for system testing."""
+
 import os
 
 from agno.agent.agent import Agent
@@ -7,7 +8,9 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
 # Get database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg_async://agno:agno_test_password@localhost:5432/agentos_test")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql+psycopg_async://agno:agno_test_password@localhost:5432/agentos_test"
+)
 CONTAINER_ID = os.getenv("CONTAINER_ID", "unknown")
 
 # Create a shared PostgreSQL database
