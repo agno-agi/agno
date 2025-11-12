@@ -5,10 +5,7 @@ from typing import Any, Dict, Optional
 from agno.models.anthropic import Claude as AnthropicClaude
 
 try:
-    from anthropic import AnthropicVertex as AnthropicClient
-    from anthropic import (
-        AsyncAnthropicVertex as AsyncAnthropicClient,
-    )
+    from anthropic import AnthropicVertex, AsyncAnthropicVertex
 except ImportError as e:
     raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
 
@@ -25,14 +22,13 @@ class Claude(AnthropicClaude):
     name: str = "Claude"
     provider: str = "VertexAI"
 
+    client: Optional[AnthropicVertex] = None  # type: ignore
+    async_client: Optional[AsyncAnthropicVertex] = None  # type: ignore
+
     # Client parameters
     region: Optional[str] = None
     project_id: Optional[str] = None
     base_url: Optional[str] = None
-
-    # Anthropic clients
-    client: Optional[AnthropicClient] = None
-    async_client: Optional[AsyncAnthropicClient] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -51,7 +47,7 @@ class Claude(AnthropicClaude):
             client_params["default_headers"] = self.default_headers
         return client_params
 
-    def get_client(self) -> AnthropicClient:
+    def get_client(self):
         """
         Returns an instance of the Anthropic client.
         """
@@ -59,16 +55,16 @@ class Claude(AnthropicClaude):
             return self.client
 
         _client_params = self._get_client_params()
-        self.client = AnthropicClient(**_client_params)
+        self.client = AnthropicVertex(**_client_params)
         return self.client
 
-    def get_async_client(self) -> AsyncAnthropicClient:
+    def get_async_client(self):
         """
         Returns an instance of the async Anthropic client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params = self._get_client_params()
-        self.async_client = AsyncAnthropicClient(**_client_params)
+        self.async_client = AsyncAnthropicVertex(**_client_params)
         return self.async_client

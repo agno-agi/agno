@@ -106,9 +106,10 @@ class ReaderSchema(BaseModel):
 
 
 class ChunkerSchema(BaseModel):
-    key: str = Field(..., description="Unique key for the chunker")
-    name: Optional[str] = Field(None, description="Name of the chunker")
-    description: Optional[str] = Field(None, description="Description of the chunking strategy")
+    key: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class VectorDbSchema(BaseModel):

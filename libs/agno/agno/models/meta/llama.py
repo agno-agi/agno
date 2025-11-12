@@ -61,7 +61,7 @@ class Llama(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # OpenAI clients
@@ -104,8 +104,11 @@ class Llama(Model):
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_debug("http_client is not an instance of httpx.Client.")
         self.client = LlamaAPIClient(**client_params)
         return self.client
 
@@ -116,18 +119,21 @@ class Llama(Model):
         Returns:
             AsyncLlamaAPIClient: An instance of the asynchronous Llama client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
         else:
+            if self.http_client:
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
             )
-        return AsyncLlamaAPIClient(**client_params)
+        self.async_client = AsyncLlamaAPIClient(**client_params)
+        return self.async_client
 
     def get_request_params(
         self,
