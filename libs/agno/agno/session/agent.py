@@ -156,9 +156,9 @@ class AgentSession:
 
         # Filter by agent_id and team_id
         if agent_id:
-            runs = [run for run in self.runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+            runs = [run for run in runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
         if team_id:
-            runs = [run for run in self.runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+            runs = [run for run in runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
 
         # Skip any messages that might be part of members of teams (for session re-use)
         runs = [run for run in runs if run.parent_run_id is None]  # type: ignore
@@ -171,7 +171,7 @@ class AgentSession:
 
         # Limit the number of messages returned if limit is set
         if limit is not None:
-            for run_response in self.runs:
+            for run_response in runs:
                 if not run_response or not run_response.messages:
                     continue
 
