@@ -962,7 +962,7 @@ def test_get_tool_calls_no_tools(shared_db):
 # Tests for get_session_messages()
 
 
-def test_get_messages_for_session_basic(shared_db):
+def test_get_session_messages_basic(shared_db):
     """Test getting user/assistant message pairs"""
     session_id = f"test_session_{uuid.uuid4()}"
 
@@ -1004,7 +1004,7 @@ def test_get_messages_for_session_basic(shared_db):
     assert messages[4].content == "Assistant response 2"
 
 
-def test_get_messages_for_session_custom_roles(shared_db):
+def test_get_session_messages_custom_roles(shared_db):
     """Test getting messages with custom assistant roles"""
     session_id = f"test_session_{uuid.uuid4()}"
 
@@ -1029,7 +1029,7 @@ def test_get_messages_for_session_custom_roles(shared_db):
     assert messages[1].role == "model"
 
 
-def test_get_messages_for_session_skip_history(shared_db):
+def test_get_session_messages_skip_history(shared_db):
     """Test that history messages are skipped"""
     session_id = f"test_session_{uuid.uuid4()}"
 
