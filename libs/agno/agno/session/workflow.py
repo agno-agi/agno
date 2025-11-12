@@ -434,16 +434,15 @@ class WorkflowSession:
         if not self.runs:
             return []
 
-        executor_runs = []
-
         if agent_id:
+            agent_runs: List[RunOutput] = []
             for run in self.runs:
                 if run.step_executor_runs:
                     for executor_run in run.step_executor_runs:
                         if isinstance(executor_run, RunOutput) and executor_run.agent_id == agent_id:
-                            executor_runs.append(executor_run)
+                            agent_runs.append(executor_run)
             return self.get_messages_from_agent_runs(
-                runs=executor_runs,
+                runs=agent_runs,
                 last_n_runs=last_n_runs,
                 limit=limit,
                 skip_roles=skip_roles,
@@ -452,14 +451,15 @@ class WorkflowSession:
             )
 
         elif team_id:
+            team_runs: List[TeamRunOutput] = []
             for run in self.runs:
                 if run.step_executor_runs:
                     for executor_run in run.step_executor_runs:
                         if isinstance(executor_run, TeamRunOutput) and executor_run.team_id == team_id:
-                            executor_runs.append(executor_run)
+                            team_runs.append(executor_run)
             return self.get_messages_from_team_runs(
                 team_id=team_id,
-                runs=executor_runs,
+                runs=team_runs,
                 last_n_runs=last_n_runs,
                 limit=limit,
                 skip_roles=skip_roles,
