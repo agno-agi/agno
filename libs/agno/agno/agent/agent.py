@@ -1140,7 +1140,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: bool = False,
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
@@ -1410,7 +1410,7 @@ class Agent:
             if stream_events:
                 yield completed_event  # type: ignore
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Agent Telemetry
@@ -1454,6 +1454,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1480,6 +1481,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1491,7 +1493,8 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: bool = False,
+        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -1506,6 +1509,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1517,7 +1521,8 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: bool = False,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
@@ -1579,7 +1584,7 @@ class Agent:
         dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -1655,6 +1660,8 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             try:
                 if stream:
@@ -1668,7 +1675,7 @@ class Agent:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -2009,7 +2016,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
@@ -2307,7 +2314,7 @@ class Agent:
             if stream_events:
                 yield completed_event  # type: ignore
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Agent Telemetry
@@ -2370,6 +2377,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2395,6 +2403,7 @@ class Agent:
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2408,7 +2417,8 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: Optional[bool] = None,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -2421,6 +2431,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2434,7 +2445,8 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: Optional[bool] = None,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
@@ -2524,7 +2536,7 @@ class Agent:
                 merge_dictionaries(metadata, self.metadata)
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -2559,6 +2571,8 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             try:
                 # Pass the new run_response to _arun
@@ -2569,7 +2583,7 @@ class Agent:
                         user_id=user_id,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         session_id=session_id,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
@@ -2684,6 +2698,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -2701,6 +2716,7 @@ class Agent:
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
+            run_context: The run context to use for the run.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for the run.
@@ -2741,7 +2757,7 @@ class Agent:
         dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,  # type: ignore
             session_id=session_id,
             user_id=user_id,
@@ -3243,12 +3259,13 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_output: bool = False,
         **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
@@ -3261,12 +3278,13 @@ class Agent:
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
+            run_context: The run context to use for the run.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for continuing the run.
             metadata: The metadata to use for continuing the run.
             debug_mode: Whether to enable debug mode.
-            yield_run_response: Whether to yield the run response.
+            yield_run_output: Whether to yield the run response.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
         """
         if run_response is None and run_id is None:
@@ -3327,7 +3345,7 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,  # type: ignore
             session_id=session_id,
             user_id=user_id,
@@ -3351,7 +3369,7 @@ class Agent:
                         session_id=session_id,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -3620,7 +3638,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: Optional[bool] = None,
+        yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
@@ -3860,7 +3878,7 @@ class Agent:
             if stream_events:
                 yield completed_event  # type: ignore
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Agent Telemetry
@@ -5745,6 +5763,9 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -5755,8 +5776,11 @@ class Agent:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return await self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -5768,6 +5792,9 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
             return None
 
@@ -5778,6 +5805,9 @@ class Agent:
                 raise ValueError("Db not initialized")
             return await self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
             return None
 

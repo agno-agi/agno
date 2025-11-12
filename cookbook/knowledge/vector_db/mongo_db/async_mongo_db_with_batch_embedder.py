@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.vectordb.mongodb import MongoDb
+from agno.vectordb.mongodb import MongoVectorDb
 
 mdb_connection_string = (
     "mongodb+srv://mongoadmin:secret@cluster0.mongodb.net/?retryWrites=true&w=majority"
@@ -17,7 +17,7 @@ agent = Agent(
         id="gpt-4o-mini",
     ),
     knowledge=Knowledge(
-        vector_db=MongoDb(
+        vector_db=MongoVectorDb(
             collection_name="documents",
             db_url=mdb_connection_string,
             database="agno",
