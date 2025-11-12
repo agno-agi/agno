@@ -8144,7 +8144,6 @@ class Team:
             return []
 
         session = self.get_session(session_id=session_id)  # type: ignore
-
         if session is None:
             log_warning(f"Session {session_id} not found")
             return []
@@ -8192,7 +8191,6 @@ class Team:
             return []
 
         session = await self.aget_session(session_id=session_id)  # type: ignore
-
         if session is None:
             log_warning(f"Session {session_id} not found")
             return []
@@ -8208,7 +8206,7 @@ class Team:
             skip_member_messages=skip_member_messages,
         )
 
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
         """Return the chat history (user and assistant messages) for the session.
         Use get_messages() for more filtering options.
 
@@ -8219,10 +8217,12 @@ class Team:
             List[Message]: The chat history from the session.
         """
         return self.get_session_messages(
-            session_id=session_id, skip_roles=["system", "tool"], skip_member_messages=True
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
         )
 
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
         """Read the chat history from the session
 
         Args:
@@ -8231,7 +8231,7 @@ class Team:
             List[Message]: The chat history from the session.
         """
         return await self.aget_session_messages(
-            session_id=session_id, skip_roles=["system", "tool"], skip_member_messages=True
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:

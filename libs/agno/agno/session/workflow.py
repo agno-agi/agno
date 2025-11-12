@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.utils.log import logger
 
@@ -36,112 +37,6 @@ class WorkflowSession:
     created_at: Optional[int] = None
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
-
-    def __post_init__(self):
-        if self.runs is None:
-            self.runs = []
-
-        # Ensure session_data, workflow_data, and metadata are dictionaries, not None
-        if self.session_data is None:
-            self.session_data = {}
-        if self.workflow_data is None:
-            self.workflow_data = {}
-        if self.metadata is None:
-            self.metadata = {}
-
-        # Set timestamps if they're not already set
-        current_time = int(time.time())
-        if self.created_at is None:
-            self.created_at = current_time
-        if self.updated_at is None:
-            self.updated_at = current_time
-
-    def get_run(self, run_id: str) -> Optional[WorkflowRunOutput]:
-        for run in self.runs or []:
-            if run.run_id == run_id:
-                return run
-        return None
-
-    def upsert_run(self, run: WorkflowRunOutput) -> None:
-        """Add or update a workflow run (upsert behavior)"""
-        if self.runs is None:
-            self.runs = []
-
-        # Find existing run and update it, or append new one
-        for i, existing_run in enumerate(self.runs):
-            if existing_run.run_id == run.run_id:
-                self.runs[i] = run
-                break
-        else:
-            self.runs.append(run)
-
-    def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
-        """Get workflow history as structured data (input, response pairs)
-
-        Args:
-            num_runs: Number of recent runs to include. If None, returns all available history.
-        """
-        if not self.runs:
-            return []
-
-        from agno.run.base import RunStatus
-
-        # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
-
-        if num_runs is not None and len(completed_runs) > num_runs:
-            recent_runs = completed_runs[-num_runs:]
-        else:
-            recent_runs = completed_runs
-
-        if not recent_runs:
-            return []
-
-        # Return structured data as list of (input, response) tuples
-        history_data = []
-        for run in recent_runs:
-            # Get input
-            input_str = ""
-            if run.input:
-                input_str = str(run.input) if not isinstance(run.input, str) else run.input
-
-            # Get response
-            response_str = ""
-            if run.content:
-                response_str = str(run.content) if not isinstance(run.content, str) else run.content
-
-            history_data.append((input_str, response_str))
-
-        return history_data
-
-    def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
-        """Get formatted workflow history context for steps
-
-        Args:
-            num_runs: Number of recent runs to include. If None, returns all available history.
-        """
-        history_data = self.get_workflow_history(num_runs)
-
-        if not history_data:
-            return None
-
-        # Format as workflow context using the structured data
-        context_parts = ["<workflow_history_context>"]
-
-        for i, (input_str, response_str) in enumerate(history_data, 1):
-            context_parts.append(f"[Workflow Run-{i}]")
-
-            if input_str:
-                context_parts.append(f"User input: {input_str}")
-            if response_str:
-                context_parts.append(f"Workflow output: {response_str}")
-
-            context_parts.append("")  # Empty line between runs
-
-        context_parts.append("</workflow_history_context>")
-        context_parts.append("")  # Empty line before current input
-
-        return "\n".join(context_parts)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
@@ -203,3 +98,126 @@ class WorkflowSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
+
+    def __post_init__(self):
+        if self.runs is None:
+            self.runs = []
+
+        # Ensure session_data, workflow_data, and metadata are dictionaries, not None
+        if self.session_data is None:
+            self.session_data = {}
+        if self.workflow_data is None:
+            self.workflow_data = {}
+        if self.metadata is None:
+            self.metadata = {}
+
+        # Set timestamps if they're not already set
+        current_time = int(time.time())
+        if self.created_at is None:
+            self.created_at = current_time
+        if self.updated_at is None:
+            self.updated_at = current_time
+
+    def get_run(self, run_id: str) -> Optional[WorkflowRunOutput]:
+        for run in self.runs or []:
+            if run.run_id == run_id:
+                return run
+        return None
+
+    def upsert_run(self, run: WorkflowRunOutput) -> None:
+        """Add or update a workflow run (upsert behavior)"""
+        if self.runs is None:
+            self.runs = []
+
+        # Find existing run and update it, or append new one
+        for i, existing_run in enumerate(self.runs):
+            if existing_run.run_id == run.run_id:
+                self.runs[i] = run
+                break
+        else:
+            self.runs.append(run)
+
+    def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get workflow history as structured data (input, response pairs)
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.runs:
+            return []
+
+        # Get completed runs only (exclude current/pending run)
+        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
+
+        if num_runs is not None and len(completed_runs) > num_runs:
+            recent_runs = completed_runs[-num_runs:]
+        else:
+            recent_runs = completed_runs
+
+        if not recent_runs:
+            return []
+
+        # Return structured data as list of (input, response) tuples
+        history_data = []
+        for run in recent_runs:
+            # Get input
+            input_str = ""
+            if run.input:
+                input_str = str(run.input) if not isinstance(run.input, str) else run.input
+
+            # Get response
+            response_str = ""
+            if run.content:
+                response_str = str(run.content) if not isinstance(run.content, str) else run.content
+
+            history_data.append((input_str, response_str))
+
+        return history_data
+
+    def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted workflow history context for steps
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        history_data = self.get_workflow_history(num_runs)
+
+        if not history_data:
+            return None
+
+        # Format as workflow context using the structured data
+        context_parts = ["<workflow_history_context>"]
+
+        for i, (input_str, response_str) in enumerate(history_data, 1):
+            context_parts.append(f"[Workflow Run-{i}]")
+
+            if input_str:
+                context_parts.append(f"User input: {input_str}")
+            if response_str:
+                context_parts.append(f"Workflow output: {response_str}")
+
+            context_parts.append("")  # Empty line between runs
+
+        context_parts.append("</workflow_history_context>")
+        context_parts.append("")  # Empty line before current input
+
+        return "\n".join(context_parts)
+
+    def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return a list of dictionaries containing the input and output for each run in the session.
+
+        Args:
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
+
+        Returns:
+            A list of dictionaries containing the input and output for each run.
+        """
+        if not self.runs:
+            return []
+
+        runs = self.runs
+
+        if last_n_runs is not None:
+            runs = self.runs[-last_n_runs:]
+
+        return [{"input": run.input, "output": run.content} for run in runs]

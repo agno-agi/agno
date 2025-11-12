@@ -6462,7 +6462,6 @@ class Agent:
             return []
 
         session = self.get_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
@@ -6504,7 +6503,6 @@ class Agent:
             return []
 
         session = await self.aget_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
@@ -6518,23 +6516,27 @@ class Agent:
             skip_history_messages=skip_history_messages,
         )
 
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
         """Return the chat history (user and assistant messages) for the session.
         Use get_messages() for more filtering options.
 
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_session_messages(session_id=session_id, skip_roles=["system", "tool"])
+        return self.get_session_messages(session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"])
 
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
         """Return the chat history (user and assistant messages) for the session.
         Use get_messages() for more filtering options.
 
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return await self.aget_session_messages(session_id=session_id, skip_roles=["system", "tool"])
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"]
+        )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for the given session ID and user ID
