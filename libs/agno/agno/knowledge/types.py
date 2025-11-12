@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Union
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -36,4 +36,4 @@ def get_content_type_enum(content_type_str: str) -> ContentType:
 
 class KnowledgeFilter(BaseModel):
     key: str
-    value: Union[str, int, float, bool]
+    value: Any
