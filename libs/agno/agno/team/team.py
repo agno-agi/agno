@@ -7144,7 +7144,7 @@ class Team:
 
                     # Yield the member event directly
                     member_agent_run_response_event.parent_run_id = (
-                        member_agent_run_response_event.parent_run_id or run_response.run_id
+                        getattr(member_agent_run_response_event, 'parent_run_id', None) or run_response.run_id
                     )
                     yield member_agent_run_response_event
             else:
