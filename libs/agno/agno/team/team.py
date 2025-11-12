@@ -4269,7 +4269,7 @@ class Team:
         """Calculate session metrics"""
 
         session_messages: List[Message] = []
-        for run in session.runs:  # type: ignore
+        for run in session.runs or []:
             if run.messages is not None:
                 for m in run.messages:
                     # Skipping messages from history to avoid duplicates
