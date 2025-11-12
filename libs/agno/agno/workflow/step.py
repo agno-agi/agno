@@ -23,6 +23,8 @@ from agno.run.workflow import (
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
 )
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
@@ -1149,6 +1151,8 @@ class Step:
         Returns:
             List[Message]: The step's Agent or Team chat history for the given session.
         """
+        session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
+
         if self.agent:
             session = self.agent.get_session(session_id=session_id)
             if not session:
@@ -1187,6 +1191,8 @@ class Step:
         Returns:
             List[Message]: The step's Agent or Team chat history for the given session.
         """
+        session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
+
         if self.agent:
             session = await self.agent.aget_session(session_id=session_id)
             if not session:
