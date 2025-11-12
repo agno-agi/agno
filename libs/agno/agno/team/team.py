@@ -4120,6 +4120,7 @@ class Team:
 
             if not member_id:
                 log_info("Skipping member response with no ID")
+                continue
 
             member_result = self._find_member_by_id(member_id)
             if not member_result:
@@ -4272,7 +4273,7 @@ class Team:
         """Calculate session metrics"""
 
         session_messages: List[Message] = []
-        for run in session.runs or []:
+        for run in session.runs:  # type: ignore
             if run.messages is not None:
                 for m in run.messages:
                     # Skipping messages from history to avoid duplicates
@@ -7521,9 +7522,6 @@ class Team:
             session = self.db.get_session(session_id=session_id, session_type=session_type)
             return session  # type: ignore
         except Exception as e:
-            import traceback
-
-            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -7538,9 +7536,6 @@ class Team:
             session = await self.db.get_session(session_id=session_id, session_type=session_type)
             return session  # type: ignore
         except Exception as e:
-            import traceback
-
-            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -7552,9 +7547,6 @@ class Team:
                 raise ValueError("Db not initialized")
             return self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
-            import traceback
-
-            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
         return None
 
@@ -7566,9 +7558,6 @@ class Team:
                 raise ValueError("Db not initialized")
             return await self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
-            import traceback
-
-            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
         return None
 
@@ -8569,7 +8558,12 @@ class Team:
         if knowledge_filters:
             if effective_filters:
                 if isinstance(effective_filters, dict):
-                    effective_filters.update(knowledge_filters)
+                    if isinstance(knowledge_filters, dict):
+                        effective_filters.update(cast(Dict[str, Any], knowledge_filters))
+                    else:
+                        # If knowledge_filters is not a dict (e.g., list of FilterExpr), combine as list if effective_filters is dict
+                        # Convert the dict to a list and concatenate
+                        effective_filters = cast(Any, [effective_filters, *knowledge_filters])
                 else:
                     effective_filters = [*effective_filters, *knowledge_filters]
             else:
