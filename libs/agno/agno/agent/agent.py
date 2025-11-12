@@ -5776,7 +5776,7 @@ class Agent:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return await self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
             import traceback
 
