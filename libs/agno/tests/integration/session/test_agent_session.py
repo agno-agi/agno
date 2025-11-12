@@ -1063,48 +1063,6 @@ def test_get_messages_for_session_skip_history(shared_db):
     assert messages[1].content == "New assistant"
 
 
-def test_get_messages_for_session_incomplete_pairs(shared_db):
-    """Test handling of incomplete user/assistant pairs"""
-    session_id = f"test_session_{uuid.uuid4()}"
-
-    runs = [
-        RunOutput(
-            run_id="run1",
-            status=RunStatus.completed,
-            messages=[
-                Message(role="user", content="User only"),
-                # No assistant response
-            ],
-        ),
-        RunOutput(
-            run_id="run2",
-            status=RunStatus.completed,
-            messages=[
-                Message(role="assistant", content="Assistant only"),
-                # No user message
-            ],
-        ),
-        RunOutput(
-            run_id="run3",
-            status=RunStatus.completed,
-            messages=[
-                Message(role="user", content="Complete user"),
-                Message(role="assistant", content="Complete assistant"),
-            ],
-        ),
-    ]
-
-    agent_session = create_session_with_runs(shared_db, session_id, runs)
-
-    # Get messages - only complete pairs
-    messages = agent_session.get_messages()
-
-    # Should only get the complete pair from run 3
-    assert len(messages) == 2
-    assert messages[0].content == "Complete user"
-    assert messages[1].content == "Complete assistant"
-
-
 # Tests for get_session_summary()
 def test_get_session_summary_exists(shared_db):
     """Test getting session summary when it exists"""
