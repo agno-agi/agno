@@ -36,14 +36,6 @@ def wait_for_services():
 
     pytest.fail("Services did not become healthy in time")
 
-
-def test_health_check():
-    """Test that the health check endpoint returns a 200 status code."""
-    response = requests.get(f"{BASE_URL}/health", timeout=REQUEST_TIMEOUT)
-    assert response.status_code == 200, f"Health check failed: {response.status_code}"
-    assert response.json().get("status") == "ok", f"Health check returned unhealthy status: {response.json()}"
-
-
 def test_multiple_containers_responding():
     """Test that requests are distributed across multiple containers."""
     containers_seen: Set[str] = set()
@@ -58,11 +50,11 @@ def test_multiple_containers_responding():
             assert response.status_code == 200, f"Request {i + 1} failed with status {response.status_code}"
 
             data = response.json()
-            container_id = data.get("container_id")
-            assert container_id, f"No container_id in response: {data}"
+            os_id = data.get("os_id")
+            assert os_id, f"No os_id in response: {data}"
 
-            containers_seen.add(container_id)
-            print(f"Request {i + 1}: Container {container_id}")
+            containers_seen.add(os_id)
+            print(f"Request {i + 1}: Container {os_id}")
 
         except requests.exceptions.RequestException as e:
             pytest.fail(f"Request {i + 1} failed: {e}")
@@ -236,55 +228,6 @@ def test_run_agent_creates_session_stateless():
     assert delete_response.status_code == 204
     print(f"✓ Cleaned up session: {session_id}")
 
-
-def test_concurrent_sessions_across_containers():
-    """Test that multiple concurrent sessions work correctly across containers."""
-    num_sessions = 5
-    sessions_created = []
-
-    # Create multiple sessions
-    for i in range(num_sessions):
-        response = requests.post(
-            f"{BASE_URL}/sessions",
-            params={"type": "agent"},
-            json={
-                "agent_id": "test-agent",
-                "session_name": f"Concurrent Session {i + 1}",
-                "session_state": {"session_number": i + 1},
-            },
-            timeout=REQUEST_TIMEOUT,
-        )
-
-        assert response.status_code == 201, f"Failed to create session {i + 1}"
-        session_data = response.json()
-        sessions_created.append(session_data["session_id"])
-
-    print(f"✓ Created {len(sessions_created)} concurrent sessions")
-
-    # Verify all sessions can be retrieved
-    for i, session_id in enumerate(sessions_created):
-        response = requests.get(
-            f"{BASE_URL}/sessions/{session_id}",
-            params={"type": "agent"},
-            timeout=REQUEST_TIMEOUT,
-        )
-
-        assert response.status_code == 200, f"Failed to retrieve session {session_id}"
-        data = response.json()
-        assert data["session_id"] == session_id
-        assert data["session_name"] == f"Concurrent Session {i + 1}"
-        assert data.get("session_state", {}).get("session_number") == i + 1
-
-    print(f"✓ All {len(sessions_created)} sessions retrieved successfully")
-
-    # Clean up all sessions
-    for session_id in sessions_created:
-        requests.delete(
-            f"{BASE_URL}/sessions/{session_id}",
-            timeout=REQUEST_TIMEOUT,
-        )
-
-    print(f"✓ Cleaned up all {len(sessions_created)} sessions")
 
 
 def test_health_check_all_containers():

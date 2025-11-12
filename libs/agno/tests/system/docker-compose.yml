@@ -21,6 +21,7 @@ services:
       dockerfile: os.Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg_async://agno:agno@postgres:5432/agentos_test
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       CONTAINER_ID: agentos-1
     depends_on:
       postgres:
@@ -39,6 +40,7 @@ services:
       dockerfile: os.Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg_async://agno:agno@postgres:5432/agentos_test
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       CONTAINER_ID: agentos-2
     depends_on:
       postgres:
@@ -57,6 +59,7 @@ services:
       dockerfile: os.Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg_async://agno:agno@postgres:5432/agentos_test
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       CONTAINER_ID: agentos-3
     depends_on:
       postgres:

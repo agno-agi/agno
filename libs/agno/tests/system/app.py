@@ -37,7 +37,7 @@ test_agent = Agent(
 
 # Create AgentOS instance
 agent_os = AgentOS(
-    id="test-os",
+    id=os.getenv("CONTAINER_ID", "unknown"),
     name="Test AgentOS",
     description=f"Test AgentOS instance running in {CONTAINER_ID}",
     agents=[test_agent],
