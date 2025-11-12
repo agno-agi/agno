@@ -1424,7 +1424,7 @@ class Knowledge:
         self,
         query: str,
         max_results: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
@@ -1466,7 +1466,7 @@ class Knowledge:
         self.valid_metadata_filters.update(await self._aget_filters_from_db())
         return self.valid_metadata_filters
 
-    def _validate_filters(self, filters: Optional[Any]) -> Tuple[Any, List[str]]:
+    def _validate_filters(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]) -> Tuple[Any, List[str]]:
         """Internal method to validate filters against known metadata keys."""
         if not filters:
             return None, []
@@ -1508,14 +1508,16 @@ class Knowledge:
 
         return valid_filters, invalid_keys
 
-    def validate_filters(self, filters: Optional[Any]) -> Tuple[Any, List[str]]:
+    def validate_filters(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]) -> Tuple[Any, List[str]]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
         self.valid_metadata_filters.update(self._get_filters_from_db())
 
         return self._validate_filters(filters)
 
-    async def async_validate_filters(self, filters: Optional[Any]) -> Tuple[Any, List[str]]:
+    async def async_validate_filters(
+        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]
+    ) -> Tuple[Any, List[str]]:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
         self.valid_metadata_filters.update(await self._aget_filters_from_db())

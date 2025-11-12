@@ -38,6 +38,7 @@ from agno.exceptions import (
     RunCancelledException,
     StopAgentRun,
 )
+from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
@@ -233,7 +234,7 @@ class Agent:
     knowledge: Optional[Knowledge] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
-    knowledge_filters: Optional[Any] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
     add_knowledge_to_context: bool = False
@@ -450,7 +451,7 @@ class Agent:
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
@@ -1135,7 +1136,7 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1461,7 +1462,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1488,7 +1489,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1516,7 +1517,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1745,7 +1746,7 @@ class Agent:
         run_context: RunContext,
         session_id: str,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2013,7 +2014,6 @@ class Agent:
         run_context: RunContext,
         session_id: str,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2389,7 +2389,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2415,7 +2415,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2443,7 +2443,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2666,7 +2666,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2685,7 +2685,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2704,7 +2704,7 @@ class Agent:
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3227,7 +3227,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3246,7 +3246,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3265,7 +3265,7 @@ class Agent:
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -5348,7 +5348,7 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -5423,7 +5423,7 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -7373,7 +7373,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -7748,7 +7748,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -9474,7 +9474,7 @@ class Agent:
     def _get_search_knowledge_base_function(
         self,
         run_response: RunOutput,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -9550,7 +9550,7 @@ class Agent:
     def _search_knowledge_base_with_agentic_filters_function(
         self,
         run_response: RunOutput,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -9820,7 +9820,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -9934,7 +9934,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -10115,7 +10115,9 @@ class Agent:
 
         return None
 
-    def _get_effective_filters(self, knowledge_filters: Optional[Any] = None) -> Optional[Any]:
+    def _get_effective_filters(
+        self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> Optional[Any]:
         """
         Determine which knowledge filters to use, with priority to run-level filters.
 
@@ -10134,8 +10136,13 @@ class Agent:
         # If run has filters, they override agent filters
         if knowledge_filters:
             if effective_filters:
-                # Merge filters, with run filters taking priority
-                effective_filters.update(knowledge_filters)
+                if isinstance(knowledge_filters, dict):
+                    if isinstance(effective_filters, dict):
+                        effective_filters.update(knowledge_filters)
+                    else:
+                        effective_filters = knowledge_filters
+                elif isinstance(knowledge_filters, list):
+                    effective_filters = [*effective_filters, *knowledge_filters]
             else:
                 effective_filters = knowledge_filters
 

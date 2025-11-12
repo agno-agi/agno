@@ -65,6 +65,4 @@ if __name__ == "__main__":
     )
     # Run your AgentOS
     # You can test your AgentOS at: http://localhost:7777/
-
-    # Don't use reload=True here, this can cause issues with the lifespan
     agent_os.serve(app="agentos_knowledge:app", reload=True)
