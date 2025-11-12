@@ -265,6 +265,7 @@ def convert_schema(
                     required=required,
                     description=description,
                     default=default,
+                    title=title,
                 )
             else:
                 return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
@@ -330,6 +331,7 @@ def convert_schema(
             items=items,
             min_items=min_items,
             max_items=max_items,
+            title=title,
         )
 
     elif schema_type == "string":
