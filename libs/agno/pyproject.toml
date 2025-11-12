@@ -116,7 +116,6 @@ notion = ["notion-client"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
 reportlab = ["reportlab"]
-scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -234,7 +233,6 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
   "agno[opencv]",
-  "agno[scrapegraph]",
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
@@ -451,7 +449,6 @@ module = [
   "redisvl.*",
   "replicate.*",
   "requests.*",
-  "scrapegraph_py.*",
   "sentence_transformers.*",
   "serpapi.*",
   "setuptools.*",
