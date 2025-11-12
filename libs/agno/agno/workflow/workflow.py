@@ -50,7 +50,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
-from agno.session.workflow import WorkflowSession
+from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
@@ -832,7 +832,7 @@ class Workflow:
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[WorkflowChatInteraction]:
         """Return a list of dictionaries containing the input and output for each run in the session.
 
         Args:

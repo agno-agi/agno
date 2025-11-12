@@ -60,8 +60,8 @@ def test_get_chat_history(simple_workflow: Workflow):
     # Assert we can get the chat history
     chat_history = simple_workflow.get_chat_history(session_id=session_id)
     assert len(chat_history) == 1
-    assert chat_history[0]["input"] == "Hello"
-    assert chat_history[0]["output"] == response.content
+    assert chat_history[0].input == "Hello"
+    assert chat_history[0].output == response.content
 
 
 def test_get_chat_history_with_default_session_id(simple_workflow: Workflow):
@@ -73,8 +73,8 @@ def test_get_chat_history_with_default_session_id(simple_workflow: Workflow):
     # Assert we can get the chat history
     chat_history = simple_workflow.get_chat_history()
     assert len(chat_history) == 1
-    assert chat_history[0]["input"] == "Hello"
-    assert chat_history[0]["output"] == response.content
+    assert chat_history[0].input == "Hello"
+    assert chat_history[0].output == response.content
 
 
 # -- 2. Step class convenience functions --

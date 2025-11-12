@@ -4,6 +4,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from pydantic import BaseModel
+from pymongo.cursor import Union
+
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -471,7 +474,7 @@ class WorkflowSession:
         else:
             raise ValueError("agent_id or team_id must be provided")
 
-    def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[WorkflowChatInteraction]:
         """Return a list of dictionaries containing the input and output for each run in the session.
 
         Args:
@@ -488,4 +491,12 @@ class WorkflowSession:
         if last_n_runs is not None:
             runs = self.runs[-last_n_runs:]
 
-        return [{"input": run.input, "output": run.content} for run in runs]
+        return [
+            WorkflowChatInteraction(input=run.input, output=run.content) for run in runs if run.input and run.content
+        ]
+
+
+@dataclass
+class WorkflowChatInteraction:
+    input: Union[str, Dict[str, Any], List[Any], BaseModel]
+    output: Any
