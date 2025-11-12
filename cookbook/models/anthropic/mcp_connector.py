@@ -5,7 +5,7 @@ from agno.utils.models.claude import MCPServerConfiguration
 agent = Agent(
     model=Claude(
         id="claude-sonnet-4-20250514",
-        default_headers={"anthropic-beta": "mcp-client-2025-04-04"},
+        betas=["mcp-client-2025-04-04"],
         mcp_servers=[
             MCPServerConfiguration(
                 type="url",

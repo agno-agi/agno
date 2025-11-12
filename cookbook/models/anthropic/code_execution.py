@@ -4,7 +4,7 @@ from agno.models.anthropic import Claude
 agent = Agent(
     model=Claude(
         id="claude-sonnet-4-20250514",
-        default_headers={"anthropic-beta": "code-execution-2025-05-22"},
+        betas=["code-execution-2025-05-22"],
     ),
     tools=[
         {

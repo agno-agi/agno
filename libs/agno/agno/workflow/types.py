@@ -17,6 +17,7 @@ from agno.utils.media import (
     reconstruct_videos,
 )
 from agno.utils.serialize import json_serializer
+from agno.utils.timer import Timer
 
 
 @dataclass
@@ -405,12 +406,18 @@ class WorkflowMetrics:
     """Complete metrics for a workflow execution"""
 
     steps: Dict[str, StepMetrics]
+    # Timer utility for tracking execution time
+    timer: Optional[Timer] = None
+    # Total workflow execution time
+    duration: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        return {
+        result: Dict[str, Any] = {
             "steps": {name: step.to_dict() for name, step in self.steps.items()},
+            "duration": self.duration,
         }
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowMetrics":
@@ -419,7 +426,19 @@ class WorkflowMetrics:
 
         return cls(
             steps=steps,
+            duration=data.get("duration"),
         )
+
+    def start_timer(self):
+        if self.timer is None:
+            self.timer = Timer()
+        self.timer.start()
+
+    def stop_timer(self, set_duration: bool = True):
+        if self.timer is not None:
+            self.timer.stop()
+            if set_duration:
+                self.duration = self.timer.elapsed
 
 
 @dataclass

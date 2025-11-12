@@ -264,7 +264,7 @@ class AgentOS:
         if not self.enable_mcp_server:
             self._add_router(app, get_home_router(self))
 
-        self._add_router(app, get_health_router())
+        self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 

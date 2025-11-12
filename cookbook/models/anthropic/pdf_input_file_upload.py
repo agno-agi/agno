@@ -27,10 +27,7 @@ uploaded_file = client.beta.files.upload(
 
 if uploaded_file is not None:
     agent = Agent(
-        model=Claude(
-            id="claude-opus-4-20250514",
-            default_headers={"anthropic-beta": "files-api-2025-04-14"},
-        ),
+        model=Claude(id="claude-opus-4-20250514", betas=["files-api-2025-04-14"]),
         markdown=True,
     )
 
