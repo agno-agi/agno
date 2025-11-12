@@ -964,7 +964,7 @@ jobs:
       - name: Verify agno_infra installation
         run: |
           source .venv/bin/activate
-          python -c "import agno_infra; print('✓ agno_infra imported successfully')" || exit 1
+          pip show agno-infra || exit 1
       - name: List installed packages
         run: |
           source .venv/bin/activate

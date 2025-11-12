@@ -129,12 +129,32 @@ def get_chunker_info(chunker_key: str) -> Dict:
             class_name = chunker_class.__name__
             docstring = chunker_class.__doc__ or f"{class_name} chunking strategy"
 
+            # Check class __init__ signature for chunk_size and overlap parameters
+            metadata = {}
+            import inspect
+
+            try:
+                sig = inspect.signature(chunker_class.__init__)
+                param_names = set(sig.parameters.keys())
+
+                # If class has chunk_size or max_chunk_size parameter, set default chunk_size
+                if "chunk_size" in param_names or "max_chunk_size" in param_names:
+                    metadata["chunk_size"] = 5000
+
+                # If class has overlap parameter, set default overlap
+                if "overlap" in param_names:
+                    metadata["chunk_overlap"] = 0
+            except Exception:
+                # If we can't inspect, skip metadata
+                pass
+
             return {
                 "key": chunker_key,
                 "class_name": class_name,
                 "name": chunker_key,
                 "description": docstring.strip(),
                 "strategy_type": strategy_type.value,
+                "metadata": metadata,
             }
         except ValueError:
             raise ValueError(f"Unknown chunker key: {chunker_key}")
