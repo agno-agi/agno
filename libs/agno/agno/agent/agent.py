@@ -6485,10 +6485,15 @@ class Agent:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
     ) -> List[Message]:
-        """Get messages for a session
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
 
         Returns:
             List[Message]: The messages for the session.

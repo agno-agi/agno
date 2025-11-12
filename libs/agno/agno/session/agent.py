@@ -152,17 +152,19 @@ class AgentSession:
         if skip_statuses is None:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
 
+        runs = self.runs
+
         # Filter by agent_id and team_id
         if agent_id:
-            self.runs = [run for run in self.runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+            runs = [run for run in self.runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
         if team_id:
-            self.runs = [run for run in self.runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+            runs = [run for run in self.runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
 
         # Skip any messages that might be part of members of teams (for session re-use)
-        self.runs = [run for run in self.runs if run.parent_run_id is None]  # type: ignore
+        runs = [run for run in runs if run.parent_run_id is None]  # type: ignore
 
         # Filter by status
-        self.runs = [run for run in self.runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
+        runs = [run for run in runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
 
         messages_from_history = []
         system_message = None
@@ -197,7 +199,7 @@ class AgentSession:
 
         # If limit is not set, return all messages
         else:
-            runs_to_process = self.runs[-last_n_runs:] if last_n_runs is not None else self.runs
+            runs_to_process = runs[-last_n_runs:] if last_n_runs is not None else runs
             for run_response in runs_to_process:
                 if not run_response or not run_response.messages:
                     continue

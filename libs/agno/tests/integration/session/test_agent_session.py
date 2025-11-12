@@ -60,7 +60,7 @@ def test_get_messages_basic(shared_db):
     assert len(agent_session.runs) == 3
 
     # Test getting messages from last 2 runs
-    messages = agent_session.get_messages(last_n_runs=2, limit=2)
+    messages = agent_session.get_messages(last_n_runs=2)
 
     # Should get 4 messages (2 from each of the last 2 runs)
     assert len(messages) == 4
@@ -328,7 +328,7 @@ def test_get_messages_skip_status(shared_db):
     agent_session = create_session_with_runs(shared_db, session_id, runs)
 
     # By default, should skip error, cancelled, and paused runs
-    messages = agent_session.get_messages()
+    messages = agent_session.get_messages(skip_roles=["system"])
 
     assert len(messages) == 2  # Only messages from completed run
     assert messages[0].content == "Completed run"
@@ -337,7 +337,7 @@ def test_get_messages_skip_status(shared_db):
     # Explicitly skip only error status
     messages_skip_error = agent_session.get_messages(skip_statuses=[RunStatus.error])
 
-    # Should get messages from completed and cancelled runs
+    # Should get messages from the completed run and the cancelled run
     assert len(messages_skip_error) == 3
 
 
@@ -991,16 +991,17 @@ def test_get_messages_for_session_basic(shared_db):
     # Get messages for session
     messages = agent_session.get_messages()
 
-    # Should get 4 messages (2 user + 2 assistant), no system
-    assert len(messages) == 4
-    assert messages[0].role == "user"
-    assert messages[0].content == "User message 1"
-    assert messages[1].role == "assistant"
-    assert messages[1].content == "Assistant response 1"
-    assert messages[2].role == "user"
-    assert messages[2].content == "User message 2"
-    assert messages[3].role == "assistant"
-    assert messages[3].content == "Assistant response 2"
+    # Should get 4 messages (2 user + 2 assistant + 1 system)
+    assert len(messages) == 5
+    assert messages[0].role == "system"
+    assert messages[1].role == "user"
+    assert messages[1].content == "User message 1"
+    assert messages[2].role == "assistant"
+    assert messages[2].content == "Assistant response 1"
+    assert messages[3].role == "user"
+    assert messages[3].content == "User message 2"
+    assert messages[4].role == "assistant"
+    assert messages[4].content == "Assistant response 2"
 
 
 def test_get_messages_for_session_custom_roles(shared_db):
@@ -1021,7 +1022,7 @@ def test_get_messages_for_session_custom_roles(shared_db):
     agent_session = create_session_with_runs(shared_db, session_id, runs)
 
     # Get messages with custom assistant role
-    messages = agent_session.get_messages(skip_roles=["model"])
+    messages = agent_session.get_messages()
 
     assert len(messages) == 2
     assert messages[0].role == "user"
@@ -1098,7 +1099,7 @@ def test_get_messages_for_session_incomplete_pairs(shared_db):
     # Get messages - only complete pairs
     messages = agent_session.get_messages()
 
-    # Should only get the complete pair from run3
+    # Should only get the complete pair from run 3
     assert len(messages) == 2
     assert messages[0].content == "Complete user"
     assert messages[1].content == "Complete assistant"
@@ -1226,8 +1227,8 @@ def test_get_chat_history_empty(shared_db):
     assert len(chat_history) == 0
 
 
-def test_get_chat_history_all_roles(shared_db):
-    """Test that chat history includes all roles"""
+def test_get_chat_history_default_roles(shared_db):
+    """Test that chat history excludes the system and tool roles by default"""
     session_id = f"test_session_{uuid.uuid4()}"
 
     runs = [
@@ -1248,8 +1249,6 @@ def test_get_chat_history_all_roles(shared_db):
     # Get chat history - should include all roles
     chat_history = agent_session.get_chat_history()
 
-    assert len(chat_history) == 4
-    assert chat_history[0].role == "system"
-    assert chat_history[1].role == "user"
-    assert chat_history[2].role == "assistant"
-    assert chat_history[3].role == "tool"
+    assert len(chat_history) == 2
+    assert chat_history[0].role == "user"
+    assert chat_history[1].role == "assistant"
