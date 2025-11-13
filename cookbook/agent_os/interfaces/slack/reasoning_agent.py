@@ -4,7 +4,7 @@ from agno.models.anthropic.claude import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack.slack import Slack
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
@@ -14,12 +14,7 @@ reasoning_finance_agent = Agent(
     db=agent_db,
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        DuckDuckGoTools(),
     ],
     instructions="Use tables to display data. When you use thinking tools, keep the thinking brief.",
     add_datetime_to_context=True,

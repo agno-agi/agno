@@ -57,7 +57,7 @@ You can find these values in your Slack App settings:
    1. For local testing with Agno's SlackApp and agents, we recommend using ngrok to create a secure tunnel to your local server. It is also easier if you get a static url from ngrok.
    2. Run ngrok:
    ```bash
-   ngrok http --url=your-url.ngrok-free.app http://localhost:8000
+   ngrok http --url=your-url.ngrok-free.app http://localhost:7777
    ```
    3. Run your app locally with `python <my-app>.py`
    4. Subscribe to the following events:
