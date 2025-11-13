@@ -14,7 +14,6 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.arxiv import ArxivTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 
 arxiv_download_dir = Path(__file__).parent.joinpath("tmp", "arxiv_pdfs__{session_id}")
@@ -50,7 +49,7 @@ academic_paper_researcher = Agent(
     name="Academic Paper Researcher",
     model=OpenAIChat("gpt-4o"),
     role="Research academic papers and scholarly content",
-    tools=[GoogleSearchTools(), ArxivTools(download_dir=arxiv_download_dir)],
+    tools=[DuckDuckGoTools(), ArxivTools(download_dir=arxiv_download_dir)],
     add_name_to_context=True,
     instructions=dedent("""
     You are a academic paper researcher.

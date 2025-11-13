@@ -401,7 +401,6 @@ module = [
   "google_maps_places.*",
   "google_auth_oauthlib.*",
   "googleapiclient.*",
-  "googlesearch.*",
   "groq.*",
   "hexbytes.*",
   "huggingface_hub.*",
