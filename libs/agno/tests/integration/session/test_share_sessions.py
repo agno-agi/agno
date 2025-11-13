@@ -129,7 +129,6 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     assert type(session_from_db.runs[0]) == RunOutput
     assert session_from_db.runs[0].agent_id == "weather-agent-id"
     assert session_from_db.runs[0].parent_run_id == session_from_db.runs[1].run_id
-    print(session_from_db.runs[1])
     assert type(session_from_db.runs[1]) == TeamRunOutput
     assert session_from_db.runs[1].team_id == team_1.id
     assert session_from_db.runs[1].parent_run_id is None
@@ -158,6 +157,9 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 1, "We should have the agent run"
     assert len(session_from_db.runs[-1].messages) == 4, "First run, no history messages"
+    assert type(session_from_db.runs[0]) == RunOutput
+    assert session_from_db.runs[0].agent_id == agent_1.id
+    assert session_from_db.runs[0].parent_run_id is None
 
     team_1.run(
         "What is the weather in Paris?", session_id=session_id, user_id="user_1", session_state={"city": "Paris"}
@@ -172,6 +174,16 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     assert len(session_from_db.runs) == 3, "We should have the first agent run, plus the new team run and member run"
 
     assert len(session_from_db.runs[-1].messages) == 9, "Original 4 history messages, plus the new team run's messages"
+    
+    assert type(session_from_db.runs[0]) == RunOutput
+    assert session_from_db.runs[0].agent_id == agent_1.id
+    assert session_from_db.runs[0].parent_run_id is None
+    assert type(session_from_db.runs[1]) == RunOutput
+    assert session_from_db.runs[1].agent_id == "weather-agent-id"
+    assert session_from_db.runs[1].parent_run_id == session_from_db.runs[2].run_id
+    assert type(session_from_db.runs[2]) == TeamRunOutput
+    assert session_from_db.runs[2].team_id == team_1.id
+    assert session_from_db.runs[2].parent_run_id is None
 
 
 def test_session_sharing_agent_to_agent_with_history(agent_1, agent_2):
