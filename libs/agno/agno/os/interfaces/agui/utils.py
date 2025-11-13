@@ -28,7 +28,8 @@ from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
+
 from agno.utils.message import get_text_from_message
 
 
@@ -117,21 +118,13 @@ class EventBuffer:
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
     """Convert AG-UI messages to Agno messages.
 
-    Deduplicates tool result messages by tool_call_id to prevent duplicate tool_call_id errors
-    from LLM providers. Also filters out tool_calls from assistant messages if those tool_calls
-    don't have results in the conversation (Issue #5116 + race condition handling).
-
-    This handles cases where:
-    1. The frontend sends the same tool result multiple times (React re-renders)
-    2. The frontend creates assistant messages listing all tool_calls, even those already executed
-    3. User interrupts before external tool completes, leaving tool_calls without results
+    Handles deduplication and filtering to ensure valid message sequences for LLM providers:
+    - Deduplicates tool results
+    - Filters tool_calls without corresponding results
+    - Skips client system messages (agent builds its own)
     """
-    import logging
-    from agno.utils.log import log_debug, log_warning
 
-    # FIRST PASS: Build position map for tool results
-    # Maps tool_call_id → [indices where results appear]
-    # This enables position-aware filtering: only keep tool_calls whose results come AFTER
+    # Build position map: tool_call_id → indices where results appear
     result_positions: Dict[str, List[int]] = {}
     for idx, msg in enumerate(messages):
         if msg.role == "tool":
@@ -149,8 +142,7 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
         if msg.role == "tool":
             tool_call_id = msg.tool_call_id
 
-            # Deduplicate tool results by tool_call_id (Issue #5116 - Part 1)
-            # Keep only the first occurrence of each tool_call_id
+            # Deduplicate tool results - keep only first occurrence
             if tool_call_id in seen_tool_call_ids:
                 skipped_duplicate_results += 1
                 log_warning(f"Skipping duplicate AGUI tool result: {tool_call_id}")
@@ -165,24 +157,22 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
 
             if msg.tool_calls:
                 original_count = len(msg.tool_calls)
-                # POSITION-AWARE FILTERING: Only keep tool_calls whose first result appears AFTER this assistant
-                # This correctly handles: 1) already executed tools (result before), 2) incomplete tools (no result)
+                # Filter tool_calls: only keep if result appears after this message
                 filtered_calls = []
                 for call in msg.tool_calls:
                     if call.id in result_positions:
                         first_result_idx = result_positions[call.id][0]
                         if first_result_idx > idx:
-                            # Result comes AFTER this assistant → Keep it
                             filtered_calls.append(call)
                         else:
-                            # Result came BEFORE this assistant → Filter out (already executed)
                             filtered_tool_calls_count += 1
                     else:
-                        # No result at all → Filter out (race condition/incomplete)
                         filtered_tool_calls_count += 1
 
                 if len(filtered_calls) < original_count:
-                    log_warning(f"Filtered {original_count - len(filtered_calls)} tool_calls from assistant (already executed or incomplete)")
+                    log_warning(
+                        f"Filtered {original_count - len(filtered_calls)} tool_calls from assistant (already executed or incomplete)"
+                    )
 
                 if filtered_calls:
                     tool_calls = [call.model_dump() for call in filtered_calls]
@@ -207,7 +197,9 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
 
     # Log summary for debugging
     if skipped_duplicate_results > 0 or filtered_tool_calls_count > 0:
-        log_debug(f"AGUI message conversion: {len(messages)}→{len(result)} messages, {skipped_duplicate_results} duplicate results skipped, {filtered_tool_calls_count} tool_calls filtered")
+        log_debug(
+            f"AGUI message conversion: {len(messages)}→{len(result)} messages, {skipped_duplicate_results} duplicate results skipped, {filtered_tool_calls_count} tool_calls filtered"
+        )
 
     return result
 
@@ -326,8 +318,7 @@ def _create_events_from_chunk(
             parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
 
             if not parent_message_id:
-                # Issue #5116 Fix: Tool calls without a parent message create separate assistants in frontend
-                # Create a parent message for orphaned tool calls
+                # Create parent message for tool calls without preceding assistant message
                 parent_message_id = str(uuid.uuid4())
                 log_warning(f"Creating parent message for orphaned tool call: {tool_call.tool_name}")
 
@@ -437,8 +428,7 @@ def _create_completion_events(
         end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
         events_to_emit.append(end_message_event)
 
-    # emit frontend tool calls, i.e. external_execution=True
-    # Issue #5116 FIX: Only emit tool calls for tools awaiting external execution
+    # Emit external execution tools
     if isinstance(chunk, RunPausedEvent):
         external_tools = chunk.tools_awaiting_external_execution
         if external_tools:
@@ -467,8 +457,7 @@ def _create_completion_events(
             )
             events_to_emit.append(assistant_end_event)
 
-            # Now emit the tool call events ONLY for external execution tools
-            # This prevents emitting events for tools that were already executed
+            # Emit tool call events for external execution
             for tool in external_tools:
                 if tool.tool_call_id is None or tool.tool_name is None:
                     continue
