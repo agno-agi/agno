@@ -6047,7 +6047,6 @@ class Agent:
 
             # We have a team member agent, so we are loading a TeamSession
             if loaded_session is None and self.team_id is not None:
-                print("Loading TeamSession")
                 # Load session for team member agents
                 loaded_session = cast(
                     TeamSession,
