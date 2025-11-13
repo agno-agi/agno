@@ -9840,6 +9840,9 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+            
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             print_response_stream(
@@ -9936,6 +9939,9 @@ class Agent:
         if stream is None:
             stream = self.stream or False
 
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
+            
         if stream:
             await aprint_response_stream(
                 agent=self,
