@@ -261,10 +261,15 @@ class Step:
                                 run_context,
                             ):  # type: ignore
                                 if isinstance(chunk, (BaseRunOutputEvent)):
-                                    if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
-                                        content += chunk.content if chunk.content is not None else ""
-                                    elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
-                                        content = chunk.content if chunk.content is not None else ""
+                                    if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)) and chunk.content is not None:
+                                        # Its a regular chunk of content
+                                        if isinstance(chunk.content, str):
+                                            content += chunk.content
+                                        # Its the BaseModel object, convert it to a dictionary
+                                        elif isinstance(chunk.content, BaseModel):
+                                            content = chunk.content.model_dump()
+                                        else:
+                                            content += str(chunk.content)
                                 else:
                                     content += str(chunk)
                                 if isinstance(chunk, StepOutput):
@@ -503,23 +508,22 @@ class Step:
                             )
                             for event in iterator:  # type: ignore
                                 if isinstance(event, (BaseRunOutputEvent)):
-                                    if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
-                                        content += event.content if event.content is not None else ""
-                                    elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
-                                        content = event.content if event.content is not None else ""
+                                    if isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content is not None:
+                                        if isinstance(event.content, str):
+                                            content += event.content
+                                        elif isinstance(event.content, BaseModel):
+                                            content = event.content.model_dump()
+                                        else:
+                                            content = str(event.content)
+                                    enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events:
+                                        yield enriched_event  # type: ignore[misc]
                                 else:
                                     content += str(event)
                                 if isinstance(event, StepOutput):
                                     final_response = event
                                     break
-                                else:
-                                    # Enrich event with workflow context before yielding
-                                    enriched_event = self._enrich_event_with_context(
-                                        event, workflow_run_response, step_index
-                                    )
-                                    # Only yield executor events if stream_executor_events is True
-                                    if stream_executor_events:
-                                        yield enriched_event  # type: ignore[misc]
 
                             # Merge session_state changes back
                             if run_context is None and session_state is not None:
@@ -720,10 +724,13 @@ class Step:
                                 )
                                 for chunk in iterator:  # type: ignore
                                     if isinstance(chunk, (BaseRunOutputEvent)):
-                                        if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
-                                            content += chunk.content if chunk.content is not None else ""
-                                        elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
-                                            content = chunk.content if chunk.content is not None else ""
+                                        if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)) and chunk.content is not None:
+                                            if isinstance(chunk.content, str):
+                                                content += chunk.content
+                                            elif isinstance(chunk.content, BaseModel):
+                                                content = chunk.content.model_dump()
+                                            else:
+                                                content = str(chunk.content)
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
@@ -738,10 +745,13 @@ class Step:
                                     )
                                     async for chunk in iterator:  # type: ignore
                                         if isinstance(chunk, (BaseRunOutputEvent)):
-                                            if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
-                                                content += chunk.content if chunk.content is not None else ""
-                                            elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
-                                                content = chunk.content if chunk.content is not None else ""
+                                            if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)) and chunk.content is not None:
+                                                if isinstance(chunk.content, str):
+                                                    content += chunk.content
+                                                elif isinstance(chunk.content, BaseModel):
+                                                    content = chunk.content.model_dump()
+                                                else:
+                                                    content = str(chunk.content)
                                         else:
                                             content += str(chunk)
                                         if isinstance(chunk, StepOutput):
@@ -940,23 +950,24 @@ class Step:
                         )
                         async for event in iterator:  # type: ignore
                             if isinstance(event, (BaseRunOutputEvent)):
-                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
-                                    content += event.content if event.content is not None else ""
-                                elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
-                                    content = event.content if event.content is not None else ""
-                            else:
-                                content += str(event)
-                            if isinstance(event, StepOutput):
-                                final_response = event
-                                break
-                            else:
-                                # Enrich event with workflow context before yielding
+                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content is not None:
+                                    if isinstance(event.content, str):
+                                        content += event.content
+                                    elif isinstance(event.content, BaseModel):
+                                        content = event.content.model_dump()
+                                    else:
+                                        content = str(event.content)
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
                                 # Only yield executor events if stream_executor_events is True
                                 if stream_executor_events:
                                     yield enriched_event  # type: ignore[misc]
+                            else:
+                                content += str(event)
+                            if isinstance(event, StepOutput):
+                                final_response = event
+                                break
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif _is_async_callable(self.active_executor):
@@ -982,23 +993,26 @@ class Step:
                         )
                         for event in iterator:  # type: ignore
                             if isinstance(event, (BaseRunOutputEvent)):
-                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
-                                    content += event.content if event.content is not None else ""
-                                elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
-                                    content = event.content if event.content is not None else ""
-                            else:
-                                content += str(event)
-                            if isinstance(event, StepOutput):
-                                final_response = event
-                                break
-                            else:
-                                # Enrich event with workflow context before yielding
+                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content is not None:
+                                    if isinstance(event.content, str):
+                                        content += event.content
+                                    elif isinstance(event.content, BaseModel):
+                                        content = event.content.model_dump()
+                                    else:
+                                        content = str(event.content)
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
                                 # Only yield executor events if stream_executor_events is True
                                 if stream_executor_events:
+                                    print("yielding enriched event")
+                                    print(enriched_event)
                                     yield enriched_event  # type: ignore[misc]
+                            else:
+                                content += str(event)
+                            if isinstance(event, StepOutput):
+                                final_response = event
+                                break
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
