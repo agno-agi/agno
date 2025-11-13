@@ -200,6 +200,9 @@ class Team:
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
 
+    # Deprecated. Use delegate_to_all_members instead.
+    delegate_task_to_all_members: bool = False
+
     # --- User settings ---
     # Default user ID for this team
     user_id: Optional[str] = None
@@ -445,6 +448,7 @@ class Team:
         role: Optional[str] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
+        delegate_task_to_all_members: bool = False,
         delegate_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -536,6 +540,9 @@ class Team:
         exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
+        if delegate_task_to_all_members:
+            log_warning("`delegate_task_to_all_members` is deprecated. Use `delegate_to_all_members` instead.")
+
         self.members = members
 
         self.model = model  # type: ignore[assignment]
@@ -546,7 +553,7 @@ class Team:
 
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
-        self.delegate_to_all_members = delegate_to_all_members
+        self.delegate_to_all_members = delegate_to_all_members or delegate_task_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
