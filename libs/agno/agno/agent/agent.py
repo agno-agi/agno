@@ -1136,7 +1136,6 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1746,7 +1745,6 @@ class Agent:
         run_context: RunContext,
         session_id: str,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -5348,12 +5346,8 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-
-        # Consider both run_context.knowledge_filters and knowledge_filters (deprecated)
-        run_context.knowledge_filters = run_context.knowledge_filters or knowledge_filters
 
         # Add provided tools
         if self.tools is not None:
@@ -5423,13 +5417,10 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
-        # Consider both run_context.knowledge_filters and knowledge_filters (deprecated)
-        run_context.knowledge_filters = run_context.knowledge_filters or knowledge_filters
         # Connect MCP tools
         await self._connect_mcp_tools()
 
@@ -8126,7 +8117,7 @@ class Agent:
         self,
         query: str,
         num_documents: Optional[int] = None,
-        filters: Optional[Any] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
