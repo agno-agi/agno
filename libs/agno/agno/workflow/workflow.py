@@ -3815,6 +3815,9 @@ class Workflow:
         if stream is None:
             stream = self.stream or False
 
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
+
         if stream:
             print_response_stream(
                 workflow=self,
@@ -3887,6 +3890,9 @@ class Workflow:
         """
         if stream is None:
             stream = self.stream or False
+
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             await aprint_response_stream(
