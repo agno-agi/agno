@@ -840,7 +840,7 @@ class Workflow:
             last_n_runs: Number of recent runs to include. If None, all runs will be considered.
 
         Returns:
-            A list of dictionaries containing the input and output for each run.
+            A list of WorkflowChatInteraction objects.
         """
         session_id = session_id or self.session_id
         if session_id is None:
