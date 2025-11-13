@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.1.4"
+version = "2.2.11"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
+dev = ["mypy==1.18.2", "ruff==0.14.3", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
 
@@ -57,7 +57,8 @@ integration-tests = [
     "ddgs",
     "yfinance",
     "sqlalchemy",
-    "Pillow"
+    "Pillow",
+    "fastmcp"
 ]
 
 # Dependencies for Telemetry
@@ -100,6 +101,7 @@ evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+tavily = ["tavily-python"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -110,7 +112,9 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+notion = ["notion-client"]
 opencv = ["opencv-python"]
+parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
 reportlab = ["reportlab"]
 scrapegraph = ["scrapegraph-py"]
@@ -128,10 +132,11 @@ neo4j = ["neo4j"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
+async_postgres = ["asyncpg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
-redis = ["redis"]
+redis = ["redis", "redisvl"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -153,6 +158,7 @@ upstash = ["upstash-vector"]
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
@@ -214,6 +220,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[tavily]",
   "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
@@ -228,10 +235,12 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
   "agno[opencv]",
+  "agno[parallel]",
   "agno[scrapegraph]",
   "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
@@ -247,6 +256,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[async_postgres]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
@@ -275,6 +285,7 @@ vectordbs = [
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[pptx]",
   "agno[text]",
   "agno[csv]",
   "agno[markdown]",
@@ -283,7 +294,8 @@ knowledge = [
 
 # All embedders
 embedders = [
-  "agno[huggingface]"
+  "agno[huggingface]",
+  "agno[vllm]"
 ]
 
 # All libraries for testing
@@ -410,6 +422,7 @@ module = [
   "mem0.*",
   "memori.*",
   "mcp.*",
+  "notion_client.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
@@ -437,6 +450,7 @@ module = [
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
   "redis.*",
+  "redisvl.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",
@@ -476,6 +490,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
+  "parallel.*",
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"

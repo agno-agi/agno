@@ -16,8 +16,7 @@ class ReaderFactory:
         from agno.knowledge.reader.pdf_reader import PDFReader
 
         config: Dict[str, Any] = {
-            "chunk": True,
-            "chunk_size": 100,
+            "name": "PDF Reader",
             "description": "Processes PDF documents with OCR support for images and text extraction",
         }
         config.update(kwargs)
@@ -58,6 +57,18 @@ class ReaderFactory:
         }
         config.update(kwargs)
         return DocxReader(**config)
+
+    @classmethod
+    def _get_pptx_reader(cls, **kwargs) -> Reader:
+        """Get PPTX reader instance."""
+        from agno.knowledge.reader.pptx_reader import PPTXReader
+
+        config: Dict[str, Any] = {
+            "name": "PPTX Reader",
+            "description": "Extracts text content from Microsoft PowerPoint presentations (.pptx format)",
+        }
+        config.update(kwargs)
+        return PPTXReader(**config)
 
     @classmethod
     def _get_json_reader(cls, **kwargs) -> Reader:
@@ -120,6 +131,21 @@ class ReaderFactory:
         }
         config.update(kwargs)
         return FirecrawlReader(**config)
+
+    @classmethod
+    def _get_tavily_reader(cls, **kwargs) -> Reader:
+        """Get Tavily reader instance."""
+        from agno.knowledge.reader.tavily_reader import TavilyReader
+
+        config: Dict[str, Any] = {
+            "api_key": kwargs.get("api_key") or os.getenv("TAVILY_API_KEY"),
+            "extract_format": "markdown",
+            "extract_depth": "basic",
+            "name": "Tavily Reader",
+            "description": "Extracts content from URLs using Tavily's Extract API with markdown or text output",
+        }
+        config.update(kwargs)
+        return TavilyReader(**config)
 
     @classmethod
     def _get_youtube_reader(cls, **kwargs) -> Reader:
@@ -203,6 +229,8 @@ class ReaderFactory:
             return cls.create_reader("csv")
         elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
             return cls.create_reader("docx")
+        elif extension == ".pptx":
+            return cls.create_reader("pptx")
         elif extension == ".json":
             return cls.create_reader("json")
         elif extension in [".md", ".markdown"]:
@@ -243,6 +271,7 @@ class ReaderFactory:
         url_reader_priority = [
             "website",
             "firecrawl",
+            "tavily",
             "youtube",
         ]
 

@@ -79,7 +79,7 @@ final_response = None
 for event in streaming_agent.run(
     "What is the value of 5! (factorial)?",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 ):
     # Print content as it streams (optional)
     if hasattr(event, "content") and event.content:
@@ -121,7 +121,7 @@ final_response_with_model = None
 for event in streaming_agent_with_model.run(
     "What is the value of 7! (factorial)?",
     stream=True,
-    stream_intermediate_steps=True,
+    stream_events=True,
 ):
     # Print content as it streams (optional)
     if hasattr(event, "content") and event.content:

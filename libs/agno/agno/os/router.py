@@ -1,5 +1,4 @@
 import json
-from itertools import chain
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -73,7 +72,7 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     form_data = await request.form()
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
-    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
 
     # Process each field, collecting all values for duplicate keys
     for field_name in form_data.keys():
@@ -86,19 +85,46 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):
         try:
-            session_state_dict = json.loads(session_state)  # type: ignore
-            kwargs["session_state"] = session_state_dict
+            if isinstance(session_state, str):
+                session_state_dict = json.loads(session_state)  # type: ignore
+                kwargs["session_state"] = session_state_dict
         except json.JSONDecodeError:
             kwargs.pop("session_state")
             log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
 
     if dependencies := kwargs.get("dependencies"):
         try:
-            dependencies_dict = json.loads(dependencies)  # type: ignore
-            kwargs["dependencies"] = dependencies_dict
+            if isinstance(dependencies, str):
+                dependencies_dict = json.loads(dependencies)  # type: ignore
+                kwargs["dependencies"] = dependencies_dict
         except json.JSONDecodeError:
             kwargs.pop("dependencies")
             log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+
+    if metadata := kwargs.get("metadata"):
+        try:
+            if isinstance(metadata, str):
+                metadata_dict = json.loads(metadata)  # type: ignore
+                kwargs["metadata"] = metadata_dict
+        except json.JSONDecodeError:
+            kwargs.pop("metadata")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+
+    if knowledge_filters := kwargs.get("knowledge_filters"):
+        try:
+            if isinstance(knowledge_filters, str):
+                knowledge_filters_dict = json.loads(knowledge_filters)  # type: ignore
+                kwargs["knowledge_filters"] = knowledge_filters_dict
+        except json.JSONDecodeError:
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+
+    # Parse boolean and null values
+    for key, value in kwargs.items():
+        if isinstance(value, str) and value.lower() in ["true", "false"]:
+            kwargs[key] = value.lower() == "true"
+        elif isinstance(value, str) and value.lower() in ["null", "none"]:
+            kwargs[key] = None
 
     return kwargs
 
@@ -250,7 +276,7 @@ async def agent_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -287,7 +313,7 @@ async def agent_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -335,7 +361,7 @@ async def team_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -389,12 +415,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_result = await workflow.arun(
+        workflow_result = await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             background=True,
             websocket=websocket,
         )
@@ -435,12 +461,12 @@ async def workflow_response_streamer(
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
-        run_response = await workflow.arun(
+        run_response = workflow.arun(
             input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
 
@@ -652,7 +678,7 @@ def get_base_router(
             os_id=os.id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=list({db.id for db in chain(os.dbs.values(), os.knowledge_dbs.values())}),
+            databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
@@ -777,6 +803,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -1077,7 +1108,8 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
-            agents.append(AgentResponse.from_agent(agent=agent))
+            agent_response = await AgentResponse.from_agent(agent=agent)
+            agents.append(agent_response)
 
         return agents
 
@@ -1124,7 +1156,7 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return AgentResponse.from_agent(agent)
+        return await AgentResponse.from_agent(agent)
 
     # -- Team routes ---
 
@@ -1188,6 +1220,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
@@ -1404,7 +1441,8 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
-            teams.append(TeamResponse.from_team(team=team))
+            team_response = await TeamResponse.from_team(team=team)
+            teams.append(team_response)
 
         return teams
 
@@ -1497,7 +1535,7 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamResponse.from_team(team)
+        return await TeamResponse.from_team(team)
 
     # -- Workflow routes ---
 
@@ -1570,7 +1608,7 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowResponse.from_workflow(workflow)
+        return await WorkflowResponse.from_workflow(workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",
@@ -1634,6 +1672,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)

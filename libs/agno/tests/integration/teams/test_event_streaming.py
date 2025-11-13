@@ -7,7 +7,7 @@ from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.db.in_memory.in_memory_db import InMemoryDb
 from agno.models.openai.chat import OpenAIChat
-from agno.run.team import TeamRunInput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team import Team, TeamRunEvent
 from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
@@ -23,7 +23,7 @@ def test_basic_events():
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=False)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=False)
 
     event_counts = {}
     for run_response in response_generator:
@@ -42,7 +42,7 @@ async def test_async_basic_events():
         telemetry=False,
     )
     event_counts = {}
-    async for run_response in team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
+    async for run_response in team.arun("Hello, how are you?", stream=True, stream_events=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
     assert event_counts.keys() == {TeamRunEvent.run_content}
@@ -50,14 +50,16 @@ async def test_async_basic_events():
     assert event_counts[TeamRunEvent.run_content] > 1
 
 
-def test_basic_intermediate_steps_events():
+def test_basic_intermediate_steps_events(shared_db):
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
+        db=shared_db,
+        store_events=True,
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -65,7 +67,12 @@ def test_basic_intermediate_steps_events():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_content, TeamRunEvent.run_completed}
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.run_completed,
+    }
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert events[TeamRunEvent.run_started][0].model == "gpt-4o-mini"
@@ -75,6 +82,7 @@ def test_basic_intermediate_steps_events():
     assert events[TeamRunEvent.run_started][0].run_id is not None
     assert events[TeamRunEvent.run_started][0].created_at is not None
     assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
     team_completed_event = events[TeamRunEvent.run_completed][0]
@@ -84,36 +92,16 @@ def test_basic_intermediate_steps_events():
     assert team_completed_event.metrics is not None
     assert team_completed_event.metrics.total_tokens > 0
 
-
-def test_basic_intermediate_steps_events_persisted(shared_db):
-    """Test that the agent streams events."""
-    team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        members=[],
-        db=shared_db,
-        store_events=True,
-        telemetry=False,
-    )
-
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
-
-    events = {}
-    for run_response_delta in response_generator:
-        if run_response_delta.event not in events:
-            events[run_response_delta.event] = []
-        events[run_response_delta.event].append(run_response_delta)
-
-    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_content, TeamRunEvent.run_completed}
-
     run_response_from_storage = team.get_last_run_output()
 
     assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
-    assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
+    assert len(run_response_from_storage.events) == 3, "We should only have the run started and run completed events"
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
-    assert run_response_from_storage.events[1].event == TeamRunEvent.run_completed
+    assert run_response_from_storage.events[1].event == TeamRunEvent.run_content_completed
+    assert run_response_from_storage.events[2].event == TeamRunEvent.run_completed
 
-    persisted_team_completed_event = run_response_from_storage.events[1]
+    persisted_team_completed_event = run_response_from_storage.events[2]
     assert hasattr(persisted_team_completed_event, "metadata")
     assert hasattr(persisted_team_completed_event, "metrics")
 
@@ -121,18 +109,18 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
     assert persisted_team_completed_event.metrics.total_tokens > 0
 
 
-def test_intermediate_steps_with_tools():
+def test_intermediate_steps_with_tools(shared_db):
     team = Team(
         model=OpenAIChat(id="o3-mini"),
         members=[],
         tools=[YFinanceTools(cache_results=True)],
+        db=shared_db,
+        store_events=True,
         telemetry=False,
     )
 
     events = {}
-    for run_response_delta in team.run(
-        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
-    ):
+    for run_response_delta in team.run("What is the stock price of Apple?", stream=True, stream_events=True):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
@@ -142,6 +130,7 @@ def test_intermediate_steps_with_tools():
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
@@ -155,33 +144,6 @@ def test_intermediate_steps_with_tools():
     assert len(completed_tools) >= 1
     assert any(event.tool.result is not None for event in events[TeamRunEvent.tool_call_completed])
 
-
-def test_intermediate_steps_with_tools_events_persisted(shared_db):
-    team = Team(
-        model=OpenAIChat(id="o3-mini"),
-        db=shared_db,
-        store_events=True,
-        members=[],
-        tools=[YFinanceTools(cache_results=True)],
-        telemetry=False,
-    )
-
-    events = {}
-    for run_response_delta in team.run(
-        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
-    ):
-        if run_response_delta.event not in events:
-            events[run_response_delta.event] = []
-        events[run_response_delta.event].append(run_response_delta)
-
-    assert events.keys() == {
-        TeamRunEvent.run_started,
-        TeamRunEvent.tool_call_started,
-        TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_content,
-        TeamRunEvent.run_completed,
-    }
-
     run_response_from_storage = team.get_last_run_output()
 
     assert run_response_from_storage is not None
@@ -192,6 +154,7 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
     assert TeamRunEvent.run_started in event_types
     assert TeamRunEvent.tool_call_started in event_types
     assert TeamRunEvent.tool_call_completed in event_types
+    assert TeamRunEvent.run_content_completed in event_types
     assert TeamRunEvent.run_completed in event_types
 
 
@@ -211,7 +174,7 @@ def test_intermediate_steps_with_reasoning():
     response_generator = team.run(
         "What is the sum of the first 10 natural numbers?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}
@@ -228,11 +191,13 @@ def test_intermediate_steps_with_reasoning():
         TeamRunEvent.reasoning_completed,
         TeamRunEvent.reasoning_step,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.tool_call_started]) > 1
     assert len(events[TeamRunEvent.tool_call_completed]) > 1
@@ -259,7 +224,7 @@ def test_intermediate_steps_with_user_confirmation():
         telemetry=False,
     )
 
-    response_generator = team.run("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("What is the weather in Tokyo?", stream=True, stream_events=True)
 
     # First until we hit a pause
     events = {}
@@ -284,9 +249,7 @@ def test_intermediate_steps_with_user_confirmation():
     updated_tools[0].confirmed = True
 
     # Then we continue the run
-    response_generator = team.continue_run(
-        run_id=run_id, updated_tools=updated_tools, stream=True, stream_intermediate_steps=True
-    )
+    response_generator = team.continue_run(run_id=run_id, updated_tools=updated_tools, stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -325,7 +288,7 @@ def test_intermediate_steps_with_memory(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -336,6 +299,7 @@ def test_intermediate_steps_with_memory(shared_db):
     assert events.keys() == {
         TeamRunEvent.run_started,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
         TeamRunEvent.memory_update_started,
         TeamRunEvent.memory_update_completed,
@@ -343,9 +307,44 @@ def test_intermediate_steps_with_memory(shared_db):
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.memory_update_started]) == 1
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
+
+
+def test_intermediate_steps_with_session_summary(shared_db):
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        db=shared_db,
+        enable_session_summaries=True,
+        telemetry=False,
+    )
+
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.run_completed,
+        TeamRunEvent.session_summary_started,
+        TeamRunEvent.session_summary_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.session_summary_started]) == 1
+    assert len(events[TeamRunEvent.session_summary_completed]) == 1
 
 
 def test_pre_hook_events_are_emitted(shared_db):
@@ -365,7 +364,7 @@ def test_pre_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -378,11 +377,13 @@ def test_pre_hook_events_are_emitted(shared_db):
         TeamRunEvent.pre_hook_started,
         TeamRunEvent.pre_hook_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.pre_hook_started]) == 2
     assert len(events[TeamRunEvent.pre_hook_completed]) == 2
@@ -423,7 +424,7 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+    response_generator = team.arun("Hello, how are you?", stream=True, stream_events=True)
 
     events = {}
     async for run_response_delta in response_generator:
@@ -436,11 +437,13 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
         TeamRunEvent.pre_hook_started,
         TeamRunEvent.pre_hook_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.pre_hook_started]) == 2
     assert len(events[TeamRunEvent.pre_hook_completed]) == 2
@@ -463,6 +466,171 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
     )
 
 
+def test_post_hook_events_are_emitted(shared_db):
+    """Test that post hook events are emitted correctly during streaming."""
+
+    def post_hook_1(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by post-hook 1)"
+
+    def post_hook_2(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by post-hook 2)"
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        post_hooks=[post_hook_1, post_hook_2],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    response_generator = team.run("Hello, how are you?", stream=True, stream_events=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.post_hook_started,
+        TeamRunEvent.post_hook_completed,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.post_hook_started]) == 2
+    assert len(events[TeamRunEvent.post_hook_completed]) == 2
+
+    # Verify first post hook
+    assert events[TeamRunEvent.post_hook_started][0].post_hook_name == "post_hook_1"
+    assert events[TeamRunEvent.post_hook_completed][0].post_hook_name == "post_hook_1"
+
+    # Verify second post hook
+    assert events[TeamRunEvent.post_hook_started][1].post_hook_name == "post_hook_2"
+    assert events[TeamRunEvent.post_hook_completed][1].post_hook_name == "post_hook_2"
+
+    # Verify final output includes modifications from both hooks
+    final_event = events[TeamRunEvent.run_completed][0]
+    assert "(Modified by post-hook 1)" in str(final_event.content)
+    assert "(Modified by post-hook 2)" in str(final_event.content)
+
+
+@pytest.mark.asyncio
+async def test_async_post_hook_events_are_emitted(shared_db):
+    """Test that async post hook events are emitted correctly during streaming."""
+
+    async def post_hook_1(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by async post-hook 1)"
+
+    async def post_hook_2(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by async post-hook 2)"
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        post_hooks=[post_hook_1, post_hook_2],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    response_generator = team.arun("Hello, how are you?", stream=True, stream_events=True)
+
+    events = {}
+    async for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.post_hook_started,
+        TeamRunEvent.post_hook_completed,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.post_hook_started]) == 2
+    assert len(events[TeamRunEvent.post_hook_completed]) == 2
+
+    # Verify first post hook
+    assert events[TeamRunEvent.post_hook_started][0].post_hook_name == "post_hook_1"
+    assert events[TeamRunEvent.post_hook_completed][0].post_hook_name == "post_hook_1"
+
+    # Verify second post hook
+    assert events[TeamRunEvent.post_hook_started][1].post_hook_name == "post_hook_2"
+    assert events[TeamRunEvent.post_hook_completed][1].post_hook_name == "post_hook_2"
+
+    # Verify final output includes modifications from both hooks
+    final_event = events[TeamRunEvent.run_completed][0]
+    assert "(Modified by async post-hook 1)" in str(final_event.content)
+    assert "(Modified by async post-hook 2)" in str(final_event.content)
+
+
+def test_pre_and_post_hook_events_are_emitted(shared_db):
+    """Test that both pre and post hook events are emitted correctly during streaming."""
+
+    def pre_hook(run_input: TeamRunInput) -> None:
+        run_input.input_content += " (Modified by pre-hook)"
+
+    def post_hook(run_output: TeamRunOutput) -> None:
+        run_output.content = str(run_output.content) + " (Modified by post-hook)"
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        pre_hooks=[pre_hook],
+        post_hooks=[post_hook],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    response_generator = team.run("Hello", stream=True, stream_events=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.pre_hook_started,
+        TeamRunEvent.pre_hook_completed,
+        TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
+        TeamRunEvent.post_hook_started,
+        TeamRunEvent.post_hook_completed,
+        TeamRunEvent.run_completed,
+    }
+
+    # Verify pre hook events
+    assert len(events[TeamRunEvent.pre_hook_started]) == 1
+    assert len(events[TeamRunEvent.pre_hook_completed]) == 1
+    assert events[TeamRunEvent.pre_hook_started][0].pre_hook_name == "pre_hook"
+    assert events[TeamRunEvent.pre_hook_completed][0].pre_hook_name == "pre_hook"
+
+    # Verify post hook events
+    assert len(events[TeamRunEvent.post_hook_started]) == 1
+    assert len(events[TeamRunEvent.post_hook_completed]) == 1
+    assert events[TeamRunEvent.post_hook_started][0].post_hook_name == "post_hook"
+    assert events[TeamRunEvent.post_hook_completed][0].post_hook_name == "post_hook"
+
+    # Verify final output includes modifications
+    final_event = events[TeamRunEvent.run_completed][0]
+    assert "(Modified by post-hook)" in str(final_event.content)
+
+
 def test_intermediate_steps_with_structured_output(shared_db):
     """Test that the agent streams events."""
 
@@ -480,7 +648,7 @@ def test_intermediate_steps_with_structured_output(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Describe Elon Musk", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -491,11 +659,13 @@ def test_intermediate_steps_with_structured_output(shared_db):
     assert events.keys() == {
         TeamRunEvent.run_started,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_content]) == 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
     assert events[TeamRunEvent.run_content][0].content is not None
@@ -531,7 +701,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Describe Elon Musk", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -546,6 +716,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         TeamRunEvent.parser_model_response_started,
         TeamRunEvent.parser_model_response_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
@@ -555,6 +726,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
     assert (
         len(events[TeamRunEvent.run_content]) >= 2
     )  # The first model streams, then the parser model has a single content event
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
     assert events[TeamRunEvent.run_content][-1].content is not None
@@ -611,7 +783,7 @@ def test_intermediate_steps_with_member_agents():
     )
 
     response_generator = team.run(
-        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_events=True
     )
 
     events = {}
@@ -630,9 +802,11 @@ def test_intermediate_steps_with_member_agents():
         RunEvent.reasoning_step,
         RunEvent.reasoning_completed,
         RunEvent.run_content,
+        RunEvent.run_content_completed,
         RunEvent.run_completed,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
@@ -649,6 +823,7 @@ def test_intermediate_steps_with_member_agents():
     assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
     assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_content_completed]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 2
@@ -664,6 +839,7 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.reasoning_completed]) == 1
     assert len(events[RunEvent.reasoning_step]) > 1
     assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_content_completed]) >= 1
 
 
 def test_intermediate_steps_with_member_agents_nested_team():
@@ -673,16 +849,11 @@ def test_intermediate_steps_with_member_agents_nested_team():
         instructions="You are an expert finance analyst with strong analytical skills! 🧠",
         tools=[YFinanceTools(cache_results=True)],
     )
-    agent_2 = Agent(
-        name="News Analyst",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are an expert news analyst with strong analytical skills! 🧠",
-        tools=[DuckDuckGoTools(cache_results=True)],
-    )
     sub_team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         name="News Team",
-        members=[agent_2],
+        members=[],
+        tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
     team = Team(
@@ -692,7 +863,7 @@ def test_intermediate_steps_with_member_agents_nested_team():
         telemetry=False,
     )
 
-    response_generator = team.run("Do a stock market analysis for Apple.", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Do a stock market analysis for Apple.", stream=True, stream_events=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -710,8 +881,10 @@ def test_intermediate_steps_with_member_agents_nested_team():
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.run_content,
+        RunEvent.run_content_completed,
         RunEvent.run_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
         TeamRunEvent.reasoning_completed,
     }
@@ -738,7 +911,7 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     )
 
     response_generator = team.run(
-        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_events=True
     )
 
     events = {}
@@ -752,6 +925,7 @@ def test_intermediate_steps_with_member_agents_streaming_off():
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_content,
+        TeamRunEvent.run_content_completed,
         TeamRunEvent.run_completed,
     }
 
@@ -771,37 +945,6 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     assert len(events[TeamRunEvent.run_completed]) == 1
 
 
-def test_create_team_run_completed_event_function():
-    """Test that create_team_run_completed_event function properly transfers metadata and metrics."""
-    from agno.models.metrics import Metrics
-    from agno.run.team import TeamRunOutput
-    from agno.utils.events import create_team_run_completed_event
-
-    mock_metrics = Metrics(input_tokens=200, output_tokens=75, total_tokens=275, duration=3.2)
-    mock_metadata = {"team_key": "team_value", "execution_mode": "collaborate"}
-
-    mock_team_run_output = TeamRunOutput(
-        session_id="test_team_session",
-        team_id="test_team",
-        team_name="Test Team",
-        run_id="test_team_run",
-        content="Team test content",
-        metrics=mock_metrics,
-        metadata=mock_metadata,
-    )
-
-    # Create the Completed Event
-    completed_event = create_team_run_completed_event(mock_team_run_output)
-
-    assert completed_event.metadata == mock_metadata
-    assert completed_event.metrics == mock_metrics
-    assert completed_event.metrics.total_tokens == 275
-    assert completed_event.metrics.duration == 3.2
-    assert completed_event.content == "Team test content"
-    assert completed_event.session_id == "test_team_session"
-    assert completed_event.team_id == "test_team"
-
-
 def test_intermediate_steps_with_member_agents_delegate_to_all_members():
     def get_news_from_hackernews(query: str):
         return "The best way to learn to code is to use the Hackernews API."
@@ -814,14 +957,14 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
         model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert web researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_duckduckgo],
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
     agent_2 = Agent(
         name="Hackernews Researcher",
         model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert hackernews researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_hackernews],
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
     team = Team(
         model=OpenAIChat(id="o3-mini"),
@@ -834,7 +977,7 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
     response_generator = team.run(
         input="Start the discussion on the topic: 'What is the best way to learn to code?'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}
@@ -879,7 +1022,7 @@ def test_tool_parent_run_id():
         input="What is the meaning of life?",
         session_id="test_session",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )
 
     events = {}

@@ -5,11 +5,16 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from pydantic import BaseModel
+from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.metrics import Metrics
-from agno.run.agent import RunOutput
+from agno.run import RunContext
+from agno.run.agent import RunCompletedEvent, RunContentEvent, RunOutput
+from agno.run.base import BaseRunOutputEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
@@ -177,32 +182,37 @@ class Step:
         func: Callable,
         step_input: StepInput,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
         """Call custom function with session_state support if the function accepts it"""
+
+        kwargs: Dict[str, Any] = {}
+        if run_context is not None and self._function_has_run_context_param():
+            kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
-            return func(step_input, session_state)
-        else:
-            return func(step_input)
+            kwargs["session_state"] = session_state
+
+        return func(step_input, **kwargs)
 
     async def _acall_custom_function(
         self,
         func: Callable,
         step_input: StepInput,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
         """Call custom async function with session_state support if the function accepts it"""
-        import inspect
 
-        if inspect.isasyncgenfunction(func):
-            if session_state is not None and self._function_has_session_state_param():
-                return func(step_input, session_state)
-            else:
-                return func(step_input)
+        kwargs: Dict[str, Any] = {}
+        if run_context is not None and self._function_has_run_context_param():
+            kwargs["run_context"] = run_context
+        if session_state is not None and self._function_has_session_state_param():
+            kwargs["session_state"] = session_state
+
+        if _is_async_generator_function(func):
+            return func(step_input, **kwargs)
         else:
-            if session_state is not None and self._function_has_session_state_param():
-                return await func(step_input, session_state)
-            else:
-                return await func(step_input)
+            return await func(step_input, **kwargs)
 
     def execute(
         self,
@@ -210,6 +220,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -224,30 +235,36 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
-        session_state_copy = copy(session_state) if session_state is not None else {}
+
+        # Create session_state copy once to avoid duplication.
+        # Consider both run_context.session_state and session_state.
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = run_context.session_state
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
                 response: Union[RunOutput, TeamRunOutput, StepOutput]
                 if self._executor_type == "function":
-                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
-                        self.active_executor
-                    ):
+                    if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
-                    if inspect.isgeneratorfunction(self.active_executor):
+                    if _is_generator_function(self.active_executor):
                         content = ""
                         final_response = None
                         try:
                             for chunk in self._call_custom_function(
-                                self.active_executor, step_input, session_state_copy
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,  # type: ignore[arg-type]
+                                run_context,
                             ):  # type: ignore
-                                if (
-                                    hasattr(chunk, "content")
-                                    and chunk.content is not None
-                                    and isinstance(chunk.content, str)
-                                ):
-                                    content += chunk.content
+                                if isinstance(chunk, (BaseRunOutputEvent)):
+                                    if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
+                                        content += chunk.content if chunk.content is not None else ""
+                                    elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        content = chunk.content if chunk.content is not None else ""
                                 else:
                                     content += str(chunk)
                                 if isinstance(chunk, StepOutput):
@@ -258,7 +275,7 @@ class Step:
                                 final_response = e.value
 
                         # Merge session_state changes back
-                        if session_state is not None:
+                        if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
@@ -267,10 +284,15 @@ class Step:
                             response = StepOutput(content=content)
                     else:
                         # Execute function with signature inspection for session_state support
-                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                        result = self._call_custom_function(
+                            self.active_executor,  # type: ignore[arg-type]
+                            step_input,
+                            session_state_copy,
+                            run_context,
+                        )
 
                         # Merge session_state changes back
-                        if session_state is not None:
+                        if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
@@ -328,12 +350,13 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
+                            run_context=run_context,
                             **kwargs,
                         )
 
-                        if session_state is not None:
-                            # Update workflow session state
-                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        # Update workflow session state
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
@@ -362,15 +385,24 @@ class Step:
 
         return StepOutput(content=f"Step {self.name} failed but skipped", success=False)
 
+    def _function_has_run_context_param(self) -> bool:
+        """Check if the custom function has a run_context parameter"""
+        if self._executor_type != "function":
+            return False
+
+        try:
+            sig = inspect.signature(self.active_executor)  # type: ignore
+            return "run_context" in sig.parameters
+        except Exception:
+            return False
+
     def _function_has_session_state_param(self) -> bool:
         """Check if the custom function has a session_state parameter"""
         if self._executor_type != "function":
             return False
 
         try:
-            from inspect import signature
-
-            sig = signature(self.active_executor)  # type: ignore
+            sig = inspect.signature(self.active_executor)  # type: ignore
             return "session_state" in sig.parameters
         except Exception:
             return False
@@ -384,7 +416,6 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-
         if hasattr(event, "workflow_id"):
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
@@ -406,8 +437,11 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -423,11 +457,19 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
-        # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+
+        # Create session_state copy once to avoid duplication.
+        # Consider both run_context.session_state and session_state.
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = run_context.session_state
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
+
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
 
         # Emit StepStartedEvent
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
@@ -447,24 +489,24 @@ class Step:
 
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
-
-                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
-                        self.active_executor
-                    ):
+                    if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
-
-                    if inspect.isgeneratorfunction(self.active_executor):
+                    if _is_generator_function(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
                         content = ""
                         try:
-                            iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                            iterator = self._call_custom_function(
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
                             for event in iterator:  # type: ignore
-                                if (
-                                    hasattr(event, "content")
-                                    and event.content is not None
-                                    and isinstance(event.content, str)
-                                ):
-                                    content += event.content
+                                if isinstance(event, (BaseRunOutputEvent)):
+                                    if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
+                                        content += event.content if event.content is not None else ""
+                                    elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                        content = event.content if event.content is not None else ""
                                 else:
                                     content += str(event)
                                 if isinstance(event, StepOutput):
@@ -475,10 +517,12 @@ class Step:
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
-                                    yield enriched_event  # type: ignore[misc]
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events:
+                                        yield enriched_event  # type: ignore[misc]
 
                             # Merge session_state changes back
-                            if session_state is not None:
+                            if run_context is None and session_state is not None:
                                 merge_dictionaries(session_state, session_state_copy)
 
                             if not final_response:
@@ -488,10 +532,15 @@ class Step:
                                 final_response = e.value
 
                     else:
-                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                        result = self._call_custom_function(
+                            self.active_executor,  # type: ignore[arg-type]
+                            step_input,
+                            session_state_copy,
+                            run_context,
+                        )
 
                         # Merge session_state changes back
-                        if session_state is not None:
+                        if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if isinstance(result, StepOutput):
@@ -549,8 +598,9 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
                             yield_run_response=True,
+                            run_context=run_context,
                             **kwargs,
                         )
 
@@ -560,11 +610,13 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
-                            yield enriched_event  # type: ignore[misc]
+                            # Only yield executor events if stream_executor_events is True
+                            if stream_executor_events:
+                                yield enriched_event  # type: ignore[misc]
 
-                        if session_state is not None:
-                            # Update workflow session state
-                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        # Update workflow session state
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -587,7 +639,7 @@ class Step:
                 yield final_response
 
                 # Emit StepCompletedEvent
-                if stream_intermediate_steps and workflow_run_response:
+                if stream_events and workflow_run_response:
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
                         workflow_name=workflow_run_response.workflow_name or "",
@@ -625,6 +677,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional["WorkflowSession"] = None,
@@ -640,48 +693,55 @@ class Step:
 
         if workflow_session:
             step_input.workflow_session = workflow_session
-        # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+
+        # Create session_state copy once to avoid duplication.
+        # Consider both run_context.session_state and session_state.
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = run_context.session_state
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
                 if self._executor_type == "function":
-                    import inspect
-
-                    if inspect.isgeneratorfunction(self.active_executor) or inspect.isasyncgenfunction(
+                    if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
                     ):
                         content = ""
                         final_response = None
                         try:
-                            if inspect.isgeneratorfunction(self.active_executor):
+                            if _is_generator_function(self.active_executor):
                                 iterator = self._call_custom_function(
-                                    self.active_executor, step_input, session_state_copy
-                                )  # type: ignore
+                                    self.active_executor,
+                                    step_input,
+                                    session_state_copy,
+                                    run_context,
+                                )
                                 for chunk in iterator:  # type: ignore
-                                    if (
-                                        hasattr(chunk, "content")
-                                        and chunk.content is not None
-                                        and isinstance(chunk.content, str)
-                                    ):
-                                        content += chunk.content
+                                    if isinstance(chunk, (BaseRunOutputEvent)):
+                                        if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
+                                            content += chunk.content if chunk.content is not None else ""
+                                        elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                            content = chunk.content if chunk.content is not None else ""
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
                                         final_response = chunk
                             else:
-                                if inspect.isasyncgenfunction(self.active_executor):
+                                if _is_async_generator_function(self.active_executor):
                                     iterator = await self._acall_custom_function(
-                                        self.active_executor, step_input, session_state_copy
-                                    )  # type: ignore
+                                        self.active_executor,
+                                        step_input,
+                                        session_state_copy,
+                                        run_context,
+                                    )
                                     async for chunk in iterator:  # type: ignore
-                                        if (
-                                            hasattr(chunk, "content")
-                                            and chunk.content is not None
-                                            and isinstance(chunk.content, str)
-                                        ):
-                                            content += chunk.content
+                                        if isinstance(chunk, (BaseRunOutputEvent)):
+                                            if isinstance(chunk, (RunContentEvent, TeamRunContentEvent)):
+                                                content += chunk.content if chunk.content is not None else ""
+                                            elif isinstance(chunk, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                                content = chunk.content if chunk.content is not None else ""
                                         else:
                                             content += str(chunk)
                                         if isinstance(chunk, StepOutput):
@@ -692,7 +752,7 @@ class Step:
                                 final_response = e.value
 
                         # Merge session_state changes back
-                        if session_state is not None:
+                        if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         if final_response is not None:
@@ -700,15 +760,23 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        if inspect.iscoroutinefunction(self.active_executor):
+                        if _is_async_callable(self.active_executor):
                             result = await self._acall_custom_function(
-                                self.active_executor, step_input, session_state_copy
-                            )  # type: ignore
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
                         else:
-                            result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                            result = self._call_custom_function(
+                                self.active_executor,  # type: ignore[arg-type]
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
 
                         # Merge session_state changes back
-                        if session_state is not None:
+                        if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
 
                         # If function returns StepOutput, use it directly
@@ -767,12 +835,13 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,
+                            run_context=run_context,
                             **kwargs,
                         )
 
-                        if session_state is not None:
-                            # Update workflow session state
-                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        # Update workflow session state
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
@@ -806,8 +875,11 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -824,10 +896,17 @@ class Step:
         if workflow_session:
             step_input.workflow_session = workflow_session
 
-        # Create session_state copy once to avoid duplication
-        session_state_copy = copy(session_state) if session_state is not None else {}
+        # Create session_state copy once to avoid duplication.
+        # Consider both run_context.session_state and session_state.
+        if run_context is not None and run_context.session_state is not None:
+            session_state_copy = run_context.session_state
+        else:
+            session_state_copy = copy(session_state) if session_state is not None else {}
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Emit StepStartedEvent
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -848,22 +927,23 @@ class Step:
 
                 if self._executor_type == "function":
                     log_debug(f"Executing async function executor for step: {self.name}")
-                    import inspect
 
                     # Check if the function is an async generator
-                    if inspect.isasyncgenfunction(self.active_executor):
+                    if _is_async_generator_function(self.active_executor):
                         content = ""
                         # It's an async generator - iterate over it
                         iterator = await self._acall_custom_function(
-                            self.active_executor, step_input, session_state_copy
-                        )  # type: ignore
+                            self.active_executor,
+                            step_input,
+                            session_state_copy,
+                            run_context,
+                        )
                         async for event in iterator:  # type: ignore
-                            if (
-                                hasattr(event, "content")
-                                and event.content is not None
-                                and isinstance(event.content, str)
-                            ):
-                                content += event.content
+                            if isinstance(event, (BaseRunOutputEvent)):
+                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
+                                    content += event.content if event.content is not None else ""
+                                elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    content = event.content if event.content is not None else ""
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
@@ -874,27 +954,38 @@ class Step:
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
-                                yield enriched_event  # type: ignore[misc]
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events:
+                                    yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
-                    elif inspect.iscoroutinefunction(self.active_executor):
+                    elif _is_async_callable(self.active_executor):
                         # It's a regular async function - await it
-                        result = await self._acall_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                        result = await self._acall_custom_function(
+                            self.active_executor,
+                            step_input,
+                            session_state_copy,
+                            run_context,
+                        )
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
                             final_response = StepOutput(content=str(result))
-                    elif inspect.isgeneratorfunction(self.active_executor):
+                    elif _is_generator_function(self.active_executor):
                         content = ""
                         # It's a regular generator function - iterate over it
-                        iterator = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                        iterator = self._call_custom_function(
+                            self.active_executor,
+                            step_input,
+                            session_state_copy,
+                            run_context,
+                        )
                         for event in iterator:  # type: ignore
-                            if (
-                                hasattr(event, "content")
-                                and event.content is not None
-                                and isinstance(event.content, str)
-                            ):
-                                content += event.content
+                            if isinstance(event, (BaseRunOutputEvent)):
+                                if isinstance(event, (RunContentEvent, TeamRunContentEvent)):
+                                    content += event.content if event.content is not None else ""
+                                elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent)):
+                                    content = event.content if event.content is not None else ""
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
@@ -905,19 +996,26 @@ class Step:
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
-                                yield enriched_event  # type: ignore[misc]
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events:
+                                    yield enriched_event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
                         # It's a regular function - call it directly
-                        result = self._call_custom_function(self.active_executor, step_input, session_state_copy)  # type: ignore
+                        result = self._call_custom_function(
+                            self.active_executor,  # type: ignore[arg-type]
+                            step_input,
+                            session_state_copy,
+                            run_context,
+                        )
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
                             final_response = StepOutput(content=str(result))
 
                     # Merge session_state changes back
-                    if session_state is not None:
+                    if run_context is None and session_state is not None:
                         merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
@@ -969,7 +1067,8 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
+                            stream_events=stream_events,
+                            run_context=run_context,
                             yield_run_response=True,
                             **kwargs,
                         )
@@ -980,11 +1079,13 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             enriched_event = self._enrich_event_with_context(event, workflow_run_response, step_index)
-                            yield enriched_event  # type: ignore[misc]
+                            # Only yield executor events if stream_executor_events is True
+                            if stream_executor_events:
+                                yield enriched_event  # type: ignore[misc]
 
-                        if session_state is not None:
-                            # Update workflow session state
-                            merge_dictionaries(session_state, session_state_copy)  # type: ignore
+                        # Update workflow session state
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -1004,7 +1105,7 @@ class Step:
                 final_response = self._process_step_output(final_response)
                 yield final_response
 
-                if stream_intermediate_steps and workflow_run_response:
+                if stream_events and workflow_run_response:
                     # Emit StepCompletedEvent
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
@@ -1045,6 +1146,14 @@ class Step:
             # propogate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
+
+            # Scrub the executor response based on the executor's storage flags before storing
+            if (
+                not self.active_executor.store_media
+                or not self.active_executor.store_tool_messages
+                or not self.active_executor.store_history_messages
+            ):  # type: ignore
+                self.active_executor._scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response
@@ -1232,3 +1341,28 @@ class Step:
                 continue
 
         return videos
+
+
+def _is_async_callable(obj: Any) -> TypeGuard[Callable[..., Any]]:
+    """Checks if obj is an async callable (coroutine function or callable with async __call__)"""
+    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
+
+
+def _is_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
+    """Checks if obj is a generator function, including callable class instances with generator __call__ methods"""
+    if inspect.isgeneratorfunction(obj):
+        return True
+    # Check if it's a callable class instance with a generator __call__ method
+    if callable(obj) and hasattr(obj, "__call__"):
+        return inspect.isgeneratorfunction(obj.__call__)
+    return False
+
+
+def _is_async_generator_function(obj: Any) -> TypeGuard[Callable[..., Any]]:
+    """Checks if obj is an async generator function, including callable class instances"""
+    if inspect.isasyncgenfunction(obj):
+        return True
+    # Check if it's a callable class instance with an async generator __call__ method
+    if callable(obj) and hasattr(obj, "__call__"):
+        return inspect.isasyncgenfunction(obj.__call__)
+    return False
