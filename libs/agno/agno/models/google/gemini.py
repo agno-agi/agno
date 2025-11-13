@@ -34,6 +34,7 @@ try:
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
+        Operation,
         Part,
         Retrieval,
         ThinkingConfig,
@@ -1241,7 +1242,7 @@ class Gemini(Model):
             log_error(f"Error deleting File Search store {name}: {e}")
             raise
 
-    def wait_for_operation(self, operation: Any, poll_interval: int = 5, max_wait: int = 600) -> Any:
+    def wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
         """
         Wait for a long-running operation to complete.
 
