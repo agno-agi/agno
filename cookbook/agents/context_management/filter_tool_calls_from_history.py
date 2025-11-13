@@ -90,7 +90,7 @@ for i, city in enumerate(cities, 1):
     total_in_context = history_tool_calls + current_tool_calls
 
     # Total tool calls stored in database (unfiltered)
-    saved_messages = agent.get_messages_for_session()
+    saved_messages = agent.get_session_messages()
     total_in_db = (
         sum(
             len(msg.tool_calls)

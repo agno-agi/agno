@@ -71,7 +71,7 @@ def test_tool_calls_in_db(agent):
     agent.run("What is the weather in Mumbai?")
 
     # Database should have all 4 runs
-    session_messages = agent.get_messages_for_session()
+    session_messages = agent.get_session_messages()
     assert session_messages is not None
 
     # Count all tool calls in database
