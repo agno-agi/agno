@@ -61,4 +61,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="basic_workflow:app", port=8080, reload=True)
+    agent_os.serve(app="basic_workflow:app", reload=True)
