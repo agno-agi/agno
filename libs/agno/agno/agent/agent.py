@@ -6012,7 +6012,7 @@ class Agent:
     def get_session(
         self,
         session_id: Optional[str] = None,
-    ) -> Optional[AgentSession]:
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Load an AgentSession from database or cache.
 
         Args:
@@ -6047,6 +6047,7 @@ class Agent:
 
             # We have a team member agent, so we are loading a TeamSession
             if loaded_session is None and self.team_id is not None:
+                print("Loading TeamSession")
                 # Load session for team member agents
                 loaded_session = cast(
                     TeamSession,
@@ -6073,7 +6074,7 @@ class Agent:
     async def aget_session(
         self,
         session_id: Optional[str] = None,
-    ) -> Optional[AgentSession]:
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Load an AgentSession from database or cache.
 
         Args:

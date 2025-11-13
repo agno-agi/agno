@@ -33,7 +33,7 @@ class AgentSession:
     # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
     # List of all runs in the session
-    runs: Optional[List[RunOutput]] = None
+    runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
 
@@ -59,7 +59,11 @@ class AgentSession:
         runs = data.get("runs")
         serialized_runs: List[RunOutput] = []
         if runs is not None and isinstance(runs[0], dict):
-            serialized_runs = [RunOutput.from_dict(run) for run in runs]
+            for run in runs:
+                if "agent_id" in run:
+                    serialized_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    serialized_runs.append(TeamRunOutput.from_dict(run))
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
