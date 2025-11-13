@@ -57,4 +57,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="agent_with_user_memory:app", port=8081, reload=True)
+    agent_os.serve(app="agent_with_user_memory:app", reload=True)

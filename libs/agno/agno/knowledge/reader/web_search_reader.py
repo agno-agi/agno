@@ -122,8 +122,12 @@ class WebSearchReader(Reader):
         return []
 
     def _perform_web_search(self, query: str) -> List[Dict[str, str]]:
-        """Perform web search using DuckDuckGo"""
-        return self._perform_duckduckgo_search(query)
+        """Perform web search using the configured search engine"""
+        if self.search_engine == "duckduckgo":
+            return self._perform_duckduckgo_search(query)
+        else:
+            logger.error(f"Unsupported search engine: {self.search_engine}")
+            return []
 
     def _is_valid_url(self, url: str) -> bool:
         """Check if URL is valid and not already visited"""
