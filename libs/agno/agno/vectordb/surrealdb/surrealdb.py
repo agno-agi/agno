@@ -11,6 +11,7 @@ except ImportError as e:
     msg = "The `surrealdb` package is not installed. Please install it via `pip install surrealdb`."
     raise ImportError(msg) from e
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -318,7 +319,9 @@ class SurrealDb(VectorDb):
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
             self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search for similar documents.
 
         Args:
@@ -563,7 +566,7 @@ class SurrealDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Any] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Document]:
         """Search for similar documents asynchronously.
 

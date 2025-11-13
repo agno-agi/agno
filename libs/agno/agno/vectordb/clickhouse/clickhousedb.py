@@ -1,6 +1,6 @@
 import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.vectordb.clickhouse.index import HNSW
 
@@ -11,6 +11,7 @@ try:
 except ImportError:
     raise ImportError("`clickhouse-connect` not installed. Use `pip install clickhouse-connect` to install it")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -448,7 +449,9 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
@@ -503,7 +506,9 @@ class Clickhouse(VectorDb):
 
         return search_results
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search for documents asynchronously."""
         async_client = await self._ensure_async_client()
 

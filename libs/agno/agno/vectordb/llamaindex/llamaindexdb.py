@@ -1,5 +1,6 @@
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.utils.log import log_warning, logger
 from agno.vectordb.base import VectorDb
@@ -68,7 +69,9 @@ class LlamaIndexVectorDb(VectorDb):
         logger.warning("LlamaIndexVectorDb.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Returns relevant documents matching the query.
 
@@ -101,7 +104,9 @@ class LlamaIndexVectorDb(VectorDb):
             )
         return documents
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         return self.search(query, limit, filters)
 
     def drop(self) -> None:

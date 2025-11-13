@@ -1,5 +1,5 @@
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from qdrant_client import AsyncQdrantClient, QdrantClient  # noqa: F401
@@ -9,6 +9,7 @@ except ImportError:
         "The `qdrant-client` package is not installed. Please install it via `pip install qdrant-client`."
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -528,7 +529,9 @@ class Qdrant(VectorDb):
         log_debug("Redirecting the async request to async_insert")
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Search for documents in the collection.
 
@@ -554,7 +557,9 @@ class Qdrant(VectorDb):
 
         return self._build_search_results(results, query)
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
             filters = None
@@ -575,7 +580,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
@@ -601,7 +606,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
 
@@ -632,7 +637,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
@@ -699,7 +704,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()

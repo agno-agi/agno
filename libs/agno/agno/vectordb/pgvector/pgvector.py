@@ -24,6 +24,7 @@ try:
 except ImportError:
     raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -681,14 +682,16 @@ class PgVector(VectorDb):
             logger.error(f"Error updating metadata for document {content_id}: {e}")
             raise
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -704,7 +707,7 @@ class PgVector(VectorDb):
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
@@ -730,14 +733,16 @@ class PgVector(VectorDb):
         else:
             raise ValueError(f"Unknown filter operator: {op}")
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a vector similarity search.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Any]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -847,14 +852,16 @@ class PgVector(VectorDb):
         processed_words = [word + "*" for word in words]
         return " ".join(processed_words)
 
-    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a keyword search on the 'content' column.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -939,7 +946,7 @@ class PgVector(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Any] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector similarity and full-text search.
@@ -947,7 +954,7 @@ class PgVector(VectorDb):
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.

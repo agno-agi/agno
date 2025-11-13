@@ -13,6 +13,7 @@ try:
 except ImportError:
     raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -477,13 +478,15 @@ class ChromaDb(VectorDb):
             logger.error(f"Error upserting documents by content hash: {e}")
             raise
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search the collection for a query.
 
         Args:
             query (str): Query to search for.
             limit (int): Number of results to return.
-            filters (Optional[Any]): Filters to apply while searching.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply while searching.
                 Supports ChromaDB's filtering operators:
                 - $eq, $ne: Equality/Inequality
                 - $gt, $gte, $lt, $lte: Numeric comparisons
@@ -608,7 +611,9 @@ class ChromaDb(VectorDb):
 
         return converted
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
 

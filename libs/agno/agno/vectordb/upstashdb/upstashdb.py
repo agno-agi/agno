@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from upstash_vector import Index, Vector
@@ -9,6 +9,7 @@ except ImportError:
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -324,7 +325,7 @@ class UpstashVectorDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Any] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents in the index.
@@ -624,7 +625,9 @@ class UpstashVectorDb(VectorDb):
         logger.info(f"Upserting {len(vectors)} vectors to Upstash with IDs: {[v.id for v in vectors[:5]]}...")
         self.index.upsert(vectors, namespace=_namespace)
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     def id_exists(self, id: str) -> bool:
