@@ -228,8 +228,9 @@ class Claude(Model):
             _request_params["mcp_servers"] = [
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
-        if self.skills:
+        if self.betas:
             _request_params["betas"] = self.betas
+        if self.skills:
             _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
