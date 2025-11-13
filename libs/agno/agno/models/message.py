@@ -126,6 +126,10 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
+    def get_api_content(self) -> Optional[Union[List[Any], str]]:
+        """Get content to send to API (compressed if available, else original)."""
+        return self.compressed_content if self.compressed_content else self.content
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
         # Handle image reconstruction properly

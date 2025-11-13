@@ -448,7 +448,7 @@ class OpenAIResponses(Model):
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.content,
+                    "content": message.get_api_content(),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -472,7 +472,17 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                if message.tool_call_id and message.content is not None:
+                api_content = message.get_api_content()
+
+                # Log if compression is being used
+                if message.compressed_content:
+                    orig_len = len(str(message.content)) if message.content else 0
+                    comp_len = len(str(api_content)) if api_content else 0
+                    log_debug(
+                        f"[OpenAI Responses API] Sending compressed tool result: {comp_len}B (original: {orig_len}B)"
+                    )
+
+                if message.tool_call_id and api_content is not None:
                     function_call_id = message.tool_call_id
                     # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
                     if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
@@ -480,7 +490,7 @@ class OpenAIResponses(Model):
                     else:
                         call_id_value = function_call_id
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
+                        {"type": "function_call_output", "call_id": call_id_value, "output": api_content}
                     )
             # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
@@ -811,23 +821,43 @@ class OpenAIResponses(Model):
             tool_ids (List[str]): The tool ids.
             context_manager (Optional): Context manager for compression.
         """
-        log_debug(f"[OpenAI] Formatting {len(function_call_results)} results")
+        log_debug(f"[OpenAI] Formatting {len(function_call_results)} results, tool_call_ids count={len(tool_call_ids)}")
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
-                using_compressed = context_manager is not None and _fc_message.compressed_content is not None
-                log_debug(f"  [{_fc_message_index}] {_fc_message.tool_name}: using_compressed={using_compressed}")
-                # Only use compressed content if context_manager is active
-                if using_compressed:
-                    # Use compressed content without mutating original
-                    result_copy = _fc_message.model_copy()
-                    result_copy.content = _fc_message.compressed_content
-                    result_copy.tool_call_id = tool_call_ids[_fc_message_index]
-                    messages.append(result_copy)
+                if _fc_message.compressed_content:
+                    orig_len = len(str(_fc_message.content)) if _fc_message.content else 0
+                    comp_len = len(_fc_message.compressed_content)
+                    ratio = int((1 - comp_len / orig_len) * 100) if orig_len > 0 else 0
+                    preview = (
+                        _fc_message.compressed_content[:100] + "..."
+                        if len(_fc_message.compressed_content) > 100
+                        else _fc_message.compressed_content
+                    )
+                    log_debug(
+                        f"  [{_fc_message_index}] {_fc_message.tool_name}: {orig_len}B→{comp_len}B ({ratio}% saved)"
+                    )
+                    log_debug(f"       Compressed preview: {preview}")
                 else:
-                    # Create copy for consistency to avoid mutating original
-                    result_copy = _fc_message.model_copy()
-                    result_copy.tool_call_id = tool_call_ids[_fc_message_index]
-                    messages.append(result_copy)
+                    log_debug(f"  [{_fc_message_index}] {_fc_message.tool_name}: No compression")
+
+                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+                messages.append(_fc_message)
+
+            # Summary log
+            compressed_count = sum(1 for msg in function_call_results if msg.compressed_content)
+            if compressed_count > 0:
+                total_orig = sum(
+                    len(str(msg.content)) if msg.content else 0
+                    for msg in function_call_results
+                    if msg.compressed_content
+                )
+                total_comp = sum(len(msg.compressed_content) for msg in function_call_results if msg.compressed_content)
+                ratio = int((1 - total_comp / total_orig) * 100) if total_orig > 0 else 0
+                log_debug(
+                    f"✅ Sent {compressed_count}/{len(function_call_results)} compressed tools to API ({ratio}% space saved)"
+                )
+            else:
+                log_debug(f"[OpenAI] Added {len(function_call_results)} tool messages to messages array")
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """

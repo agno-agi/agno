@@ -1,15 +1,11 @@
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import TYPE_CHECKING, List, Optional
+from typing import List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.utils.log import log_debug, log_warning
-
-if TYPE_CHECKING:
-    from agno.agent.agent import Agent
-    from agno.team.team import Team
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
     You are compressing tool call results to save context space while preserving critical information.
@@ -50,8 +46,6 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
 @dataclass
 class ContextManager:
     model: Optional[Model] = None
-    agent: Optional["Agent"] = None
-    team: Optional["Team"] = None
     compress_tool_calls_limit: int = 3
     tool_compression_instructions: Optional[str] = None
 
@@ -133,11 +127,13 @@ class ContextManager:
             function_call_results: New tool results from current execution
         """
         existing_tool_count = len([m for m in messages if m.role == "tool"])
-        log_debug(
-            f"🗜️  Compression starting: {existing_tool_count} existing tools, {len(function_call_results)} new results"
-        )
+        log_debug(f"🗜️  Compression starting:")
+        log_debug(f"   Existing tools in messages: {existing_tool_count}")
+        log_debug(f"   New results to process: {len(function_call_results)}")
+        log_debug(f"   Compression model: {self.model.id if self.model else 'None'}")
 
         # Phase 1: Compress NEW results
+        log_debug(f"  📝 Phase 1: Compressing new results...")
         for idx, result in enumerate(function_call_results):
             if result.compressed_content is None:
                 compressed = self._compress_tool_result([result])
@@ -147,7 +143,11 @@ class ContextManager:
                     compressed_len = len(compressed)
                     log_debug(f"  NEW[{idx}] {result.tool_name}: {original_len}→{compressed_len}B")
 
+        phase1_compressed = sum(1 for r in function_call_results if r.compressed_content is not None)
+        log_debug(f"  ✅ Phase 1 complete: {phase1_compressed}/{len(function_call_results)} new results compressed")
+
         # Phase 2: Retroactively compress OLD standard tool messages
+        log_debug(f"  📝 Phase 2: Compressing old tool messages...")
         old_count = 0
         for msg in messages:
             if msg.role == "tool" and msg.compressed_content is None:
@@ -156,48 +156,9 @@ class ContextManager:
                     original_len = len(str(msg.content)) if msg.content else 0
                     compressed_len = len(compressed)
                     msg.compressed_content = compressed
-                    msg.content = compressed  # Modify for next API call
+                    # Don't mutate msg.content - keep original for storage
                     old_count += 1
                     log_debug(f"  OLD message {msg.tool_name}: {original_len}→{compressed_len}B (retroactive)")
 
         if old_count > 0:
-            log_debug(f"  Total retroactively compressed: {old_count} old standard messages")
-
-        # Phase 3: Compress Bedrock-style user messages with tool results
-        bedrock_count = 0
-        for msg in messages:
-            if msg.role == "user" and isinstance(msg.content, list) and msg.compressed_content is None:
-                # Extract tool results from Bedrock structure
-                tool_results = []
-                for item in msg.content:
-                    if isinstance(item, dict) and "toolResult" in item:
-                        tool_result = item.get("toolResult", {})
-                        content_items = tool_result.get("content", [])
-                        for content_item in content_items:
-                            if isinstance(content_item, dict) and "json" in content_item:
-                                result_data = content_item["json"].get("result", "")
-                                tool_results.append(str(result_data))
-
-                if tool_results:
-                    # Compress the combined tool results
-                    combined_content = "\n---\n".join(tool_results)
-                    temp_msg = Message(role="tool", content=combined_content, tool_name="bedrock_combined")
-                    compressed = self._compress_tool_result([temp_msg])
-
-                    if compressed:
-                        original_len = len(combined_content)
-                        compressed_len = len(compressed)
-                        msg.compressed_content = compressed
-                        # Modify the nested content structure to use compressed version
-                        for item in msg.content:
-                            if isinstance(item, dict) and "toolResult" in item:
-                                tool_result = item.get("toolResult", {})
-                                content_items = tool_result.get("content", [])
-                                for content_item in content_items:
-                                    if isinstance(content_item, dict) and "json" in content_item:
-                                        content_item["json"]["result"] = compressed
-                        bedrock_count += 1
-                        log_debug(f"  OLD Bedrock message: {original_len}→{compressed_len}B (retroactive)")
-
-        if bedrock_count > 0:
-            log_debug(f"  Total retroactively compressed: {bedrock_count} Bedrock-format messages")
+            log_debug(f"  ✅ Phase 2 complete: {old_count} old standard messages compressed")

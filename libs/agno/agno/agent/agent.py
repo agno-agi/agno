@@ -838,9 +838,6 @@ class Agent:
             if self.context_manager.model is None:
                 self.context_manager.model = self.model
 
-            if self.context_manager.agent is None:
-                self.context_manager.agent = self
-
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
