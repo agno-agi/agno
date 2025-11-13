@@ -1,6 +1,6 @@
 """Base class for Railway applications."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.base.app import InfraApp
 from agno.base.context import ContainerContext
@@ -27,6 +27,10 @@ class RailwayApp(InfraApp):
     # Service icon (emoji or URL)
     service_icon: Optional[str] = None
 
+    # Database reference (optional)
+    # Type: RailwayPostgres (using Any to avoid forward reference issues)
+    database: Optional[Any] = None
+
     def get_container_env(self, container_context: ContainerContext) -> Dict[str, str]:
         """Get environment variables for the container.
 
@@ -34,6 +38,7 @@ class RailwayApp(InfraApp):
         1. Base container_env (if set by subclass)
         2. User-provided env_vars
         3. Railway-specific variables (PORT, etc.)
+        4. Database connection variables (if database is referenced)
 
         Args:
             container_context: Container context with infra paths
@@ -44,7 +49,14 @@ class RailwayApp(InfraApp):
         # Start with base container_env if set
         container_env: Dict[str, str] = self.container_env.copy() if self.container_env else {}
 
-        # Add user-provided env_vars
+        # Add database connection variables if database is referenced
+        if self.database:
+            # Add DATABASE_URL from referenced database service
+            database_url_ref = self.database.get_connection_string_reference()
+            container_env["DATABASE_URL"] = database_url_ref
+            logger.debug(f"Added DATABASE_URL reference from {self.database.name}")
+
+        # Add user-provided env_vars (can override database vars if needed)
         if self.env_vars:
             container_env.update(self.env_vars)
 
@@ -65,10 +77,11 @@ class RailwayApp(InfraApp):
         """Build Railway resource graph for this app.
 
         Creates the necessary Railway resources:
-        1. Project (if not provided)
-        2. Environment (if not exists)
-        3. Service (the actual application)
-        4. Variables (environment variables)
+        1. Database (if referenced)
+        2. Project (if not provided)
+        3. Environment (if not exists)
+        4. Service (the actual application)
+        5. Variables (environment variables)
 
         Args:
             build_context: Railway build context
@@ -101,7 +114,11 @@ class RailwayApp(InfraApp):
         resources.append(environment)
         environment_id = "{{environment.railway_id}}"
 
-        # 3. Create service
+        # 3. Add database resource if referenced
+        # Note: Database should be added to the RailwayResources apps list
+        # before this app to ensure proper dependency order
+
+        # 4. Create service
         service = RailwayService(
             name=self.name,
             project_id=project_id,
@@ -110,8 +127,9 @@ class RailwayApp(InfraApp):
             icon=self.service_icon,
         )
         resources.append(service)
+        service_id = "{{service.railway_id}}"
 
-        # 4. Create environment variables
+        # 5. Create environment variables
         # Get container context for env var building
         container_context = ContainerContext(
             infra_name=self.name,
@@ -126,6 +144,7 @@ class RailwayApp(InfraApp):
                 name=f"{self.name}-{key.lower()}",
                 project_id=project_id,
                 environment_id=environment_id,
+                service_id=service_id,  # Scope variables to this service
                 variable_name=key,
                 variable_value=str(value),
             )

@@ -10,8 +10,9 @@ from agno.utilities.logging import logger
 class RailwayVariable(RailwayResource):
     """Railway Environment Variable resource.
 
-    Variables are scoped to a project and environment.
-    They are available to all services in that environment.
+    Variables can be scoped to:
+    - Environment level: Available to all services (no service_id)
+    - Service level: Only available to a specific service (with service_id)
     """
 
     resource_type: str = "RailwayVariable"
@@ -21,6 +22,9 @@ class RailwayVariable(RailwayResource):
     environment_id: str
     variable_name: str
     variable_value: str
+
+    # Optional service scoping
+    service_id: Optional[str] = None
 
     def _read(self, railway_client: RailwayApiClient) -> Any:
         """Read variable from Railway.
@@ -59,6 +63,7 @@ class RailwayVariable(RailwayResource):
         """Create or update variable in Railway.
 
         Railway uses upsert semantics - variableUpsert creates or updates.
+        Variables can be scoped to environment or service level.
         """
         mutation = """
         mutation variableUpsert($input: VariableUpsertInput!) {
@@ -66,18 +71,24 @@ class RailwayVariable(RailwayResource):
         }
         """
 
-        variables = {
-            "input": {
-                "projectId": self.project_id,
-                "environmentId": self.environment_id,
-                "name": self.variable_name,
-                "value": self.variable_value,
-            }
+        # Build input with required fields
+        input_data = {
+            "projectId": self.project_id,
+            "environmentId": self.environment_id,
+            "name": self.variable_name,
+            "value": self.variable_value,
         }
+
+        # Add service_id if this is a service-scoped variable
+        if self.service_id:
+            input_data["serviceId"] = self.service_id
+
+        variables = {"input": input_data}
 
         try:
             railway_client.execute_mutation(mutation, variables)
-            logger.info(f"Set variable: {self.variable_name}")
+            scope = f"service {self.service_id}" if self.service_id else "environment"
+            logger.info(f"Set variable: {self.variable_name} ({scope})")
             return True
         except Exception as e:
             logger.error(f"Failed to set variable {self.variable_name}: {e}")

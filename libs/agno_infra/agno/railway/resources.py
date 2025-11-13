@@ -285,14 +285,22 @@ class RailwayResources(InfraResources):
 
                         # Update all subsequent resources that reference this project
                         for subsequent_resource in final_railway_resources[final_railway_resources.index(resource) + 1 :]:
-                            if hasattr(subsequent_resource, "project_id") and subsequent_resource.project_id in [
-                                f"{{{{project.railway_id}}}}",
-                                f"{{{{{project_name}.railway_id}}}}",
-                            ]:
-                                subsequent_resource.project_id = project_id
-                                logger.debug(
-                                    f"Updated {subsequent_resource.get_resource_name()}.project_id = {project_id}"
-                                )
+                            if hasattr(subsequent_resource, "project_id"):
+                                # Update resources with placeholder references
+                                if subsequent_resource.project_id in [
+                                    f"{{{{project.railway_id}}}}",
+                                    f"{{{{{project_name}.railway_id}}}}",
+                                ]:
+                                    subsequent_resource.project_id = project_id
+                                    logger.debug(
+                                        f"Updated {subsequent_resource.get_resource_name()}.project_id = {project_id}"
+                                    )
+                                # Also update resources with None project_id (from resources list)
+                                elif subsequent_resource.project_id is None:
+                                    subsequent_resource.project_id = project_id
+                                    logger.debug(
+                                        f"Assigned {subsequent_resource.get_resource_name()}.project_id = {project_id}"
+                                    )
 
                     elif isinstance(resource, RailwayEnvironment) and resource.railway_id:
                         env_name = resource.name
@@ -302,14 +310,22 @@ class RailwayResources(InfraResources):
 
                         # Update all subsequent resources that reference this environment
                         for subsequent_resource in final_railway_resources[final_railway_resources.index(resource) + 1 :]:
-                            if hasattr(subsequent_resource, "environment_id") and subsequent_resource.environment_id in [
-                                f"{{{{environment.railway_id}}}}",
-                                f"{{{{{env_name}.railway_id}}}}",
-                            ]:
-                                subsequent_resource.environment_id = env_id
-                                logger.debug(
-                                    f"Updated {subsequent_resource.get_resource_name()}.environment_id = {env_id}"
-                                )
+                            if hasattr(subsequent_resource, "environment_id"):
+                                # Update resources with placeholder references
+                                if subsequent_resource.environment_id in [
+                                    f"{{{{environment.railway_id}}}}",
+                                    f"{{{{{env_name}.railway_id}}}}",
+                                ]:
+                                    subsequent_resource.environment_id = env_id
+                                    logger.debug(
+                                        f"Updated {subsequent_resource.get_resource_name()}.environment_id = {env_id}"
+                                    )
+                                # Also update resources with None environment_id (from resources list)
+                                elif subsequent_resource.environment_id is None:
+                                    subsequent_resource.environment_id = env_id
+                                    logger.debug(
+                                        f"Assigned {subsequent_resource.get_resource_name()}.environment_id = {env_id}"
+                                    )
                 else:
                     if self.infra_settings is not None and not self.infra_settings.continue_on_create_failure:
                         return num_resources_created, num_resources_to_create
