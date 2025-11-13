@@ -28,15 +28,17 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
+from agno.runner.base import BaseRunner
 from agno.team.team import Team
+from agno.utils.log import log_warning
 
 logger = logging.getLogger(__name__)
 
 
 def get_eval_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
+    agents: Optional[List[Union[Agent, BaseRunner]]] = None,
+    teams: Optional[List[Union[Team, BaseRunner]]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
@@ -57,8 +59,8 @@ def get_eval_router(
 def attach_routes(
     router: APIRouter,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
+    agents: Optional[List[Union[Agent, BaseRunner]]] = None,
+    teams: Optional[List[Union[Team, BaseRunner]]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -396,16 +398,28 @@ def attach_routes(
 
         # Run the evaluation
         if eval_run_input.eval_type == EvalType.ACCURACY:
+            if isinstance(agent, BaseRunner) or isinstance(team, BaseRunner):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
             return await run_accuracy_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
         elif eval_run_input.eval_type == EvalType.PERFORMANCE:
+            if isinstance(agent, BaseRunner) or isinstance(team, BaseRunner):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
             return await run_performance_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
         else:
+            if isinstance(agent, BaseRunner) or isinstance(team, BaseRunner):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
             return await run_reliability_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -9,6 +9,7 @@ from agno.team.team import Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_info
 from agno.workflow.workflow import Workflow
+from agno.runner.base import BaseRunner
 
 
 class SlackEventResponse(BaseModel):
@@ -24,7 +25,7 @@ class SlackChallengeResponse(BaseModel):
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None, workflow: Optional[Workflow] = None
+    router: APIRouter, agent: Optional[Union[Agent, BaseRunner]] = None, team: Optional[Union[Team, BaseRunner]] = None, workflow: Optional[Union[Workflow, BaseRunner]] = None
 ) -> APIRouter:
     # Determine entity type for documentation
     entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"

@@ -27,9 +27,9 @@ from agno.workflow import Workflow
 
 def attach_routes(
     router: APIRouter,
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
-    workflows: Optional[List[Workflow]] = None,
+    agents: Optional[List[Union[Agent, BaseRunner]]] = None,
+    teams: Optional[List[Union[Team, BaseRunner]]] = None,
+    workflows: Optional[List[Union[Workflow, BaseRunner]]] = None,
 ) -> APIRouter:
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")

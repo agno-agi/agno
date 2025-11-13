@@ -45,6 +45,7 @@ from agno.os.utils import (
     load_yaml_config,
     update_cors_middleware,
 )
+from agno.runner.base import BaseRunner
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
@@ -96,9 +97,9 @@ class AgentOS:
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
-        agents: Optional[List[Agent]] = None,
-        teams: Optional[List[Team]] = None,
-        workflows: Optional[List[Workflow]] = None,
+        agents: Optional[List[Union[Agent, BaseRunner]]] = None,
+        teams: Optional[List[Union[Team, BaseRunner]]] = None,
+        workflows: Optional[List[Union[Workflow, BaseRunner]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -142,9 +143,9 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Agent]] = agents
-        self.workflows: Optional[List[Workflow]] = workflows
-        self.teams: Optional[List[Team]] = teams
+        self.agents: Optional[List[Union[Agent, BaseRunner]]] = agents
+        self.workflows: Optional[List[Union[Workflow, BaseRunner]]] = workflows
+        self.teams: Optional[List[Union[Team, BaseRunner]]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
@@ -329,6 +330,8 @@ class AgentOS:
             return
 
         for agent in self.agents:
+            if isinstance(agent, BaseRunner):
+                continue
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
@@ -349,6 +352,8 @@ class AgentOS:
             return
 
         for team in self.teams:
+            if isinstance(team, BaseRunner):
+                continue
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
 
@@ -371,6 +376,8 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
+                if isinstance(workflow, BaseRunner):
+                    continue
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
@@ -561,10 +568,19 @@ class AgentOS:
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
+        agent_ids = []
+        team_ids = []
+        workflow_ids = []
+        for agent in self.agents or []:
+            agent_ids.append(agent.id)
+        for team in self.teams or []:
+            team_ids.append(team.id)
+        for workflow in self.workflows or []:
+            workflow_ids.append(workflow.id)
         return {
-            "agents": [agent.id for agent in self.agents] if self.agents else None,
-            "teams": [team.id for team in self.teams] if self.teams else None,
-            "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
+            "agents": agent_ids,
+            "teams": team_ids,
+            "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
 
@@ -577,18 +593,27 @@ class AgentOS:
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
+            if isinstance(agent, BaseRunner):
+                # TODO: Fetch config from remote AgentOS
+                continue
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
+            if isinstance(team, BaseRunner):
+                # TODO: Fetch config from remote AgentOS
+                continue
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
+            if isinstance(workflow, BaseRunner):
+                # TODO: Fetch config from remote AgentOS
+                continue
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
@@ -713,10 +738,16 @@ class AgentOS:
             knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
+            if isinstance(agent, BaseRunner):
+                # TODO: Fetch config from remote AgentOS
+                continue
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
+            if isinstance(team, BaseRunner):
+                # TODO: Fetch config from remote AgentOS
+                continue
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
 

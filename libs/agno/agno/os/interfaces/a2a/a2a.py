@@ -10,6 +10,7 @@ from agno.os.interfaces.a2a.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
 from agno.team import Team
 from agno.workflow import Workflow
+from agno.runner.base import BaseRunner
 
 
 class A2A(BaseInterface):
@@ -19,9 +20,9 @@ class A2A(BaseInterface):
 
     def __init__(
         self,
-        agents: Optional[List[Agent]] = None,
-        teams: Optional[List[Team]] = None,
-        workflows: Optional[List[Workflow]] = None,
+        agents: Optional[List[Union[Agent, BaseRunner]]] = None,
+        teams: Optional[List[Union[Team, BaseRunner]]] = None,
+        workflows: Optional[List[Union[Workflow, BaseRunner]]] = None,
         prefix: str = "/a2a",
         tags: Optional[List[str]] = None,
     ):

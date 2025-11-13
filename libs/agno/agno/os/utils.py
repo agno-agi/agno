@@ -12,6 +12,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.runner.base import BaseRunner
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -290,7 +291,9 @@ def format_team_tools(team_tools: List[Union[Function, dict]]):
     return formatted_tools
 
 
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+def get_agent_by_id(
+    agent_id: str, agents: Optional[List[Union[Agent, BaseRunner]]] = None
+) -> Optional[Union[Agent, BaseRunner]]:
     if agent_id is None or agents is None:
         return None
 
@@ -300,7 +303,9 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
-def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+def get_team_by_id(
+    team_id: str, teams: Optional[List[Union[Team, BaseRunner]]] = None
+) -> Optional[Union[Team, BaseRunner]]:
     if team_id is None or teams is None:
         return None
 
@@ -310,7 +315,9 @@ def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional
     return None
 
 
-def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+def get_workflow_by_id(
+    workflow_id: str, workflows: Optional[List[Union[Workflow, BaseRunner]]] = None
+) -> Optional[Union[Workflow, BaseRunner]]:
     if workflow_id is None or workflows is None:
         return None
 

@@ -50,6 +50,7 @@ from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput, WorkflowRunOutputEvent
+from agno.runner.base import BaseRunner
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.workflow import Workflow
@@ -248,7 +249,7 @@ websocket_manager = WebSocketManager(
 
 
 async def agent_response_streamer(
-    agent: Agent,
+    agent: Union[Agent, BaseRunner],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -256,10 +257,12 @@ async def agent_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    stream: bool = True,
+    stream_events: bool = True,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
-        run_response = agent.arun(
+        run_response = agent.arun(  # type: ignore
             input=message,
             session_id=session_id,
             user_id=user_id,
@@ -267,11 +270,11 @@ async def agent_response_streamer(
             audio=audio,
             videos=videos,
             files=files,
-            stream=True,
-            stream_events=True,
+            stream=stream,
+            stream_events=stream_events,
             **kwargs,
         )
-        async for run_response_chunk in run_response:
+        async for run_response_chunk in run_response:  # type: ignore
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
@@ -292,8 +295,8 @@ async def agent_response_streamer(
 
 
 async def agent_continue_response_streamer(
-    agent: Agent,
-    run_id: Optional[str] = None,
+    agent: Union[Agent, BaseRunner],
+    run_id: str,
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -307,7 +310,7 @@ async def agent_continue_response_streamer(
             stream=True,
             stream_events=True,
         )
-        async for run_response_chunk in continue_response:
+        async for run_response_chunk in continue_response:  # type: ignore
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
@@ -332,7 +335,7 @@ async def agent_continue_response_streamer(
 
 
 async def team_response_streamer(
-    team: Team,
+    team: Union[Team, BaseRunner],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -344,7 +347,7 @@ async def team_response_streamer(
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
-        run_response = team.arun(
+        run_response = team.arun(  # type: ignore
             input=message,
             session_id=session_id,
             user_id=user_id,
@@ -356,7 +359,7 @@ async def team_response_streamer(
             stream_events=True,
             **kwargs,
         )
-        async for run_response_chunk in run_response:
+        async for run_response_chunk in run_response:  # type: ignore
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
@@ -401,7 +404,9 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         # Generate session_id if not provided
         # Use workflow's default session_id if not provided in message
         if not session_id:
-            if workflow.session_id:
+            if isinstance(workflow, BaseRunner):
+                session_id = str(uuid4())
+            elif workflow.session_id:
                 session_id = workflow.session_id
             else:
                 session_id = str(uuid4())
@@ -666,6 +671,35 @@ def get_base_router(
         },
     )
     async def config() -> ConfigResponse:
+        from agno.runner.base import BaseRunner
+
+        agent_summaries = []
+        if os.agents:
+            for agent in os.agents:
+                # TODO: Get config from remote AgentOS
+                if isinstance(agent, BaseRunner):
+                    continue
+                else:
+                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
+
+        team_summaries = []
+        if os.teams:
+            for team in os.teams:
+                # TODO: Get config from remote AgentOS
+                if isinstance(team, BaseRunner):
+                    continue
+                else:
+                    team_summaries.append(TeamSummaryResponse.from_team(team))
+
+        workflow_summaries = []
+        if os.workflows:
+            for workflow in os.workflows:
+                # TODO: Get config from remote AgentOS
+                if isinstance(workflow, BaseRunner):
+                    continue
+                else:
+                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
             description=os.description,
@@ -677,9 +711,9 @@ def get_base_router(
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
-            workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
+            agents=agent_summaries,
+            teams=team_summaries,
+            workflows=workflow_summaries,
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -715,9 +749,19 @@ def get_base_router(
         """Return the list of all models used by agents and teams in the contextual OS"""
         all_components: List[Union[Agent, Team]] = []
         if os.agents:
-            all_components.extend(os.agents)
+            for agent in os.agents:
+                # TODO: Get models from remote AgentOS
+                if isinstance(agent, BaseRunner):
+                    continue
+                else:
+                    all_components.append(agent)
         if os.teams:
-            all_components.extend(os.teams)
+            for team in os.teams:
+                # TODO: Get models from remote AgentOS
+                if isinstance(team, BaseRunner):
+                    continue
+                else:
+                    all_components.append(team)
 
         unique_models = {}
         for item in all_components:
@@ -915,7 +959,7 @@ def get_base_router(
             try:
                 run_response = cast(
                     RunOutput,
-                    await agent.arun(
+                    await agent.arun(  # type: ignore
                         input=message,
                         session_id=session_id,
                         user_id=user_id,
@@ -1042,7 +1086,7 @@ def get_base_router(
             try:
                 run_response_obj = cast(
                     RunOutput,
-                    await agent.acontinue_run(
+                    await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
                         session_id=session_id,
@@ -1100,6 +1144,10 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
+            # TODO: Get config from remote AgentOS
+            if isinstance(agent, BaseRunner):
+                continue
+
             agent_response = await AgentResponse.from_agent(agent=agent)
             agents.append(agent_response)
 
@@ -1300,7 +1348,7 @@ def get_base_router(
             )
         else:
             try:
-                run_response = await team.arun(
+                run_response = await team.arun(  # type: ignore
                     input=message,
                     session_id=session_id,
                     user_id=user_id,
@@ -1433,6 +1481,10 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
+            # TODO: Get config from remote AgentOS
+            if isinstance(team, BaseRunner):
+                continue
+
             team_response = await TeamResponse.from_team(team=team)
             teams.append(team_response)
 
@@ -1568,7 +1620,16 @@ def get_base_router(
         if os.workflows is None:
             return []
 
-        return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in os.workflows]
+        workflow_summaries = []
+        if os.workflows:
+            for workflow in os.workflows:
+                # TODO: Get config from remote AgentOS
+                if isinstance(workflow, BaseRunner):
+                    continue
+
+                workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+
+        return workflow_summaries
 
     @router.get(
         "/workflows/{workflow_id}",
