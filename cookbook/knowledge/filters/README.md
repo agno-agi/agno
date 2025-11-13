@@ -63,13 +63,13 @@ from agno.filters import EQ, IN, GT, LT, AND, OR, NOT
 filter = EQ("status", "published")
 
 # Range queries
-filter = GT("views", 1000) & LT("views", 10000)
+filter = AND(GT("views", 1000), LT("views", 10000))
 
 # Complex logic
-filter = (EQ("type", "article") & GT("word_count", 500)) | IN("priority", ["high", "urgent"])
+filter = OR(AND(EQ("type", "article"), GT("word_count", 500)), IN("priority", ["high", "urgent"]))
 
 # Negation
-filter = ~EQ("status", "archived")
+filter = NOT(EQ("status", "archived"))
 
 # Use with agent
 agent.run("Query", knowledge_filters=[filter])
@@ -80,9 +80,9 @@ agent.run("Query", knowledge_filters=[filter])
 - `IN(key, [values])` - Value in list
 - `GT(key, value)` - Greater than
 - `LT(key, value)` - Less than
-- `&` - AND logic
-- `|` - OR logic
-- `~` - NOT logic
+- `AND(...)` - AND logic
+- `OR(...)` - OR logic
+- `NOT(...)` - NOT logic
 
 ## Supported Filter Types
 

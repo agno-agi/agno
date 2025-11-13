@@ -8,34 +8,29 @@ Filter Types:
     - Inclusion: IN (value in list)
     - Logical: AND, OR, NOT
 
-Operators can be combined using Python operators:
-    - `&` for AND
-    - `|` for OR
-    - `~` for NOT
-
 Example:
-    >>> from agno.filters import EQ, GT, IN, AND, OR
+    >>> from agno.filters import EQ, GT, IN, AND, OR, NOT
     >>>
     >>> # Simple equality filter
     >>> filter = EQ("category", "technology")
     >>>
     >>> # Complex filter with multiple conditions
-    >>> filter = (
-    ...     EQ("status", "published") &
-    ...     GT("views", 1000) &
+    >>> filter = AND(
+    ...     EQ("status", "published"),
+    ...     GT("views", 1000),
     ...     IN("category", ["tech", "science"])
     ... )
     >>>
     >>> # Using OR logic
-    >>> filter = EQ("priority", "high") | EQ("urgent", True)
+    >>> filter = OR(EQ("priority", "high"), EQ("urgent", True))
     >>>
     >>> # Negating conditions
-    >>> filter = ~EQ("status", "archived")
+    >>> filter = NOT(EQ("status", "archived"))
     >>>
     >>> # Complex nested logic
-    >>> filter = (
-    ...     (EQ("type", "article") & GT("word_count", 500)) |
-    ...     (EQ("type", "tutorial") & ~EQ("difficulty", "beginner"))
+    >>> filter = OR(
+    ...     AND(EQ("type", "article"), GT("word_count", 500)),
+    ...     AND(EQ("type", "tutorial"), NOT(EQ("difficulty", "beginner")))
     ... )
 """
 
@@ -51,28 +46,28 @@ from typing import Any, List
 class FilterExpr:
     """Base class for all filter expressions.
 
-    Provides logical operator overloads for combining filter expressions:
-    - `|` (OR): Combine filters where either expression can be true
-    - `&` (AND): Combine filters where both expressions must be true
-    - `~` (NOT): Negate a filter expression
+    Filters can be combined using AND, OR, and NOT classes:
+    - AND: Combine filters where both expressions must be true
+    - OR: Combine filters where either expression can be true
+    - NOT: Negate a filter expression
 
     Example:
-        >>> # Create complex filters using operators
-        >>> filter = (EQ("status", "active") & GT("age", 18)) | EQ("role", "admin")
+        >>> # Create complex filters using AND, OR, NOT
+        >>> filter = OR(AND(EQ("status", "active"), GT("age", 18)), EQ("role", "admin"))
         >>> # Equivalent to: (status == "active" AND age > 18) OR role == "admin"
     """
 
     # Logical operator overloads
     def __or__(self, other: FilterExpr) -> OR:
-        """Combine two filters with OR logic using the | operator."""
+        """Combine two filters with OR logic."""
         return OR(self, other)
 
     def __and__(self, other: FilterExpr) -> AND:
-        """Combine two filters with AND logic using the & operator."""
+        """Combine two filters with AND logic."""
         return AND(self, other)
 
     def __invert__(self) -> NOT:
-        """Negate a filter using the ~ operator."""
+        """Negate a filter."""
         return NOT(self)
 
     def to_dict(self) -> dict:
@@ -204,9 +199,6 @@ class AND(FilterExpr):
         >>> # Match documents where status is "published" AND age > 18
         >>> filter = AND(EQ("status", "published"), GT("age", 18))
         >>>
-        >>> # Using the & operator (preferred syntax)
-        >>> filter = EQ("status", "published") & GT("age", 18)
-        >>>
         >>> # Multiple expressions
         >>> filter = AND(
         ...     EQ("status", "active"),
@@ -235,9 +227,6 @@ class OR(FilterExpr):
         >>> # Match documents where status is "published" OR status is "archived"
         >>> filter = OR(EQ("status", "published"), EQ("status", "archived"))
         >>>
-        >>> # Using the | operator (preferred syntax)
-        >>> filter = EQ("status", "published") | EQ("status", "archived")
-        >>>
         >>> # Complex: Match VIP users OR users with high score
         >>> filter = OR(
         ...     EQ("membership", "VIP"),
@@ -264,14 +253,11 @@ class NOT(FilterExpr):
         >>> # Match documents where status is NOT "draft"
         >>> filter = NOT(EQ("status", "draft"))
         >>>
-        >>> # Using the ~ operator (preferred syntax)
-        >>> filter = ~EQ("status", "draft")
-        >>>
         >>> # Exclude inactive users with low scores
-        >>> filter = ~(EQ("status", "inactive") & LT("score", 10))
+        >>> filter = NOT(AND(EQ("status", "inactive"), LT("score", 10)))
         >>>
         >>> # Match users who are NOT in the blocked list
-        >>> filter = ~IN("user_id", [101, 102, 103])
+        >>> filter = NOT(IN("user_id", [101, 102, 103]))
     """
 
     def __init__(self, expression: FilterExpr):
@@ -310,7 +296,7 @@ def from_dict(filter_dict: dict) -> FilterExpr:
         >>> reconstructed = from_dict(serialized)
         >>>
         >>> # Complex filter with nested expressions
-        >>> complex_filter = (EQ("type", "article") & GT("views", 1000)) | IN("priority", ["high", "urgent"])
+        >>> complex_filter = OR(AND(EQ("type", "article"), GT("views", 1000)), IN("priority", ["high", "urgent"]))
         >>> serialized = complex_filter.to_dict()
         >>> reconstructed = from_dict(serialized)
         >>>

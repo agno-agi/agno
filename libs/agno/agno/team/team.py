@@ -2041,7 +2041,6 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
@@ -4273,7 +4272,7 @@ class Team:
         """Calculate session metrics"""
 
         session_messages: List[Message] = []
-        for run in session.runs:  # type: ignore
+        for run in session.runs or []:
             if run.messages is not None:
                 for m in run.messages:
                     # Skipping messages from history to avoid duplicates
@@ -6100,7 +6099,6 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         **kwargs,
     ):
@@ -7522,6 +7520,9 @@ class Team:
             session = self.db.get_session(session_id=session_id, session_type=session_type)
             return session  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -7536,6 +7537,9 @@ class Team:
             session = await self.db.get_session(session_id=session_id, session_type=session_type)
             return session  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -7547,6 +7551,9 @@ class Team:
                 raise ValueError("Db not initialized")
             return self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
         return None
 
@@ -7558,6 +7565,9 @@ class Team:
                 raise ValueError("Db not initialized")
             return await self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
         return None
 
