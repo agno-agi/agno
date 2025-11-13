@@ -2012,7 +2012,6 @@ class Agent:
         run_context: RunContext,
         session_id: str,
         user_id: Optional[str] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -8034,7 +8033,7 @@ class Agent:
         self,
         query: str,
         num_documents: Optional[int] = None,
-        filters: Optional[Any] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.

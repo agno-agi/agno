@@ -1393,7 +1393,7 @@ class Knowledge:
         self,
         query: str,
         max_results: Optional[int] = None,
-        filters: Optional[Any] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
