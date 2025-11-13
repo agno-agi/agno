@@ -244,7 +244,7 @@ class Gemini(Model):
             )
 
         if self.file_search_store_names:
-            log_info("File Search enabled.")
+            log_debug("Gemini File Search enabled.")
             file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
             if self.file_search_metadata_filter:
                 file_search_config["metadata_filter"] = self.file_search_metadata_filter
