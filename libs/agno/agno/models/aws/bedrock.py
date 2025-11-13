@@ -561,6 +561,7 @@ class AwsBedrock(Model):
             context_manager: Optional context manager for compression.
             **kwargs: Additional arguments including tool_ids.
         """
+        log_debug(f"[Bedrock] Formatting {len(function_call_results)} results")
         if function_call_results:
             tool_ids = kwargs.get("tool_ids", [])
             tool_result_content: List = []
@@ -569,7 +570,9 @@ class AwsBedrock(Model):
                 # Use tool_call_id from message if tool_ids list is insufficient
                 tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
                 # Only use compressed content if context_manager is active
-                if context_manager is not None and _fc_message.compressed_content is not None:
+                using_compressed = context_manager is not None and _fc_message.compressed_content is not None
+                log_debug(f"  [{_fc_message_index}] {_fc_message.tool_name}: using_compressed={using_compressed}")
+                if using_compressed:
                     content = _fc_message.compressed_content
                 else:
                     content = _fc_message.content

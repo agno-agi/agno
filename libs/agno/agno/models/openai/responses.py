@@ -811,18 +811,23 @@ class OpenAIResponses(Model):
             tool_ids (List[str]): The tool ids.
             context_manager (Optional): Context manager for compression.
         """
+        log_debug(f"[OpenAI] Formatting {len(function_call_results)} results")
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
+                using_compressed = context_manager is not None and _fc_message.compressed_content is not None
+                log_debug(f"  [{_fc_message_index}] {_fc_message.tool_name}: using_compressed={using_compressed}")
                 # Only use compressed content if context_manager is active
-                if context_manager is not None and _fc_message.compressed_content is not None:
+                if using_compressed:
                     # Use compressed content without mutating original
                     result_copy = _fc_message.model_copy()
                     result_copy.content = _fc_message.compressed_content
                     result_copy.tool_call_id = tool_call_ids[_fc_message_index]
                     messages.append(result_copy)
                 else:
-                    _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
-                    messages.append(_fc_message)
+                    # Create copy for consistency to avoid mutating original
+                    result_copy = _fc_message.model_copy()
+                    result_copy.tool_call_id = tool_call_ids[_fc_message_index]
+                    messages.append(result_copy)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """

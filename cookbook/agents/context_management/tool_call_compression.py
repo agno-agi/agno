@@ -8,8 +8,8 @@ Run: `python cookbook/agents/context_management/tool_call_compression.py`
 from agno.agent import Agent
 from agno.context.manager import ContextManager
 from agno.db.sqlite import SqliteDb
-from agno.models.google import Gemini
 from agno.models.aws import AwsBedrock
+from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.log import log_info
@@ -46,7 +46,7 @@ Example:
 
 # Create context manager with custom compression
 context_manager = ContextManager(
-    model=OpenAIChat(id="gpt-4o-mini"), 
+    model=OpenAIChat(id="gpt-4o-mini"),
     compress_tool_calls_limit=1,
     tool_compression_instructions=custom_compression_prompt,  # Custom prompt!
 )
@@ -54,17 +54,20 @@ context_manager = ContextManager(
 # Create agent with custom context manager
 agent = Agent(
     name="Competitive Intelligence Agent",
-    model=Gemini(id="gemini-2.5-pro", vertexai=True),
+    model=AwsBedrock(
+        id="arn:aws:bedrock:us-east-1:386435111151:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0"
+    ),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     context_manager=context_manager,
     compress_tool_calls=True,
     markdown=True,
-    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent10.db"),
+    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_bedrock.db"),
     session_id="competitive_intelligence_agent",
     add_history_to_context=True,
     num_history_runs=6,
     instructions="Use the search tools and alwayd for the latest information and data.",
+    debug_mode=True,
 )
 
 
@@ -122,7 +125,7 @@ log_info("\n📋 Query 2: Researching Microsoft, IBM, Oracle, SAP, Salesforce...
 response = agent.run(
     """
     Use the search tools and alwayd for the latest information and data.
-    Research recent activities (last 3 months) for these AI companies:
+    Research recent activities for these AI companies:
     
     5. Microsoft - new products, partnerships, acquisitions
     6. IBM - new products, partnerships, acquisitions
@@ -140,7 +143,7 @@ log_info("\n📋 Query 3: Researching Accenture, Deloitte, PwC, KPMG, EY...")
 response = agent.run(
     """
     Use the search tools and alwayd for the latest information and data.
-    Research recent activities (last 3 months) for these AI companies:
+    Research recent activities for these AI companies:
     
     10. Accenture - new products, partnerships, acquisitions
     11. Deloitte - new products, partnerships, acquisitions

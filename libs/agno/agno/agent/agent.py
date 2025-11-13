@@ -7675,10 +7675,8 @@ class Agent:
                     and self.context_manager is not None
                     and self.context_manager.should_compress(history)
                 ):
-                    # Compress the original history messages
-                    history = self.context_manager.compress_tool_results(
-                        messages=history,
-                    )
+                    # Compress the history messages
+                    self.context_manager.compress_messages_and_results(history, [])
                 # Create a deep copy of the history messages
                 history_copy = [deepcopy(msg) for msg in history]
 

@@ -432,19 +432,29 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
+                # Debug: Log tool execution summary
+                log_debug(
+                    f"📊 Tool execution complete: {len(function_call_results)} new results, {len(messages)} existing messages"
+                )
+                log_debug(f"   Context manager: {'Active' if context_manager else 'None'}")
+
+                # Compress tool results BEFORE formatting
+                if context_manager and context_manager.should_compress(messages + function_call_results):
+                    log_debug("✅ Compression threshold exceeded, starting compression...")
+                    context_manager.compress_messages_and_results(messages, function_call_results)
+                    log_debug("✅ Compression complete")
+                elif context_manager:
+                    log_debug("⏭️  Compression threshold not reached, skipping compression")
+
                 # Format and add results to messages
+                log_debug(f"📝 Formatting {len(function_call_results)} tool results for model")
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
                     context_manager=context_manager,
                     **model_response.extra or {},
                 )
-
-                # Compress tool results
-                if context_manager and context_manager.should_compress(messages):
-                    messages[:] = context_manager.compress_tool_results(
-                        messages=messages,
-                    )
+                log_debug(f"✅ Formatting complete, messages array now has {len(messages)} messages")
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -605,19 +615,29 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
+                # Debug: Log tool execution summary
+                log_debug(
+                    f"📊 Tool execution complete: {len(function_call_results)} new results, {len(messages)} existing messages"
+                )
+                log_debug(f"   Context manager: {'Active' if context_manager else 'None'}")
+
+                # Compress tool results BEFORE formatting
+                if context_manager and context_manager.should_compress(messages + function_call_results):
+                    log_debug("✅ Compression threshold exceeded, starting compression...")
+                    context_manager.compress_messages_and_results(messages, function_call_results)
+                    log_debug("✅ Compression complete")
+                elif context_manager:
+                    log_debug("⏭️  Compression threshold not reached, skipping compression")
+
                 # Format and add results to messages
+                log_debug(f"📝 Formatting {len(function_call_results)} tool results for model")
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
                     context_manager=context_manager,
                     **model_response.extra or {},
                 )
-
-                # Compress tool results
-                if context_manager and context_manager.should_compress(messages):
-                    messages[:] = context_manager.compress_tool_results(
-                        messages=messages,
-                    )
+                log_debug(f"✅ Formatting complete, messages array now has {len(messages)} messages")
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -794,7 +814,7 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
-            assistant_message.tool_calls = self.parse_tool_calls(provider_response.tool_calls)
+            assistant_message.tool_calls = provider_response.tool_calls
 
         # Add audio to assistant message
         if provider_response.audio is not None:
@@ -2137,9 +2157,12 @@ class Model(ABC):
         Format function call results.
         Uses compressed_content if available AND context_manager is active.
         """
+        log_debug(f"[Base] Formatting {len(function_call_results)} results")
         if len(function_call_results) > 0:
-            for result in function_call_results:
-                if context_manager is not None and result.compressed_content is not None:
+            for idx, result in enumerate(function_call_results):
+                using_compressed = context_manager is not None and result.compressed_content is not None
+                log_debug(f"  [{idx}] {result.tool_name}: using_compressed={using_compressed}")
+                if using_compressed:
                     # Use compressed content without mutating original
                     result_copy = result.model_copy()
                     result_copy.content = result.compressed_content

@@ -774,13 +774,16 @@ class Gemini(Model):
         """
         Format function call results for Gemini.
         """
+        log_debug(f"[Gemini] Formatting {len(function_call_results)} results")
         combined_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
         if len(function_call_results) > 0:
-            for result in function_call_results:
+            for idx, result in enumerate(function_call_results):
                 # Only use compressed content if context_manager is active
-                if context_manager is not None and result.compressed_content is not None:
+                using_compressed = context_manager is not None and result.compressed_content is not None
+                log_debug(f"  [{idx}] {result.tool_name}: using_compressed={using_compressed}")
+                if using_compressed:
                     content = result.compressed_content
                 else:
                     content = result.content
