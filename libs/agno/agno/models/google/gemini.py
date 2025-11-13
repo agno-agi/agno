@@ -45,7 +45,7 @@ try:
         File as GeminiFile,
     )
 except ImportError:
-    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+    raise ImportError("`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`")
 
 
 @dataclass

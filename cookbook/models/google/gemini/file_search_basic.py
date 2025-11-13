@@ -38,43 +38,39 @@ print(f"\nResponse:\n{run.content}")
 
 # Extract and display citations
 print("\n" + "=" * 50)
-if run.citations:
-    print(
-        f"Citations found: {len(run.citations.urls) if run.citations.urls else 0} sources"
-    )
-    if run.citations.raw:
-        # Use our custom citation formatter
-        citations_dict = {
-            "sources": [],
-            "grounding_chunks": [],
-            "raw_metadata": run.citations.raw.get("grounding_metadata", {}),
-        }
+if run.citations and run.citations.raw:
+    # Use our custom citation formatter
+    citations_dict = {
+        "sources": [],
+        "grounding_chunks": [],
+        "raw_metadata": run.citations.raw.get("grounding_metadata", {}),
+    }
 
-        # Extract from grounding metadata
-        grounding_metadata = run.citations.raw.get("grounding_metadata", {})
-        chunks = grounding_metadata.get("grounding_chunks", []) or []
-        for chunk in chunks:
-            if isinstance(chunk, dict):
-                retrieved_context = chunk.get("retrieved_context")
-                if isinstance(retrieved_context, dict):
-                    title = retrieved_context.get("title", "Unknown")
-                    citations_dict["sources"].append(title)
-                    citations_dict["grounding_chunks"].append(
-                        {
-                            "title": title,
-                            "uri": retrieved_context.get("uri", ""),
-                            "text": retrieved_context.get("text", ""),
-                            "type": "file_search",
-                        }
-                    )
+    # Extract from grounding metadata
+    grounding_metadata = run.citations.raw.get("grounding_metadata", {})
+    chunks = grounding_metadata.get("grounding_chunks", []) or []
+    for chunk in chunks:
+        if isinstance(chunk, dict):
+            retrieved_context = chunk.get("retrieved_context")
+            if isinstance(retrieved_context, dict):
+                title = retrieved_context.get("title", "Unknown")
+                citations_dict["sources"].append(title)
+                citations_dict["grounding_chunks"].append(
+                    {
+                        "title": title,
+                        "uri": retrieved_context.get("uri", ""),
+                        "text": retrieved_context.get("text", ""),
+                        "type": "file_search",
+                    }
+                )
 
-        if citations_dict["sources"]:
-            formatted_citations = model.format_citations(
-                citations_dict, include_text=True
-            )
-            print(formatted_citations)
-        else:
-            print("Citations metadata found but no File Search sources detected")
+    if citations_dict["sources"]:
+        formatted_citations = model.format_citations(
+            citations_dict, include_text=True
+        )
+        print(formatted_citations)
+    else:
+        print("Citations metadata found but no File Search sources detected")
 else:
     print("No citations found in response")
 
