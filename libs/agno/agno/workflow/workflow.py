@@ -857,7 +857,7 @@ class Workflow:
 
     async def aget_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[WorkflowChatInteraction]:
         """Return a list of dictionaries containing the input and output for each run in the session.
 
         Args:
