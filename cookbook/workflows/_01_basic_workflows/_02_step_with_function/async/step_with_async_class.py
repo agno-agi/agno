@@ -134,7 +134,6 @@ async def main():
         input="AI agent frameworks 2025",
         markdown=True,
         stream=True,
-        stream_events=True,
     )
 
 

@@ -3786,8 +3786,6 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -3806,32 +3804,16 @@ class Workflow:
             videos: Video input
             files: File input
             stream: Whether to stream the response content
-            stream_events: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
         """
         if self._has_async_db():
             raise Exception("`print_response()` is not supported with an async DB. Please use `aprint_response()`.")
 
         if stream is None:
             stream = self.stream or False
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
 
         if stream:
             print_response_stream(
@@ -3844,7 +3826,7 @@ class Workflow:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -3880,8 +3862,6 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -3900,29 +3880,13 @@ class Workflow:
             videos: Video input
             files: Files input
             stream: Whether to stream the response content
-            stream_events: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
         """
         if stream is None:
             stream = self.stream or False
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
 
         if stream:
             await aprint_response_stream(
@@ -3935,7 +3899,7 @@ class Workflow:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4168,8 +4132,6 @@ class Workflow:
         user: str = "User",
         emoji: str = ":technologist:",
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -4189,12 +4151,10 @@ class Workflow:
             user: Display name for the user in the CLI prompt. Defaults to "User".
             emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
             stream: Whether to stream the workflow response. If None, uses workflow default.
-            stream_events: Whether to stream intermediate step outputs. If None, uses workflow default.
             markdown: Whether to render output as markdown. Defaults to True.
             show_time: Whether to display timestamps in the output. Defaults to True.
             show_step_details: Whether to show detailed step information. Defaults to True.
             exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
             **kwargs: Additional keyword arguments passed to the workflow's print_response method.
 
         Returns:
@@ -4203,14 +4163,10 @@ class Workflow:
 
         from rich.prompt import Prompt
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps or False
-
         if input:
             self.print_response(
                 input=input,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4228,7 +4184,6 @@ class Workflow:
             self.print_response(
                 input=message,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4245,8 +4200,6 @@ class Workflow:
         user: str = "User",
         emoji: str = ":technologist:",
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -4266,12 +4219,10 @@ class Workflow:
             user: Display name for the user in the CLI prompt. Defaults to "User".
             emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
             stream: Whether to stream the workflow response. If None, uses workflow default.
-            stream_events: Whether to stream events from the workflow. If None, uses workflow default.
             markdown: Whether to render output as markdown. Defaults to True.
             show_time: Whether to display timestamps in the output. Defaults to True.
             show_step_details: Whether to show detailed step information. Defaults to True.
             exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
             **kwargs: Additional keyword arguments passed to the workflow's print_response method.
 
         Returns:
@@ -4280,14 +4231,10 @@ class Workflow:
 
         from rich.prompt import Prompt
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps or False
-
         if input:
             await self.aprint_response(
                 input=input,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4305,7 +4252,6 @@ class Workflow:
             await self.aprint_response(
                 input=message,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,

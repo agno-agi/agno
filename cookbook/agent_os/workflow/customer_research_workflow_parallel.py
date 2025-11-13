@@ -774,7 +774,6 @@ if __name__ == "__main__":
 #         input=research_query,
 #         markdown=True,
 #         stream=True,
-#         stream_events=True,
 #     )
 
 #     print("\n" + "=" * 70)
