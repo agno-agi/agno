@@ -34,6 +34,7 @@ try:
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
+        Operation,
         Part,
         Retrieval,
         ThinkingConfig,
@@ -244,7 +245,7 @@ class Gemini(Model):
             )
 
         if self.file_search_store_names:
-            log_info("File Search enabled.")
+            log_debug("Gemini File Search enabled.")
             file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
             if self.file_search_metadata_filter:
                 file_search_config["metadata_filter"] = self.file_search_metadata_filter
@@ -1241,7 +1242,7 @@ class Gemini(Model):
             log_error(f"Error deleting File Search store {name}: {e}")
             raise
 
-    def wait_for_operation(self, operation: Any, poll_interval: int = 5, max_wait: int = 600) -> Any:
+    def wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
         """
         Wait for a long-running operation to complete.
 
@@ -1268,7 +1269,7 @@ class Gemini(Model):
         log_info("Operation completed successfully")
         return operation
 
-    async def async_wait_for_operation(self, operation: Any, poll_interval: int = 5, max_wait: int = 600) -> Any:
+    async def async_wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
         """
         Async version of wait_for_operation.
 
