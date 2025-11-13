@@ -1,26 +1,3 @@
-"""Example: Team with External Execution Tools + AGUI (Issue #5401 Investigation)
-
-This cookbook demonstrates using a Team with external_execution tools via AGUI interface.
-It investigates Issue #5401: Event state machine errors when Teams emit events.
-
-KEY CONCEPTS:
-- Team with multiple specialized agents
-- Mix of backend and external_execution tools
-- AGUI protocol with Team coordination
-- Event ordering and state machine compliance
-
-ISSUE #5401:
-"Cannot send TEXT_MESSAGE_START after TOOL_CALL_START: Send TOOL_CALL_END first"
-
-This happens when Team agents execute in parallel and events get interleaved improperly.
-
-TESTING:
-1. Run this script: python cookbook/agent_os/interfaces/agui/team_external_tools.py
-2. Connect dojo frontend
-3. Ask: "Generate a weather chart for Mumbai this week"
-4. Watch for event ordering issues in logs
-"""
-
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional

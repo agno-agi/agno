@@ -7705,7 +7705,6 @@ class Agent:
                 log_warning(f"Failed to convert BaseModel to message: {e}")
 
         # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
-        # Issue #5368 FIX: Add knowledge references to user messages when add_knowledge_to_context=True
         if (
             isinstance(input, list)
             and len(input) > 0
@@ -7713,21 +7712,6 @@ class Agent:
         ):
             for _m in input:
                 if isinstance(_m, Message):
-                    # Issue #5368: Add knowledge to user messages if configured
-                    if _m.role == self.user_message_role and self.add_knowledge_to_context and references is not None:
-                        if references.references and len(references.references) > 0:
-                            # Enhance user message with knowledge references
-                            enhanced_content = _m.content or ""
-                            enhanced_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-                            enhanced_content += "<references>\n"
-                            enhanced_content += self._convert_documents_to_string(references.references) + "\n"
-                            enhanced_content += "</references>"
-                            _m = Message(
-                                role=_m.role,
-                                content=enhanced_content,
-                                tool_call_id=_m.tool_call_id,
-                                tool_calls=_m.tool_calls,
-                            )
                     run_messages.messages.append(_m)
                     if run_messages.extra_messages is None:
                         run_messages.extra_messages = []
@@ -7735,20 +7719,6 @@ class Agent:
                 elif isinstance(_m, dict):
                     try:
                         msg = Message.model_validate(_m)
-                        # Issue #5368: Add knowledge to user messages if configured
-                        if msg.role == self.user_message_role and self.add_knowledge_to_context and references is not None:
-                            if references.references and len(references.references) > 0:
-                                enhanced_content = msg.content or ""
-                                enhanced_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-                                enhanced_content += "<references>\n"
-                                enhanced_content += self._convert_documents_to_string(references.references) + "\n"
-                                enhanced_content += "</references>"
-                                msg = Message(
-                                    role=msg.role,
-                                    content=enhanced_content,
-                                    tool_call_id=msg.tool_call_id,
-                                    tool_calls=msg.tool_calls,
-                                )
                         run_messages.messages.append(msg)
                         if run_messages.extra_messages is None:
                             run_messages.extra_messages = []
@@ -7946,7 +7916,6 @@ class Agent:
                 log_warning(f"Failed to convert BaseModel to message: {e}")
 
         # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
-        # Issue #5368 FIX: Add knowledge references to user messages when add_knowledge_to_context=True
         if (
             isinstance(input, list)
             and len(input) > 0
@@ -7954,21 +7923,6 @@ class Agent:
         ):
             for _m in input:
                 if isinstance(_m, Message):
-                    # Issue #5368: Add knowledge to user messages if configured
-                    if _m.role == self.user_message_role and self.add_knowledge_to_context and references is not None:
-                        if references.references and len(references.references) > 0:
-                            # Enhance user message with knowledge references
-                            enhanced_content = _m.content or ""
-                            enhanced_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-                            enhanced_content += "<references>\n"
-                            enhanced_content += self._convert_documents_to_string(references.references) + "\n"
-                            enhanced_content += "</references>"
-                            _m = Message(
-                                role=_m.role,
-                                content=enhanced_content,
-                                tool_call_id=_m.tool_call_id,
-                                tool_calls=_m.tool_calls,
-                            )
                     run_messages.messages.append(_m)
                     if run_messages.extra_messages is None:
                         run_messages.extra_messages = []
@@ -7976,20 +7930,6 @@ class Agent:
                 elif isinstance(_m, dict):
                     try:
                         msg = Message.model_validate(_m)
-                        # Issue #5368: Add knowledge to user messages if configured
-                        if msg.role == self.user_message_role and self.add_knowledge_to_context and references is not None:
-                            if references.references and len(references.references) > 0:
-                                enhanced_content = msg.content or ""
-                                enhanced_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-                                enhanced_content += "<references>\n"
-                                enhanced_content += self._convert_documents_to_string(references.references) + "\n"
-                                enhanced_content += "</references>"
-                                msg = Message(
-                                    role=msg.role,
-                                    content=enhanced_content,
-                                    tool_call_id=msg.tool_call_id,
-                                    tool_calls=msg.tool_calls,
-                                )
                         run_messages.messages.append(msg)
                         if run_messages.extra_messages is None:
                             run_messages.extra_messages = []
@@ -8001,14 +7941,6 @@ class Agent:
         if user_message is not None:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
-
-        # [ISSUE #5368] Log final messages for debugging AGUI vs Standard API differences
-        log_info(f"[ISSUE #5368] Final messages for LLM ({len(run_messages.messages)} total):")
-        for i, msg in enumerate(run_messages.messages):
-            content_preview = msg.content[:100] if msg.content else "no content"
-            log_info(f"  [{i+1}] role={msg.role}: {content_preview}...")
-            if msg.tool_calls:
-                log_info(f"      tool_calls={len(msg.tool_calls)}")
 
         return run_messages
 

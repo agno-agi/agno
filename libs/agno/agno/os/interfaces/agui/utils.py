@@ -127,20 +127,17 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
     3. User interrupts before external tool completes, leaving tool_calls without results
     """
     import logging
+    from agno.utils.log import log_debug, log_warning
 
-    logger = logging.getLogger(__name__)
-
-    logger.info("=" * 80)
-    logger.info(f"[AGUI] Converting {len(messages)} AGUI messages to Agno messages")
-    logger.info("=" * 80)
-
-    # FIRST PASS: Collect all tool_call_ids that have results (for filtering)
-    tool_call_ids_with_results: Set[str] = set()
-    for msg in messages:
+    # FIRST PASS: Build position map for tool results
+    # Maps tool_call_id → [indices where results appear]
+    # This enables position-aware filtering: only keep tool_calls whose results come AFTER
+    result_positions: Dict[str, List[int]] = {}
+    for idx, msg in enumerate(messages):
         if msg.role == "tool":
-            tool_call_ids_with_results.add(msg.tool_call_id)
-
-    logger.info(f"[AGUI] First pass: Found {len(tool_call_ids_with_results)} tool_call_ids with results")
+            if msg.tool_call_id not in result_positions:
+                result_positions[msg.tool_call_id] = []
+            result_positions[msg.tool_call_id].append(idx)
 
     # SECOND PASS: Convert messages, deduplicating and filtering
     result = []
@@ -149,23 +146,17 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
     filtered_tool_calls_count = 0
 
     for idx, msg in enumerate(messages):
-        logger.info(f"[AGUI] Message {idx + 1}/{len(messages)}: role={msg.role}, id={getattr(msg, 'id', 'N/A')}")
-
         if msg.role == "tool":
             tool_call_id = msg.tool_call_id
-            logger.info(
-                f"[AGUI]   Tool message: tool_call_id={tool_call_id}, content_length={len(msg.content) if msg.content else 0}"
-            )
 
             # Deduplicate tool results by tool_call_id (Issue #5116 - Part 1)
             # Keep only the first occurrence of each tool_call_id
             if tool_call_id in seen_tool_call_ids:
                 skipped_duplicate_results += 1
-                logger.warning(f"[AGUI]   ⚠️  SKIPPING DUPLICATE tool result: {tool_call_id}")
+                log_warning(f"Skipping duplicate AGUI tool result: {tool_call_id}")
                 continue  # Skip duplicate
 
             seen_tool_call_ids.add(tool_call_id)
-            logger.info(f"[AGUI]   ✓ Added tool result: {tool_call_id}")
             result.append(Message(role="tool", tool_call_id=tool_call_id, content=msg.content))
 
         elif msg.role == "assistant":
@@ -174,32 +165,29 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
 
             if msg.tool_calls:
                 original_count = len(msg.tool_calls)
-                # Filter out tool_calls that DON'T have results in this conversation
-                # This handles both: 1) already executed tools, 2) interrupted/incomplete tools
-                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
+                # POSITION-AWARE FILTERING: Only keep tool_calls whose first result appears AFTER this assistant
+                # This correctly handles: 1) already executed tools (result before), 2) incomplete tools (no result)
+                filtered_calls = []
+                for call in msg.tool_calls:
+                    if call.id in result_positions:
+                        first_result_idx = result_positions[call.id][0]
+                        if first_result_idx > idx:
+                            # Result comes AFTER this assistant → Keep it
+                            filtered_calls.append(call)
+                        else:
+                            # Result came BEFORE this assistant → Filter out (already executed)
+                            filtered_tool_calls_count += 1
+                    else:
+                        # No result at all → Filter out (race condition/incomplete)
+                        filtered_tool_calls_count += 1
 
                 if len(filtered_calls) < original_count:
-                    removed = original_count - len(filtered_calls)
-                    filtered_tool_calls_count += removed
-                    removed_ids = [call.id for call in msg.tool_calls if call.id not in tool_call_ids_with_results]
-                    logger.warning(f"[AGUI]   ⚠️  Filtered {removed} tool_calls without results: {removed_ids}")
+                    log_warning(f"Filtered {original_count - len(filtered_calls)} tool_calls from assistant (already executed or incomplete)")
 
                 if filtered_calls:
                     tool_calls = [call.model_dump() for call in filtered_calls]
-                    logger.info(
-                        f"[AGUI]   Assistant with {len(filtered_calls)} tool calls (filtered from {original_count}):"
-                    )
-                    for tc in filtered_calls:
-                        logger.info(f"[AGUI]     - {tc.id}: {tc.function.name}")
-                else:
-                    logger.info(
-                        f"[AGUI]   Assistant message (all {original_count} tool_calls filtered out - no results)"
-                    )
-            else:
-                logger.info(f"[AGUI]   Assistant message (no tool calls)")
 
             # Always add assistant message to preserve conversation structure
-            # Even if all tool_calls were filtered, keep the message for context
             result.append(
                 Message(
                     role="assistant",
@@ -207,31 +195,19 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
                     tool_calls=tool_calls,
                 )
             )
-            if tool_calls or msg.content:
-                logger.info(f"[AGUI]   ✓ Added assistant message")
-            else:
-                logger.info(f"[AGUI]   ✓ Added empty assistant (all tool_calls filtered, preserving structure)")
 
         elif msg.role == "user":
-            logger.info(f"[AGUI]   User message: {msg.content[:50]}...")
             result.append(Message(role="user", content=msg.content))
         elif msg.role == "system":
             # Skip system messages from client - agent builds its own from configuration
-            # Including expected_output, additional_context, role, description, etc.
-            logger.info(f"[AGUI]   Skipping system message (agent builds its own from config)")
+            log_debug("Skipping system message from client (agent builds its own from config)")
+            continue
         else:
-            logger.warning(f"[AGUI]   ⚠️  Unknown role: {msg.role}")
+            log_warning(f"Unknown AGUI message role: {msg.role}")
 
-    logger.info("=" * 80)
-    logger.info(f"[AGUI] Conversion complete:")
-    logger.info(f"[AGUI]   Input:  {len(messages)} messages")
-    logger.info(f"[AGUI]   Output: {len(result)} messages")
-    logger.info(f"[AGUI]   Skipped duplicate tool results: {skipped_duplicate_results}")
-    logger.info(f"[AGUI]   Filtered tool_calls from assistants: {filtered_tool_calls_count}")
-    logger.info(f"[AGUI]   Unique tool_call_ids with results: {len(tool_call_ids_with_results)}")
-    if tool_call_ids_with_results:
-        logger.info(f"[AGUI]   Tool call IDs with results: {list(tool_call_ids_with_results)}")
-    logger.info("=" * 80)
+    # Log summary for debugging
+    if skipped_duplicate_results > 0 or filtered_tool_calls_count > 0:
+        log_debug(f"AGUI message conversion: {len(messages)}→{len(result)} messages, {skipped_duplicate_results} duplicate results skipped, {filtered_tool_calls_count} tool_calls filtered")
 
     return result
 
@@ -331,12 +307,6 @@ def _create_events_from_chunk(
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
 
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.info(f"[AGUI EVENT] tool_call_started: {tool_call.tool_name} (id={tool_call.tool_call_id})")
-            logger.info(f"[AGUI EVENT]   message_started={message_started}, message_id={message_id}")
-
             # End current text message and handle for tool calls
             current_message_id = message_id
             if message_started:
@@ -347,7 +317,6 @@ def _create_events_from_chunk(
                 # Set this message as the parent for any upcoming tool calls
                 # This ensures multiple sequential tool calls all use the same parent
                 event_buffer.set_pending_tool_calls_parent_id(current_message_id)
-                logger.info(f"[AGUI EVENT]   Set pending_parent={current_message_id}")
 
                 # Reset message started state and generate new message_id for future messages
                 message_started = False
@@ -355,15 +324,12 @@ def _create_events_from_chunk(
 
             # Get the parent message ID - this will use pending parent if set, ensuring multiple tool calls in sequence have the same parent
             parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
-            logger.info(f"[AGUI EVENT]   Retrieved parent_message_id={parent_message_id}")
 
             if not parent_message_id:
-                # Issue #5116: Tool calls without a parent message create separate assistants in frontend
-                # Fix: Create a parent message for orphaned tool calls
+                # Issue #5116 Fix: Tool calls without a parent message create separate assistants in frontend
+                # Create a parent message for orphaned tool calls
                 parent_message_id = str(uuid.uuid4())
-                logger.warning(
-                    f"[AGUI EVENT]   ⚠️ Creating new parent message for orphaned tool call: {parent_message_id}"
-                )
+                log_warning(f"Creating parent message for orphaned tool call: {tool_call.tool_name}")
 
                 # Emit a text message to serve as the parent
                 text_start = TextMessageStartEvent(
@@ -381,8 +347,6 @@ def _create_events_from_chunk(
 
                 # Set this as the pending parent for subsequent tool calls in this batch
                 event_buffer.set_pending_tool_calls_parent_id(parent_message_id)
-
-            logger.info(f"[AGUI EVENT]   Final parent_message_id={parent_message_id}")
 
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,

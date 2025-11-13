@@ -31,21 +31,8 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # Log incoming request
-        logger.info("=" * 80)
-        logger.info(f"[AGUI ROUTER] Incoming request: thread_id={run_input.thread_id}, run_id={run_id}")
-        logger.info(f"[AGUI ROUTER] Input messages count: {len(run_input.messages or [])}")
-        logger.info("=" * 80)
-
         # Preparing the input for the Agent and emitting the run started event
         messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
-
-        logger.info(f"[AGUI ROUTER] After conversion: {len(messages)} Agno messages")
-        for idx, msg in enumerate(messages):
-            if msg.role == "assistant" and msg.tool_calls:
-                logger.info(f"[AGUI ROUTER]   {idx + 1}. {msg.role} with {len(msg.tool_calls)} tool calls")
-            else:
-                logger.info(f"[AGUI ROUTER]   {idx + 1}. {msg.role}")
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
