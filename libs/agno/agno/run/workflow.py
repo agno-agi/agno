@@ -492,7 +492,7 @@ class WorkflowRunOutput:
 
     input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
-    content_type: str = "str"
+    content_type: Optional[Any] = None
 
     # Workflow-specific fields
     workflow_id: Optional[str] = None

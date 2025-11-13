@@ -480,7 +480,7 @@ class TeamRunOutput:
     input: Optional[TeamRunInput] = None
 
     content: Optional[Any] = None
-    content_type: str = "str"
+    content_type: Optional[Any] = None
 
     messages: Optional[List[Message]] = None
     metrics: Optional[Metrics] = None

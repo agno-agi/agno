@@ -505,7 +505,7 @@ class RunOutput:
     input: Optional[RunInput] = None
 
     content: Optional[Any] = None
-    content_type: str = "str"
+    content_type: Optional[Any] = None
 
     reasoning_content: Optional[str] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
