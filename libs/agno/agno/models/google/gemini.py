@@ -1269,7 +1269,7 @@ class Gemini(Model):
         log_info("Operation completed successfully")
         return operation
 
-    async def async_wait_for_operation(self, operation: Any, poll_interval: int = 5, max_wait: int = 600) -> Any:
+    async def async_wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
         """
         Async version of wait_for_operation.
 
