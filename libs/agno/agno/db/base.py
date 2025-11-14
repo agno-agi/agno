@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -24,6 +25,7 @@ class BaseDb(ABC):
         self,
         session_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -33,6 +35,7 @@ class BaseDb(ABC):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
         self.culture_table_name = culture_table or "agno_culture"
+        self.context_table_name = context_table or "agno_context"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -314,6 +317,30 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
+    @abstractmethod
+    def clear_context_items(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_context_item(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_context_item(self, id: str) -> Optional["ContextItem"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> Optional[List["ContextItem"]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_context_item(self, context_item: "ContextItem") -> Optional["ContextItem"]:
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -327,6 +354,7 @@ class AsyncBaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        context_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -335,6 +363,7 @@ class AsyncBaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.culture_table_name = culture_table or "agno_culture"
+        self.context_table_name = context_table or "agno_context"
 
     @abstractmethod
     async def table_exists(self, table_name: str) -> bool:
@@ -595,4 +624,29 @@ class AsyncBaseDb(ABC):
 
     @abstractmethod
     async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+        raise NotImplementedError
+
+
+    @abstractmethod
+    async def clear_context_items(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_context_item(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_context_item(self, id: str) -> Optional["ContextItem"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> Optional[List["ContextItem"]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_context_item(self, context_item: "ContextItem") -> Optional["ContextItem"]:
         raise NotImplementedError
