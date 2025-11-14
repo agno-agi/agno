@@ -270,13 +270,13 @@ class Step:
                                         # Its the BaseModel object, set it as the content. Replace any previous content.
                                         # There should be no previous str content at this point
                                         elif isinstance(chunk.content, BaseModel):
-                                            content = chunk.content
+                                            content = chunk.content  # type: ignore[assignment]
                                         else:
                                             # Safeguard but should never happen
                                             content += str(chunk.content)
                                 elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                     # This is the final response from the agent/team
-                                    content = chunk.content
+                                    content = chunk.content  # type: ignore[assignment]
                                 else:
                                     # Non Agent/Team data structure that was yielded
                                     content += str(chunk)
@@ -526,7 +526,7 @@ class Step:
                                         if isinstance(event.content, str):
                                             content += event.content
                                         elif isinstance(event.content, BaseModel):
-                                            content = event.content
+                                            content = event.content  # type: ignore[assignment]
                                         else:
                                             content = str(event.content)
                                     # Only yield executor events if stream_executor_events is True
@@ -536,7 +536,7 @@ class Step:
                                         )
                                         yield enriched_event  # type: ignore[misc]
                                 elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                    content = event.content
+                                    content = event.content  # type: ignore[assignment]
                                 else:
                                     content += str(event)
                                 if isinstance(event, StepOutput):
@@ -753,11 +753,11 @@ class Step:
                                             if isinstance(chunk.content, str):
                                                 content += chunk.content
                                             elif isinstance(chunk.content, BaseModel):
-                                                content = chunk.content
+                                                content = chunk.content  # type: ignore[assignment]
                                             else:
                                                 content = str(chunk.content)
                                     elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                        content = chunk.content
+                                        content = chunk.content  # type: ignore[assignment]
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
@@ -779,11 +779,11 @@ class Step:
                                                 if isinstance(chunk.content, str):
                                                     content += chunk.content
                                                 elif isinstance(chunk.content, BaseModel):
-                                                    content = chunk.content
+                                                    content = chunk.content  # type: ignore[assignment]
                                                 else:
                                                     content = str(chunk.content)
                                         elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                            content = chunk.content
+                                            content = chunk.content  # type: ignore[assignment]
                                         else:
                                             content += str(chunk)
                                         if isinstance(chunk, StepOutput):
@@ -991,7 +991,7 @@ class Step:
                                     if isinstance(event.content, str):
                                         content += event.content
                                     elif isinstance(event.content, BaseModel):
-                                        content = event.content
+                                        content = event.content  # type: ignore[assignment]
                                     else:
                                         content = str(event.content)
 
@@ -1002,7 +1002,7 @@ class Step:
                                     )
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                content = event.content
+                                content = event.content  # type: ignore[assignment]
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
@@ -1042,7 +1042,7 @@ class Step:
                                     if isinstance(event.content, str):
                                         content += event.content
                                     elif isinstance(event.content, BaseModel):
-                                        content = event.content
+                                        content = event.content  # type: ignore[assignment]
                                     else:
                                         content = str(event.content)
 
@@ -1053,7 +1053,7 @@ class Step:
                                     )
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                content = event.content
+                                content = event.content  # type: ignore[assignment]
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
