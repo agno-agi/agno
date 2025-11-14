@@ -80,6 +80,8 @@ Check out these example agents and teams:
 
 - **[Basic Chat Agent](./basic.py)** - Simple conversational agent
 - **[Agent with Tools](./agent_with_tools.py)** - Agent with both agent and frontend tools
+- **[External Execution Tools](./external_execution_tools.py)** - Chart generation with frontend rendering (Issue #5116 reproduction)
+- **[Team with External Tools](./team_external_tools.py)** - Team with external execution tools (Issue #5401 investigation)
 - **[Research Team](./research_team.py)** - Team of agents working together
 - **[Reasoning Agent](./reasoning_agent.py)** - Agent with reasoning capabilities
 - **[Structured Output](./structured_output.py)** - Agent with structured response formats
