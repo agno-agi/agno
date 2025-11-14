@@ -18,12 +18,12 @@ try:
 except ImportError as exc:
     missing = []
     try:
-        import google.genai  # type: ignore
+        from google.genai import types
     except ImportError:
         missing.append("google-genai")
 
     try:
-        import PIL  # type: ignore
+        from PIL import Image as PILImage
     except ImportError:
         missing.append("Pillow")
 
