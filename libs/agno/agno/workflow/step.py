@@ -312,6 +312,8 @@ class Step:
                         # If function returns StepOutput, use it directly
                         if isinstance(result, StepOutput):
                             response = result
+                        elif isinstance(result, (RunOutput, TeamRunOutput)):
+                            response = StepOutput(content=result.content)
                         else:
                             response = StepOutput(content=str(result))
                 else:
@@ -507,7 +509,7 @@ class Step:
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
-                        content = ""
+                        content: Union[str, BaseModel] = ""
                         try:
                             iterator = self._call_custom_function(
                                 self.active_executor,
@@ -565,6 +567,8 @@ class Step:
 
                         if isinstance(result, StepOutput):
                             final_response = result
+                        elif isinstance(result, (RunOutput, TeamRunOutput)):
+                            final_response = StepOutput(content=result.content)
                         else:
                             final_response = StepOutput(content=str(result))
                         log_debug("Function returned non-iterable, created StepOutput")
@@ -730,7 +734,7 @@ class Step:
                     if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
                     ):
-                        content = ""
+                        content: Union[str, BaseModel] = ""
                         final_response = None
                         try:
                             if _is_generator_function(self.active_executor):
@@ -778,6 +782,8 @@ class Step:
                                                     content = chunk.content
                                                 else:
                                                     content = str(chunk.content)
+                                        elif isinstance(chunk, (RunOutput, TeamRunOutput)):
+                                            content = chunk.content
                                         else:
                                             content += str(chunk)
                                         if isinstance(chunk, StepOutput):
@@ -793,6 +799,8 @@ class Step:
 
                         if final_response is not None:
                             response = final_response
+                        elif isinstance(result, (RunOutput, TeamRunOutput)):
+                            response = StepOutput(content=result.content)
                         else:
                             response = StepOutput(content=content)
                     else:
@@ -966,7 +974,7 @@ class Step:
 
                     # Check if the function is an async generator
                     if _is_async_generator_function(self.active_executor):
-                        content = ""
+                        content: Union[str, BaseModel] = ""
                         # It's an async generator - iterate over it
                         iterator = await self._acall_custom_function(
                             self.active_executor,
@@ -1012,10 +1020,12 @@ class Step:
                         )
                         if isinstance(result, StepOutput):
                             final_response = result
+                        elif isinstance(result, (RunOutput, TeamRunOutput)):
+                            final_response = StepOutput(content=result.content)
                         else:
                             final_response = StepOutput(content=str(result))
                     elif _is_generator_function(self.active_executor):
-                        content = ""
+                        content: Union[str, BaseModel] = ""
                         # It's a regular generator function - iterate over it
                         iterator = self._call_custom_function(
                             self.active_executor,
@@ -1061,6 +1071,8 @@ class Step:
                         )
                         if isinstance(result, StepOutput):
                             final_response = result
+                        elif isinstance(result, (RunOutput, TeamRunOutput)):
+                            final_response = StepOutput(content=result.content)
                         else:
                             final_response = StepOutput(content=str(result))
 
