@@ -3,7 +3,7 @@
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -34,6 +34,8 @@ USER_MEMORY_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
+    "feedback": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
@@ -106,6 +108,11 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
 }
 
+VERSIONS_TABLE_SCHEMA = {
+    "version": {"type": String, "nullable": False, "primary_key": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -124,6 +131,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
+        "versions": VERSIONS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

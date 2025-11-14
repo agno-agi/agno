@@ -252,6 +252,14 @@ class RedisDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {e}")
             return []
 
+    def get_latest_schema_version(self) -> str:
+        """Get the latest version of the database schema."""
+        pass
+    
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:
@@ -903,6 +911,9 @@ class RedisDb(BaseDb):
                 "memory_id": memory.memory_id,
                 "memory": memory.memory,
                 "topics": memory.topics,
+                "input": memory.input,
+                "feedback": memory.feedback,
+                "created_at": memory.created_at,
                 "updated_at": int(time.time()),
             }
 
