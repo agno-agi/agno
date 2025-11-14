@@ -197,7 +197,7 @@ class SingleStoreDb(BaseDb):
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            log_debug(f"Creating table {table_ref} with schema: {table_schema}")
+            log_debug(f"Creating table {table_ref}")
 
             columns: List[Column] = []
             indexes: List[str] = []

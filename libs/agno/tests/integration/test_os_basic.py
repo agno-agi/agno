@@ -1,11 +1,12 @@
-
 import pytest
+from fastapi.testclient import TestClient
+
 from agno.agent.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.vectordb.chroma import ChromaDb
 from agno.os import AgentOS
-from fastapi.testclient import TestClient
+from agno.vectordb.chroma import ChromaDb
+
 
 @pytest.fixture
 def vector_db():
@@ -15,6 +16,7 @@ def vector_db():
     # Clean up after test
     vector_db.drop()
 
+
 @pytest.fixture
 def agent(shared_db, vector_db):
     """Create a test agent with SQLite database."""
@@ -22,14 +24,9 @@ def agent(shared_db, vector_db):
         vector_db=vector_db,
         contents_db=shared_db,
     )
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"), 
-        knowledge=knowledge,
-        db=shared_db,
-        markdown=True, 
-        telemetry=False
-    )
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), knowledge=knowledge, db=shared_db, markdown=True, telemetry=False)
     return agent
+
 
 @pytest.fixture
 def test_os_client(agent: Agent):
@@ -39,14 +36,10 @@ def test_os_client(agent: Agent):
     return TestClient(app)
 
 
-
 def test_basic_with_no_import_errors(test_os_client, agent):
-    
     response = test_os_client.post(
         f"/agents/{agent.id}/runs",
         data={"message": "Hello, world!"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert response.status_code == 200
-
-
