@@ -7666,22 +7666,14 @@ class Agent:
             )
 
             if len(history) > 0:
-                # compress tool calls from history if needed
-                if (
-                    self.compress_tool_calls
-                    and self.context_manager is not None
-                    and self.context_manager.should_compress(history)
-                ):
-                    # Compress the history messages
-                    self.context_manager.compress_messages_and_results(history, [])
-                # Create a deep copy of the history messages
+                # Create a deep copy of the history messages to avoid modifying the original messages
                 history_copy = [deepcopy(msg) for msg in history]
 
                 # Tag each message as coming from history
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set (before adding to run_messages)
+                # Filter tool calls from history if limit is set
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 

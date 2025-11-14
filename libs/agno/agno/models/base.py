@@ -464,7 +464,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if context_manager and context_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_messages_and_results(messages, function_call_results)
+                    context_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug(f"🔍 Post-compression state:")
@@ -666,7 +666,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if context_manager and context_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_messages_and_results(messages, function_call_results)
+                    context_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug(f"🔍 Post-compression state:")
@@ -1063,7 +1063,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if context_manager and context_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_messages_and_results(messages, function_call_results)
+                    context_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug(f"🔍 Post-compression state:")
@@ -1290,7 +1290,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if context_manager and context_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_messages_and_results(messages, function_call_results)
+                    context_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug(f"🔍 Post-compression state:")

@@ -50,16 +50,10 @@ class ContextManager:
     tool_compression_instructions: Optional[str] = None
 
     def _is_tool_result_message(self, msg: Message) -> bool:
-        """
-        Check if message contains tool results (any provider format).
-
-        Standard providers (OpenAI, Gemini): role="tool"
-        Bedrock: role="user" with content=[{"toolResult": {...}}]
-        """
         if msg.role == "tool":
             return True
 
-        # Bedrock format: role="user" with list containing toolResult dicts
+        # Bedrock format: role="user"
         if msg.role == "user" and isinstance(msg.content, list):
             for item in msg.content:
                 if isinstance(item, dict) and "toolResult" in item:
@@ -68,20 +62,16 @@ class ContextManager:
         return False
 
     def should_compress(self, messages: List[Message]) -> bool:
-        """
-        Count uncompressed tool results, including Bedrock-style user messages.
-        """
         uncompressed_tools_count = len(
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )
-        result = uncompressed_tools_count > self.compress_tool_calls_limit
+        should_compress = uncompressed_tools_count > self.compress_tool_calls_limit
 
         log_debug(
-            f"Compression check: {uncompressed_tools_count} uncompressed tools "
-            f"(including Bedrock format), threshold: {self.compress_tool_calls_limit}, compress: {result}"
+            f"Compression check: {uncompressed_tools_count} uncompressed tools, threshold: {self.compress_tool_calls_limit}, compress: {should_compress}"
         )
 
-        return result
+        return should_compress
 
     def _compress_tool_result(self, tool_results: List[Message]) -> Optional[str]:
         if not tool_results:
@@ -114,18 +104,8 @@ class ContextManager:
             log_warning(f"Compression failed: {e}")
             return None
 
-    def compress_messages_and_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
-        """
-        Compress tool results before formatting.
-
-        Two-phase compression:
-        1. Compress NEW function_call_results (sets compressed_content)
-        2. Compress OLD tool messages in messages array (sets compressed_content + modifies content)
-
-        Args:
-            messages: Existing messages array (may contain old tool results)
-            function_call_results: New tool results from current execution
-        """
+    def compress_tool_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
+        # Phase 1: Compress NEW results
         existing_tool_count = len([m for m in messages if m.role == "tool"])
         log_debug(f"🗜️  Compression starting:")
         log_debug(f"   Existing tools in messages: {existing_tool_count}")
@@ -146,7 +126,7 @@ class ContextManager:
         phase1_compressed = sum(1 for r in function_call_results if r.compressed_content is not None)
         log_debug(f"  ✅ Phase 1 complete: {phase1_compressed}/{len(function_call_results)} new results compressed")
 
-        # Phase 2: Retroactively compress OLD standard tool messages
+        # Phase 2: Compress old tool messages
         log_debug(f"  📝 Phase 2: Compressing old tool messages...")
         old_count = 0
         for msg in messages:
@@ -156,9 +136,8 @@ class ContextManager:
                     original_len = len(str(msg.content)) if msg.content else 0
                     compressed_len = len(compressed)
                     msg.compressed_content = compressed
-                    # Don't mutate msg.content - keep original for storage
                     old_count += 1
                     log_debug(f"  OLD message {msg.tool_name}: {original_len}→{compressed_len}B (retroactive)")
 
         if old_count > 0:
-            log_debug(f"  ✅ Phase 2 complete: {old_count} old standard messages compressed")
+            log_debug(f"  ✅ Phase 2 complete: {old_count} old tool messages compressed")

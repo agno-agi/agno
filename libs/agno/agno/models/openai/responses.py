@@ -448,7 +448,7 @@ class OpenAIResponses(Model):
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.get_api_content(),
+                    "content": message.get_tool_result(),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -472,17 +472,17 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                api_content = message.get_api_content()
+                tool_result = message.get_tool_result()
 
                 # Log if compression is being used
                 if message.compressed_content:
                     orig_len = len(str(message.content)) if message.content else 0
-                    comp_len = len(str(api_content)) if api_content else 0
+                    comp_len = len(str(tool_result)) if tool_result else 0
                     log_debug(
                         f"[OpenAI Responses API] Sending compressed tool result: {comp_len}B (original: {orig_len}B)"
                     )
 
-                if message.tool_call_id and api_content is not None:
+                if message.tool_call_id and tool_result is not None:
                     function_call_id = message.tool_call_id
                     # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
                     if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
@@ -490,7 +490,7 @@ class OpenAIResponses(Model):
                     else:
                         call_id_value = function_call_id
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": call_id_value, "output": api_content}
+                        {"type": "function_call_output", "call_id": call_id_value, "output": tool_result}
                     )
             # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:

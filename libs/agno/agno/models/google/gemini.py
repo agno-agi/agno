@@ -472,7 +472,7 @@ class Gemini(Model):
             role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
-            content = message.get_api_content()
+            content = message.get_tool_result()
 
             # Log if compression is being used for tool messages
             if message.role == "function" and message.compressed_content:
