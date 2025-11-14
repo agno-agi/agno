@@ -101,8 +101,8 @@ class ContextManager:
                 log_debug(f"  Compressed: {original_size}→{compressed_size}B ({reduction}% reduction)")
             return response.content
         except Exception as e:
-            log_warning(f"Compression failed: {e}")
-            return None
+            log_debug(f"Compression failed: {e}. Using original content as fallback.")
+            return tool_content
 
     def compress_tool_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
         # Phase 1: Compress NEW results
