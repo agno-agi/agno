@@ -37,7 +37,7 @@ class ToolExecution:
 
     created_at: int = int(time())
 
-    # User control flow requirements
+    # User control flow (HITL) fields
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
     confirmation_note: Optional[str] = None
@@ -82,6 +82,54 @@ class ToolExecution:
             external_execution_required=data.get("external_execution_required"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
         )
+
+
+@dataclass
+class ToolRequirement:
+    """Requirement to complete a paused tool execution (used in HITL flows)"""
+
+    tool: ToolExecution
+
+    # User confirmation
+    needs_confirmation: bool = False
+    confirmation_note: Optional[str] = None
+    confirmation: Optional[bool] = None
+
+    # User input
+    needs_user_input: bool = False
+    user_input_schema: Optional[List[UserInputField]] = None
+    user_input: Optional[str] = None
+
+    # External execution
+    needs_external_execution: bool = False
+
+    def __init__(self, tool: ToolExecution):
+        self.tool = tool
+        self.needs_confirmation = tool.requires_confirmation or False
+        self.needs_user_input = tool.requires_user_input or False
+        self.user_input_schema = tool.user_input_schema
+        self.needs_external_execution = tool.external_execution_required or False
+
+    def answer(self, user_response: str):
+        self.is_valid_user_response(user_response)
+        self.user_input = user_response
+
+    def confirm(self):
+        self.confirmation = True
+
+    def reject(self):
+        self.confirmation = False
+
+    def is_valid_user_response(self, user_response: str):
+        """Return True if the given user response fits the current user input schema"""
+        if not self.user_input_schema:
+            return False
+        ...
+        return True
+
+    def is_resolved(self) -> bool:
+        """Return True if the requirement has been resolved"""
+        return bool(self.confirmation or self.user_input)
 
 
 @dataclass

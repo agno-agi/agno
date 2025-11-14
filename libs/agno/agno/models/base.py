@@ -1568,7 +1568,7 @@ class Model(ABC):
 
             paused_tool_executions = []
 
-            # The function cannot be executed without user confirmation
+            # The function requires user confirmation (HITL)
             if fc.function.requires_confirmation:
                 paused_tool_executions.append(
                     ToolExecution(
@@ -1578,7 +1578,8 @@ class Model(ABC):
                         requires_confirmation=True,
                     )
                 )
-            # If the function requires user input, we yield a message to the user
+
+            # The function requires user input (HITL)
             if fc.function.requires_user_input:
                 user_input_schema = fc.function.user_input_schema
                 if fc.arguments and user_input_schema:
@@ -1596,7 +1597,8 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
-            # If the function is from the user control flow tools, we handle it here
+
+            # If the function is from the user control flow (HITL) tools, we handle it here
             if fc.function.name == "get_user_input" and fc.arguments and fc.arguments.get("user_input_fields"):
                 user_input_schema = []
                 for input_field in fc.arguments.get("user_input_fields", []):
@@ -1622,7 +1624,8 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
-            # If the function requires external execution, we yield a message to the user
+
+            # The function requires external execution (HITL)
             if fc.function.external_execution:
                 paused_tool_executions.append(
                     ToolExecution(

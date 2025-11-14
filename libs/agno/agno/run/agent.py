@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
-from agno.models.response import ToolExecution
+from agno.models.response import ToolExecution, ToolRequirement
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import logger
@@ -543,6 +543,13 @@ class RunOutput:
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    def get_tool_requirements(self) -> List[ToolRequirement]:
+        """Return a list of ToolRequirement objects for the paused tools"""
+        if not self.tools:
+            return []
+
+        return [ToolRequirement(tool=tool) for tool in self.tools if tool.is_paused]
 
     @property
     def is_paused(self):
