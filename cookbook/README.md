@@ -132,7 +132,7 @@ Models are the brain of Agno Agents. In this folder you will find specific examp
 - LiteLLM
 - Mistral
 - NVIDIA
-- Nebius AI Studio
+- Nebius Token Factory
 - Ollama
 - OpenAI
 - OpenAI Like
