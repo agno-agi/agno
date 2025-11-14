@@ -734,7 +734,7 @@ class Step:
                     if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
                     ):
-                        content
+                        content = ""
                         final_response = None
                         try:
                             if _is_generator_function(self.active_executor):
