@@ -302,6 +302,8 @@ class Agent:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+    # Provide the introduction as the first message from the Agent
+    introduction: Optional[str] = None
     # Set to False to skip context building
     build_context: bool = True
 
@@ -423,7 +425,6 @@ class Agent:
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
-        introduction: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -475,6 +476,7 @@ class Agent:
         send_media_to_model: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        introduction: Optional[str] = None,
         build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -5892,6 +5894,15 @@ class Agent:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                agent_session.upsert_run(
+                    RunOutput(
+                        content=self.introduction,
+                        messages=[
+                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                        ],
+                    )
+                )
 
         if self.cache_session:
             self._cached_session = agent_session
@@ -5935,6 +5946,15 @@ class Agent:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                agent_session.upsert_run(
+                    RunOutput(
+                        content=self.introduction,
+                        messages=[
+                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                        ],
+                    )
+                )
 
         if self.cache_session:
             self._cached_session = agent_session
