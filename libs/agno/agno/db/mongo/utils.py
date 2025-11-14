@@ -34,6 +34,23 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
         log_warning(f"Error creating indexes for {collection_type} collection: {e}")
 
 
+async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
+    """Create all required indexes for a collection (async version for Motor)"""
+    try:
+        indexes = get_collection_indexes(collection_type)
+        for index_spec in indexes:
+            key = index_spec["key"]
+            unique = index_spec.get("unique", False)
+
+            if isinstance(key, list):
+                await collection.create_index(key, unique=unique)
+            else:
+                await collection.create_index([(key, 1)], unique=unique)
+
+    except Exception as e:
+        log_warning(f"Error creating indexes for {collection_type} collection: {e}")
+
+
 def apply_sorting(
     query_args: Dict[str, Any], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[tuple]:
