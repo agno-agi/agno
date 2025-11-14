@@ -250,7 +250,7 @@ class Step:
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
-                        content: Union[str, BaseModel] = ""
+                        content = ""
                         final_response = None
                         try:
                             for chunk in self._call_custom_function(
@@ -509,7 +509,7 @@ class Step:
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
                         log_debug("Function returned iterable, streaming events")
-                        content: Union[str, BaseModel] = ""
+                        content = ""
                         try:
                             iterator = self._call_custom_function(
                                 self.active_executor,
@@ -734,7 +734,7 @@ class Step:
                     if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
                     ):
-                        content: Union[str, BaseModel] = ""
+                        content
                         final_response = None
                         try:
                             if _is_generator_function(self.active_executor):
@@ -974,7 +974,7 @@ class Step:
 
                     # Check if the function is an async generator
                     if _is_async_generator_function(self.active_executor):
-                        content: Union[str, BaseModel] = ""
+                        content = ""
                         # It's an async generator - iterate over it
                         iterator = await self._acall_custom_function(
                             self.active_executor,
@@ -1025,7 +1025,7 @@ class Step:
                         else:
                             final_response = StepOutput(content=str(result))
                     elif _is_generator_function(self.active_executor):
-                        content: Union[str, BaseModel] = ""
+                        content = ""
                         # It's a regular generator function - iterate over it
                         iterator = self._call_custom_function(
                             self.active_executor,
