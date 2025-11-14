@@ -549,30 +549,66 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
     ) -> None:
         """
-        Handle the results of function calls.
+        Handle the results of function calls for Bedrock.
+        Uses compressed_content if context_manager is active.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
+            context_manager: Optional context manager for compression.
             **kwargs: Additional arguments including tool_ids.
         """
         if function_call_results:
+            log_debug(f"[Bedrock] Formatting {len(function_call_results)} results")
             tool_ids = kwargs.get("tool_ids", [])
             tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 # Use tool_call_id from message if tool_ids list is insufficient
                 tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
+
+                # Use compressed content if available
+                if context_manager and _fc_message.compressed_content:
+                    content = _fc_message.compressed_content
+                    orig_len = len(str(_fc_message.content)) if _fc_message.content else 0
+                    comp_len = len(content)
+                    ratio = int((1 - comp_len / orig_len) * 100) if orig_len > 0 else 0
+                    preview = content[:100] + "..." if len(content) > 100 else content
+                    log_debug(
+                        f"  [{_fc_message_index}] {_fc_message.tool_name}: {orig_len}B→{comp_len}B ({ratio}% saved)"
+                    )
+                    log_debug(f"       Compressed preview: {preview}")
+                else:
+                    content = _fc_message.content
+                    if not _fc_message.compressed_content:
+                        log_debug(f"  [{_fc_message_index}] {_fc_message.tool_name}: No compression")
+
                 tool_result = {
                     "toolUseId": tool_id,
-                    "content": [{"json": {"result": _fc_message.content}}],
+                    "content": [{"json": {"result": content}}],
                 }
                 tool_result_content.append({"toolResult": tool_result})
 
             messages.append(Message(role="user", content=tool_result_content))
+
+            # Summary log
+            compressed_count = sum(1 for msg in function_call_results if msg.compressed_content)
+            if compressed_count > 0:
+                total_orig = sum(
+                    len(str(msg.content)) if msg.content else 0
+                    for msg in function_call_results
+                    if msg.compressed_content
+                )
+                total_comp = sum(len(msg.compressed_content) for msg in function_call_results if msg.compressed_content)
+                ratio = int((1 - total_comp / total_orig) * 100) if total_orig > 0 else 0
+                log_debug(
+                    f"✅ Sent {compressed_count}/{len(function_call_results)} compressed tools to API ({ratio}% space saved)"
+                )
+            else:
+                log_debug(f"[Bedrock] Created 1 user message with {len(tool_result_content)} toolResults")
 
     def _parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         """

@@ -59,6 +59,9 @@ class Message(BaseModel):
     role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
+    # Compressed content of the message
+    compressed_content: Optional[str] = None
+
     # An optional name for the participant.
     # Provides the model information to differentiate between participants of the same role.
     name: Optional[str] = None
@@ -122,6 +125,10 @@ class Message(BaseModel):
             else:
                 return json.dumps(self.content)
         return ""
+
+    def get_tool_result(self) -> Optional[Union[List[Any], str]]:
+        """Return tool result content to send to API"""
+        return self.compressed_content if self.compressed_content else self.content
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
@@ -266,6 +273,7 @@ class Message(BaseModel):
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
+            "compressed_content": self.compressed_content,
             "stop_after_tool_call": self.stop_after_tool_call,
             "role": self.role,
             "name": self.name,

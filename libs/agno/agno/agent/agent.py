@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.context.manager import ContextManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -407,6 +408,12 @@ class Agent:
     # If True, the agent adds cultural knowledge in the response
     add_culture_to_context: Optional[bool] = None
 
+    # --- Context Compression ---
+    # If True, compress tool call results to save context
+    compress_tool_calls: bool = False
+    # Context manager for compression
+    context_manager: Optional[ContextManager] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -443,6 +450,8 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        compress_tool_calls: bool = False,
+        context_manager: Optional[ContextManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -545,6 +554,10 @@ class Agent:
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_to_context = add_session_summary_to_context
+
+        # Context compression settings
+        self.compress_tool_calls = compress_tool_calls
+        self.context_manager = context_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -816,6 +829,16 @@ class Agent:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
+    def _set_context_manager(self) -> None:
+        if self.compress_tool_calls and self.context_manager is None:
+            self.context_manager = ContextManager(
+                model=self.model,
+            )
+
+        if self.context_manager is not None:
+            if self.context_manager.model is None:
+                self.context_manager.model = self.model
+
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -845,6 +868,8 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
+        if self.compress_tool_calls or self.context_manager is not None:
+            self._set_context_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -1034,6 +1059,7 @@ class Agent:
 
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
+
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1042,6 +1068,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
+                context_manager=self.context_manager if self.compress_tool_calls else None,
             )
 
             # Check for cancellation after model call
@@ -1890,6 +1917,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
+                context_manager=self.context_manager if self.compress_tool_calls else None,
             )
 
             # Check for cancellation after model call
@@ -4739,6 +4767,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            context_manager=self.context_manager if self.compress_tool_calls else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4819,6 +4848,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            context_manager=self.context_manager if self.compress_tool_calls else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -7643,7 +7673,7 @@ class Agent:
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set (before adding to run_messages)
+                # Filter tool calls from history if limit is set
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
@@ -7849,14 +7879,14 @@ class Agent:
             )
 
             if len(history) > 0:
-                # Create a deep copy of the history messages to avoid modifying the original messages
+                # Create a deep copy of the history messages
                 history_copy = [deepcopy(msg) for msg in history]
 
                 # Tag each message as coming from history
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set (before adding to run_messages)
+                # Filter tool calls from history if limit is set
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 

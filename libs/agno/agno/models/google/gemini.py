@@ -472,7 +472,14 @@ class Gemini(Model):
             role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
-            content = message.content
+            content = message.get_tool_result()
+
+            # Log if compression is being used for tool messages
+            if message.role == "function" and message.compressed_content:
+                orig_len = len(str(message.content)) if message.content else 0
+                comp_len = len(str(content)) if content else 0
+                log_debug(f"[Gemini API] Sending compressed tool result: {comp_len}B (original: {orig_len}B)")
+
             # Initialize message_parts to be used for Gemini
             message_parts: List[Any] = []
 
@@ -490,7 +497,17 @@ class Gemini(Model):
                     )
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
-                for tool_call in message.tool_calls:
+                for idx, tool_call in enumerate(message.tool_calls):
+                    # Log what content is being sent from tool_calls array
+                    tc_content = tool_call.get("content", "")
+                    tc_content_len = len(str(tc_content)) if tc_content else 0
+                    tool_name = tool_call.get("tool_name", "unknown")
+                    tool_call_id = tool_call.get("tool_call_id", "unknown")
+                    log_debug(
+                        f"[SEND_GEMINI] tool_calls[{idx}]: tool_call_id={tool_call_id}, "
+                        f"tool_name={tool_name}, content_len={tc_content_len}"
+                    )
+
                     message_parts.append(
                         Part.from_function_response(
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}
@@ -759,18 +776,28 @@ class Gemini(Model):
         return None
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
     ) -> None:
         """
-        Format function call results.
+        Format function call results for Gemini.
         """
+        log_debug(f"[Gemini] Formatting {len(function_call_results)} results")
         combined_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
         if len(function_call_results) > 0:
-            for result in function_call_results:
-                combined_content.append(result.content)
-                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+            for idx, result in enumerate(function_call_results):
+                # Only use compressed content if context_manager is active
+                using_compressed = context_manager is not None and result.compressed_content is not None
+                log_debug(f"  [{idx}] {result.tool_name}: using_compressed={using_compressed}")
+                if using_compressed:
+                    content = result.compressed_content
+                else:
+                    content = result.content
+                combined_content.append(content)
+                combined_function_result.append(
+                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": content}
+                )
                 message_metrics += result.metrics
 
         if combined_content:

@@ -3,15 +3,17 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
+
+workflow_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Define agents for the workflow
 researcher_agent = Agent(
     name="Research Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     role="Search the web and gather comprehensive research on the given topic",
     instructions=[
         "Search for the most recent and relevant information",
@@ -47,7 +49,7 @@ writing_step = Step(
 content_workflow = Workflow(
     name="Content Creation Workflow",
     description="Research and create content on any topic via Slack",
-    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+    db=workflow_db,
     steps=[research_step, writing_step],
     session_id="slack_workflow_session",
 )
@@ -61,4 +63,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="basic_workflow:app", port=8000, reload=True)
+    agent_os.serve(app="research_workflow:app", reload=True)
