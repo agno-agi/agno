@@ -10,6 +10,7 @@ from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
@@ -35,7 +36,7 @@ def print_response_stream(
     files: Optional[Sequence[File]] = None,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -227,7 +228,7 @@ async def aprint_response_stream(
     files: Optional[Sequence[File]] = None,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -505,7 +506,7 @@ def print_response(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -621,7 +622,7 @@ async def aprint_response(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,

@@ -974,8 +974,8 @@ class Workflow:
         websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
-        from agno.run.agent import RunOutput
         from agno.run.base import BaseRunOutputEvent
+        from agno.run.agent import RunOutput
         from agno.run.team import TeamRunOutput
 
         if isinstance(event, (RunOutput, TeamRunOutput)):
@@ -2550,10 +2550,13 @@ class Workflow:
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
-    async def aget_run(self, run_id: str) -> Optional[WorkflowRunOutput]:
+    async def aget_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
-        if self.db is not None and self.session_id is not None:
-            session = await self.db.aget_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+        # Use provided session_id or fall back to self.session_id
+        _session_id = session_id if session_id is not None else self.session_id
+
+        if self.db is not None and _session_id is not None:
+            session = await self.db.aget_session(session_id=_session_id, session_type=SessionType.WORKFLOW)  # type: ignore
             if session and isinstance(session, WorkflowSession) and session.runs:
                 # Find the run by ID
                 for run in session.runs:
@@ -2562,10 +2565,13 @@ class Workflow:
 
         return None
 
-    def get_run(self, run_id: str) -> Optional[WorkflowRunOutput]:
+    def get_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
-        if self.db is not None and self.session_id is not None:
-            session = self.db.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+        # Use provided session_id or fall back to self.session_id
+        _session_id = session_id if session_id is not None else self.session_id
+
+        if self.db is not None and _session_id is not None:
+            session = self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession) and session.runs:
                 # Find the run by ID
                 for run in session.runs:

@@ -3,10 +3,11 @@ import time
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Union
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -458,7 +459,12 @@ class CouchbaseSearch(VectorDb):
         if errors_occurred:
             logger.warning("Some errors occurred during the upsert operation. Please check logs for details.")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
+            filters = None
         """Search the Couchbase bucket for documents relevant to the query."""
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -1068,8 +1074,11 @@ class CouchbaseSearch(VectorDb):
         logger.info(f"[async] Total successfully upserted: {total_upserted_count}, Total failed: {total_failed_count}.")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"[async] Failed to generate embedding for query: {query}")
