@@ -65,7 +65,7 @@ research_team = Team(
     name="Research Team with Input Validation",
     model=OpenAIChat(id="o3-mini"),
     members=[hackernews_agent, web_researcher],
-    delegate_task_to_all_members=True,  # We want all members to get the task
+    delegate_to_all_members=True,  # We want all members to get the task
     input_schema=ResearchProject,
     instructions=[
         "Conduct thorough research based on the validated input",

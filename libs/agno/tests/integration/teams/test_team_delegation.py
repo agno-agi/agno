@@ -128,7 +128,7 @@ def test_delegate_to_all_members():
 
     team = Team(
         name="Collaborative Team",
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         model=OpenAIChat("gpt-4o"),
         members=[agent1, agent2],
         instructions=[
