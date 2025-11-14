@@ -799,8 +799,6 @@ class Step:
 
                         if final_response is not None:
                             response = final_response
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            response = StepOutput(content=result.content)
                         else:
                             response = StepOutput(content=content)
                     else:
@@ -826,6 +824,8 @@ class Step:
                         # If function returns StepOutput, use it directly
                         if isinstance(result, StepOutput):
                             response = result
+                        elif isinstance(result, (RunOutput, TeamRunOutput)):
+                            response = StepOutput(content=result.content)
                         else:
                             response = StepOutput(content=str(result))
 
