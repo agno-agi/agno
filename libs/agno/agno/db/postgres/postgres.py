@@ -26,12 +26,12 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Index, String, UniqueConstraint, func, update
+    from sqlalchemy import Index, String, UniqueConstraint, func, select, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -48,6 +48,7 @@ class PostgresDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -68,6 +69,7 @@ class PostgresDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -97,6 +99,7 @@ class PostgresDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            versions_table=versions_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -126,6 +129,7 @@ class PostgresDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -271,6 +275,15 @@ class PostgresDb(BaseDb):
             )
             return self.culture_table
 
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
@@ -312,6 +325,28 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
+        
+    def get_latest_schema_version(self) -> str:
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return None
+        with self.Session() as sess:
+            stmt = select(table).order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return None
+            version_dict = dict(result._mapping)
+            return version_dict.get("version")
+    
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        with self.Session() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(version=version, created_at=int(time.time()))
+            sess.execute(stmt)
 
     # -- Session methods --
 
@@ -1241,6 +1276,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = postgresql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1249,7 +1286,9 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=current_time,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1259,7 +1298,10 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
+                        feedback=memory.feedback,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
                     ),
                 ).returning(table)
 
@@ -1312,7 +1354,8 @@ class PostgresDb(BaseDb):
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set (even if None), otherwise use current time
-                updated_at = memory.updated_at if preserve_updated_at else current_time
+                updated_at = memory.updated_at if preserve_updated_at else current_time     
+                
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1322,6 +1365,8 @@ class PostgresDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1333,7 +1378,7 @@ class PostgresDb(BaseDb):
                 update_columns = {
                     col.name: insert_stmt.excluded[col.name]
                     for col in table.columns
-                    if col.name not in ["memory_id"]  # Don't update primary key
+                    if col.name not in ["memory_id", "created_at"]  # Don't update primary key or created_at
                 }
                 stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
                     table

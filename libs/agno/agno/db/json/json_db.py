@@ -123,6 +123,14 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error writing to the {file_path} JSON file: {e}")
             raise e
+        
+    def get_latest_schema_version(self) -> str:
+        """Get the latest version of the database schema."""
+        pass
+    
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
 
     # -- Session methods --
 

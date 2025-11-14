@@ -28,7 +28,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, and_, cast, func, update
+    from sqlalchemy import TEXT, and_, cast, func, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -50,6 +50,7 @@ class MySQLDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -70,6 +71,7 @@ class MySQLDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -90,6 +92,7 @@ class MySQLDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -218,6 +221,7 @@ class MySQLDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -278,6 +282,15 @@ class MySQLDb(BaseDb):
             )
             return self.culture_table
 
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
@@ -320,6 +333,23 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
+
+    def get_latest_schema_version(self) -> str:
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        with self.Session() as sess:
+            stmt = select(table).order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return None
+            return result[0]
+    
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            stmt = mysql.insert(table).values(version=version, created_at=int(time.time()))
+            sess.execute(stmt)
 
     # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
@@ -1287,6 +1317,8 @@ class MySQLDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = mysql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1295,7 +1327,9 @@ class MySQLDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=current_time,
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=memory.memory,
@@ -1303,7 +1337,10 @@ class MySQLDb(BaseDb):
                     input=memory.input,
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    updated_at=current_time,
+                    # Preserve created_at on update - don't overwrite existing value
+                    created_at=table.c.created_at,
                 )
                 sess.execute(stmt)
 
@@ -1358,12 +1395,14 @@ class MySQLDb(BaseDb):
             # Prepare bulk data
             bulk_data = []
             current_time = int(time.time())
+
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+                
                 bulk_data.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1373,6 +1412,8 @@ class MySQLDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1388,7 +1429,10 @@ class MySQLDb(BaseDb):
                     input=stmt.inserted.input,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
+                    feedback=stmt.inserted.feedback,
                     updated_at=stmt.inserted.updated_at,
+                    # Preserve created_at on update
+                    created_at=table.c.created_at,
                 )
                 sess.execute(stmt, bulk_data)
 

@@ -27,6 +27,9 @@ USER_MEMORY_SCHEMA = {
     "team_id": {"type": "string"},
     "user_id": {"type": "string"},
     "topics": {"type": "json"},
+    "input": {"type": "string"},
+    "feedback": {"type": "string"},
+    "created_at": {"type": "integer"},
     "updated_at": {"type": "integer"},
 }
 
@@ -114,6 +117,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_SCHEMA,
         "evals": EVAL_SCHEMA,
         "knowledge": KNOWLEDGE_SCHEMA,
+        "culture": CULTURAL_KNOWLEDGE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

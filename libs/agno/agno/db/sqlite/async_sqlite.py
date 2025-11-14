@@ -47,6 +47,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -68,6 +69,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -85,6 +87,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -132,6 +135,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -267,6 +271,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                     table_type="culture",
                 )
             return self.culture_table
+        
+        elif table_type == "versions":
+            if not hasattr(self, "versions_table"):
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name,
+                    table_type="versions",
+                )
+            return self.versions_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -309,6 +321,29 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {table_name}: {e}")
             raise e
+
+    async def get_latest_schema_version(self) -> str:
+        """Get the latest version of the database schema."""
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            stmt = select(table).order_by(table.c.version.desc()).limit(1)
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            if row is None:
+                return None
+            version_dict = dict(row._mapping)
+            return version_dict.get("version")
+        
+    async def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = sqlite.insert(table).values(version=version, created_at=int(time.time()))
+            await sess.execute(stmt)
 
     # -- Session methods --
 
@@ -1248,29 +1283,39 @@ class AsyncSqliteDb(AsyncBaseDb):
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
-            async with self.async_session_factory() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(
-                    user_id=memory.user_id,
-                    agent_id=memory.agent_id,
-                    team_id=memory.team_id,
-                    memory_id=memory.memory_id,
-                    memory=memory.memory,
-                    topics=memory.topics,
-                    input=memory.input,
-                    updated_at=int(time.time()),
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["memory_id"],
-                    set_=dict(
+            current_time = int(time.time())
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(
+                        user_id=memory.user_id,
+                        agent_id=memory.agent_id,
+                        team_id=memory.team_id,
+                        memory_id=memory.memory_id,
                         memory=memory.memory,
                         topics=memory.topics,
                         input=memory.input,
-                        updated_at=int(time.time()),
-                    ),
-                ).returning(table)
+                        feedback=memory.feedback,
+                        created_at=memory.created_at,
+                        updated_at=current_time,
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["memory_id"],
+                        set_=dict(
+                            memory=memory.memory,
+                            topics=memory.topics,
+                            input=memory.input,
+                            agent_id=memory.agent_id,
+                            team_id=memory.team_id,
+                            feedback=memory.feedback,
+                            updated_at=current_time,
+                            # Preserve created_at on update - don't overwrite existing value
+                            created_at=table.c.created_at,
+                        ),
+                    ).returning(table)
 
-                result = await sess.execute(stmt)
-                row = result.fetchone()
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
 
                 if row is None:
                     return None
@@ -1321,12 +1366,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             # Prepare bulk data
             bulk_data = []
             current_time = int(time.time())
+
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+                
                 bulk_data.append(
                     {
                         "user_id": memory.user_id,
@@ -1335,6 +1382,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                         "memory_id": memory.memory_id,
                         "memory": memory.memory,
                         "topics": memory.topics,
+                        "input": memory.input,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1352,7 +1402,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                         input=stmt.excluded.input,
                         agent_id=stmt.excluded.agent_id,
                         team_id=stmt.excluded.team_id,
+                        feedback=stmt.excluded.feedback,
                         updated_at=stmt.excluded.updated_at,
+                        # Preserve created_at on update
+                        created_at=table.c.created_at,
                     ),
                 )
                 await sess.execute(stmt, bulk_data)
