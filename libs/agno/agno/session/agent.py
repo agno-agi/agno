@@ -106,7 +106,7 @@ class AgentSession:
 
         log_debug("Added RunOutput to Agent Session")
 
-    def get_run(self, run_id: str) -> Optional[RunOutput]:
+    def get_run(self, run_id: str) -> Optional[Union[RunOutput, TeamRunOutput]]:
         for run in self.runs or []:
             if run.run_id == run_id:
                 return run
