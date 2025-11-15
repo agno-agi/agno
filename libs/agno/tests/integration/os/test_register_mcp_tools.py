@@ -156,3 +156,21 @@ def test_mcp_tools_are_not_registered_multiple_times():
     assert len(agent_os.mcp_tools) == 2
     assert agent_mcp_tools in agent_os.mcp_tools
     assert team_mcp_tools in agent_os.mcp_tools
+
+
+def test_mcp_tools_subclass_are_registered():
+    """Test that subclasses to MCP Tools also are registered."""
+
+    class MockMCPTools(MCPTools):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+    mcp_tools = MockMCPTools("npm fake-command")
+    agent = Agent(tools=[mcp_tools])
+    assert agent.tools is not None
+    assert agent.tools[0] is mcp_tools
+
+    # Asserting the MCP tools were registered
+    agent_os = AgentOS(agents=[agent])
+    assert agent_os.mcp_tools is not None
+    assert agent_os.mcp_tools[0] is mcp_tools
