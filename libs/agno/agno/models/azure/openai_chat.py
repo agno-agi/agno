@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from agno.models.openai.like import OpenAILike
+from agno.utils.http import get_default_async_client
 from agno.utils.log import log_debug
 
 try:
@@ -120,12 +121,8 @@ class AzureOpenAI(OpenAILike):
         if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             _client_params["http_client"] = self.http_client
         else:
-            if self.http_client:
-                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
-            # Create a new async HTTP client with custom limits
-            _client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            # Use global async client when no custom http_client is provided
+            _client_params["http_client"] = get_default_async_client()
 
         self.async_client = AsyncAzureOpenAIClient(**_client_params)
         return self.async_client

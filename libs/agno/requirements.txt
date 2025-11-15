@@ -20,10 +20,16 @@ h11==0.16.0
     # via
     #   agno (libs/agno/pyproject.toml)
     #   httpcore
+h2==4.3.0
+    # via httpx
+hpack==4.1.0
+    # via h2
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
     # via agno (libs/agno/pyproject.toml)
+hyperframe==6.1.0
+    # via h2
 idna==3.10
     # via
     #   anyio
