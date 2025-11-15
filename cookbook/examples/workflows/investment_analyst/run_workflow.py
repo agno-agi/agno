@@ -423,5 +423,4 @@ if __name__ == "__main__":
     response = investment_analysis_workflow.print_response(
         input=request,
         stream=True,
-        stream_events=True,
     )

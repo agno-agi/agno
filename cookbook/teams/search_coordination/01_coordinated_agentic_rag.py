@@ -106,7 +106,7 @@ def main():
     query = "What are Agents and how do they work with tools and knowledge?"
 
     # Run the coordinated team
-    coordinated_rag_team.print_response(query, stream=True, stream_events=True)
+    coordinated_rag_team.print_response(query, stream=True)
 
 
 if __name__ == "__main__":

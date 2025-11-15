@@ -35,4 +35,4 @@ structured_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-structured_output_agent.print_response("New York", stream=True, stream_events=True)
+structured_output_agent.print_response("New York", stream=True)

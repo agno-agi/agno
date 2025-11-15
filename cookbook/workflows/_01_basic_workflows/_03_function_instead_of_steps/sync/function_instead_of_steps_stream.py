@@ -70,5 +70,4 @@ if __name__ == "__main__":
     content_creation_workflow.print_response(
         input="AI trends in 2024",
         stream=True,
-        stream_events=True,
     )

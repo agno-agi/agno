@@ -109,5 +109,4 @@ if __name__ == "__main__":
         "Latest developments in artificial intelligence and machine learning",
         markdown=True,
         stream=True,
-        stream_events=True,
     )

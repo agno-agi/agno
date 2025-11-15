@@ -139,7 +139,6 @@ if __name__ == "__main__":
         workflow.print_response(
             input="Comprehensive analysis of climate change research",
             stream=True,
-            stream_events=True,
         )
     except Exception as e:
         print(f"❌ Error: {e}")

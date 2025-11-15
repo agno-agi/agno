@@ -58,15 +58,12 @@ async def main():
     await workflow.aprint_response(
         "Tell me a story about a dog named Rocky",
         stream=True,
-        stream_events=True,
     )
 
     print("\n" + "=" * 80)
     print("SECOND CALL (ASYNC STREAMING): What was Rocky's personality?")
     print("=" * 80)
-    await workflow.aprint_response(
-        "What was Rocky's personality?", stream=True, stream_events=True
-    )
+    await workflow.aprint_response("What was Rocky's personality?", stream=True)
 
     print("\n" + "=" * 80)
     print("THIRD CALL (ASYNC STREAMING): Now tell me a story about a cat named Luna")
@@ -74,15 +71,12 @@ async def main():
     await workflow.aprint_response(
         "Tell me a story about a cat named Luna",
         stream=True,
-        stream_events=True,
     )
 
     print("\n" + "=" * 80)
     print("FOURTH CALL (ASYNC STREAMING): Compare Rocky and Luna")
     print("=" * 80)
-    await workflow.aprint_response(
-        "Compare Rocky and Luna", stream=True, stream_events=True
-    )
+    await workflow.aprint_response("Compare Rocky and Luna", stream=True)
 
 
 if __name__ == "__main__":

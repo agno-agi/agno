@@ -95,5 +95,4 @@ if __name__ == "__main__":
         input="Write a short note about conspiracy theories",
         markdown=True,
         stream=True,
-        stream_events=True,
     )

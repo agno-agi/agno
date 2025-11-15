@@ -108,7 +108,6 @@ async def main():
     await workflow.aprint_response(
         "Tell me a story about a brave knight",
         stream=True,
-        stream_events=True,
     )
 
     # Second call - should answer from history without re-running workflow
@@ -118,7 +117,6 @@ async def main():
     await workflow.aprint_response(
         "What was the knight's name?",
         stream=True,
-        stream_events=True,
     )
 
     # Third call - new topic, should run workflow again
@@ -128,7 +126,6 @@ async def main():
     await workflow.aprint_response(
         "Now tell me about a cat",
         stream=True,
-        stream_events=True,
     )
 
 

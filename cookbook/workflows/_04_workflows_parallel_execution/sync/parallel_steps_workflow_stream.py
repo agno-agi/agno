@@ -28,5 +28,4 @@ workflow = Workflow(
 workflow.print_response(
     "Write about the latest AI developments",
     stream=True,
-    stream_events=True,
 )

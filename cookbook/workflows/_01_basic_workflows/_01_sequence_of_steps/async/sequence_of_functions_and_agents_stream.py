@@ -104,6 +104,5 @@ if __name__ == "__main__":
             input="AI trends in 2024",
             markdown=True,
             stream=True,
-            stream_events=True,
         )
     )

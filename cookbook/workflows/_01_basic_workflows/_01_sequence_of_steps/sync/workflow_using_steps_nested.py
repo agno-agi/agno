@@ -144,5 +144,4 @@ if __name__ == "__main__":
         input="Write an article about the latest AI developments in machine learning",
         markdown=True,
         stream=True,
-        stream_events=True,
     )

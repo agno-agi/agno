@@ -84,5 +84,4 @@ if __name__ == "__main__":
     workflow.print_response(
         input="Research the latest trends in AI and machine learning, then create a summary",
         stream=True,
-        stream_events=True,
     )

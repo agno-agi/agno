@@ -106,7 +106,6 @@ if __name__ == "__main__":
         basic_workflow.print_response(
             input="Recent breakthroughs in quantum computing",
             stream=True,
-            stream_events=True,
         )
     except Exception as e:
         print(f"❌ Error: {e}")

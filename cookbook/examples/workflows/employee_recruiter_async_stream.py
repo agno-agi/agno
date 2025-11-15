@@ -305,6 +305,5 @@ if __name__ == "__main__":
         🌟 Bonus: starred Agno repo.
         """,
             stream=True,
-            stream_events=True,
         )
     )

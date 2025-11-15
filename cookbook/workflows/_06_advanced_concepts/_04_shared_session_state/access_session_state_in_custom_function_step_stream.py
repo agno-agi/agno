@@ -211,7 +211,6 @@ if __name__ == "__main__":
         input="AI trends in 2024",
         markdown=True,
         stream=True,
-        stream_events=True,
     )
 
     print(
@@ -225,7 +224,6 @@ if __name__ == "__main__":
         input="Machine Learning automation tools",
         markdown=True,
         stream=True,
-        stream_events=True,
     )
 
     print(f"\nFinal Session State: {streaming_content_workflow.get_session_state()}")

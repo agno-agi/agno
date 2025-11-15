@@ -100,5 +100,4 @@ if __name__ == "__main__":
     workflow.print_response(
         "Latest developments in artificial intelligence and machine learning",
         stream=True,
-        stream_events=True,
     )
