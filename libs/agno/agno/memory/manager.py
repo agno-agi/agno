@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
+from agno.memory.strategy import (
+    MemoryOptimizationStrategy,
+    MemoryOptimizationStrategyFactory,
+    MemoryOptimizationStrategyType,
+)
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -711,6 +716,166 @@ class MemoryManager:
             sorted_memories_list = sorted_memories_list[:limit]
 
         return sorted_memories_list
+
+    def optimize_memories(
+        self,
+        user_id: Optional[str] = None,
+        strategy: Union[
+            MemoryOptimizationStrategyType, MemoryOptimizationStrategy
+        ] = MemoryOptimizationStrategyType.SUMMARIZE,
+        apply: bool = True,
+    ) -> List[UserMemory]:
+        """Optimize user memories using the specified strategy.
+
+        Args:
+            user_id: User ID to optimize memories for. Defaults to "default".
+            strategy: Optimization strategy. Can be:
+                - Enum: MemoryOptimizationStrategyType.SUMMARIZE
+                - Instance: Custom MemoryOptimizationStrategy instance
+            apply: If True, automatically replace memories in database.
+
+        Returns:
+            List of optimized UserMemory objects.
+        """
+        if user_id is None:
+            user_id = "default"
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError(
+                "optimize_memories() is not supported with an async DB. Please use aoptimize_memories() instead."
+            )
+
+        # Get user memories
+        memories = self.get_user_memories(user_id=user_id)
+        if not memories:
+            log_debug("No memories to optimize")
+            return []
+
+        # Get strategy instance
+        if isinstance(strategy, MemoryOptimizationStrategyType):
+            strategy_instance = MemoryOptimizationStrategyFactory.create_strategy(strategy)
+        else:
+            # Already a strategy instance
+            strategy_instance = strategy
+
+        # Optimize memories using strategy
+        optimization_model = self.get_model()
+        optimized_memories = strategy_instance.optimize(memories=memories, model=optimization_model)
+
+        # Apply to database if requested
+        if apply:
+            log_debug(f"Applying optimized memories to database for user {user_id}")
+
+            # Collect memory_ids from optimized set
+            optimized_memory_ids = {mem.memory_id for mem in optimized_memories if mem.memory_id}
+
+            # Identify memories to delete (in original but not in optimized)
+            memories_to_delete = [
+                mem for mem in memories if mem.memory_id and mem.memory_id not in optimized_memory_ids
+            ]
+
+            # Delete removed memories
+            for mem in memories_to_delete:
+                self.delete_user_memory(memory_id=mem.memory_id, user_id=user_id)  # type: ignore
+
+            # Upsert all optimized memories
+            for opt_mem in optimized_memories:
+                # Ensure memory has an ID (generate if needed for new memories)
+                if not opt_mem.memory_id:
+                    from uuid import uuid4
+
+                    opt_mem.memory_id = str(uuid4())
+
+                # Use replace_user_memory for all (it handles both insert and update)
+                self.replace_user_memory(
+                    memory_id=opt_mem.memory_id,
+                    memory=opt_mem,
+                    user_id=user_id,  # type: ignore
+                )
+
+        optimized_tokens = strategy_instance.count_tokens(optimized_memories)
+        log_debug(f"Optimization complete. New token count: {optimized_tokens}")
+
+        return optimized_memories
+
+    async def aoptimize_memories(
+        self,
+        user_id: Optional[str] = None,
+        strategy: Union[
+            MemoryOptimizationStrategyType, MemoryOptimizationStrategy
+        ] = MemoryOptimizationStrategyType.SUMMARIZE,
+        apply: bool = True,
+    ) -> List[UserMemory]:
+        """Async version of optimize_memories.
+
+        Args:
+            user_id: User ID to optimize memories for. Defaults to "default".
+            strategy: Optimization strategy. Can be:
+                - Enum: MemoryOptimizationStrategyType.SUMMARIZE
+                - Instance: Custom MemoryOptimizationStrategy instance
+            apply: If True, automatically replace memories in database.
+
+        Returns:
+            List of optimized UserMemory objects.
+        """
+        if user_id is None:
+            user_id = "default"
+
+        # Get user memories
+        memories = await self.aget_user_memories(user_id=user_id)
+        if not memories:
+            log_debug("No memories to optimize")
+            return []
+
+        # Get strategy instance
+        if isinstance(strategy, MemoryOptimizationStrategyType):
+            strategy_instance = MemoryOptimizationStrategyFactory.create_strategy(strategy)
+        else:
+            # Already a strategy instance
+            strategy_instance = strategy
+
+        # Optimize memories using strategy (async)
+        optimization_model = self.get_model()
+        optimized_memories = await strategy_instance.aoptimize(memories=memories, model=optimization_model)
+
+        # Apply to database if requested
+        if apply:
+            log_debug(f"Applying optimized memories to database for user {user_id}")
+
+            # Collect memory_ids from optimized set
+            optimized_memory_ids = {mem.memory_id for mem in optimized_memories if mem.memory_id}
+
+            # Identify memories to delete (in original but not in optimized)
+            memories_to_delete = [
+                mem for mem in memories if mem.memory_id and mem.memory_id not in optimized_memory_ids
+            ]
+
+            # Delete removed memories
+            for mem in memories_to_delete:
+                await self.adelete_user_memory(memory_id=mem.memory_id, user_id=user_id)  # type: ignore
+
+            # Upsert all optimized memories (update existing or insert new)
+            for opt_mem in optimized_memories:
+                if opt_mem.memory_id:
+                    # Update existing memory
+                    self.replace_user_memory(
+                        memory_id=opt_mem.memory_id,
+                        memory=opt_mem,
+                        user_id=user_id,  # type: ignore
+                    )
+                else:
+                    # Insert new memory (for strategies that create new memories)
+                    opt_mem.user_id = user_id
+                    if not opt_mem.updated_at:
+                        from datetime import datetime
+
+                        opt_mem.updated_at = datetime.now()
+                    self._upsert_db_memory(memory=opt_mem)
+
+        optimized_tokens = strategy_instance.count_tokens(optimized_memories)
+        log_debug(f"Optimization complete. New token count: {optimized_tokens}")
+
+        return optimized_memories
 
     # --Memory Manager Functions--
     def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
