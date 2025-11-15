@@ -253,6 +253,8 @@ class Agent:
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # Maximum number of calls allowed per tool. Format: {"tool_name": max_calls}
+    tool_call_limits: Optional[Dict[str, int]] = None
     # Controls which (if any) tool is called by the model.
     # "none" means the model will not call a tool and instead generates a message.
     # "auto" means the model can pick between generating a message or calling a tool.
@@ -459,6 +461,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
+        tool_call_limits: Optional[Dict[str, int]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
@@ -574,6 +577,7 @@ class Agent:
 
         self.tools = list(tools) if tools else []
         self.tool_call_limit = tool_call_limit
+        self.tool_call_limits = tool_call_limits
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
 
@@ -1039,6 +1043,7 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                tool_call_limits=self.tool_call_limits,
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
@@ -1887,6 +1892,7 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                tool_call_limits=self.tool_call_limits,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
@@ -2968,6 +2974,7 @@ class Agent:
                 tools=tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                tool_call_limits=self.tool_call_limits,
             )
 
             # Check for cancellation after model processing
@@ -3531,6 +3538,7 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
+                tool_call_limits=self.tool_call_limits,
             )
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4736,6 +4744,7 @@ class Agent:
             tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            tool_call_limits=self.tool_call_limits,
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -4816,6 +4825,7 @@ class Agent:
             tools=tools,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            tool_call_limits=self.tool_call_limits,
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
@@ -8618,6 +8628,7 @@ class Agent:
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
                     tool_call_limit=self.tool_call_limit,
+                    tool_call_limits=self.tool_call_limits,
                     use_json_mode=self.use_json_mode,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -8911,6 +8922,7 @@ class Agent:
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
                     tool_call_limit=self.tool_call_limit,
+                    tool_call_limits=self.tool_call_limits,
                     use_json_mode=self.use_json_mode,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
