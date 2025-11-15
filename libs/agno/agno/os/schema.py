@@ -99,38 +99,60 @@ class ManagerResponse(BaseModel):
 
 
 class AgentSummaryResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the agent")
-    name: Optional[str] = Field(None, description="Name of the agent")
+    id: str = Field(..., description="Unique identifier for the agent")
+    name: str = Field(..., description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
-    db_id: Optional[str] = Field(None, description="Database identifier")
+    db_id: Optional[str] = Field(default=..., description="Database identifier")
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+        if not agent.id:
+            raise ValueError("Agent must have an id before serializing AgentSummaryResponse")
+
+        agent_name = agent.name or agent.id
+        return cls(
+            id=str(agent.id),
+            name=str(agent_name),
+            description=agent.description,
+            db_id=agent.db.id if agent.db else None,
+        )
 
 
 class TeamSummaryResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the team")
-    name: Optional[str] = Field(None, description="Name of the team")
+    id: str = Field(..., description="Unique identifier for the team")
+    name: str = Field(..., description="Name of the team")
     description: Optional[str] = Field(None, description="Description of the team")
-    db_id: Optional[str] = Field(None, description="Database identifier")
+    db_id: Optional[str] = Field(default=..., description="Database identifier")
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+        if not team.id:
+            raise ValueError("Team must have an id before serializing TeamSummaryResponse")
+
+        team_name = team.name or team.id
+        return cls(
+            id=str(team.id),
+            name=str(team_name),
+            description=team.description,
+            db_id=team.db.id if team.db else None,
+        )
 
 
 class WorkflowSummaryResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
-    name: Optional[str] = Field(None, description="Name of the workflow")
+    id: str = Field(..., description="Unique identifier for the workflow")
+    name: str = Field(..., description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
-    db_id: Optional[str] = Field(None, description="Database identifier")
+    db_id: Optional[str] = Field(default=..., description="Database identifier")
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
+        if not workflow.id:
+            raise ValueError("Workflow must have an id before serializing WorkflowSummaryResponse")
+
+        workflow_name = workflow.name or workflow.id
         return cls(
-            id=workflow.id,
-            name=workflow.name,
+            id=str(workflow.id),
+            name=str(workflow_name),
             description=workflow.description,
             db_id=workflow.db.id if workflow.db else None,
         )
@@ -142,15 +164,15 @@ class ConfigResponse(BaseModel):
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
-    available_models: Optional[List[str]] = Field(None, description="List of available models")
+    available_models: List[str] = Field(default_factory=list, description="List of available models")
     databases: List[str] = Field(..., description="List of database IDs")
-    chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
+    chat: Optional[ChatConfig] = Field(default=..., description="Chat configuration")
 
-    session: Optional[SessionConfig] = Field(None, description="Session configuration")
-    metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
-    memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
-    knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
-    evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
+    session: Optional[SessionConfig] = Field(default=..., description="Session configuration")
+    metrics: Optional[MetricsConfig] = Field(default=..., description="Metrics configuration")
+    memory: Optional[MemoryConfig] = Field(default=..., description="Memory configuration")
+    knowledge: Optional[KnowledgeConfig] = Field(default=..., description="Knowledge configuration")
+    evals: Optional[EvalsConfig] = Field(default=..., description="Evaluations configuration")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
@@ -164,28 +186,43 @@ class Model(BaseModel):
 
 
 class ModelResponse(BaseModel):
-    name: Optional[str] = Field(None, description="Name of the model")
-    model: Optional[str] = Field(None, description="Model identifier")
-    provider: Optional[str] = Field(None, description="Model provider name")
+    name: str = Field(..., description="Name of the model")
+    model: str = Field(..., description="Model identifier")
+    provider: str = Field(..., description="Model provider name")
+
+
+def _build_model_response(model: Optional[Any]) -> Optional[ModelResponse]:
+    """Construct a ModelResponse only when all required fields are available."""
+    if model is None:
+        return None
+
+    name = getattr(model, "name", None) or model.__class__.__name__
+    model_id = getattr(model, "id", None) or getattr(model, "model", None)
+    provider = getattr(model, "provider", None) or model.__class__.__name__
+
+    if not (name and model_id and provider):
+        return None
+
+    return ModelResponse(name=str(name), model=str(model_id), provider=str(provider))
 
 
 class AgentResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    db_id: Optional[str] = None
-    model: Optional[ModelResponse] = None
-    tools: Optional[Dict[str, Any]] = None
-    sessions: Optional[Dict[str, Any]] = None
-    knowledge: Optional[Dict[str, Any]] = None
-    memory: Optional[Dict[str, Any]] = None
-    reasoning: Optional[Dict[str, Any]] = None
-    default_tools: Optional[Dict[str, Any]] = None
-    system_message: Optional[Dict[str, Any]] = None
-    extra_messages: Optional[Dict[str, Any]] = None
-    response_settings: Optional[Dict[str, Any]] = None
-    streaming: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    input_schema: Optional[Dict[str, Any]] = None
+    id: str
+    name: str
+    db_id: Optional[str] = Field(default=..., description="Database identifier associated with the agent")
+    model: Optional[ModelResponse]
+    tools: Optional[Dict[str, Any]]
+    sessions: Optional[Dict[str, Any]]
+    knowledge: Optional[Dict[str, Any]]
+    memory: Optional[Dict[str, Any]]
+    reasoning: Optional[Dict[str, Any]]
+    default_tools: Optional[Dict[str, Any]]
+    system_message: Optional[Dict[str, Any]]
+    extra_messages: Optional[Dict[str, Any]]
+    response_settings: Optional[Dict[str, Any]]
+    streaming: Optional[Dict[str, Any]]
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    input_schema: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
@@ -262,18 +299,6 @@ class AgentResponse(BaseModel):
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
 
-        # Build model only if it has at least one non-null field
-        model_name = agent.model.name if (agent.model and agent.model.name) else None
-        model_provider = agent.model.provider if (agent.model and agent.model.provider) else None
-        model_id = agent.model.id if (agent.model and agent.model.id) else None
-        _agent_model_data: Dict[str, Any] = {}
-        if model_name is not None:
-            _agent_model_data["name"] = model_name
-        if model_id is not None:
-            _agent_model_data["model"] = model_id
-        if model_provider is not None:
-            _agent_model_data["provider"] = model_provider
-
         session_table = agent.db.session_table_name if agent.db else None
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
 
@@ -309,12 +334,9 @@ class AgentResponse(BaseModel):
                 "memory_table": agent.db.memory_table_name if agent.db and agent.enable_user_memories else None,
             }
 
-            if agent.memory_manager.model is not None:
-                memory_info["model"] = ModelResponse(
-                    name=agent.memory_manager.model.name,
-                    model=agent.memory_manager.model.id,
-                    provider=agent.memory_manager.model.provider,
-                ).model_dump()
+            memory_model = _build_model_response(agent.memory_manager.model)
+            if memory_model is not None:
+                memory_info["model"] = memory_model.model_dump()
 
         reasoning_info: Dict[str, Any] = {
             "reasoning": agent.reasoning,
@@ -323,12 +345,9 @@ class AgentResponse(BaseModel):
             "reasoning_max_steps": agent.reasoning_max_steps,
         }
 
-        if agent.reasoning_model:
-            reasoning_info["reasoning_model"] = ModelResponse(
-                name=agent.reasoning_model.name,
-                model=agent.reasoning_model.id,
-                provider=agent.reasoning_model.provider,
-            ).model_dump()
+        reasoning_model = _build_model_response(agent.reasoning_model)
+        if reasoning_model is not None:
+            reasoning_info["reasoning_model"] = reasoning_model.model_dump()
 
         default_tools_info = {
             "read_chat_history": agent.read_chat_history,
@@ -371,12 +390,9 @@ class AgentResponse(BaseModel):
             "save_response_to_file": agent.save_response_to_file,
         }
 
-        if agent.parser_model:
-            response_settings_info["parser_model"] = ModelResponse(
-                name=agent.parser_model.name,
-                model=agent.parser_model.id,
-                provider=agent.parser_model.provider,
-            ).model_dump()
+        parser_model = _build_model_response(agent.parser_model)
+        if parser_model is not None:
+            response_settings_info["parser_model"] = parser_model.model_dump()
 
         streaming_info = {
             "stream": agent.stream,
@@ -384,11 +400,18 @@ class AgentResponse(BaseModel):
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
 
+        agent_model = _build_model_response(agent.model)
+
+        if not agent.id:
+            raise ValueError("Agent must have an id before serializing AgentResponse")
+
+        agent_name = agent.name or agent.id
+
         return AgentResponse(
-            id=agent.id,
-            name=agent.name,
-            db_id=agent.db.id if agent.db else None,
-            model=ModelResponse(**_agent_model_data) if _agent_model_data else None,
+            id=str(agent.id),
+            name=str(agent_name),
+            db_id=str(agent.db.id) if agent.db and getattr(agent.db, "id", None) else None,
+            model=agent_model,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, agent_defaults),
             knowledge=filter_meaningful_config(knowledge_info, agent_defaults),
@@ -399,29 +422,29 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
-            metadata=agent.metadata,
-            input_schema=get_agent_input_schema_dict(agent),
+            metadata=agent.metadata or {},
+            input_schema=get_agent_input_schema_dict(agent) or {},
         )
 
 
 class TeamResponse(BaseModel):
-    id: Optional[str] = None
-    name: Optional[str] = None
-    db_id: Optional[str] = None
+    id: str
+    name: str
+    db_id: Optional[str] = Field(default=..., description="Database identifier associated with the team")
     description: Optional[str] = None
-    model: Optional[ModelResponse] = None
-    tools: Optional[Dict[str, Any]] = None
-    sessions: Optional[Dict[str, Any]] = None
-    knowledge: Optional[Dict[str, Any]] = None
-    memory: Optional[Dict[str, Any]] = None
-    reasoning: Optional[Dict[str, Any]] = None
-    default_tools: Optional[Dict[str, Any]] = None
-    system_message: Optional[Dict[str, Any]] = None
-    response_settings: Optional[Dict[str, Any]] = None
-    streaming: Optional[Dict[str, Any]] = None
-    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    input_schema: Optional[Dict[str, Any]] = None
+    model: Optional[ModelResponse]
+    tools: Optional[Dict[str, Any]]
+    sessions: Optional[Dict[str, Any]]
+    knowledge: Optional[Dict[str, Any]]
+    memory: Optional[Dict[str, Any]]
+    reasoning: Optional[Dict[str, Any]]
+    default_tools: Optional[Dict[str, Any]]
+    system_message: Optional[Dict[str, Any]]
+    response_settings: Optional[Dict[str, Any]]
+    streaming: Optional[Dict[str, Any]]
+    members: List[Union[AgentResponse, "TeamResponse"]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    input_schema: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     async def from_team(cls, team: Team) -> "TeamResponse":
@@ -488,17 +511,6 @@ class TeamResponse(BaseModel):
         )
         team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
-
-        model_name = team.model.name or team.model.__class__.__name__ if team.model else None
-        model_provider = team.model.provider or team.model.__class__.__name__ if team.model else ""
-        model_id = team.model.id if team.model else None
-
-        if model_provider and model_id:
-            model_provider = f"{model_provider} {model_id}"
-        elif model_name and model_id:
-            model_provider = f"{model_name} {model_id}"
-        elif model_id:
-            model_provider = model_id
 
         session_table = team.db.session_table_name if team.db else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
@@ -599,14 +611,6 @@ class TeamResponse(BaseModel):
         }
 
         # Build team model only if it has at least one non-null field
-        _team_model_data: Dict[str, Any] = {}
-        if team.model and team.model.name is not None:
-            _team_model_data["name"] = team.model.name
-        if team.model and team.model.id is not None:
-            _team_model_data["model"] = team.model.id
-        if team.model and team.model.provider is not None:
-            _team_model_data["provider"] = team.model.provider
-
         members: List[Union[AgentResponse, TeamResponse]] = []
         for member in team.members:
             if isinstance(member, Agent):
@@ -616,11 +620,18 @@ class TeamResponse(BaseModel):
                 team_response = await TeamResponse.from_team(member)
                 members.append(team_response)
 
+        team_model = _build_model_response(team.model)
+
+        if not team.id:
+            raise ValueError("Team must have an id before serializing TeamResponse")
+
+        team_name = team.name or team.id
+
         return TeamResponse(
-            id=team.id,
-            name=team.name,
-            db_id=team.db.id if team.db else None,
-            model=ModelResponse(**_team_model_data) if _team_model_data else None,
+            id=str(team.id),
+            name=str(team_name),
+            db_id=str(team.db.id) if team.db and getattr(team.db, "id", None) else None,
+            model=team_model,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
             knowledge=filter_meaningful_config(knowledge_info, team_defaults),
@@ -630,22 +641,22 @@ class TeamResponse(BaseModel):
             system_message=filter_meaningful_config(system_message_info, team_defaults),
             response_settings=filter_meaningful_config(response_settings_info, team_defaults),
             streaming=filter_meaningful_config(streaming_info, team_defaults),
-            members=members if members else None,
-            metadata=team.metadata,
-            input_schema=get_team_input_schema_dict(team),
+            members=members,
+            metadata=team.metadata or {},
+            input_schema=get_team_input_schema_dict(team) or {},
         )
 
 
 class WorkflowResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
-    name: Optional[str] = Field(None, description="Name of the workflow")
-    db_id: Optional[str] = Field(None, description="Database identifier")
+    id: str = Field(..., description="Unique identifier for the workflow")
+    name: str = Field(..., description="Name of the workflow")
+    db_id: Optional[str] = Field(default=..., description="Database identifier")
     description: Optional[str] = Field(None, description="Description of the workflow")
-    input_schema: Optional[Dict[str, Any]] = Field(None, description="Input schema for the workflow")
-    steps: Optional[List[Dict[str, Any]]] = Field(None, description="List of workflow steps")
-    agent: Optional[AgentResponse] = Field(None, description="Agent configuration if used")
-    team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    input_schema: Dict[str, Any] = Field(default_factory=dict, description="Input schema for the workflow")
+    steps: List[Dict[str, Any]] = Field(default_factory=list, description="List of workflow steps")
+    agent: Optional[AgentResponse]
+    team: Optional[TeamResponse]
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
 
     @classmethod
@@ -690,14 +701,21 @@ class WorkflowResponse(BaseModel):
         if steps:
             steps = await cls._resolve_agents_and_teams_recursively(steps)
 
+        if not workflow.id:
+            raise ValueError("Workflow must have an id before serializing WorkflowResponse")
+
+        workflow_name = workflow.name or workflow.id
+
         return cls(
-            id=workflow.id,
-            name=workflow.name,
-            db_id=workflow.db.id if workflow.db else None,
+            id=str(workflow.id),
+            name=str(workflow_name),
+            db_id=str(workflow.db.id) if workflow.db and getattr(workflow.db, "id", None) else None,
             description=workflow.description,
-            steps=steps,
-            input_schema=get_workflow_input_schema_dict(workflow),
-            metadata=workflow.metadata,
+            steps=steps or [],
+            input_schema=get_workflow_input_schema_dict(workflow) or {},
+            agent=None,
+            team=None,
+            metadata=workflow.metadata or {},
             workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
         )
 
@@ -711,9 +729,9 @@ class WorkflowRunRequest(BaseModel):
 class SessionSchema(BaseModel):
     session_id: str = Field(..., description="Unique identifier for the session")
     session_name: str = Field(..., description="Human-readable name for the session")
-    session_state: Optional[dict] = Field(None, description="Current state data of the session")
-    created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
-    updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
+    session_state: Dict[str, Any] = Field(default_factory=dict, description="Current state data of the session")
+    created_at: Optional[datetime] = Field(default=..., description="Timestamp when session was created")
+    updated_at: Optional[datetime] = Field(default=..., description="Timestamp when session was last updated")
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
@@ -721,7 +739,7 @@ class SessionSchema(BaseModel):
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
-            session_state=session.get("session_data", {}).get("session_state", None),
+            session_state=session.get("session_data", {}).get("session_state") or {},
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
@@ -869,28 +887,28 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
-    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
-    agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
-    user_id: Optional[str] = Field(None, description="User ID associated with the run")
-    run_input: Optional[str] = Field(None, description="Input provided to the run")
-    content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
-    run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
-    reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
-    reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
-    metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
-    messages: Optional[List[dict]] = Field(None, description="Message history for the run")
-    tools: Optional[List[dict]] = Field(None, description="Tools used in the run")
-    events: Optional[List[dict]] = Field(None, description="Events generated during the run")
-    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
-    references: Optional[List[dict]] = Field(None, description="References cited in the run")
-    reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
-    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
-    images: Optional[List[dict]] = Field(None, description="Images included in the run")
-    videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
-    audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
-    files: Optional[List[dict]] = Field(None, description="Files included in the run")
-    response_audio: Optional[dict] = Field(None, description="Audio response if generated")
-    input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
+    parent_run_id: Optional[str] = Field(default=..., description="Parent run ID if this is a nested run")
+    agent_id: Optional[str] = Field(default=..., description="Agent ID that executed this run")
+    user_id: Optional[str] = Field(default=..., description="User ID associated with the run")
+    run_input: Optional[str] = Field(default=..., description="Input provided to the run")
+    content: Optional[Union[str, Dict[str, Any]]] = Field(default=..., description="Output content from the run")
+    run_response_format: Optional[str] = Field(default=..., description="Format of the response (text/json)")
+    reasoning_content: Optional[str] = Field(default=..., description="Reasoning content if reasoning was enabled")
+    reasoning_steps: List[Dict[str, Any]] = Field(default_factory=list, description="List of reasoning steps")
+    metrics: Dict[str, Any] = Field(default_factory=dict, description="Performance and usage metrics")
+    messages: List[Dict[str, Any]] = Field(default_factory=list, description="Message history for the run")
+    tools: List[Dict[str, Any]] = Field(default_factory=list, description="Tools used in the run")
+    events: List[Dict[str, Any]] = Field(default_factory=list, description="Events generated during the run")
+    created_at: Optional[datetime] = Field(default=..., description="Run creation timestamp")
+    references: List[Dict[str, Any]] = Field(default_factory=list, description="References cited in the run")
+    reasoning_messages: List[Dict[str, Any]] = Field(default_factory=list, description="Reasoning process messages")
+    session_state: Dict[str, Any] = Field(default_factory=dict, description="Session state at the end of the run")
+    images: List[Dict[str, Any]] = Field(default_factory=list, description="Images included in the run")
+    videos: List[Dict[str, Any]] = Field(default_factory=list, description="Videos included in the run")
+    audio: List[Dict[str, Any]] = Field(default_factory=list, description="Audio files included in the run")
+    files: List[Dict[str, Any]] = Field(default_factory=list, description="Files included in the run")
+    response_audio: Optional[Dict[str, Any]] = Field(default=..., description="Audio response if generated")
+    input_media: Optional[Dict[str, Any]] = Field(default=..., description="Input media attachments")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -898,26 +916,26 @@ class RunSchema(BaseModel):
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
             run_id=run_dict.get("run_id", ""),
-            parent_run_id=run_dict.get("parent_run_id", ""),
-            agent_id=run_dict.get("agent_id", ""),
-            user_id=run_dict.get("user_id", ""),
+            parent_run_id=run_dict.get("parent_run_id"),
+            agent_id=run_dict.get("agent_id"),
+            user_id=run_dict.get("user_id"),
             run_input=run_input,
-            content=run_dict.get("content", ""),
+            content=run_dict.get("content"),
             run_response_format=run_response_format,
-            reasoning_content=run_dict.get("reasoning_content", ""),
-            reasoning_steps=run_dict.get("reasoning_steps", []),
-            metrics=run_dict.get("metrics", {}),
-            messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
-            tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
-            events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
-            references=run_dict.get("references", []),
-            reasoning_messages=run_dict.get("reasoning_messages", []),
-            session_state=run_dict.get("session_state"),
-            images=run_dict.get("images", []),
-            videos=run_dict.get("videos", []),
-            audio=run_dict.get("audio", []),
-            files=run_dict.get("files", []),
-            response_audio=run_dict.get("response_audio", None),
+            reasoning_content=run_dict.get("reasoning_content"),
+            reasoning_steps=list(run_dict.get("reasoning_steps") or []),
+            metrics=run_dict.get("metrics") or {},
+            messages=list(run_dict.get("messages") or []),
+            tools=list(run_dict.get("tools") or []),
+            events=list(run_dict.get("events") or []),
+            references=list(run_dict.get("references") or []),
+            reasoning_messages=list(run_dict.get("reasoning_messages") or []),
+            session_state=run_dict.get("session_state") or {},
+            images=list(run_dict.get("images") or []),
+            videos=list(run_dict.get("videos") or []),
+            audio=list(run_dict.get("audio") or []),
+            files=list(run_dict.get("files") or []),
+            response_audio=run_dict.get("response_audio"),
             input_media=extract_input_media(run_dict),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
