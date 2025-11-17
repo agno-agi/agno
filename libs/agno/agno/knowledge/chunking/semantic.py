@@ -14,7 +14,7 @@ class SemanticChunking(ChunkingStrategy):
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
-            embedder = OpenAIEmbedder(id="text-embedding-3-small")  # type: ignore
+            embedder = OpenAIEmbedder()  # type: ignore
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
         self.chunk_size = chunk_size
