@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Unio
 
 from pydantic import BaseModel
 
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -33,7 +34,7 @@ def print_response(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -333,7 +334,7 @@ def print_response_stream(
     markdown: bool = False,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -865,7 +866,7 @@ async def aprint_response(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -1163,7 +1164,7 @@ async def aprint_response_stream(
     markdown: bool = False,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,

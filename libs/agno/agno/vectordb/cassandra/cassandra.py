@@ -1,9 +1,10 @@
 import asyncio
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Union
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
@@ -204,13 +205,17 @@ class Cassandra(VectorDb):
             self.delete_by_content_hash(content_hash)
         await self.async_insert(content_hash, documents, filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Keyword-based search on document metadata."""
         log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
+        if filters is not None:
+            log_warning("Filters are not yet supported in Cassandra. No filters will be applied.")
         return self.vector_search(query=query, limit=limit)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
@@ -221,7 +226,9 @@ class Cassandra(VectorDb):
     ) -> List[Document]:
         return [self._row_to_document(row=hit) for hit in hits]
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Vector similarity search implementation."""
         query_embedding = self.embedder.get_embedding(query)
         hits = list(

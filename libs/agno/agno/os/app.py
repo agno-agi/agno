@@ -232,6 +232,12 @@ class AgentOS:
         self._initialize_workflows()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+
+        if self.enable_mcp_server:
+            from agno.os.mcp import get_mcp_server
+
+            self._mcp_app = get_mcp_server(self)
+
         self._reprovision_routers(app=app)
 
     def _reprovision_routers(self, app: FastAPI) -> None:
@@ -248,7 +254,9 @@ class AgentOS:
         app.router.routes = [
             route
             for route in app.router.routes
-            if hasattr(route, "path") and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]  # type: ignore
+            if hasattr(route, "path")
+            and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
+            or route.path.startswith("/mcp")  # type: ignore
         ]
 
         # Add the built-in routes
@@ -258,13 +266,17 @@ class AgentOS:
         for router in updated_routers:
             self._add_router(app, router)
 
+        # Mount MCP if needed
+        if self.enable_mcp_server and self._mcp_app:
+            app.mount("/", self._mcp_app)
+
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
         # Add the home router if MCP server is not enabled
         if not self.enable_mcp_server:
             self._add_router(app, get_home_router(self))
 
-        self._add_router(app, get_health_router())
+        self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
@@ -381,19 +393,23 @@ class AgentOS:
             # Collect all lifespans that need to be combined
             lifespans = []
 
-            if fastapi_app.router.lifespan_context:
-                lifespans.append(fastapi_app.router.lifespan_context)
-
-            if self.mcp_tools:
-                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
-
-            if self.enable_mcp_server and self._mcp_app:
-                lifespans.append(self._mcp_app.lifespan)
-
+            # The user provided lifespan
             if self.lifespan:
                 # Wrap the user lifespan with agent_os parameter
                 wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
                 lifespans.append(wrapped_lifespan)
+
+            # The provided app's existing lifespan
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
+
+            # The MCP tools lifespan
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            # The /mcp server lifespan
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
 
             # Combine lifespans and set them in the app
             if lifespans:
