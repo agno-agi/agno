@@ -6,7 +6,7 @@ from typing import List
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
-from agno.memory.strategies.base import MemoryOptimizationStrategy
+from agno.memory.strategies import MemoryOptimizationStrategy
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import log_debug
@@ -20,7 +20,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
     metadata (topics, user_id) is preserved in the summarized memory.
     """
 
-    def get_system_prompt(self) -> str:
+    def _get_system_prompt(self) -> str:
         """Get system prompt for memory summarization.
 
         Returns:
@@ -87,7 +87,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
         # Create comprehensive prompt for summarization
         combined_content = "\n\n".join([f"Memory {i + 1}: {content}" for i, content in enumerate(memory_contents)])
 
-        system_prompt = self.get_system_prompt()
+        system_prompt = self._get_system_prompt()
 
         messages_for_model = [
             Message(role="system", content=system_prompt),
@@ -164,7 +164,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
         # Create comprehensive prompt for summarization
         combined_content = "\n\n".join([f"Memory {i + 1}: {content}" for i, content in enumerate(memory_contents)])
 
-        system_prompt = self.get_system_prompt()
+        system_prompt = self._get_system_prompt()
 
         messages_for_model = [
             Message(role="system", content=system_prompt),

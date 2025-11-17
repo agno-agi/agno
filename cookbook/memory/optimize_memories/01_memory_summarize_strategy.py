@@ -9,13 +9,13 @@ Run: python cookbook/memory/09_memory_summarize_strategy.py
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.memory import MemoryManager, SummarizeStrategy
 from agno.memory.strategy import MemoryOptimizationStrategyType
 from agno.models.openai import OpenAIChat
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url)
+db_file = "tmp/memory_summarize_strategy.db"
+db = SqliteDb(db_file=db_file)
 
 user_id = "user2"
 

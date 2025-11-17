@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import List
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.db.schemas import UserMemory
 from agno.memory import MemoryManager, MemoryOptimizationStrategy
 from agno.models.base import Model
@@ -25,10 +25,6 @@ class RecentOnlyStrategy(MemoryOptimizationStrategy):
 
     def __init__(self, keep_count: int = 2):
         self.keep_count = keep_count
-
-    def get_system_prompt(self) -> str:
-        """Not used by this strategy."""
-        return "RecentOnlyStrategy doesn't use LLM"
 
     def optimize(
         self,
@@ -61,8 +57,8 @@ class RecentOnlyStrategy(MemoryOptimizationStrategy):
 
 
 # Example usage
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url)
+db_file = "tmp/custom_memory_strategy.db"
+db = SqliteDb(db_file=db_file)
 
 user_id = "user3"
 

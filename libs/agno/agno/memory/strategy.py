@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-from agno.memory.strategies.base import MemoryOptimizationStrategy
+from agno.memory.strategies import MemoryOptimizationStrategy
 
 
 class MemoryOptimizationStrategyType(str, Enum):

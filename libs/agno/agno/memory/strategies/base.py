@@ -9,10 +9,10 @@ from agno.utils.tokens import count_tokens as count_text_tokens
 class MemoryOptimizationStrategy(ABC):
     """Abstract base class for memory optimization strategies.
 
-    Subclasses must implement optimize(), aoptimize(), and get_system_prompt()
+    Subclasses must implement optimize() and aoptimize().
+    get_system_prompt() is optional and only needed for LLM-based strategies.
     """
 
-    @abstractmethod
     def get_system_prompt(self) -> str:
         """Get system prompt for this optimization strategy.
 
