@@ -2,7 +2,7 @@ import asyncio
 import json
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     import lancedb
@@ -10,10 +10,11 @@ try:
 except ImportError:
     raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -158,7 +159,7 @@ class LanceDb(VectorDb):
 
     def _prepare_vector(self, embedding) -> List[float]:
         """Prepare vector embedding for insertion, ensuring correct dimensions and type."""
-        if embedding is not None:
+        if embedding is not None and len(embedding) > 0:
             # Convert to list of floats
             vector = [float(x) for x in embedding]
 
@@ -176,7 +177,7 @@ class LanceDb(VectorDb):
 
             return vector
         else:
-            # Fallback if embedding is None
+            # Fallback if embedding is None or empty
             return [0.0] * (self.dimensions or 1536)
 
     async def _get_async_connection(self) -> lancedb.AsyncConnection:
@@ -200,7 +201,6 @@ class LanceDb(VectorDb):
             # Re-establish sync connection to see async changes
             if self.connection and self.table_name in self.connection.table_names():
                 self.table = self.connection.open_table(self.table_name)
-                log_debug(f"Refreshed sync connection for table: {self.table_name}")
         except Exception as e:
             log_debug(f"Could not refresh sync connection: {e}")
             # If refresh fails, we can still function but sync methods might not see async changes
@@ -359,6 +359,9 @@ class LanceDb(VectorDb):
         """
         Asynchronously insert documents into the database.
 
+        Note: Currently wraps sync insert method since LanceDB async insert has sync/async table
+        synchronization issues causing empty vectors. We still do async embedding for performance.
+
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
@@ -368,115 +371,36 @@ class LanceDb(VectorDb):
             return
 
         log_debug(f"Inserting {len(documents)} documents")
-        data = []
 
+        # Still do async embedding for performance
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
-            # Use batch embedding when enabled and supported
             try:
-                # Extract content from all documents
                 doc_contents = [doc.content for doc in documents]
-
-                # Get batch embeddings and usage
                 embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
-                    try:
-                        if j < len(embeddings):
-                            doc.embedding = embeddings[j]
-                            doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
-
+                    if j < len(embeddings):
+                        doc.embedding = embeddings[j]
+                        doc.usage = usages[j] if j < len(usages) else None
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
                 error_str = str(e).lower()
                 is_rate_limit = any(
                     phrase in error_str
                     for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
                 )
-
                 if is_rate_limit:
                     logger.error(f"Rate limit detected during batch embedding. {e}")
                     raise e
                 else:
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
-                    # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
         else:
-            # Use individual embedding
-            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
-        for document in documents:
-            if await self.async_doc_exists(document):
-                continue
-
-            # Add filters to document metadata if provided
-            if filters:
-                meta_data = document.meta_data.copy() if document.meta_data else {}
-                meta_data.update(filters)
-                document.meta_data = meta_data
-
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = str(md5(cleaned_content.encode()).hexdigest())
-            payload = {
-                "name": document.name,
-                "meta_data": document.meta_data,
-                "content": cleaned_content,
-                "usage": document.usage,
-                "content_id": document.content_id,
-                "content_hash": content_hash,
-            }
-            data.append(
-                {
-                    "id": doc_id,
-                    "vector": self._prepare_vector(document.embedding),
-                    "payload": json.dumps(payload),
-                }
-            )
-            log_debug(f"Parsed document: {document.name} ({document.meta_data})")
-
-        if not data:
-            log_debug("No new data to insert")
-            return
-
-        try:
-            await self._get_async_connection()
-
-            # Ensure the async table is created before inserting
-            if self.async_table is None:
-                try:
-                    await self.async_create()
-                except Exception as create_e:
-                    logger.error(f"Failed to create async table: {create_e}")
-                    # Continue to fallback logic below
-
-            if self.async_table is None:
-                # Fall back to sync insertion if async table creation failed
-                logger.warning("Async table not available, falling back to sync insertion")
-                return self.insert(content_hash, documents, filters)
-
-            if self.on_bad_vectors is not None:
-                await self.async_table.add(data, on_bad_vectors=self.on_bad_vectors, fill_value=self.fill_value)  # type: ignore
-            else:
-                await self.async_table.add(data)  # type: ignore
-
-            log_debug(f"Asynchronously inserted {len(data)} documents")
-
-            # Refresh sync connection to see async changes
-            self._refresh_sync_connection()
-        except Exception as e:
-            logger.error(f"Error during async document insertion: {e}")
-            # Try falling back to sync insertion as a last resort
-            try:
-                logger.warning("Async insertion failed, attempting sync fallback")
-                self.insert(content_hash, documents, filters)
-                logger.info("Sync fallback successful")
-            except Exception as sync_e:
-                logger.error(f"Sync fallback also failed: {sync_e}")
-                raise e from sync_e
+        # Use sync insert to avoid sync/async table synchronization issues
+        self.insert(content_hash, documents, filters)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in LanceDB."""
@@ -497,11 +421,42 @@ class LanceDb(VectorDb):
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        """
+        Asynchronously upsert documents into the database.
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        Note: Uses async embedding for performance, then sync upsert for reliability.
+        """
+        if len(documents) > 0:
+            # Do async embedding for performance
+            if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+                try:
+                    doc_contents = [doc.content for doc in documents]
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                    for j, doc in enumerate(documents):
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                except Exception as e:
+                    error_str = str(e).lower()
+                    is_rate_limit = any(
+                        phrase in error_str
+                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                    )
+                    if is_rate_limit:
+                        raise e
+                    else:
+                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+            else:
+                embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        # Use sync upsert for reliability
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
+
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Search for documents matching the query.
 
@@ -517,6 +472,10 @@ class LanceDb(VectorDb):
             self.table = self.connection.open_table(name=self.table_name)
 
         results = None
+
+        if isinstance(filters, list):
+            log_warning("Filter Expressions are not yet supported in LanceDB. No filters will be applied.")
+            filters = None
 
         if self.search_type == SearchType.vector:
             results = self.vector_search(query, limit)
@@ -559,10 +518,13 @@ class LanceDb(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """
         Asynchronously search for documents matching the query.
+
+        Note: Currently wraps sync search method since LanceDB async search has sync/async table
+        synchronization issues. Performance impact is minimal for search operations.
 
         Args:
             query (str): Query string to search for
@@ -572,53 +534,12 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
-        if self.connection:
-            self.table = self.connection.open_table(name=self.table_name)
+        # Wrap sync search method to avoid sync/async table synchronization issues
+        return self.search(query=query, limit=limit, filters=filters)
 
-        results = None
-
-        if self.search_type == SearchType.vector:
-            results = self.vector_search(query, limit)
-        elif self.search_type == SearchType.keyword:
-            results = self.keyword_search(query, limit)
-        elif self.search_type == SearchType.hybrid:
-            results = self.hybrid_search(query, limit)
-        else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
-            return []
-
-        if results is None:
-            return []
-
-        search_results = self._build_search_results(results)
-
-        # Filter results based on metadata if filters are provided
-        if filters and search_results:
-            filtered_results = []
-            for doc in search_results:
-                if doc.meta_data is None:
-                    continue
-
-                # Check if all filter criteria match
-                match = True
-                for key, value in filters.items():
-                    if key not in doc.meta_data or doc.meta_data[key] != value:
-                        match = False
-                        break
-
-                if match:
-                    filtered_results.append(doc)
-
-            search_results = filtered_results
-
-        if self.reranker and search_results:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
-        log_info(f"Found {len(search_results)} documents")
-        return search_results
-
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -638,7 +559,9 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
+    def hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -667,7 +590,9 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+    def keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return []
