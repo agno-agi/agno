@@ -94,20 +94,39 @@ async def query_with_citations(model: Gemini, query: str, store_name: str):
     run = agent.run(query)
     print(f"\nAnswer:\n{run.content}")
 
-    # Extract and display citations
-    citations = model.extract_file_search_citations(run)
+    # Extract and display citations directly from run.citations
+    sources = []
+    chunks = []
 
-    if citations["sources"]:
+    if run.citations and run.citations.raw:
+        grounding_metadata = run.citations.raw.get("grounding_metadata", {})
+        grounding_chunks = grounding_metadata.get("grounding_chunks", []) or []
+
+        sources_set = set()
+        for chunk in grounding_chunks:
+            if isinstance(chunk, dict):
+                retrieved_context = chunk.get("retrieved_context")
+                if isinstance(retrieved_context, dict):
+                    title = retrieved_context.get("title", "Unknown")
+                    sources_set.add(title)
+                    chunks.append({
+                        "title": title,
+                        "uri": retrieved_context.get("uri", ""),
+                        "text": retrieved_context.get("text", ""),
+                        "type": "file_search"
+                    })
+
+        sources = sorted(list(sources_set))
+
+    if sources:
         print("\n" + "─" * 80)
-        print(f"Sources ({len(citations['sources'])} documents):")
-        for i, source in enumerate(citations["sources"], 1):
+        print(f"Sources ({len(sources)} documents):")
+        for i, source in enumerate(sources, 1):
             print(f"  [{i}] {source}")
 
-        if citations["grounding_chunks"]:
-            print(f"\nCitations ({len(citations['grounding_chunks'])} chunks):")
-            for i, chunk in enumerate(
-                citations["grounding_chunks"][:3], 1
-            ):  # Show first 3
+        if chunks:
+            print(f"\nCitations ({len(chunks)} chunks):")
+            for i, chunk in enumerate(chunks[:3], 1):  # Show first 3
                 print(f"\n  [{i}] {chunk['title']}")
                 if chunk.get("text"):
                     text = chunk["text"]
@@ -117,7 +136,7 @@ async def query_with_citations(model: Gemini, query: str, store_name: str):
     else:
         print("\nNo citations found")
 
-    return run, citations
+    return run, {"sources": sources, "grounding_chunks": chunks}
 
 
 async def main():

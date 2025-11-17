@@ -39,36 +39,40 @@ print(f"\nResponse:\n{run.content}")
 # Extract and display citations
 print("\n" + "=" * 50)
 if run.citations and run.citations.raw:
-    # Use our custom citation formatter
-    citations_dict = {
-        "sources": [],
-        "grounding_chunks": [],
-        "raw_metadata": run.citations.raw.get("grounding_metadata", {}),
-    }
+    print("Citations:")
+    print("=" * 50)
 
-    # Extract from grounding metadata
+    # Access grounding metadata directly from citations
     grounding_metadata = run.citations.raw.get("grounding_metadata", {})
     chunks = grounding_metadata.get("grounding_chunks", []) or []
+
+    sources = set()
     for chunk in chunks:
         if isinstance(chunk, dict):
             retrieved_context = chunk.get("retrieved_context")
             if isinstance(retrieved_context, dict):
                 title = retrieved_context.get("title", "Unknown")
-                citations_dict["sources"].append(title)
-                citations_dict["grounding_chunks"].append(
-                    {
-                        "title": title,
-                        "uri": retrieved_context.get("uri", ""),
-                        "text": retrieved_context.get("text", ""),
-                        "type": "file_search",
-                    }
-                )
+                sources.add(title)
 
-    if citations_dict["sources"]:
-        formatted_citations = model.format_citations(
-            citations_dict, include_text=True
-        )
-        print(formatted_citations)
+    if sources:
+        print(f"\nSources ({len(sources)}):")
+        for i, source in enumerate(sorted(sources), 1):
+            print(f"  [{i}] {source}")
+
+        print(f"\nDetailed Citations ({len(chunks)}):")
+        for i, chunk in enumerate(chunks, 1):
+            if isinstance(chunk, dict):
+                retrieved_context = chunk.get("retrieved_context")
+                if isinstance(retrieved_context, dict):
+                    print(f"\n  [{i}] {retrieved_context.get('title', 'Unknown')}")
+                    if retrieved_context.get("uri"):
+                        print(f"      URI: {retrieved_context['uri']}")
+                    print(f"      Type: file_search")
+                    if retrieved_context.get("text"):
+                        text = retrieved_context["text"]
+                        if len(text) > 200:
+                            text = text[:200] + "..."
+                        print(f"      Text: {text}")
     else:
         print("Citations metadata found but no File Search sources detected")
 else:
