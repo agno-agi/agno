@@ -60,3 +60,15 @@ class UserStatsSchema(BaseModel):
             total_memories=user_stats_dict["total_memories"],
             last_memory_updated_at=datetime.fromtimestamp(updated_at, tz=timezone.utc) if updated_at else None,
         )
+
+
+class OptimizeMemoriesResponse(BaseModel):
+    """Schema for memory optimization response"""
+
+    optimized_memories: List[UserMemorySchema] = Field(..., description="List of optimized memory objects")
+    memories_before: int = Field(..., description="Number of memories before optimization", ge=0)
+    memories_after: int = Field(..., description="Number of memories after optimization", ge=0)
+    tokens_before: int = Field(..., description="Token count before optimization", ge=0)
+    tokens_after: int = Field(..., description="Token count after optimization", ge=0)
+    tokens_saved: int = Field(..., description="Number of tokens saved through optimization", ge=0)
+    reduction_percentage: float = Field(..., description="Percentage of token reduction achieved", ge=0.0, le=100.0)
