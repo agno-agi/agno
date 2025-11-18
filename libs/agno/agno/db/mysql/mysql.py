@@ -338,17 +338,17 @@ class MySQLDb(BaseDb):
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         with self.Session() as sess:
-            stmt = select(table).order_by(table.c.version.desc()).limit(1)
+            stmt = select(table).order_by(table.c.version.desc()).limit(1)  # type: ignore
             result = sess.execute(stmt).fetchone()
             if result is None:
-                return None
+                return "v2.0.0"
             return result[0]
 
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            stmt = mysql.insert(table).values(version=version, created_at=int(time.time()))
+            stmt = mysql.insert(table).values(version=version, created_at=int(time.time()))  # type: ignore
             sess.execute(stmt)
 
     # -- Session methods --

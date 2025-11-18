@@ -170,7 +170,7 @@ class SurrealDb(BaseDb):
     def get_latest_schema_version(self) -> str:
         """Get the latest version of the database schema."""
         pass
-    
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         pass

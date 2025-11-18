@@ -129,7 +129,7 @@ def _migrate_postgres(db: Any) -> None:
                 text(
                     f"""
                     ALTER TABLE {db_schema}.{memory_table_name}
-                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    ALTER COLUMN created_at SET NOT NULL
                     """
                 ),
             )
@@ -256,7 +256,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb) -> None:
                 text(
                     f"""
                     ALTER TABLE {db_schema}.{memory_table_name}
-                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    ALTER COLUMN created_at SET NOT NULL
                     """
                 ),
             )

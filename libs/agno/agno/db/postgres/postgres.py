@@ -330,14 +330,14 @@ class PostgresDb(BaseDb):
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
-            return None
+            return "v2.0.0"
         with self.Session() as sess:
             stmt = select(table).order_by(table.c.version.desc()).limit(1)
             result = sess.execute(stmt).fetchone()
             if result is None:
-                return None
+                return "v2.0.0"
             version_dict = dict(result._mapping)
-            return version_dict.get("version")
+            return version_dict.get("version") or "v2.0.0"
 
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""

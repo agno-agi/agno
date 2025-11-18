@@ -324,21 +324,21 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def get_latest_schema_version(self) -> str:
         """Get the latest version of the database schema."""
-        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        table = await self._get_table(table_type="versions")
         if table is None:
-            return None
+            return "v2.0.0"
         async with self.async_session_factory() as sess:
             stmt = select(table).order_by(table.c.version.desc()).limit(1)
             result = await sess.execute(stmt)
             row = result.fetchone()
             if row is None:
-                return None
+                return "v2.0.0"
             version_dict = dict(row._mapping)
-            return version_dict.get("version")
+            return version_dict.get("version") or "v2.0.0"
 
     async def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
-        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        table = await self._get_table(table_type="versions")
         if table is None:
             return
         async with self.async_session_factory() as sess, sess.begin():

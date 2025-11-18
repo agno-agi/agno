@@ -12,15 +12,12 @@ class MigrationManager:
     """Manager class to handle database migrations"""
 
     available_versions: list[tuple[str, Version]] = [
-        ("v2.0.0", packaging_version.parse("2.0.0")),
-        ("v2.3.0", packaging_version.parse("2.3.0")),
+        ("v2_0_0", packaging_version.parse("2.0.0")),
+        ("v2_3_0", packaging_version.parse("2.3.0")),
     ]
 
     def __init__(self, db: BaseDb):
         self.db = db
-
-    def get_current_version(self) -> str:
-        return self.db.get_latest_schema_version()
 
     def up(self, target_version: Optional[str] = None):
         """Handle executing an up migration.
@@ -70,7 +67,7 @@ class MigrationManager:
         Args:
             version: The version to migrate to, e.g. "v3.0.0"
         """
-        migration_module = importlib.import_module(f"agno.db.migrations.versions.{version}.py")
+        migration_module = importlib.import_module(f"agno.db.migrations.versions.{version}")
 
         try:
             migration_module.up(self.db)
