@@ -268,7 +268,7 @@ Guidelines:
                     user_id=session_from_db.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
-                    session_state=run_context.session_state,
+                    run_context=run_context,
                     stream_events=True,
                     websocket_handler=websocket_handler,
                 ):
@@ -286,7 +286,7 @@ Guidelines:
                     user_id=session_from_db.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
-                    session_state=run_context.session_state,
+                    run_context=run_context,
                 )
 
                 if isinstance(result.content, str):

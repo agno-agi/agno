@@ -9,7 +9,7 @@ from agno.db.mongo.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
-    create_collection_indexes,
+    create_collection_indexes_async,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
@@ -99,6 +99,33 @@ class AsyncMongoDb(AsyncBaseDb):
         self._database: Optional[AsyncIOMotorDatabase] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
+    async def table_exists(self, table_name: str) -> bool:
+        """Check if a collection with the given name exists in the MongoDB database.
+
+        Args:
+            table_name: Name of the collection to check
+
+        Returns:
+            bool: True if the collection exists in the database, False otherwise
+        """
+        collection_names = await self.database.list_collection_names()
+        return table_name in collection_names
+
+    async def _create_all_tables(self):
+        """Create all configured MongoDB collections if they don't exist."""
+        collections_to_create = [
+            ("sessions", self.session_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("culture", self.culture_table_name),
+        ]
+
+        for collection_type, collection_name in collections_to_create:
+            if collection_name and not await self.table_exists(collection_name):
+                await self._get_collection(collection_type, create_collection_if_not_found=True)
+
     def _ensure_client(self) -> AsyncIOMotorClient:
         """
         Ensure the Motor client is valid for the current event loop.
@@ -140,9 +167,9 @@ class AsyncMongoDb(AsyncBaseDb):
 
             self._event_loop = current_loop
             self._database = None  # Reset database reference
-            # Clear collection caches when switching event loops
+            # Clear collection caches and initialization flags when switching event loops
             for attr in list(vars(self).keys()):
-                if attr.endswith("_collection"):
+                if attr.endswith("_collection") or attr.endswith("_initialized"):
                     delattr(self, attr)
 
         return self._client  # type: ignore
@@ -280,9 +307,8 @@ class AsyncMongoDb(AsyncBaseDb):
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
                     return None
-                # Note: Motor doesn't have sync create_index, so we use it as-is
-                # The indexes are created in the background
-                create_collection_indexes(collection, collection_type)  # type: ignore
+                # Create indexes asynchronously for Motor collections
+                await create_collection_indexes_async(collection, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
                 log_debug(f"Initialized collection '{collection_name}'")
             else:
