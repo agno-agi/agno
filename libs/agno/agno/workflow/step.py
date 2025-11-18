@@ -272,17 +272,18 @@ class Step:
                                         elif isinstance(chunk.content, BaseModel):
                                             content = chunk.content  # type: ignore[assignment]
                                         else:
-                                            # Safeguard but should never happen
+                                            # Case when parse_response is False and the content is a dict
                                             content += str(chunk.content)
                                 elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                     # This is the final response from the agent/team
                                     content = chunk.content  # type: ignore[assignment]
-                                else:
-                                    # Non Agent/Team data structure that was yielded
-                                    content += str(chunk)
                                 # If the chunk is a StepOutput, use it as the final response
-                                if isinstance(chunk, StepOutput):
+                                elif isinstance(chunk, StepOutput):
                                     final_response = chunk
+                                    break
+                                # Non Agent/Team data structure that was yielded
+                                else:
+                                    content += str(chunk)
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -536,12 +537,12 @@ class Step:
                                         )
                                         yield enriched_event  # type: ignore[misc]
                                 elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                    content = event.content  # type: ignore[assignment]
-                                else:
-                                    content += str(event)
-                                if isinstance(event, StepOutput):
+                                    content = event.content  # type: ignore[assignment] 
+                                elif isinstance(event, StepOutput):
                                     final_response = event
                                     break
+                                else:
+                                    content += str(event)
 
                             # Merge session_state changes back
                             if run_context is None and session_state is not None:
@@ -758,10 +759,12 @@ class Step:
                                                 content = str(chunk.content)
                                     elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                         content = chunk.content  # type: ignore[assignment]
+                                    elif isinstance(chunk, StepOutput):
+                                        final_response = chunk
+                                        break
                                     else:
                                         content += str(chunk)
-                                    if isinstance(chunk, StepOutput):
-                                        final_response = chunk
+
                             else:
                                 if _is_async_generator_function(self.active_executor):
                                     iterator = await self._acall_custom_function(
@@ -784,10 +787,11 @@ class Step:
                                                     content = str(chunk.content)
                                         elif isinstance(chunk, (RunOutput, TeamRunOutput)):
                                             content = chunk.content  # type: ignore[assignment]
+                                        elif isinstance(chunk, StepOutput):
+                                            final_response = chunk
+                                            break
                                         else:
                                             content += str(chunk)
-                                        if isinstance(chunk, StepOutput):
-                                            final_response = chunk
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -1003,11 +1007,11 @@ class Step:
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
                                 content = event.content  # type: ignore[assignment]
-                            else:
-                                content += str(event)
-                            if isinstance(event, StepOutput):
+                            elif isinstance(event, StepOutput):
                                 final_response = event
                                 break
+                            else:
+                                content += str(event)
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif _is_async_callable(self.active_executor):
@@ -1054,11 +1058,14 @@ class Step:
                                     yield enriched_event  # type: ignore[misc]
                             elif isinstance(event, (RunOutput, TeamRunOutput)):
                                 content = event.content  # type: ignore[assignment]
-                            else:
-                                content += str(event)
-                            if isinstance(event, StepOutput):
+                            elif isinstance(event, StepOutput):
                                 final_response = event
                                 break
+                            else:
+                                if isinstance(content, str):
+                                    content += str(event)
+                                else:
+                                    content = str(event)
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
