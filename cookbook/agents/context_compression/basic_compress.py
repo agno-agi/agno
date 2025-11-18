@@ -18,23 +18,21 @@ from agno.utils.log import log_info
 # Create agent with custom context manager
 agent = Agent(
     name="Competitive Intelligence Agent",
-    # model=AwsBedrock(
-    #     id="arn:aws:bedrock:us-east-1:386435111151:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0"
-    # ),
+    model=AwsBedrock(
+        id="us.anthropic.claude-sonnet-4-20250514-v1:0"
+    ),
     # model="google:gemini-2.5-pro",
     # model=Gemini(id="gemini-2.5-pro", vertexai=True),
     # model=DeepSeek(id="deepseek-reasoner"),
-    model="openai:gpt-4o",
+    # model="openai:gpt-4o",
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     compress_tool_calls=True,
     markdown=True,
     db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_.db"),
-    session_id="competitive_intelligence_agent",
     add_history_to_context=True,
     num_history_runs=6,
-    instructions="Use the search tools and alwayd for the latest information and data.",
-    debug_mode=True,
+    instructions="Use the search tools and always use the latest information and data.",
 )
 
 

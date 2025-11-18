@@ -31,7 +31,7 @@ class Claude(AnthropicClaude):
     For more information, see: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic.html
     """
 
-    id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    id: str = "anthropic.claude-sonnet-4-20250514-v1:0"
     name: str = "AwsBedrockAnthropicClaude"
     provider: str = "AwsBedrock"
 

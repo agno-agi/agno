@@ -1293,7 +1293,7 @@ class Model(ABC):
                     context_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
-                    log_debug(f"🔍 Post-compression state:")
+                    log_debug("🔍 Post-compression state:")
                     for idx, result in enumerate(function_call_results):
                         has_comp = result.compressed_content is not None
                         content_len = len(str(result.content)) if result.content else 0
