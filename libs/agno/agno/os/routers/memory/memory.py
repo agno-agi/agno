@@ -8,6 +8,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
+from agno.models.utils import get_model
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
@@ -48,44 +49,6 @@ def get_memory_router(
         },
     )
     return attach_routes(router=router, dbs=dbs)
-
-
-def create_model_from_provider(provider: str, model_id: str):
-    """Create a model instance based on provider and model_id.
-
-    Args:
-        provider: Model provider name (openai, anthropic, gemini, groq)
-        model_id: Specific model ID to use
-
-    Returns:
-        Model instance for the specified provider
-
-    Raises:
-        HTTPException: If provider is not supported
-    """
-    provider = provider.lower()
-
-    if provider == "openai":
-        from agno.models.openai import OpenAIChat
-
-        return OpenAIChat(id=model_id)
-    elif provider == "anthropic":
-        from agno.models.anthropic import Claude
-
-        return Claude(id=model_id)
-    elif provider == "gemini" or provider == "google":
-        from agno.models.google import Gemini
-
-        return Gemini(id=model_id)
-    elif provider == "groq":
-        from agno.models.groq import Groq
-
-        return Groq(id=model_id)
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported model provider: {provider}. Supported providers: openai, anthropic, gemini, groq",
-        )
 
 
 def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
@@ -543,7 +506,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Optimize all memories for a given user using the default summarize strategy. "
             "This operation combines all memories into a single comprehensive summary, "
             "achieving maximum token reduction while preserving all key information. "
-            "To use a custom model, specify BOTH model_id and model_provider together. "
+            "To use a custom model, specify the model parameter in 'provider:model_id' format "
+            "(e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022'). "
             "If not specified, uses MemoryManager's default model (gpt-4o). "
             "Set apply=false to preview optimization results without saving to database."
         ),
@@ -573,7 +537,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 },
             },
             400: {
-                "description": "Bad request - User ID is required, unsupported model provider, or model_id/model_provider must be provided together",
+                "description": "Bad request - User ID is required or invalid model string format",
                 "model": BadRequestResponse,
             },
             404: {"description": "No memories found for user", "model": NotFoundResponse},
@@ -582,12 +546,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def optimize_memories(
         user_id: str = Query(..., description="User ID to optimize memories for"),
-        model_id: Optional[str] = Query(
+        model: Optional[str] = Query(
             default=None,
-            description="Model ID to use for optimization (e.g., 'gpt-4o-mini', 'claude-3-5-sonnet-20241022', 'gemini-2.0-flash')",
-        ),
-        model_provider: Optional[str] = Query(
-            default=None, description="Model provider: 'openai', 'anthropic', 'gemini', 'groq'"
+            description="Model to use for optimization in format 'provider:model_id' (e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022', 'google:gemini-2.0-flash-exp'). If not specified, uses MemoryManager's default model (gpt-4o).",
         ),
         apply: bool = Query(
             default=True,
@@ -604,20 +565,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Get database instance
             db = await get_db(dbs, db_id, table)
 
-            # Validate model parameters - both must be provided together or both omitted
-            if (model_id and not model_provider) or (model_provider and not model_id):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Both model_id and model_provider must be provided together, or both omitted. "
-                    "To use a custom model, specify both parameters. To use the default model, omit both.",
-                )
-
             # Create memory manager with optional model
-            if model_id and model_provider:
-                model = create_model_from_provider(model_provider, model_id)
-                memory_manager = MemoryManager(model=model, db=db)
+            if model:
+                try:
+                    model_instance = get_model(model)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+                memory_manager = MemoryManager(model=model_instance, db=db)
             else:
-                # No model specified - use MemoryManager's default via get_model()
+                # No model specified - use MemoryManager's default
                 memory_manager = MemoryManager(db=db)
 
             # Get current memories to count tokens before optimization
