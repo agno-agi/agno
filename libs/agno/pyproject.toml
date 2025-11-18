@@ -33,9 +33,11 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
+  "grpcio>=1.62.0",
   "h11>=0.16.0",
   "httpx",
   "packaging",
+  "protobuf>=4.25.0,<5.0.0",
   "pydantic-settings",
   "pydantic",
   "python-dotenv",
