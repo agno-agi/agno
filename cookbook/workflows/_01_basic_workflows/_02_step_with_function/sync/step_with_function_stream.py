@@ -73,7 +73,7 @@ def custom_content_planning_function(
 
     try:
         response_iterator = content_planner.run(
-            planning_prompt, stream=True, stream_intermediate_steps=True
+            planning_prompt, stream=True, stream_events=True
         )
         for event in response_iterator:
             yield event
@@ -140,5 +140,5 @@ if __name__ == "__main__":
         input="AI trends in 2024",
         markdown=True,
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     )

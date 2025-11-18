@@ -1,6 +1,6 @@
 import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.vectordb.clickhouse.index import HNSW
 
@@ -11,9 +11,10 @@ try:
 except ImportError:
     raise ImportError("`clickhouse-connect` not installed. Use `pip install clickhouse-connect` to install it")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -23,6 +24,8 @@ class Clickhouse(VectorDb):
         self,
         table_name: str,
         host: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         username: Optional[str] = None,
         password: str = "",
         port: int = 0,
@@ -41,9 +44,11 @@ class Clickhouse(VectorDb):
         self.password = password
         self.port = port
         self.dsn = dsn
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.compress = compress
         self.database_name = database_name
-
         if not client:
             client = clickhouse_connect.get_client(
                 host=self.host,
@@ -444,7 +449,11 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        if filters is not None:
+            log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -498,10 +507,13 @@ class Clickhouse(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search for documents asynchronously."""
         async_client = await self._ensure_async_client()
+
+        if filters is not None:
+            log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -817,3 +829,7 @@ class Clickhouse(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # Clickhouse doesn't use SearchType enum

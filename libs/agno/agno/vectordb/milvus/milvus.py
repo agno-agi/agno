@@ -9,10 +9,11 @@ try:
 except ImportError:
     raise ImportError("The `pymilvus` package is not installed. Please install it via `pip install pymilvus`.")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -28,6 +29,9 @@ class Milvus(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         uri: str = "http://localhost:19530",
@@ -42,6 +46,8 @@ class Milvus(VectorDb):
 
         Args:
             collection (str): Name of the Milvus collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             embedder (Embedder): Embedder to use for embedding documents.
             distance (Distance): Distance metric to use for vector similarity.
             uri (Optional[str]): URI of the Milvus server.
@@ -63,6 +69,20 @@ class Milvus(VectorDb):
             reranker (Optional[Reranker]): Reranker to use for hybrid search results
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
         """
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{uri or 'milvus'}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self.collection: str = collection
 
         if embedder is None:
@@ -656,7 +676,9 @@ class Milvus(VectorDb):
         """
         return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Search for documents matching the query.
 
@@ -668,6 +690,9 @@ class Milvus(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit)
 
@@ -700,12 +725,20 @@ class Milvus(VectorDb):
                 )
             )
 
+        # Apply reranker if available
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+            search_results = search_results[:limit]
+
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
             return await self.async_hybrid_search(query, limit, filters)
 
@@ -741,7 +774,9 @@ class Milvus(VectorDb):
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
-    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a hybrid search combining dense and sparse vector similarity.
 
@@ -833,7 +868,7 @@ class Milvus(VectorDb):
             return []
 
     async def async_hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """
         Perform an asynchronous hybrid search combining dense and sparse vector similarity.
@@ -1141,3 +1176,7 @@ class Milvus(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]

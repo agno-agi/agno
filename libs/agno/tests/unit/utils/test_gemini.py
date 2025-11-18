@@ -514,3 +514,175 @@ def test_prepare_response_schema_with_dict_field():
     # Should be converted due to additionalProperties
     assert result != ModelWithDict
     assert hasattr(result, "type")  # Should be a Schema object
+
+
+def test_convert_schema_string_with_title():
+    """Test converting a string schema with title"""
+    schema_dict = {"type": "string", "title": "Name", "description": "A string field"}
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "STRING"
+    assert result.title == "Name"
+    assert result.description == "A string field"
+
+
+def test_convert_schema_object_with_title():
+    """Test converting an object schema with title"""
+    schema_dict = {
+        "type": "object",
+        "title": "Person",
+        "description": "A person object",
+        "properties": {
+            "name": {"type": "string", "description": "Name field"},
+            "age": {"type": "integer", "description": "Age field"},
+        },
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert result.title == "Person"
+    assert result.description == "A person object"
+
+
+def test_convert_schema_object_properties_with_titles():
+    """Test converting an object schema where properties have titles"""
+    schema_dict = {
+        "type": "object",
+        "properties": {
+            "key": {"type": "string", "title": "Key", "description": "The key field"},
+            "value": {
+                "anyOf": [{"type": "string"}, {"type": "integer"}],
+                "title": "Value",
+                "description": "The value field",
+            },
+        },
+        "required": ["key", "value"],
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "key" in result.properties
+    assert "value" in result.properties
+    assert result.properties["key"].title == "Key"
+    assert result.properties["value"].title == "Value"
+
+
+def test_convert_schema_enum_with_title():
+    """Test converting an enum schema with title"""
+    schema_dict = {
+        "type": "string",
+        "title": "Status",
+        "enum": ["active", "inactive", "pending"],
+        "description": "Status enum",
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "STRING"
+    assert result.title == "Status"
+    assert result.enum == ["active", "inactive", "pending"]
+
+
+def test_convert_schema_array_with_title():
+    """Test converting an array schema with title"""
+    schema_dict = {
+        "type": "array",
+        "title": "Items",
+        "description": "An array of strings",
+        "items": {"type": "string", "title": "Item"},
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "ARRAY"
+    assert result.title == "Items"
+    assert result.items is not None
+    assert result.items.type == "STRING"
+    assert result.items.title == "Item"
+
+
+def test_convert_schema_integer_with_title():
+    """Test converting an integer schema with title"""
+    schema_dict = {"type": "integer", "title": "Age", "description": "An integer field", "default": 42}
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "INTEGER"
+    assert result.title == "Age"
+    assert result.description == "An integer field"
+    assert result.default == 42
+
+
+def test_convert_schema_number_with_title():
+    """Test converting a number schema with title"""
+    schema_dict = {
+        "type": "number",
+        "title": "Score",
+        "description": "A number field",
+        "minimum": 0,
+        "maximum": 100,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "NUMBER"
+    assert result.title == "Score"
+    assert result.minimum == 0
+    assert result.maximum == 100
+
+
+def test_convert_schema_anyof_with_title():
+    """Test converting a schema with anyOf and title"""
+    schema_dict = {
+        "anyOf": [{"type": "string"}, {"type": "integer"}],
+        "title": "StringOrInteger",
+        "description": "String or integer",
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.title == "StringOrInteger"
+    assert result.description == "String or integer"
+    assert result.any_of is not None
+    assert len(result.any_of) == 2
+
+
+def test_convert_schema_empty_object_with_title():
+    """Test converting an empty object schema with title"""
+    schema_dict = {"type": "object", "title": "EmptyObject", "description": "Empty object"}
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert result.title == "EmptyObject"
+    assert result.description == "Empty object"
+
+
+def test_convert_schema_property_without_type_has_title():
+    """Test that properties without type but with title still get title preserved"""
+    schema_dict = {
+        "type": "object",
+        "properties": {
+            "key": {"type": "string", "title": "Key"},
+            "value": {"title": "Value", "description": "Value without type"},
+        },
+        "required": ["key", "value"],
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "OBJECT"
+    assert "key" in result.properties
+    assert "value" in result.properties
+    # Value property should have title even though it doesn't have a type
+    assert result.properties["value"].title == "Value"

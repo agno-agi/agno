@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from upstash_vector import Index, Vector
@@ -9,10 +9,11 @@ except ImportError:
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -32,6 +33,8 @@ class UpstashVectorDb(VectorDb):
         embedder (Optional[Embedder], optional): The embedder to use. If None, uses Upstash hosted embedding models.
         namespace (Optional[str], optional): The namespace to use. Defaults to DEFAULT_NAMESPACE.
         reranker (Optional[Reranker], optional): The reranker to use. Defaults to None.
+        name (Optional[str], optional): The name of the vector database. Defaults to None.
+        description (Optional[str], optional): The description of the vector database. Defaults to None.
         **kwargs: Additional keyword arguments.
     """
 
@@ -45,8 +48,28 @@ class UpstashVectorDb(VectorDb):
         embedder: Optional[Embedder] = None,
         namespace: Optional[str] = DEFAULT_NAMESPACE,
         reranker: Optional[Reranker] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+        # Validate required parameters
+        if not url:
+            raise ValueError("URL must be provided.")
+        if not token:
+            raise ValueError("Token must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            namespace_identifier = namespace or DEFAULT_NAMESPACE
+            seed = f"{url}#{namespace_identifier}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self._index: Optional[Index] = None
         self.url: str = url
         self.token: str = token
@@ -56,7 +79,6 @@ class UpstashVectorDb(VectorDb):
         self.namespace: str = namespace if namespace is not None else DEFAULT_NAMESPACE
         self.kwargs: Dict[str, Any] = kwargs
         self.use_upstash_embeddings: bool = embedder is None
-
         if embedder is None:
             logger.warning(
                 "You have not provided an embedder, using Upstash hosted embedding models. "
@@ -303,7 +325,7 @@ class UpstashVectorDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents in the index.
@@ -316,7 +338,9 @@ class UpstashVectorDb(VectorDb):
             List[Document]: List of matching documents.
         """
         _namespace = self.namespace if namespace is None else namespace
-
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
+            filters = None
         filter_str = "" if filters is None else str(filters)
 
         if not self.use_upstash_embeddings and self.embedder is not None:
@@ -602,7 +626,7 @@ class UpstashVectorDb(VectorDb):
         self.index.upsert(vectors, namespace=_namespace)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
@@ -688,3 +712,7 @@ class UpstashVectorDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # UpstashVectorDb doesn't use SearchType enum

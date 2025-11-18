@@ -13,6 +13,7 @@ from agno.db.dynamo.utils import (
     build_topic_filter_expression,
     calculate_date_metrics,
     create_table_if_not_exists,
+    deserialize_cultural_knowledge_from_db,
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
@@ -23,10 +24,12 @@ from agno.db.dynamo.utils import (
     get_dates_to_calculate_metrics_for,
     merge_with_existing_session,
     prepare_session_data,
+    serialize_cultural_knowledge_for_db,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -52,6 +55,7 @@ class DynamoDb(BaseDb):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -67,6 +71,7 @@ class DynamoDb(BaseDb):
             aws_access_key_id: AWS access key ID.
             aws_secret_access_key: AWS secret access key.
             session_table: The name of the session table.
+            culture_table: The name of the culture table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
@@ -80,6 +85,7 @@ class DynamoDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -106,27 +112,8 @@ class DynamoDb(BaseDb):
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
 
-    def _create_tables(self):
-        tables_to_create = [
-            (self.session_table_name, "sessions"),
-            (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
-            (self.eval_table_name, "evals"),
-            (self.knowledge_table_name, "knowledge_sources"),
-        ]
-
-        for table_name, table_type in tables_to_create:
-            if table_name:
-                try:
-                    schema = get_table_schema_definition(table_type)
-                    schema["TableName"] = table_name
-                    create_table_if_not_exists(self.client, table_name, schema)
-
-                except Exception as e:
-                    log_error(f"Failed to create table {table_name}: {e}")
-
-    def _table_exists(self, table_name: str) -> bool:
-        """Check if a DynamoDB table with the given name exists.
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a DynamoDB table exists.
 
         Args:
             table_name: The name of the table to check
@@ -139,9 +126,23 @@ class DynamoDb(BaseDb):
             return True
         except self.client.exceptions.ResourceNotFoundException:
             return False
-        except Exception as e:
-            log_error(f"Error checking if table {table_name} exists: {e}")
-            return False
+
+    def _create_all_tables(self):
+        """Create all configured DynamoDB tables if they don't exist."""
+        tables_to_create = [
+            ("sessions", self.session_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("culture", self.culture_table_name),
+        ]
+
+        for table_type, table_name in tables_to_create:
+            if not self.table_exists(table_name):
+                schema = get_table_schema_definition(table_type)
+                schema["TableName"] = table_name
+                create_table_if_not_exists(self.client, table_name, schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
@@ -168,11 +169,13 @@ class DynamoDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
+        elif table_type == "culture":
+            table_name = self.culture_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
         # Check if table exists, create if it doesn't
-        if not self._table_exists(table_name) and create_table_if_not_found:
+        if not self.table_exists(table_name) and create_table_if_not_found:
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
@@ -269,8 +272,6 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if session.get("session_type") != session_type.value:
-                return None
             if user_id and session.get("user_id") != user_id:
                 return None
 
@@ -524,7 +525,7 @@ class DynamoDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -962,7 +963,7 @@ class DynamoDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1884,4 +1885,158 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to rename eval run {eval_run_id}: {e}")
+            raise e
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database."""
+        try:
+            table_name = self._get_table("culture")
+            response = self.client.scan(TableName=table_name, ProjectionExpression="id")
+
+            with self.client.batch_writer(table_name) as batch:
+                for item in response.get("Items", []):
+                    batch.delete_item(Key={"id": item["id"]})
+        except Exception as e:
+            log_error(f"Failed to clear cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from the database."""
+        try:
+            table_name = self._get_table("culture")
+            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+        except Exception as e:
+            log_error(f"Failed to delete cultural knowledge {id}: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from the database."""
+        try:
+            table_name = self._get_table("culture")
+            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
+
+            item = response.get("Item")
+            if not item:
+                return None
+
+            db_row = deserialize_from_dynamodb_item(item)
+            if not deserialize:
+                return db_row
+
+            return deserialize_cultural_knowledge_from_db(db_row)
+        except Exception as e:
+            log_error(f"Failed to get cultural knowledge {id}: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from the database."""
+        try:
+            table_name = self._get_table("culture")
+
+            # Build filter expression
+            filter_expressions = []
+            expression_values = {}
+
+            if name:
+                filter_expressions.append("#name = :name")
+                expression_values[":name"] = {"S": name}
+            if agent_id:
+                filter_expressions.append("agent_id = :agent_id")
+                expression_values[":agent_id"] = {"S": agent_id}
+            if team_id:
+                filter_expressions.append("team_id = :team_id")
+                expression_values[":team_id"] = {"S": team_id}
+
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            if filter_expressions:
+                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
+                scan_kwargs["ExpressionAttributeValues"] = expression_values
+                if name:
+                    scan_kwargs["ExpressionAttributeNames"] = {"#name": "name"}
+
+            # Execute scan
+            response = self.client.scan(**scan_kwargs)
+            items = response.get("Items", [])
+
+            # Continue scanning if there's more data
+            while "LastEvaluatedKey" in response:
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+            # Deserialize items from DynamoDB format
+            db_rows = [deserialize_from_dynamodb_item(item) for item in items]
+
+            # Apply sorting
+            if sort_by:
+                reverse = sort_order == "desc" if sort_order else False
+                db_rows.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
+
+            # Apply pagination
+            total_count = len(db_rows)
+            if limit and page:
+                start = (page - 1) * limit
+                db_rows = db_rows[start : start + limit]
+            elif limit:
+                db_rows = db_rows[:limit]
+
+            if not deserialize:
+                return db_rows, total_count
+
+            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+        except Exception as e:
+            log_error(f"Failed to get all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into the database."""
+        try:
+            from uuid import uuid4
+
+            table_name = self._get_table("culture", create_table_if_not_found=True)
+
+            if not cultural_knowledge.id:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            item_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Convert to DynamoDB format
+            item = serialize_to_dynamo_item(item_dict)
+            self.client.put_item(TableName=table_name, Item=item)
+
+            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
+
+        except Exception as e:
+            log_error(f"Failed to upsert cultural knowledge: {e}")
             raise e

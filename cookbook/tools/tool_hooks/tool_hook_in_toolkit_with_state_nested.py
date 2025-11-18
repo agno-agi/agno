@@ -4,6 +4,7 @@ import json
 from typing import Any, Callable, Dict
 
 from agno.agent import Agent
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -29,11 +30,15 @@ class CustomerDBTools(Toolkit):
 
 # When used as a tool hook, this function will receive the contextual Agent, function_name, etc as parameters
 def grab_customer_profile_hook(
-    session_state: dict,
+    run_context: RunContext,
     function_name: str,
     function_call: Callable,
     arguments: Dict[str, Any],
 ):
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    session_state = run_context.session_state
     cust_id = arguments.get("customer")
     if cust_id not in session_state["customer_profiles"]:  # type: ignore
         raise ValueError(f"Customer profile for {cust_id} not found")
@@ -69,4 +74,4 @@ agent = Agent(
 agent.print_response("I am customer 456, please retrieve my profile.")
 
 # This should fail
-agent.print_response("I am customer 789, please retrieve my profile.")
+# agent.print_response("I am customer 789, please retrieve my profile.")
