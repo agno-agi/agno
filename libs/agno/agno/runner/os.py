@@ -45,6 +45,7 @@ class AgentOSRunner(BaseRunner):
 
         self.api_key: Optional[str] = api_key or getenv("AGNO_API_KEY")
         self.timeout: float = timeout
+        
 
     def _get_headers(self) -> Dict[str, str]:
         """Get HTTP headers for remote requests."""

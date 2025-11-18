@@ -150,4 +150,4 @@ if __name__ == "__main__":
     """
     Run your AgentOS.
     """
-    agent_os.serve(app="02_agent_os_gateway:app", reload=True)
+    agent_os.serve(app="02_agent_os_gateway:app", reload=True, port=7777)
