@@ -128,6 +128,7 @@ jobs:
         working-directory: .
         env:
           AGNO_TELEMETRY: false
+          PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit

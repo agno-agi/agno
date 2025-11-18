@@ -43,8 +43,6 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install firecrawl-py==3.4.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install chonkie[st] chonkie
 VIRTUAL_ENV=${VENV_DIR} uv pip install pylance
 VIRTUAL_ENV=${VENV_DIR} uv pip install psycopg-binary psycopg psycopg2
-export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-
 
 print_heading "Installing agno-os"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
