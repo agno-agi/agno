@@ -145,6 +145,7 @@ def test_agent_stream_with_yield_run_output():
     assert "StepOutputEvent" in event_types
     assert "RunContentEvent" in event_types
 
+
 def test_agent_stream_with_yield_step_output():
     def test_step_one_executor(step_input: StepInput) -> StepOutput:
         agent = Agent(

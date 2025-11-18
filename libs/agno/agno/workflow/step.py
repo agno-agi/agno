@@ -537,7 +537,7 @@ class Step:
                                         )
                                         yield enriched_event  # type: ignore[misc]
                                 elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                    content = event.content  # type: ignore[assignment] 
+                                    content = event.content  # type: ignore[assignment]
                                 elif isinstance(event, StepOutput):
                                     final_response = event
                                     break
