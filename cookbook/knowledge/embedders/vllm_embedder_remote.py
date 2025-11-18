@@ -19,12 +19,11 @@ def main():
     test_text = "The quick brown fox jumps over the lazy dog."
     try:
         embeddings = embedder.get_embedding(test_text)
-        print(f"   Text: {test_text}")
-        print(f"   Embedding dimensions: {len(embeddings)}")
-        print(f"   First 5 values: {embeddings[:5]}")
+        print(f"Text: {test_text}")
+        print(f"Embedding dimensions: {len(embeddings)}")
+        print(f"First 5 values: {embeddings[:5]}")
     except Exception as e:
-        print(f"   ✗ Error connecting to remote server: {e}")
-        print("   Make sure vLLM server is running at http://localhost:8000")
+        print(f"Error connecting to remote server: {e}")
         return
 
     # Step 3: Create Knowledge base with remote embedder
