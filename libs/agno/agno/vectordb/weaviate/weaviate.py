@@ -3,7 +3,7 @@ import json
 import uuid
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
     from warnings import filterwarnings
@@ -18,10 +18,11 @@ try:
 except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
@@ -41,6 +42,9 @@ class Weaviate(VectorDb):
         local: bool = False,
         # Collection params
         collection: str = "default",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         vector_index: VectorIndex = VectorIndex.HNSW,
         distance: Distance = Distance.COSINE,
         # Search/Embedding params
@@ -49,6 +53,17 @@ class Weaviate(VectorDb):
         reranker: Optional[Reranker] = None,
         hybrid_search_alpha: float = 0.5,
     ):
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            connection_identifier = wcd_url or "local" if local else "default"
+            seed = f"{connection_identifier}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Connection setup
         self.wcd_url = wcd_url or getenv("WCD_URL")
         self.wcd_api_key = wcd_api_key or getenv("WCD_API_KEY")
@@ -378,7 +393,9 @@ class Weaviate(VectorDb):
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
         return
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
@@ -390,6 +407,9 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
@@ -401,7 +421,7 @@ class Weaviate(VectorDb):
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """
         Perform a search based on the configured search type asynchronously.
@@ -414,6 +434,9 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.vector:
             return await self.async_vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
@@ -424,7 +447,9 @@ class Weaviate(VectorDb):
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
@@ -459,7 +484,7 @@ class Weaviate(VectorDb):
             self.get_client().close()
 
     async def async_vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """
         Perform a vector search in Weaviate asynchronously.
@@ -504,7 +529,9 @@ class Weaviate(VectorDb):
             logger.error(f"Error searching for documents: {e}")
             return []
 
-    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         try:
             collection = self.get_client().collections.get(self.collection)
             filter_expr = self._build_filter_expression(filters)
@@ -535,7 +562,7 @@ class Weaviate(VectorDb):
             self.get_client().close()
 
     async def async_keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """
         Perform a keyword search in Weaviate asynchronously.
@@ -576,7 +603,9 @@ class Weaviate(VectorDb):
             logger.error(f"Error searching for documents: {e}")
             return []
 
-    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
@@ -614,7 +643,7 @@ class Weaviate(VectorDb):
             self.get_client().close()
 
     async def async_hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword search in Weaviate asynchronously.
@@ -835,7 +864,7 @@ class Weaviate(VectorDb):
         """Indicate that upsert functionality is available."""
         return True
 
-    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]):
+    def _build_filter_expression(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]):
         """
         Build a filter expression for Weaviate queries.
 
@@ -847,7 +876,9 @@ class Weaviate(VectorDb):
         """
         if not filters:
             return None
-
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
+            return None
         try:
             # Create a filter for each key-value pair
             filter_conditions = []
@@ -968,3 +999,7 @@ class Weaviate(VectorDb):
         except Exception as e:
             logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
             return False
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

@@ -188,7 +188,7 @@ async def recruitment_execution(
         """
 
         async for response in screening_agent.arun(
-            screening_prompt, stream=True, stream_intermediate_steps=True
+            screening_prompt, stream=True, stream_events=True
         ):
             if hasattr(response, "content") and response.content:
                 candidate = response.content
@@ -226,7 +226,7 @@ async def recruitment_execution(
             """
 
             async for response in scheduler_agent.arun(
-                schedule_prompt, stream=True, stream_intermediate_steps=True
+                schedule_prompt, stream=True, stream_events=True
             ):
                 if hasattr(response, "content") and response.content:
                     scheduled_call = response.content
@@ -245,7 +245,7 @@ async def recruitment_execution(
             """
 
             async for response in email_writer_agent.arun(
-                email_prompt, stream=True, stream_intermediate_steps=True
+                email_prompt, stream=True, stream_events=True
             ):
                 if hasattr(response, "content") and response.content:
                     email_content = response.content
@@ -262,7 +262,7 @@ async def recruitment_execution(
             """
 
             async for response in email_sender_agent.arun(
-                send_prompt, stream=True, stream_intermediate_steps=True
+                send_prompt, stream=True, stream_events=True
             ):
                 yield response
 
@@ -305,6 +305,6 @@ if __name__ == "__main__":
         🌟 Bonus: starred Agno repo.
         """,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
     )

@@ -14,7 +14,12 @@ from agno.db import DynamoDb
 db = DynamoDb()
 
 # Setup a basic agent with the DynamoDB database
-agent = Agent(db=db)
+agent = Agent(
+    db=db,
+    name="DynamoDB Agent",
+    description="An agent that uses DynamoDB as a database",
+    add_history_to_context=True,
+)
 
 # The Agent sessions and runs will now be stored in DynamoDB
 agent.print_response("How many people live in Canada?")

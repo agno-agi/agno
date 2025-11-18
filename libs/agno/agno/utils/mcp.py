@@ -27,9 +27,13 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
     Returns:
         Callable: The entrypoint function for the tool
     """
-    from agno.agent import Agent
 
-    async def call_tool(agent: Agent, tool_name: str, **kwargs) -> ToolResult:
+    async def call_tool(tool_name: str, **kwargs) -> ToolResult:
+        try:
+            await session.send_ping()
+        except Exception as e:
+            print(e)
+
         try:
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
             result: CallToolResult = await session.call_tool(tool_name, kwargs)  # type: ignore
@@ -122,3 +126,89 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)
+
+
+def prepare_command(command: str) -> list[str]:
+    """Sanitize a command and split it into parts before using it to run a MCP server."""
+    import os
+    import shutil
+    from shlex import split
+
+    # Block dangerous characters
+    if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")"]):
+        raise ValueError("MCP command can't contain shell metacharacters")
+
+    parts = split(command)
+    if not parts:
+        raise ValueError("MCP command can't be empty")
+
+    # Only allow specific executables
+    ALLOWED_COMMANDS = {
+        # Python
+        "python",
+        "python3",
+        "uv",
+        "uvx",
+        "pipx",
+        # Node
+        "node",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        # Other runtimes
+        "deno",
+        "java",
+        "ruby",
+        "docker",
+    }
+
+    executable = parts[0].split("/")[-1]
+
+    # Check if it's a relative path starting with ./ or ../
+    if executable.startswith("./") or executable.startswith("../"):
+        # Allow relative paths to binaries
+        return parts
+
+    # Check if it's an absolute path to a binary
+    if executable.startswith("/") and os.path.isfile(executable):
+        # Allow absolute paths to existing files
+        return parts
+
+    # Check if it's a binary in current directory without ./
+    if "/" not in executable and os.path.isfile(executable):
+        # Allow binaries in current directory
+        return parts
+
+    # Check if it's a binary in PATH
+    if shutil.which(executable):
+        return parts
+
+    if executable not in ALLOWED_COMMANDS:
+        raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
+
+    first_part = parts[0]
+    executable = first_part.split("/")[-1]
+
+    # Allow known commands
+    if executable in ALLOWED_COMMANDS:
+        return parts
+
+    # Allow relative paths to custom binaries
+    if first_part.startswith(("./", "../")):
+        return parts
+
+    # Allow absolute paths to existing files
+    if first_part.startswith("/") and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in current directory without ./
+    if "/" not in first_part and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in PATH
+    if shutil.which(first_part):
+        return parts
+
+    raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")

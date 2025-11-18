@@ -1,5 +1,5 @@
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from qdrant_client import AsyncQdrantClient, QdrantClient  # noqa: F401
@@ -9,6 +9,7 @@ except ImportError:
         "The `qdrant-client` package is not installed. Please install it via `pip install qdrant-client`."
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -28,6 +29,9 @@ class Qdrant(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         location: Optional[str] = None,
@@ -52,6 +56,8 @@ class Qdrant(VectorDb):
         """
         Args:
             collection (str): Name of the Qdrant collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             embedder (Optional[Embedder]): Optional embedder for automatic vector generation.
             distance (Distance): Distance metric to use (default: cosine).
             location (Optional[str]): `":memory:"` for in-memory, or str used as `url`. If `None`, use default host/port.
@@ -73,6 +79,21 @@ class Qdrant(VectorDb):
             fastembed_kwargs (Optional[dict]): Keyword args for `fastembed.SparseTextEmbedding.__init__()`.
             **kwargs: Keyword args for `qdrant_client.QdrantClient.__init__()`.
         """
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            host_identifier = host or location or url or "localhost"
+            seed = f"{host_identifier}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Collection attributes
         self.collection: str = collection
 
@@ -508,7 +529,9 @@ class Qdrant(VectorDb):
         log_debug("Redirecting the async request to async_insert")
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Search for documents in the collection.
 
@@ -517,28 +540,37 @@ class Qdrant(VectorDb):
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
+
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
+            filters = None
+
         filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
-            results = self._run_vector_search_sync(query, limit, filters)
+            results = self._run_vector_search_sync(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = self._run_keyword_search_sync(query, limit, filters)
+            results = self._run_keyword_search_sync(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = self._run_hybrid_search_sync(query, limit, filters)
+            results = self._run_hybrid_search_sync(query, limit, filters)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
         return self._build_search_results(results, query)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
+            filters = None
+
         filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
-            results = await self._run_vector_search_async(query, limit, filters)
+            results = await self._run_vector_search_async(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = await self._run_keyword_search_async(query, limit, filters)
+            results = await self._run_keyword_search_async(query, limit, filters)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = await self._run_hybrid_search_async(query, limit, filters)
+            results = await self._run_hybrid_search_async(query, limit, filters)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
@@ -548,7 +580,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
@@ -574,7 +606,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
 
@@ -605,7 +637,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
@@ -672,7 +704,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
@@ -1096,3 +1128,7 @@ class Qdrant(VectorDb):
                 log_debug(f"Error closing async Qdrant client: {e}")
             finally:
                 self._async_client = None
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]
