@@ -271,7 +271,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     table_type="culture",
                 )
             return self.culture_table
-        
+
         elif table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
@@ -335,7 +335,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return None
             version_dict = dict(row._mapping)
             return version_dict.get("version")
-        
+
     async def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -1297,7 +1297,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         input=memory.input,
                         feedback=memory.feedback,
                         created_at=memory.created_at,
-                        updated_at=current_time,
+                        updated_at=memory.created_at,
                     )
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["memory_id"],
@@ -1373,7 +1373,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
-                
+
                 bulk_data.append(
                     {
                         "user_id": memory.user_id,

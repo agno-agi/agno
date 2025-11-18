@@ -343,7 +343,7 @@ class MySQLDb(BaseDb):
             if result is None:
                 return None
             return result[0]
-    
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -1329,7 +1329,7 @@ class MySQLDb(BaseDb):
                     topics=memory.topics,
                     feedback=memory.feedback,
                     created_at=memory.created_at,
-                    updated_at=current_time,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=memory.memory,
@@ -1402,7 +1402,7 @@ class MySQLDb(BaseDb):
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
-                
+
                 bulk_data.append(
                     {
                         "memory_id": memory.memory_id,

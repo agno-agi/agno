@@ -307,7 +307,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
- 
+
     async def get_latest_schema_version(self) -> str:
         """Get the latest version of the database schema."""
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -321,7 +321,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return None
             version_dict = dict(row._mapping)
             return version_dict.get("version")
-    
+
     async def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -1266,12 +1266,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             current_time = int(time.time())
-            
+
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if memory.memory_id is None:
                         memory.memory_id = str(uuid4())
-
 
                     stmt = postgresql.insert(table).values(
                         memory_id=memory.memory_id,
@@ -1283,7 +1282,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         topics=memory.topics,
                         feedback=memory.feedback,
                         created_at=memory.created_at,
-                        updated_at=current_time,
+                        updated_at=memory.created_at,
                     )
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["memory_id"],

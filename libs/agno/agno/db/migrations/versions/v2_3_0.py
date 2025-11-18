@@ -6,10 +6,10 @@ Changes:
 - Change JSON to JSONB for PostgreSQL
 """
 
+import asyncio
 import time
 from typing import Any, Union
 
-import asyncio
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -90,10 +90,10 @@ def _migrate_postgres(db: Any) -> None:
         # Check if columns already exist
         check_columns = sess.execute(
             text(
-                f"""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_schema = :schema 
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = :schema
                 AND table_name = :table_name
                 """
             ),
@@ -105,30 +105,39 @@ def _migrate_postgres(db: Any) -> None:
         if "created_at" not in existing_columns:
             log_info(f"-- Adding created_at column to {memory_table_name}")
             current_time = int(time.time())
+            # Add created_at column
             sess.execute(
                 text(
                     f"""
                     ALTER TABLE {db_schema}.{memory_table_name}
-                    ADD COLUMN created_at BIGINT NOT NULL
+                    ADD COLUMN created_at BIGINT
                     """
                 ),
             )
-            # Update existing rows to have created_at = updated_at or current time
+            # Populate created_at
             sess.execute(
                 text(
                     f"""
                     UPDATE {db_schema}.{memory_table_name}
                     SET created_at = COALESCE(updated_at, :default_time)
-                    WHERE created_at IS NULL OR created_at = 0
                     """
                 ),
                 {"default_time": current_time},
+            )
+            # Set created_at as non nullable
+            sess.execute(
+                text(
+                    f"""
+                    ALTER TABLE {db_schema}.{memory_table_name}
+                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    """
+                ),
             )
             # Add index
             sess.execute(
                 text(
                     f"""
-                    CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at 
+                    CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at
                     ON {db_schema}.{memory_table_name}(created_at)
                     """
                 )
@@ -171,11 +180,11 @@ def _migrate_postgres(db: Any) -> None:
             # Check current type
             col_type = sess.execute(
                 text(
-                    f"""
-                    SELECT data_type 
-                    FROM information_schema.columns 
-                    WHERE table_schema = :schema 
-                    AND table_name = :table_name 
+                    """
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                    AND table_name = :table_name
                     AND column_name = :column_name
                     """
                 ),
@@ -196,6 +205,7 @@ def _migrate_postgres(db: Any) -> None:
         sess.commit()
         log_info("-- PostgreSQL migration completed successfully")
 
+
 async def _migrate_async_postgres(db: AsyncBaseDb) -> None:
     """Migrate PostgreSQL database."""
     from sqlalchemy import text
@@ -207,10 +217,10 @@ async def _migrate_async_postgres(db: AsyncBaseDb) -> None:
         # Check if columns already exist
         check_columns = await sess.execute(
             text(
-                f"""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_schema = :schema 
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = :schema
                 AND table_name = :table_name
                 """
             ),
@@ -222,30 +232,39 @@ async def _migrate_async_postgres(db: AsyncBaseDb) -> None:
         if "created_at" not in existing_columns:
             log_info(f"-- Adding created_at column to {memory_table_name}")
             current_time = int(time.time())
-            await sess.execute(
+            # Add created_at column
+            sess.execute(
                 text(
                     f"""
                     ALTER TABLE {db_schema}.{memory_table_name}
-                    ADD COLUMN created_at BIGINT NOT NULL
+                    ADD COLUMN created_at BIGINT
                     """
                 ),
             )
-            # Update existing rows to have created_at = updated_at or current time
-            await sess.execute(
+            # Populate created_at
+            sess.execute(
                 text(
                     f"""
                     UPDATE {db_schema}.{memory_table_name}
                     SET created_at = COALESCE(updated_at, :default_time)
-                    WHERE created_at IS NULL OR created_at = 0
                     """
                 ),
                 {"default_time": current_time},
             )
-            # Add index
-            await sess.execute(
+            # Set created_at as non nullable
+            sess.execute(
                 text(
                     f"""
-                    CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at 
+                    ALTER TABLE {db_schema}.{memory_table_name}
+                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    """
+                ),
+            )
+            # Add index
+            sess.execute(
+                text(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at
                     ON {db_schema}.{memory_table_name}(created_at)
                     """
                 )
@@ -288,11 +307,11 @@ async def _migrate_async_postgres(db: AsyncBaseDb) -> None:
             # Check current type
             col_type = await sess.execute(
                 text(
-                    f"""
-                    SELECT data_type 
-                    FROM information_schema.columns 
-                    WHERE table_schema = :schema 
-                    AND table_name = :table_name 
+                    """
+                    SELECT data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                    AND table_name = :table_name
                     AND column_name = :column_name
                     """
                 ),
@@ -325,10 +344,10 @@ def _migrate_mysql(db: Any) -> None:
         # Check if columns already exist
         check_columns = sess.execute(
             text(
-                f"""
-                SELECT COLUMN_NAME 
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_SCHEMA = :schema 
+                """
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = :schema
                 AND TABLE_NAME = :table_name
                 """
             ),
@@ -340,25 +359,34 @@ def _migrate_mysql(db: Any) -> None:
         if "created_at" not in existing_columns:
             log_info(f"-- Adding created_at column to {memory_table_name}")
             current_time = int(time.time())
+            # Add created_at column
             sess.execute(
                 text(
                     f"""
                     ALTER TABLE `{db_schema}`.`{memory_table_name}`
-                    ADD COLUMN `created_at` BIGINT NOT NULL,
+                    ADD COLUMN `created_at` BIGINT,
                     ADD INDEX `idx_{memory_table_name}_created_at` (`created_at`)
                     """
                 ),
             )
-            # Update existing rows
+            # Populate created_at
             sess.execute(
                 text(
                     f"""
                     UPDATE `{db_schema}`.`{memory_table_name}`
                     SET `created_at` = COALESCE(`updated_at`, :default_time)
-                    WHERE `created_at` IS NULL OR `created_at` = 0
                     """
                 ),
                 {"default_time": current_time},
+            )
+            # Set created_at as non nullable
+            sess.execute(
+                text(
+                    f"""
+                    ALTER TABLE `{db_schema}`.`{memory_table_name}`
+                    MODIFY COLUMN `created_at` BIGINT NOT NULL
+                    """
+                )
             )
 
         # Add feedback if it doesn't exist
@@ -392,23 +420,34 @@ def _migrate_sqlite(db: Any) -> None:
         if "created_at" not in existing_columns:
             log_info(f"-- Adding created_at column to {memory_table_name}")
             current_time = int(time.time())
+            # Add created_at column
             sess.execute(
-                text(f"ALTER TABLE {memory_table_name} ADD COLUMN created_at BIGINT NOT NULL"),
+                text(f"ALTER TABLE {memory_table_name} ADD COLUMN created_at BIGINT"),
             )
-            # Update existing rows
+            # Populate created_at
             sess.execute(
                 text(
                     f"""
                     UPDATE {memory_table_name}
                     SET created_at = COALESCE(updated_at, :default_time)
-                    WHERE created_at IS NULL OR created_at = 0
                     """
                 ),
                 {"default_time": current_time},
             )
+            # Set created_at as non nullable
+            sess.execute(
+                text(
+                    f"""
+                    ALTER TABLE {memory_table_name}
+                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    """
+                ),
+            )
             # Add index
             sess.execute(
-                text(f"CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at ON {memory_table_name}(created_at)")
+                text(
+                    f"CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at ON {memory_table_name}(created_at)"
+                )
             )
 
         # Add feedback if it doesn't exist
@@ -418,7 +457,6 @@ def _migrate_sqlite(db: Any) -> None:
 
         sess.commit()
         log_info("-- SQLite migration completed successfully")
-
 
 
 async def _migrate_async_sqlite(db: AsyncBaseDb) -> None:
@@ -436,23 +474,34 @@ async def _migrate_async_sqlite(db: AsyncBaseDb) -> None:
         if "created_at" not in existing_columns:
             log_info(f"-- Adding created_at column to {memory_table_name}")
             current_time = int(time.time())
+            # Add created_at column
             await sess.execute(
-                text(f"ALTER TABLE {memory_table_name} ADD COLUMN created_at BIGINT NOT NULL"),
+                text(f"ALTER TABLE {memory_table_name} ADD COLUMN created_at BIGINT"),
             )
-            # Update existing rows
+            # Populate created_at
             await sess.execute(
                 text(
                     f"""
                     UPDATE {memory_table_name}
                     SET created_at = COALESCE(updated_at, :default_time)
-                    WHERE created_at IS NULL OR created_at = 0
                     """
                 ),
                 {"default_time": current_time},
             )
+            # Set created_at as non nullable
+            await sess.execute(
+                text(
+                    f"""
+                    ALTER TABLE {memory_table_name}
+                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    """
+                ),
+            )
             # Add index
             await sess.execute(
-                text(f"CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at ON {memory_table_name}(created_at)")
+                text(
+                    f"CREATE INDEX IF NOT EXISTS idx_{memory_table_name}_created_at ON {memory_table_name}(created_at)"
+                )
             )
 
         # Add feedback if it doesn't exist
@@ -475,10 +524,10 @@ def _migrate_singlestore(db: Any) -> None:
         # Check if columns already exist
         check_columns = sess.execute(
             text(
-                f"""
-                SELECT COLUMN_NAME 
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_SCHEMA = :schema 
+                """
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = :schema
                 AND TABLE_NAME = :table_name
                 """
             ),
@@ -490,25 +539,34 @@ def _migrate_singlestore(db: Any) -> None:
         if "created_at" not in existing_columns:
             log_info(f"-- Adding created_at column to {memory_table_name}")
             current_time = int(time.time())
+            # Add created_at column
             sess.execute(
                 text(
                     f"""
                     ALTER TABLE `{db_schema}`.`{memory_table_name}`
-                    ADD COLUMN `created_at` BIGINT NOT NULL,
+                    ADD COLUMN `created_at` BIGINT,
                     ADD INDEX `idx_{memory_table_name}_created_at` (`created_at`)
                     """
                 ),
             )
-            # Update existing rows
+            # Populate created_at
             sess.execute(
                 text(
                     f"""
                     UPDATE `{db_schema}`.`{memory_table_name}`
                     SET `created_at` = COALESCE(`updated_at`, :default_time)
-                    WHERE `created_at` IS NULL OR `created_at` = 0
                     """
                 ),
                 {"default_time": current_time},
+            )
+            # Set created_at as non nullable
+            sess.execute(
+                text(
+                    f"""
+                    ALTER TABLE `{db_schema}`.`{memory_table_name}`
+                    MODIFY COLUMN `created_at` BIGINT NOT NULL
+                    """
+                )
             )
 
         # Add feedback if it doesn't exist
@@ -542,6 +600,7 @@ def _revert_postgres(db: Any) -> None:
         sess.commit()
         log_info("-- PostgreSQL migration reverted")
 
+
 async def _revert_async_postgres(db: AsyncBaseDb) -> None:
     """Revert PostgreSQL migration."""
     from sqlalchemy import text
@@ -567,7 +626,11 @@ def _revert_mysql(db: Any) -> None:
 
     with db.Session() as sess, sess.begin():
         sess.execute(text(f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP COLUMN IF EXISTS `feedback`"))
-        sess.execute(text(f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP INDEX IF EXISTS `idx_{memory_table_name}_created_at`"))
+        sess.execute(
+            text(
+                f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP INDEX IF EXISTS `idx_{memory_table_name}_created_at`"
+            )
+        )
         sess.execute(text(f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP COLUMN IF EXISTS `created_at`"))
         sess.commit()
         log_info("-- MySQL migration reverted")
@@ -593,8 +656,14 @@ def _revert_singlestore(db: Any) -> None:
 
     with db.Session() as sess, sess.begin():
         sess.execute(text(f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP COLUMN IF EXISTS `feedback`"))
-        sess.execute(text(f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP INDEX IF EXISTS `idx_{memory_table_name}_created_at`"))
+        sess.execute(
+            text(
+                f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP INDEX IF EXISTS `idx_{memory_table_name}_created_at`"
+            )
+        )
         sess.execute(text(f"ALTER TABLE `{db_schema}`.`{memory_table_name}` DROP COLUMN IF EXISTS `created_at`"))
-        sess.execute(text(f"ALTER TABLE `{db_schema}`.`{metrics_table_name}` DROP CONSTRAINT IF EXISTS `uq_metrics_date_period`"))
+        sess.execute(
+            text(f"ALTER TABLE `{db_schema}`.`{metrics_table_name}` DROP CONSTRAINT IF EXISTS `uq_metrics_date_period`")
+        )
         sess.commit()
         log_info("SingleStore migration reverted")

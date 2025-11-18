@@ -325,7 +325,7 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
-        
+
     def get_latest_schema_version(self) -> str:
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -338,7 +338,7 @@ class PostgresDb(BaseDb):
                 return None
             version_dict = dict(result._mapping)
             return version_dict.get("version")
-    
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -1288,7 +1288,7 @@ class PostgresDb(BaseDb):
                     topics=memory.topics,
                     feedback=memory.feedback,
                     created_at=memory.created_at,
-                    updated_at=current_time,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1354,8 +1354,8 @@ class PostgresDb(BaseDb):
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set (even if None), otherwise use current time
-                updated_at = memory.updated_at if preserve_updated_at else current_time     
-                
+                updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,

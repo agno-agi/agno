@@ -318,7 +318,7 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {table_name}: {e}")
             raise e
-        
+
     def get_latest_schema_version(self) -> str:
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -331,7 +331,7 @@ class SqliteDb(BaseDb):
                 return None
             version_dict = dict(result._mapping)
             return version_dict.get("version")
-        
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -1279,7 +1279,6 @@ class SqliteDb(BaseDb):
             current_time = int(time.time())
 
             with self.Session() as sess, sess.begin():
-
                 stmt = sqlite.insert(table).values(
                     user_id=memory.user_id,
                     agent_id=memory.agent_id,
@@ -1290,7 +1289,7 @@ class SqliteDb(BaseDb):
                     input=memory.input,
                     feedback=memory.feedback,
                     created_at=memory.created_at,
-                    updated_at=current_time,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1366,7 +1365,7 @@ class SqliteDb(BaseDb):
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
-                
+
                 bulk_data.append(
                     {
                         "user_id": memory.user_id,
