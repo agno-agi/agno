@@ -28,13 +28,15 @@ read_only_agent = Agent(
                 "get_emails_by_thread",
                 "mark_email_as_read",
                 "mark_email_as_unread",
+                "list_custom_labels",
             ]
         )
     ],
-    description="You are a Gmail reading specialist that can search and read emails.",
+    description="You are a Gmail reading specialist that can search, read and label emails.",
     instructions=[
         "You can search and read Gmail messages but cannot send or draft emails.",
         "You can mark emails as read or unread for processing workflows.",
+        "You can list all available labels in the user's Gmail account.",
         "Summarize email contents and extract key details and dates.",
         "Show the email contents in a structured markdown format.",
     ],
@@ -56,14 +58,41 @@ safe_gmail_agent = Agent(
     output_schema=FindEmailOutput,
 )
 
-# Example 3: Full Gmail functionality (default)
+# Example 3: Label Management Specialist Agent
+label_manager_agent = Agent(
+    name="Gmail Label Manager",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        GmailTools(
+            include_tools=[
+                "list_custom_labels",
+                "apply_label",
+                "remove_label",
+                "delete_custom_label",
+                "search_emails",
+                "get_emails_by_context",
+            ]
+        )
+    ],
+    description="You are a Gmail label management specialist that helps organize emails with labels.",
+    instructions=[
+        "You specialize in Gmail label management operations.",
+        "You can list existing custom labels, apply labels to emails, remove labels, and delete labels.",
+        "Always be careful when deleting labels - confirm with the user first.",
+        "When applying or removing labels, search for relevant emails first.",
+        "Provide clear feedback on label operations performed.",
+    ],
+    markdown=True,
+)
+
+# Example 4: Full Gmail functionality (default)
 agent = Agent(
     name="Full Gmail Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
-    description="You are an expert Gmail Agent that can read, draft and send emails using Gmail.",
+    description="You are an expert Gmail Agent that can read, draft, send and label emails using Gmail.",
     instructions=[
-        "Based on user query, you can read, draft and send emails using Gmail.",
+        "Based on user query, you can read, draft, send and label emails using Gmail.",
         "While showing email contents, you can summarize the email contents, extract key details and dates.",
         "Show the email contents in a structured markdown format.",
         "Attachments can be added to the email",
@@ -72,6 +101,9 @@ agent = Agent(
     markdown=True,
     output_schema=FindEmailOutput,
 )
+
+
+# BASIC GMAIL OPERATIONS EXAMPLES
 
 # Example 1: Find the last email from a specific sender
 email = "<replace_with_email_address>"
@@ -99,3 +131,26 @@ agent.print_response(
 #     markdown=True,
 #     stream=True,
 # )
+
+# LABEL MANAGEMENT EXAMPLES
+
+# Example 4.1: List all custom labels
+label_manager_agent.print_response(
+    "List all my custom labels in Gmail.",
+    markdown=True,
+    stream=True,
+)
+
+# Example 4.2: Apply labels to organize emails
+label_manager_agent.print_response(
+    "Apply the 'Newsletters' label to emails from 'newsletter@company.com'. Process the last 5 emails.",
+    markdown=True,
+    stream=True,
+)
+
+# Example 4.3: Remove labels from emails
+label_manager_agent.print_response(
+    "Remove the 'Urgent' label from emails containing 'resolved' in the subject. Process up to 5 emails.",
+    markdown=True,
+    stream=True,
+)

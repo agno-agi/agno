@@ -134,7 +134,7 @@ class MySQLDb(BaseDb):
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
+            log_debug(f"Creating table {table_name}")
 
             columns: List[Column] = []
             indexes: List[str] = []
