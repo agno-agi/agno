@@ -26,12 +26,12 @@ class MemoryOptimizationStrategyFactory:
             MemoryOptimizationStrategy instance
         """
         strategy_map = {
-            MemoryOptimizationStrategyType.SUMMARIZE: cls._create_summarize,
+            MemoryOptimizationStrategyType.SUMMARIZE: cls._create_summarize_strategy,
         }
         return strategy_map[strategy_type](**kwargs)
 
     @classmethod
-    def _create_summarize(cls, **kwargs) -> MemoryOptimizationStrategy:
+    def _create_summarize_strategy(cls, **kwargs) -> MemoryOptimizationStrategy:
         from agno.memory.strategies.summarize import SummarizeStrategy
 
         return SummarizeStrategy(**kwargs)

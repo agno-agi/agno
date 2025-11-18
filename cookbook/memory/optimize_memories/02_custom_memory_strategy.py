@@ -12,8 +12,8 @@ from datetime import datetime
 from typing import List
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.db.schemas import UserMemory
+from agno.db.sqlite import SqliteDb
 from agno.memory import MemoryManager, MemoryOptimizationStrategy
 from agno.models.base import Model
 from agno.models.openai import OpenAIChat

@@ -29,7 +29,9 @@ def count_tokens(text: str) -> int:
     except ImportError:
         from agno.utils.log import log_warning
 
-        log_warning("tiktoken not installed. You can install with `pip install -U tiktoken`. Using character-based estimation.")
+        log_warning(
+            "tiktoken not installed. You can install with `pip install -U tiktoken`. Using character-based estimation."
+        )
         # Fallback: rough estimation (1 token H 4 characters)
         return len(text) // 4
     except Exception as e:
