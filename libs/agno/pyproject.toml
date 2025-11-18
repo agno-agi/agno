@@ -133,6 +133,7 @@ neo4j = ["neo4j"]
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
 async_postgres = ["asyncpg"]
+async_mongo = ["pymongo", "motor"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -257,6 +258,7 @@ storage = [
   "agno[sql]",
   "agno[postgres]",
   "agno[async_postgres]",
+  "agno[async_mongo]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",

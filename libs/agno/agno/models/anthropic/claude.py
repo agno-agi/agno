@@ -25,6 +25,11 @@ try:
     from anthropic import (
         AsyncAnthropic as AsyncAnthropicClient,
     )
+    from anthropic.lib.streaming._beta_types import (
+        BetaRawContentBlockStartEvent,
+        ParsedBetaContentBlockStopEvent,
+        ParsedBetaMessageStopEvent,
+    )
     from anthropic.types import (
         CitationPageLocation,
         CitationsWebSearchResultLocation,
@@ -39,6 +44,7 @@ try:
     from anthropic.types import (
         Message as AnthropicMessage,
     )
+
 except ImportError as e:
     raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
 
@@ -634,6 +640,9 @@ class Claude(Model):
             ContentBlockStopEvent,
             MessageStopEvent,
             BetaRawContentBlockDeltaEvent,
+            BetaRawContentBlockStartEvent,
+            ParsedBetaContentBlockStopEvent,
+            ParsedBetaMessageStopEvent,
         ],
     ) -> ModelResponse:
         """
@@ -647,11 +656,11 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
-        if isinstance(response, ContentBlockStartEvent):
+        if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
             if response.content_block.type == "redacted_reasoning_content":
                 model_response.redacted_reasoning_content = response.content_block.data
 
-        if isinstance(response, ContentBlockDeltaEvent):
+        if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
@@ -663,7 +672,7 @@ class Claude(Model):
                     "signature": response.delta.signature,
                 }
 
-        elif isinstance(response, ContentBlockStopEvent):
+        elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
@@ -684,7 +693,7 @@ class Claude(Model):
                 ]
 
         # Capture citations from the final response
-        elif isinstance(response, MessageStopEvent):
+        elif isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)):
             model_response.content = ""
             model_response.citations = Citations(raw=[], urls=[], documents=[])
             for block in response.message.content:  # type: ignore
