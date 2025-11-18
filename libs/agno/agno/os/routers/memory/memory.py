@@ -656,7 +656,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             # Calculate statistics
             tokens_saved = tokens_before - tokens_after
-            reduction_percentage = (tokens_saved / tokens_before * 100) if tokens_before > 0 else 0.0
+            reduction_percentage = (tokens_saved / tokens_before * 100.0) if tokens_before > 0 else 0.0
 
             # Convert to schema objects
             optimized_memory_schemas = [
