@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
@@ -33,7 +34,7 @@ class AgentSession:
     # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
     # List of all runs in the session
-    runs: Optional[List[RunOutput]] = None
+    runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
 
@@ -57,9 +58,13 @@ class AgentSession:
             return None
 
         runs = data.get("runs")
-        serialized_runs: List[RunOutput] = []
+        serialized_runs: List[Union[RunOutput, TeamRunOutput]] = []
         if runs is not None and isinstance(runs[0], dict):
-            serialized_runs = [RunOutput.from_dict(run) for run in runs]
+            for run in runs:
+                if "agent_id" in run:
+                    serialized_runs.append(RunOutput.from_dict(run))
+                elif "team_id" in run:
+                    serialized_runs.append(TeamRunOutput.from_dict(run))
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
@@ -101,7 +106,7 @@ class AgentSession:
 
         log_debug("Added RunOutput to Agent Session")
 
-    def get_run(self, run_id: str) -> Optional[RunOutput]:
+    def get_run(self, run_id: str) -> Optional[Union[RunOutput, TeamRunOutput]]:
         for run in self.runs or []:
             if run.run_id == run_id:
                 return run
