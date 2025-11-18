@@ -108,6 +108,7 @@ workflow_logger: AgnoLogger = build_logger(WORKFLOW_LOGGER_NAME, source_type="wo
 # Set the default logger to the agent logger
 logger: AgnoLogger = agent_logger
 
+
 debug_on: bool = False
 debug_level: Literal[1, 2] = 1
 
