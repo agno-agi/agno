@@ -39,7 +39,7 @@ structured_output_agent = Agent(
 
 async def main():
     await structured_output_agent.aprint_response(
-        "New York", stream=True, stream_intermediate_steps=True
+        "New York", stream=True, stream_events=True
     )
 
 

@@ -71,7 +71,7 @@ research_team = Team(
     name="Research Team",
     description="A team of agents that research the web",
     members=[research_agent, simple_agent],
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-4.1"),
     id="research_team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
@@ -92,4 +92,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="demo:app", port=7777)
+    agent_os.serve(app="demo:app", port=7777, reload=True)

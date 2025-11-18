@@ -55,13 +55,13 @@ def test_multimcp_empty_command_string():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "mcp_tools,kwargs",
+    "kwargs",
     (
-        (MCPTools, {"command": "npx foo", "include_tools": ["foo"]}),
-        (MCPTools, {"command": "npx foo", "exclude_tools": ["foo"]}),
+        {"command": "npx foo", "include_tools": ["foo"]},
+        {"command": "npx foo", "exclude_tools": ["foo"]},
     ),
 )
-async def test_mcp_include_exclude_tools_bad_values(mcp_tools, kwargs):
+async def test_mcp_include_exclude_tools_bad_values(kwargs):
     """Test that _check_tools_filters raises ValueError during initialize"""
     session_mock = AsyncMock()
     tool_mock = AsyncMock()
@@ -71,7 +71,7 @@ async def test_mcp_include_exclude_tools_bad_values(mcp_tools, kwargs):
     session_mock.list_tools.return_value = tools
 
     # _check_tools_filters should be bypassed during __init__
-    tools = mcp_tools(**kwargs)
+    tools = MCPTools(**kwargs)
     with pytest.raises(ValueError, match="not present in the toolkit"):
         tools.session = session_mock
-        await tools.initialize()
+        await tools.build_tools()

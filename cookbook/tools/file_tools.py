@@ -13,7 +13,9 @@ from agno.tools.file import FileTools
 
 # Example 1: All functions enabled (default behavior)
 agent_full = Agent(
-    tools=[FileTools(Path("tmp/file"))],  # All functions enabled by default
+    tools=[
+        FileTools(Path("tmp/file"))
+    ],  # All functions enabled by default, except file deletion
     description="You are a comprehensive file management assistant with all file operation capabilities.",
     instructions=[
         "Help users with all file operations including read, write, search, and management",
@@ -64,6 +66,7 @@ agent_writer = Agent(
             Path("tmp/file"),
             enable_save_file=True,
             enable_read_file=False,  # Disable file reading
+            enable_read_file_chunk=False,  # Disable reading in chunks as well
             enable_search_files=False,  # Disable file searching
         )
     ],

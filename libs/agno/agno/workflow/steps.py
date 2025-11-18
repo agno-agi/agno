@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     StepsExecutionCompletedEvent,
@@ -118,6 +119,7 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -151,6 +153,7 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -204,10 +207,13 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
@@ -222,7 +228,10 @@ class Steps:
 
         self._prepare_steps()
 
-        if stream_intermediate_steps:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events:
             # Yield steps execution started event
             yield StepsExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -264,8 +273,10 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    run_context=run_context,
                     session_state=session_state,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
+                    stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
@@ -307,7 +318,7 @@ class Steps:
 
             log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-            if stream_intermediate_steps:
+            if stream_events:
                 # Yield steps execution completed event
                 yield StepsExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -348,6 +359,7 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
@@ -381,6 +393,7 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -433,10 +446,13 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
+        stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
@@ -451,7 +467,10 @@ class Steps:
 
         self._prepare_steps()
 
-        if stream_intermediate_steps:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events:
             # Yield steps execution started event
             yield StepsExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -493,8 +512,10 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    run_context=run_context,
                     session_state=session_state,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
+                    stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
@@ -536,7 +557,7 @@ class Steps:
 
             log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             # Yield steps execution completed event
-            if stream_intermediate_steps:
+            if stream_events:
                 yield StepsExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",

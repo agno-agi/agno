@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import log_debug
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
@@ -70,7 +71,6 @@ class AzureOpenAI(OpenAILike):
             "base_url": self.base_url,
             "azure_ad_token": self.azure_ad_token,
             "azure_ad_token_provider": self.azure_ad_token_provider,
-            "http_client": self.http_client,
         }
         if self.default_headers is not None:
             _client_params["default_headers"] = self.default_headers
@@ -95,7 +95,13 @@ class AzureOpenAI(OpenAILike):
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
-        # -*- Create client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_debug("http_client is not an instance of httpx.Client.")
+
+        # Create client
         self.client = AzureOpenAIClient(**_client_params)
         return self.client
 
@@ -106,14 +112,16 @@ class AzureOpenAI(OpenAILike):
         Returns:
             AsyncAzureOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
-        if self.http_client:
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             _client_params["http_client"] = self.http_client
         else:
+            if self.http_client:
+                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
             # Create a new async HTTP client with custom limits
             _client_params["http_client"] = httpx.AsyncClient(
                 limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)

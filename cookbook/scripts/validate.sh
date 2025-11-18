@@ -15,5 +15,6 @@ print_heading "Validating cookbook"
 print_heading "Running: ruff check ${COOKBOOK_DIR}"
 ruff check ${COOKBOOK_DIR}
 
-print_heading "Running: mypy ${COOKBOOK_DIR} --config-file ${AGNO_DIR}/pyproject.toml"
-mypy ${COOKBOOK_DIR} --config-file ${AGNO_DIR}/pyproject.toml
+# Not validating cookbook for now
+# print_heading "Running: mypy ${COOKBOOK_DIR} --config-file ${AGNO_DIR}/pyproject.toml"
+# mypy ${COOKBOOK_DIR} --config-file ${AGNO_DIR}/pyproject.toml

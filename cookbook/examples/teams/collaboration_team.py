@@ -100,6 +100,6 @@ if __name__ == "__main__":
         agent_team.aprint_response(
             input="Start the discussion on the topic: 'What is the best way to learn to code?'",
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
         )
     )

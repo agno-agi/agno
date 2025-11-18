@@ -1,9 +1,10 @@
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from bson import ObjectId
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -33,6 +34,9 @@ class MongoDb(VectorDb):
     def __init__(
         self,
         collection_name: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         db_url: Optional[str] = "mongodb://localhost:27017/",
         database: str = "agno",
         embedder: Optional[Embedder] = None,
@@ -56,6 +60,8 @@ class MongoDb(VectorDb):
 
         Args:
             collection_name (str): Name of the MongoDB collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): MongoDB connection string.
             database (str): Database name.
             embedder (Embedder): Embedder instance for generating embeddings.
@@ -74,11 +80,24 @@ class MongoDb(VectorDb):
             hybrid_rank_constant (int): Default rank constant (k) for Reciprocal Rank Fusion in hybrid search. This constant is added to the rank before taking the reciprocal, helping to smooth scores. A common value is 60.
             **kwargs: Additional arguments for MongoClient.
         """
+        # Validate required parameters
         if not collection_name:
             raise ValueError("Collection name must not be empty.")
         if not database:
             raise ValueError("Database name must not be empty.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            connection_identifier = db_url or "mongodb://localhost:27017/"
+            seed = f"{connection_identifier}#{database}#{collection_name}"
+            id = generate_id(seed)
+
         self.collection_name = collection_name
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self.database = database
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
@@ -567,9 +586,16 @@ class MongoDb(VectorDb):
         return True
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        min_score: float = 0.0,
     ) -> List[Document]:
         """Search for documents using vector similarity."""
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit=limit, filters=filters)
 
@@ -1135,9 +1161,12 @@ class MongoDb(VectorDb):
                 logger.error(f"Error upserting document '{document.name}' asynchronously: {e}")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search for documents asynchronously."""
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")
@@ -1382,3 +1411,7 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]
