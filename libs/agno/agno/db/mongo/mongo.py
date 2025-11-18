@@ -236,13 +236,14 @@ class MongoDb(BaseDb):
             log_error(f"Error getting collection {collection_name}: {e}")
             raise
 
-    def get_latest_schema_version(self) -> str:
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         pass
-    
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         pass
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:

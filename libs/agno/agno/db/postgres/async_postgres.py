@@ -308,7 +308,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
-    async def get_latest_schema_version(self) -> str:
+    async def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         table = await self._get_table(table_type="versions")
         if table is None:

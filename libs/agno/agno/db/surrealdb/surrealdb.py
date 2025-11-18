@@ -167,7 +167,7 @@ class SurrealDb(BaseDb):
 
         return table_name
 
-    def get_latest_schema_version(self) -> str:
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         pass
 

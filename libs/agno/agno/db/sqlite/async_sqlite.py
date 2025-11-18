@@ -322,7 +322,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error loading existing table {table_name}: {e}")
             raise e
 
-    async def get_latest_schema_version(self) -> str:
+    async def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         table = await self._get_table(table_type="versions")
         if table is None:

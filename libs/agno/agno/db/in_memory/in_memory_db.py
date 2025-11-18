@@ -37,11 +37,11 @@ class InMemoryDb(BaseDb):
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
         return True
-    
-    def get_latest_schema_version(self) -> str:
+
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         pass
-    
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         pass

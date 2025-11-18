@@ -211,9 +211,9 @@ async def _migrate_async_postgres(db: AsyncBaseDb) -> None:
     from sqlalchemy import text
 
     memory_table_name = db.memory_table_name or "agno_memories"
-    db_schema = db.db_schema or "public"
+    db_schema = db.db_schema or "public"  # type: ignore
 
-    async with db.async_session_factory() as sess, sess.begin():
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if columns already exist
         check_columns = await sess.execute(
             text(
@@ -464,10 +464,10 @@ async def _migrate_async_sqlite(db: AsyncBaseDb) -> None:
 
     memory_table_name = db.memory_table_name or "agno_memories"
 
-    async with db.async_session_factory() as sess, sess.begin():
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # SQLite doesn't support ALTER TABLE ADD COLUMN with constraints easily
         # We'll use a simpler approach
-        inspector = inspect(db.db_engine)
+        inspector = inspect(db.db_engine)  # type: ignore
         existing_columns = {col["name"] for col in inspector.get_columns(memory_table_name)}
 
         # Add created_at if it doesn't exist
@@ -606,9 +606,9 @@ async def _revert_async_postgres(db: AsyncBaseDb) -> None:
     from sqlalchemy import text
 
     memory_table_name = db.memory_table_name or "agno_memories"
-    db_schema = db.db_schema or "agno"
+    db_schema = db.db_schema or "agno"  # type: ignore
 
-    async with db.async_session_factory() as sess, sess.begin():
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Remove columns (in reverse order)
         await sess.execute(text(f"ALTER TABLE {db_schema}.{memory_table_name} DROP COLUMN IF EXISTS feedback"))
         await sess.execute(text(f"DROP INDEX IF EXISTS idx_{memory_table_name}_created_at"))

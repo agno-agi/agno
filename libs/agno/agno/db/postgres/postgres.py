@@ -326,7 +326,7 @@ class PostgresDb(BaseDb):
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
-    def get_latest_schema_version(self) -> str:
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:

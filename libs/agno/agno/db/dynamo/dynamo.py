@@ -181,11 +181,11 @@ class DynamoDb(BaseDb):
             create_table_if_not_exists(self.client, table_name, schema)
 
         return table_name
-    
-    def get_latest_schema_version(self) -> str:
+
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         pass
-    
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         pass

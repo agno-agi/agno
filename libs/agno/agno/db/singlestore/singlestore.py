@@ -369,19 +369,19 @@ class SingleStoreDb(BaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def get_latest_schema_version(self) -> str:
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
-            return None
+            return "v2.0.0"
         with self.Session() as sess:
             stmt = select(table).order_by(table.c.version.desc()).limit(1)
             result = sess.execute(stmt).fetchone()
             if result is None:
-                return None
+                return "v2.0.0"
             version_dict = dict(result._mapping)
-            return version_dict.get("version")
-        
+            return version_dict.get("version") or "v2.0.0"
+
     def upsert_schema_version(self, version: str) -> None:
         """Upsert the schema version into the database."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
@@ -1451,7 +1451,7 @@ class SingleStoreDb(BaseDb):
                     memory.memory_id = str(uuid4())
                 # Use preserved updated_at if flag is set, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
-                
+
                 memory_data.append(
                     {
                         "memory_id": memory.memory_id,

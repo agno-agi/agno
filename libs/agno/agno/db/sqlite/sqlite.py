@@ -319,7 +319,7 @@ class SqliteDb(BaseDb):
             log_error(f"Error loading existing table {table_name}: {e}")
             raise e
 
-    def get_latest_schema_version(self) -> str:
+    def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
