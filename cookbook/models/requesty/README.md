@@ -50,3 +50,9 @@ python cookbook/models/requesty/tool_use.py
 ```shell
 python cookbook/models/requesty/structured_output.py
 ```
+
+### 7. Run Agent with custom requesty labels
+
+```shell
+python cookbook/models/requesty/requesty_tags.py
+```
