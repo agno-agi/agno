@@ -113,6 +113,19 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 }
 
 
+AGNO_CONFIGS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "entity_id": {"type": String, "nullable": False, "index": True},  # To allow search on all configs for a specific entity (agent/team/workflow)
+    "entity_type": {"type": String, "nullable": False, "index": True},  # To allow search on all configs for agents/teams/workflows
+    "config": {"type": JSONB, "nullable": False},
+    "version": {"type": String, "nullable": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
+
+
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -130,6 +143,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
+        "configs": AGNO_CONFIGS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

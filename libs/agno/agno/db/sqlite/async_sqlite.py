@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.schemas.config import EntityConfig
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -16,6 +17,7 @@ from agno.db.sqlite.utils import (
     ais_valid_table,
     apply_sorting,
     calculate_date_metrics,
+    deserialize_config_from_db,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
@@ -47,6 +49,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        configs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -68,6 +71,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            configs_table (Optional[str]): Name of the table to store configs.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -85,6 +89,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            configs_table=configs_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -132,6 +137,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.configs_table_name, "configs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -267,6 +273,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                     table_type="culture",
                 )
             return self.culture_table
+
+        elif table_type == "configs":
+            if not hasattr(self, "configs_table"):
+                self.configs_table = await self._get_or_create_table(
+                    table_name=self.configs_table_name,
+                    table_type="configs",
+                )
+            return self.configs_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -2290,4 +2304,128 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
+            raise e
+
+    # -- Configs methods --
+    async def get_config(self, id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a config by ID, or by entity_id and entity_type.
+        """
+        try:
+            table = await self._get_table(table_type="configs")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = (await sess.execute(stmt)).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+
+            return deserialize_config_from_db(db_row)
+
+        except Exception as e:
+            log_error(f"Error getting config: {e}")
+            raise e
+    
+    async def get_config_for_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[EntityConfig]:
+        """
+        Get a config for an entity by entity_id and version.
+        
+        This has to return a unique config. If multiple configs are found, it will raise an error.
+        """
+        try:
+            table = await self._get_table(table_type="configs")
+            if table is None:
+                return None
+            
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table).where(table.c.entity_id == entity_id)
+                if version is not None:
+                    stmt = stmt.where(table.c.version == version)
+                results = (await sess.execute(stmt)).fetchall()
+                if not results:
+                    return None
+                if len(results) > 1:
+                    if version is None:
+                        raise ValueError(f"Multiple configs found for entity {entity_id}")
+                    else:
+                        raise ValueError(f"Multiple configs found for entity {entity_id} and version {version}")
+                db_row = dict(results[0]._mapping)
+                return deserialize_config_from_db(db_row)
+        except Exception as e:
+            log_error(f"Error getting config for entity: {e}")
+            raise e
+        
+    async def get_configs(self, entity_id: Optional[str] = None, entity_type: Optional[str] = None) -> Optional[List[EntityConfig]]:
+        """
+        Get all configs by entity_id and entity_type.
+        """
+        try:
+            table = await self._get_table(table_type="configs")
+            if table is None:
+                return None
+            
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+                result = (await sess.execute(stmt)).fetchall()
+                if not result:
+                    return None
+                db_rows = [dict(record._mapping) for record in result]
+                return [deserialize_config_from_db(row) for row in db_rows]
+        except Exception as e:
+            log_error(f"Error getting configs: {e}")
+            raise e
+        
+    async def upsert_config(self, config: EntityConfig) -> Optional[EntityConfig]:
+        """
+        Upsert a config.
+
+        Args:
+            config (EntityConfig): The config to upsert.
+
+        Returns:
+            Optional[EntityConfig]: The upserted config, or None if the operation fails.
+        """
+        try:
+            table = await self._get_table(table_type="configs")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    id=config.id,
+                    entity_id=config.entity_id,
+                    entity_type=config.entity_type,
+                    config=config.config,
+                    version=config.version,
+                    metadata=config.metadata,
+                    created_at=config.created_at,
+                    updated_at=int(time.time()),
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        entity_id=config.entity_id,
+                        entity_type=config.entity_type,
+                        config=config.config,
+                        version=config.version,
+                        metadata=config.metadata,
+                        updated_at=int(time.time()),
+                    ),
+                ).returning(table)
+                result = (await sess.execute(stmt)).fetchone()
+                row = result.fetchone()
+                if row is None:
+                    return None
+                db_row = dict(row._mapping)
+                return deserialize_config_from_db(db_row)
+        except Exception as e:
+            log_error(f"Error upserting config: {e}")
             raise e

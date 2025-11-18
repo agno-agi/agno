@@ -1983,3 +1983,4 @@ class Knowledge:
     def youtube_reader(self) -> Optional[Reader]:
         """YouTube reader - lazy loaded via factory."""
         return self._get_reader("youtube")
+    

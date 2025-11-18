@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.schemas.config import EntityConfig
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -14,6 +15,7 @@ from agno.db.sqlite.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
+    deserialize_config_from_db,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
@@ -48,6 +50,7 @@ class SqliteDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        configs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -69,6 +72,7 @@ class SqliteDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            configs_table (Optional[str]): Name of the table to store configs.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -86,6 +90,7 @@ class SqliteDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            configs_table=configs_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -133,6 +138,7 @@ class SqliteDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.configs_table_name, "configs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -266,6 +272,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.culture_table
+
+        elif table_type == "configs":
+            self.configs_table = self._get_or_create_table(
+                table_name=self.configs_table_name,
+                table_type="configs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.configs_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -2285,4 +2299,130 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
+            raise e
+
+    # -- Configs methods --
+    def get_config(self, id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a config by ID, or by entity_id and entity_type.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+
+            return deserialize_config_from_db(db_row)
+
+        except Exception as e:
+            log_error(f"Error getting config: {e}")
+            raise e
+    
+    def get_config_for_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[EntityConfig]:
+        """
+        Get a config for an entity by entity_id and version.
+        
+        This has to return a unique config. If multiple configs are found, it will raise an error.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return None
+            
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.entity_id == entity_id)
+                if version is not None:
+                    stmt = stmt.where(table.c.version == version)
+                results = sess.execute(stmt).fetchall()
+                if not results:
+                    return None
+                if len(results) > 1:
+                    if version is None:
+                        raise ValueError(f"Multiple configs found for entity {entity_id}")
+                    else:
+                        raise ValueError(f"Multiple configs found for entity {entity_id} and version {version}")
+                db_row = dict(results[0]._mapping)
+                return deserialize_config_from_db(db_row)
+        except Exception as e:
+            log_error(f"Error getting config for entity: {e}")
+            raise e
+    
+    def get_configs(self, entity_id: Optional[str] = None, entity_type: Optional[str] = None) -> Optional[List[EntityConfig]]:
+        """
+        Get all configs by entity_id and entity_type.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return None
+            
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return None
+                db_rows = [dict(record._mapping) for record in result]
+                return [deserialize_config_from_db(row) for row in db_rows]
+        except Exception as e:
+            log_error(f"Error getting configs: {e}")
+            raise e
+        
+    def upsert_config(self, config: EntityConfig) -> Optional[EntityConfig]:
+        """
+        Upsert a config.
+
+        Args:
+            config (EntityConfig): The config to upsert.
+
+        Returns:
+            Optional[EntityConfig]: The upserted config, or None if the operation fails.
+        """
+        try:
+            table = self._get_table(table_type="configs", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            current_datetime = datetime.now()
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    id=config.id,
+                    entity_id=config.entity_id,
+                    entity_type=config.entity_type,
+                    config=config.config,
+                    version=config.version,
+                    metadata=config.metadata or {},
+                    created_at=config.created_at or current_datetime,
+                    updated_at=config.updated_at or current_datetime,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        entity_id=config.entity_id,
+                        entity_type=config.entity_type,
+                        config=config.config,
+                        version=config.version,
+                        metadata=config.metadata or {},
+                        updated_at=current_datetime,
+                    ),
+                ).returning(table)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                db_row = dict(row._mapping)
+                return deserialize_config_from_db(db_row)
+        except Exception as e:
+            log_error(f"Error upserting config: {e}")
             raise e

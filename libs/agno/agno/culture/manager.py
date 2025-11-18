@@ -842,7 +842,7 @@ class CultureManager:
         if enable_clear_knowledge:
             functions.append(clear_cultural_knowledge)
         return functions
-
+    
     async def _aget_db_tools(
         self,
         db: AsyncBaseDb,
@@ -954,3 +954,4 @@ class CultureManager:
         if enable_clear_knowledge:
             functions.append(clear_cultural_knowledge)
         return functions
+    

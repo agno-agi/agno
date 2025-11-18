@@ -48,6 +48,7 @@ class PostgresDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        configs_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -97,6 +98,7 @@ class PostgresDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            configs_table=configs_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
