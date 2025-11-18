@@ -81,11 +81,7 @@ class MigrationManager:
         Args:
             target_version: The version to migrate to. e.g. "v2.3.0"
         """
-        if not target_version:
-            _target_version = self.available_versions[-1][1]
-        else:
-            _target_version = packaging_version.parse(target_version)
-
+        _target_version = packaging_version.parse(target_version)
         current_version = packaging_version.parse(self.db.get_latest_schema_version())
 
         if _target_version >= current_version:
