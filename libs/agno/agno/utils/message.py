@@ -1,5 +1,5 @@
-from copy import deepcopy
 import json
+from copy import deepcopy
 from typing import Dict, List, Union
 
 from pydantic import BaseModel
