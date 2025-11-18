@@ -80,6 +80,8 @@ class Gemini(Model):
     url_context: bool = False
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
+
+    # Gemini File Search capabilities
     file_search_store_names: Optional[List[str]] = None
     file_search_metadata_filter: Optional[str] = None
 
