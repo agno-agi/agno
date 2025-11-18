@@ -873,7 +873,7 @@ class MemoryManager:
                     self._upsert_db_memory(memory=opt_mem)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
-        log_debug(f"Optimization complete. New token count: {optimized_tokens}")
+        log_debug(f"Memory optimization complete. New token count: {optimized_tokens}")
 
         return optimized_memories
 
