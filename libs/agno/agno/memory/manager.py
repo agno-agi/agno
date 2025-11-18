@@ -840,7 +840,7 @@ class MemoryManager:
 
         # Apply to database if requested
         if apply:
-            log_debug(f"Applying optimized memories to database for user {user_id}")
+            log_debug(f"Optimizing memories for user {user_id}")
 
             # Collect memory_ids from optimized set
             optimized_memory_ids = {mem.memory_id for mem in optimized_memories if mem.memory_id}
