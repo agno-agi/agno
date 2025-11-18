@@ -15,6 +15,21 @@ Get your API key from: https://modelstudio.console.alibabacloud.com/?tab=model#/
 export DASHSCOPE_API_KEY=***
 ```
 
+🆕 Region Configuration (optional)
+
+You can now specify the DashScope region via environment variable DASHSCOPE_REGION:
+• intl → use the Singapore endpoint (default)
+• cn → use the Beijing (China Mainland) endpoint
+
+```shell
+# Example: use China Mainland region
+export DASHSCOPE_REGION=cn
+``` 
+
+This automatically sets:
+• https://dashscope.aliyuncs.com/compatible-mode/v1 for cn
+• https://dashscope-intl.aliyuncs.com/compatible-mode/v1 for intl
+
 ### 3. Install libraries
 
 ```shell
