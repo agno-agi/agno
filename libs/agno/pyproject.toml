@@ -44,7 +44,6 @@ dependencies = [
   "rich",
   "typer",
   "typing-extensions",
-  "protobuf>=6.32.0"
 ]
 
 [project.optional-dependencies]
