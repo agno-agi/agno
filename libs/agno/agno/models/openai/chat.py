@@ -339,7 +339,6 @@ class OpenAIChat(Model):
         if message.content is None:
             message_dict["content"] = ""
         
-        print("MESSAGE", message_dict)
         return message_dict
 
     def invoke(
