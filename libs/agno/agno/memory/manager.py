@@ -821,6 +821,11 @@ class MemoryManager:
         if user_id is None:
             user_id = "default"
 
+        if not isinstance(self.db, AsyncBaseDb):
+            raise ValueError(
+                "aoptimize_memories() is not supported with a sync DB. Please use optimize_memories() instead."
+            )
+
         # Get user memories
         memories = await self.aget_user_memories(user_id=user_id)
         if not memories:
