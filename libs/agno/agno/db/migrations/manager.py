@@ -19,7 +19,7 @@ class MigrationManager:
     
     def up(self, target_version: Optional[str] = None):
         current_version = self.db.get_latest_schema_version()
-        log_info(f"Current schema version: {current_version}")
+        log_info(f"Starting migration. Current schema version: {current_version}")
         
         # Find files after the current version
         latest_version = None
