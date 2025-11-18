@@ -1,22 +1,24 @@
 """
-This example demonstrates max_tool_calls_from_history to limit tool calls sent to the model.
+This example demonstrates max_tool_calls_from_history to limit tool call results sent to the model.
 
 How it works:
 1. Database stores ALL runs (no limit)
 2. num_history_runs loads last N runs from database (default: 3)
-3. max_tool_calls_from_history filters loaded history to keep only M most recent tool calls
+3. max_tool_calls_from_history prunes older tool call results, keeping only M most recent ones
 
-Flow: Database → Load History → Filter Tool Calls → Send to Model
+Flow: Database → Load History → Prune Tool Call Results → Send to Model
 
 Expected behavior (with add_history_to_context=True, no num_history_runs limit):
 - Run 1: No history → Model sees: [1] → DB has: [1]
 - Run 2: History [1] → Model sees: [1, 2] → DB has: [1, 2]
 - Run 3: History [1,2] → Model sees: [1, 2, 3] → DB has: [1, 2, 3]
 - Run 4: History [1,2,3] → Model sees: [1, 2, 3, 4] → DB has: [1, 2, 3, 4]
-- Run 5: History [1,2,3,4] filtered to [2,3,4] → Model sees: [2, 3, 4, 5] → DB has: [1, 2, 3, 4, 5]
-- Run 6: History [2,3,4,5] filtered to [3,4,5] → Model sees: [3, 4, 5, 6] → DB has: [1, 2, 3, 4, 5, 6]
+- Run 5: History [1,2,3,4] → Model sees: [1:PRUNED, 2, 3, 4, 5] → DB has: [1, 2, 3, 4, 5]
+- Run 6: History [1:PRUNED,2,3,4,5] → Model sees: [1:PRUNED, 2:PRUNED, 3, 4, 5, 6] → DB has: [1, 2, 3, 4, 5, 6]
 
-Key insight: Filtering affects MODEL INPUT only. Database stores everything, always.
+Key insight: Pruning replaces old tool results with [RESULT_PRUNED] messages.
+The tool call history is preserved (reducing hallucinations), but detailed results
+are removed to save tokens. Database stores everything, always.
 """
 
 import random
@@ -38,7 +40,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_weather_for_city],
     instructions="You are a weather assistant. Get the weather using the get_weather_for_city tool.",
-    # Only keep 3 most recent tool calls from history in context (reduces token costs)
+    # Prune older tool call results, keeping only 3 most recent ones (reduces token costs while preserving call history)
     max_tool_calls_from_history=3,
     db=SqliteDb(db_file="tmp/weather_data.db"),
     add_history_to_context=True,
@@ -58,7 +60,7 @@ cities = [
 ]
 
 print("\n" + "=" * 90)
-print("Tool Call Filtering Demo: max_tool_calls_from_history=3")
+print("Tool Call Pruning Demo: max_tool_calls_from_history=3")
 print("=" * 90)
 print(
     f"{'Run':<5} | {'City':<15} | {'History':<8} | {'Current':<8} | {'In Context':<11} | {'In DB':<8}"
