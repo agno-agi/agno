@@ -19,9 +19,6 @@ agent = Agent(
     add_datetime_to_context=True,
     enable_agentic_memory=True,
     markdown=True,
-    
-    # Run from config
-    run_from_config=True,
 )
 
 agent.print_response("What is the current price of Tesla?")
@@ -42,13 +39,15 @@ updated_config = agent.update_config(saved_config)
 assert updated_config.config["enable_session_summaries"] == True
 
 ### Create a new agent from an existing config
-new_agent = Agent.from_config(config=updated_config)
+new_agent = Agent.from_config(db=db, config_id=updated_config.id)
 
 new_agent.print_response("What is the current price of NVIDIA?")
 
 
 ### Create a new agent from a config ID
-agent = Agent(db=db, 
-      config_id=updated_config.id,
-      run_from_config=True # Re-hydrate the agent on each run
-      )
+new_new_agent = Agent(db=db, 
+    config_id=updated_config.id,
+    # run_from_config=True # Re-hydrate the agent on each run (optional)
+)
+
+new_new_agent.print_response("What is the current price of Apple?")
