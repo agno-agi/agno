@@ -480,12 +480,6 @@ class Gemini(Model):
             # Add content to the message for the model
             content = message.get_tool_result(compression_manager)
 
-            # Log if compression is being used for tool messages
-            if message.role == "function" and message.compressed_content:
-                orig_len = len(str(message.content)) if message.content else 0
-                comp_len = len(str(content)) if content else 0
-                log_debug(f"[Gemini API] Sending compressed tool result: {comp_len}B (original: {orig_len}B)")
-
             # Initialize message_parts to be used for Gemini
             message_parts: List[Any] = []
 

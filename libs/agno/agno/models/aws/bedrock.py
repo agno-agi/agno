@@ -591,34 +591,8 @@ class AwsBedrock(Model):
                 if not _fc_message.tool_call_id:
                     _fc_message.tool_call_id = tool_id
 
-                if compression_manager and _fc_message.compressed_content:
-                    orig_len = len(str(_fc_message.content)) if _fc_message.content else 0
-                    comp_len = len(_fc_message.compressed_content)
-                    ratio = int((1 - comp_len / orig_len) * 100) if orig_len > 0 else 0
-                    log_debug(
-                        f"  [{_fc_message_index}] {_fc_message.tool_name}: {orig_len}B→{comp_len}B ({ratio}% saved)"
-                    )
-                else:
-                    log_debug(f"  [{_fc_message_index}] {_fc_message.tool_name}: No compression")
-
                 # Append as standard role="tool" message
                 messages.append(_fc_message)
-
-            # Summary log
-            compressed_count = sum(1 for msg in function_call_results if msg.compressed_content)
-            if compressed_count > 0:
-                total_orig = sum(
-                    len(str(msg.content)) if msg.content else 0
-                    for msg in function_call_results
-                    if msg.compressed_content
-                )
-                total_comp = sum(len(msg.compressed_content) for msg in function_call_results if msg.compressed_content)
-                ratio = int((1 - total_comp / total_orig) * 100) if total_orig > 0 else 0
-                log_debug(
-                    f"✅ Stored {compressed_count}/{len(function_call_results)} compressed tool results ({ratio}% space saved)"
-                )
-            else:
-                log_debug(f"[Bedrock] Stored {len(function_call_results)} tool results as role=tool")
 
     def _parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         """

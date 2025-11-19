@@ -69,24 +69,11 @@ research_team = Team(
     max_tool_calls_from_history=3,  # Keep only last 3 research results
     markdown=True,
     show_members_responses=True,
-    debug_mode=True,
     compress_tool_results=True,
+    stream=True,
 )
 
 if __name__ == "__main__":
     research_team.print_response(
         "What are the latest developments in AI agents? Which companies dominate the market? Find the latest news and reports on the companies.",
-        stream=True,
-    )
-    research_team.print_response(
-        "How is the tech market performing this quarter? How about last year? Find the latest news and reports on Mag 7.",
-        stream=True,
-    )
-    research_team.print_response(
-        "What are the trends in LLM applications for enterprises? Find the latest news and reports on the trends.",
-        stream=True,
-    )
-    research_team.print_response(
-        "What companies are leading in AI infrastructure? Find reports on the companies and their products.",
-        stream=True,
     )
