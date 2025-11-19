@@ -384,7 +384,7 @@ def _migrate_mysql(db: Any) -> None:
                 text(
                     f"""
                     ALTER TABLE `{db_schema}`.`{memory_table_name}`
-                    MODIFY COLUMN `created_at` BIGINT NOT NULL
+                    ALTER COLUMN `created_at` SET NOT NULL
                     """
                 )
             )
@@ -439,7 +439,7 @@ def _migrate_sqlite(db: Any) -> None:
                 text(
                     f"""
                     ALTER TABLE {memory_table_name}
-                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    ALTER COLUMN created_at SET NOT NULL
                     """
                 ),
             )
@@ -493,7 +493,7 @@ async def _migrate_async_sqlite(db: AsyncBaseDb) -> None:
                 text(
                     f"""
                     ALTER TABLE {memory_table_name}
-                    MODIFY COLUMN created_at BIGINT NOT NULL
+                    ALTER COLUMN created_at SET NOT NULL
                     """
                 ),
             )
@@ -558,15 +558,6 @@ def _migrate_singlestore(db: Any) -> None:
                     """
                 ),
                 {"default_time": current_time},
-            )
-            # Set created_at as non nullable
-            sess.execute(
-                text(
-                    f"""
-                    ALTER TABLE `{db_schema}`.`{memory_table_name}`
-                    MODIFY COLUMN `created_at` BIGINT NOT NULL
-                    """
-                )
             )
 
         # Add feedback if it doesn't exist
