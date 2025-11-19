@@ -517,7 +517,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 "content": {
                     "application/json": {
                         "example": {
-                            "optimized_memories": [
+                            "memories": [
                                 {
                                     "memory_id": "f9361a69-2997-40c7-ae4e-a5861d434047",
                                     "memory": "User has a 3-year-old golden retriever named Max who loves fetch and walks. Lives in San Francisco's Mission district, works as a product manager in tech. Enjoys hiking Bay Area trails, trying new restaurants (especially Japanese, Thai, Mexican), and learning piano for 1.5 years.",
@@ -629,7 +629,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             ]
 
             return OptimizeMemoriesResponse(
-                optimized_memories=optimized_memory_schemas,
+                memories=optimized_memory_schemas,
                 memories_before=memories_before_count,
                 memories_after=memories_after_count,
                 tokens_before=tokens_before,

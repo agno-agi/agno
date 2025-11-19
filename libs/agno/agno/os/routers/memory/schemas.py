@@ -65,7 +65,7 @@ class UserStatsSchema(BaseModel):
 class OptimizeMemoriesResponse(BaseModel):
     """Schema for memory optimization response"""
 
-    optimized_memories: List[UserMemorySchema] = Field(..., description="List of optimized memory objects")
+    memories: List[UserMemorySchema] = Field(..., description="List of optimized memory objects")
     memories_before: int = Field(..., description="Number of memories before optimization", ge=0)
     memories_after: int = Field(..., description="Number of memories after optimization", ge=0)
     tokens_before: int = Field(..., description="Token count before optimization", ge=0)
