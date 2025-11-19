@@ -349,12 +349,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 table_name=table_name,
                 version=version,
                 created_at=current_datetime,  # Store as ISO format string
-            )  # type: ignore
+                updated_at=current_datetime,
+            )
             # Update version if table_name already exists
             stmt = stmt.on_conflict_do_update(
                 index_elements=["table_name"],
                 set_=dict(version=version, updated_at=current_datetime),
-            )  # type: ignore
+            )
             await sess.execute(stmt)
 
     # -- Session methods --

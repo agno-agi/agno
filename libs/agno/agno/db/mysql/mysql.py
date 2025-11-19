@@ -370,6 +370,7 @@ class MySQLDb(BaseDb):
                 table_name=table_name,
                 version=version,
                 created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
             )
             # Update version if table_name already exists
             stmt = stmt.on_duplicate_key_update(

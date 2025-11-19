@@ -57,7 +57,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_schema_version(self, table_name: str, version: str) -> None:
+    def upsert_schema_version(self, table_name: str, version: str):
         """Upsert the schema version into the database."""
         raise NotImplementedError
 
@@ -373,7 +373,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_schema_version(self, table_name: str, version: str) -> None:
+    async def upsert_schema_version(self, table_name: str, version: str):
         """Upsert the schema version into the database."""
         raise NotImplementedError
 
