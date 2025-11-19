@@ -1367,8 +1367,8 @@ class JsonDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         status: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List, int]:
@@ -1381,8 +1381,8 @@ class JsonDb(BaseDb):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             status: Filter by status (OK, ERROR, UNSET).
-            start_time: Filter traces starting after this timestamp (nanoseconds).
-            end_time: Filter traces ending before this timestamp (nanoseconds).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return.
 
         Returns:
@@ -1395,8 +1395,8 @@ class JsonDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -1406,8 +1406,8 @@ class JsonDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            start_time: Filter sessions with traces created after this timestamp (Unix seconds).
-            end_time: Filter sessions with traces created before this timestamp (Unix seconds).
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 

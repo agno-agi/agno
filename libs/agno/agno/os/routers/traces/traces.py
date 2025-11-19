@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Union
 
 from fastapi import Depends, HTTPException, Query
@@ -137,13 +137,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             start_time_ms = time_module.time() * 1000
 
-            # Convert ISO datetime strings to nanoseconds for database query
-            start_time_ns = None
-            end_time_ns = None
+            # Convert ISO datetime strings to datetime objects for database query
+            start_time_dt = None
+            end_time_dt = None
             if start_time:
                 try:
-                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    start_time_ns = int(dt.timestamp() * 1_000_000_000)
+                    start_time_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
@@ -151,8 +150,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     )
             if end_time:
                 try:
-                    dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
-                    end_time_ns = int(dt.timestamp() * 1_000_000_000)
+                    end_time_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
@@ -167,8 +165,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     agent_id=agent_id,
                     team_id=team_id,
                     status=status,
-                    start_time=start_time_ns,
-                    end_time=end_time_ns,
+                    start_time=start_time_dt,
+                    end_time=end_time_dt,
                     limit=limit,
                     page=page,
                 )
@@ -180,8 +178,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     agent_id=agent_id,
                     team_id=team_id,
                     status=status,
-                    start_time=start_time_ns,
-                    end_time=end_time_ns,
+                    start_time=start_time_dt,
+                    end_time=end_time_dt,
                     limit=limit,
                     page=page,
                 )
@@ -477,13 +475,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             start_time_ms = time_module.time() * 1000
 
-            # Convert ISO datetime strings to Unix timestamps (seconds) for database query
-            start_time_unix = None
-            end_time_unix = None
+            # Convert ISO datetime strings to datetime objects for database query
+            start_time_dt = None
+            end_time_dt = None
             if start_time:
                 try:
-                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    start_time_unix = int(dt.timestamp())
+                    start_time_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
@@ -491,8 +488,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     )
             if end_time:
                 try:
-                    dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
-                    end_time_unix = int(dt.timestamp())
+                    end_time_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
@@ -504,8 +500,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    start_time=start_time_unix,
-                    end_time=end_time_unix,
+                    start_time=start_time_dt,
+                    end_time=end_time_dt,
                     limit=limit,
                     page=page,
                 )
@@ -514,8 +510,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    start_time=start_time_unix,
-                    end_time=end_time_unix,
+                    start_time=start_time_dt,
+                    end_time=end_time_dt,
                     limit=limit,
                     page=page,
                 )
@@ -533,16 +529,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Calculate total pages
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
-            # Convert stats to response models with datetime conversion
+            # Convert stats to response models (Pydantic auto-serializes datetime to ISO 8601)
             stats_response = [
                 TraceSessionStats(
                     session_id=stat["session_id"],
+                    session_name=stat.get("session_name"),
                     user_id=stat.get("user_id"),
                     agent_id=stat.get("agent_id"),
                     team_id=stat.get("team_id"),
                     total_traces=stat["total_traces"],
-                    first_trace_at=datetime.fromtimestamp(stat["first_trace_at"], tz=timezone.utc).isoformat(),
-                    last_trace_at=datetime.fromtimestamp(stat["last_trace_at"], tz=timezone.utc).isoformat(),
+                    first_trace_at=stat["first_trace_at"],
+                    last_trace_at=stat["last_trace_at"],
                 )
                 for stat in stats_list
             ]

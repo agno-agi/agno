@@ -3,7 +3,7 @@ Trace data models for Agno tracing.
 """
 
 from dataclasses import asdict, dataclass
-from time import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from opentelemetry.sdk.trace import ReadableSpan  # type: ignore
@@ -17,8 +17,8 @@ class Trace:
     trace_id: str
     name: str  # Name from root span
     status: str  # Overall status: OK, ERROR, UNSET
-    start_time_ns: int
-    end_time_ns: int
+    start_time: datetime  # Python datetime object
+    end_time: datetime  # Python datetime object
     duration_ms: int
     total_spans: int
     error_count: int
@@ -29,22 +29,47 @@ class Trace:
     user_id: Optional[str]
     agent_id: Optional[str]
     team_id: Optional[str]
+    workflow_id: Optional[str]
 
-    created_at: int
+    created_at: datetime  # Python datetime object
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert Trace to dictionary for database storage"""
-        return asdict(self)
+        """Convert Trace to dictionary for database storage (datetime -> ISO string)"""
+        data = asdict(self)
+        # Convert datetime objects to ISO format strings for database storage
+        data["start_time"] = self.start_time.isoformat()
+        data["end_time"] = self.end_time.isoformat()
+        data["created_at"] = self.created_at.isoformat()
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Trace":
-        """Create Trace from dictionary"""
+        """Create Trace from dictionary (ISO string -> datetime)"""
+        # Convert ISO format strings to datetime objects
+        start_time = data["start_time"]
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        elif isinstance(start_time, int):
+            start_time = datetime.fromtimestamp(start_time / 1_000_000_000, tz=timezone.utc)
+
+        end_time = data["end_time"]
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        elif isinstance(end_time, int):
+            end_time = datetime.fromtimestamp(end_time / 1_000_000_000, tz=timezone.utc)
+
+        created_at = data["created_at"]
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        elif isinstance(created_at, int):
+            created_at = datetime.fromtimestamp(created_at, tz=timezone.utc)
+
         return cls(
             trace_id=data["trace_id"],
             name=data["name"],
             status=data["status"],
-            start_time_ns=data["start_time_ns"],
-            end_time_ns=data["end_time_ns"],
+            start_time=start_time,
+            end_time=end_time,
             duration_ms=data["duration_ms"],
             total_spans=data["total_spans"],
             error_count=data["error_count"],
@@ -52,8 +77,9 @@ class Trace:
             session_id=data.get("session_id"),
             user_id=data.get("user_id"),
             agent_id=data.get("agent_id"),
-            created_at=data["created_at"],
             team_id=data.get("team_id"),
+            workflow_id=data.get("workflow_id"),
+            created_at=created_at,
         )
 
 
@@ -68,19 +94,43 @@ class Span:
     span_kind: str
     status_code: str
     status_message: Optional[str]
-    start_time_ns: int
-    end_time_ns: int
+    start_time: datetime  # Python datetime object
+    end_time: datetime  # Python datetime object
     duration_ms: int
     attributes: Dict[str, Any]
-    created_at: int
+    created_at: datetime  # Python datetime object
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert Span to dictionary for database storage"""
-        return asdict(self)
+        """Convert Span to dictionary for database storage (datetime -> ISO string)"""
+        data = asdict(self)
+        # Convert datetime objects to ISO format strings for database storage
+        data["start_time"] = self.start_time.isoformat()
+        data["end_time"] = self.end_time.isoformat()
+        data["created_at"] = self.created_at.isoformat()
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Span":
-        """Create Span from dictionary"""
+        """Create Span from dictionary (ISO string -> datetime)"""
+        # Convert ISO format strings to datetime objects
+        start_time = data["start_time"]
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        elif isinstance(start_time, int):
+            start_time = datetime.fromtimestamp(start_time / 1_000_000_000, tz=timezone.utc)
+
+        end_time = data["end_time"]
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        elif isinstance(end_time, int):
+            end_time = datetime.fromtimestamp(end_time / 1_000_000_000, tz=timezone.utc)
+
+        created_at = data["created_at"]
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        elif isinstance(created_at, int):
+            created_at = datetime.fromtimestamp(created_at, tz=timezone.utc)
+
         return cls(
             span_id=data["span_id"],
             trace_id=data["trace_id"],
@@ -89,11 +139,11 @@ class Span:
             span_kind=data["span_kind"],
             status_code=data["status_code"],
             status_message=data.get("status_message"),
-            start_time_ns=data["start_time_ns"],
-            end_time_ns=data["end_time_ns"],
+            start_time=start_time,
+            end_time=end_time,
             duration_ms=data["duration_ms"],
             attributes=data.get("attributes", {}),
-            created_at=data["created_at"],
+            created_at=created_at,
         )
 
     @classmethod
@@ -133,6 +183,10 @@ class Span:
         end_time_ns = otel_span.end_time or start_time_ns
         duration_ms = int((end_time_ns - start_time_ns) / 1_000_000)
 
+        # Convert nanosecond timestamps to datetime objects
+        start_time = datetime.fromtimestamp(start_time_ns / 1_000_000_000, tz=timezone.utc)
+        end_time = datetime.fromtimestamp(end_time_ns / 1_000_000_000, tz=timezone.utc)
+
         # Convert attributes to dictionary
         attributes: Dict[str, Any] = {}
         if otel_span.attributes:
@@ -153,11 +207,11 @@ class Span:
             span_kind=span_kind,
             status_code=status_code,
             status_message=status_message,
-            start_time_ns=start_time_ns,
-            end_time_ns=end_time_ns,
+            start_time=start_time,
+            end_time=end_time,
             duration_ms=duration_ms,
             attributes=attributes,
-            created_at=int(time()),
+            created_at=datetime.now(timezone.utc),
         )
 
 
@@ -179,9 +233,9 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
 
     # Calculate aggregated metrics
     trace_id = spans[0].trace_id
-    start_time_ns = min(s.start_time_ns for s in spans)
-    end_time_ns = max(s.end_time_ns for s in spans)
-    duration_ms = int((end_time_ns - start_time_ns) / 1_000_000)
+    start_time = min(s.start_time for s in spans)
+    end_time = max(s.end_time for s in spans)
+    duration_ms = int((end_time - start_time).total_seconds() * 1000)
     total_spans = len(spans)
     error_count = sum(1 for s in spans if s.status_code == "ERROR")
 
@@ -201,12 +255,14 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
 
     team_id = attrs.get("team_id") or attrs.get("agno.team.id")
 
+    workflow_id = attrs.get("workflow_id") or attrs.get("agno.workflow.id")
+
     return Trace(
         trace_id=trace_id,
         name=root_span.name,
         status=status,
-        start_time_ns=start_time_ns,
-        end_time_ns=end_time_ns,
+        start_time=start_time,
+        end_time=end_time,
         duration_ms=duration_ms,
         total_spans=total_spans,
         error_count=error_count,
@@ -215,5 +271,6 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
         user_id=user_id,
         agent_id=agent_id,
         team_id=team_id,
-        created_at=int(time()),
+        workflow_id=workflow_id,
+        created_at=datetime.now(timezone.utc),
     )

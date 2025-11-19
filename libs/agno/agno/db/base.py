@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -337,8 +337,8 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         status: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List, int]:
@@ -350,14 +350,14 @@ class BaseDb(ABC):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            status: Filter by status (OK, ERROR, UNSET).
-            start_time: Filter traces starting after this timestamp (nanoseconds).
-            end_time: Filter traces ending before this timestamp (nanoseconds).
+            status: Filter by status (OK, ERROR).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
 
         Returns:
-            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+            tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
         """
         raise NotImplementedError
 
@@ -367,8 +367,8 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -378,15 +378,15 @@ class BaseDb(ABC):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            start_time: Filter sessions with traces created after this timestamp (Unix seconds).
-            end_time: Filter sessions with traces created before this timestamp (Unix seconds).
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                first_trace_at, last_trace_at.
+                first_trace_at (datetime), last_trace_at (datetime).
         """
         raise NotImplementedError
 
@@ -773,8 +773,8 @@ class AsyncBaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         status: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List, int]:
@@ -786,14 +786,14 @@ class AsyncBaseDb(ABC):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            status: Filter by status (OK, ERROR, UNSET).
-            start_time: Filter traces starting after this timestamp (nanoseconds).
-            end_time: Filter traces ending before this timestamp (nanoseconds).
+            status: Filter by status (OK, ERROR).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
 
         Returns:
-            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+            tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
         """
         raise NotImplementedError
 
@@ -803,8 +803,8 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -814,15 +814,15 @@ class AsyncBaseDb(ABC):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            start_time: Filter sessions with traces created after this timestamp (Unix seconds).
-            end_time: Filter sessions with traces created before this timestamp (Unix seconds).
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                first_trace_at, last_trace_at.
+                first_trace_at (datetime), last_trace_at (datetime).
         """
         raise NotImplementedError
 

@@ -97,8 +97,8 @@ TRACE_TABLE_SCHEMA = {
     "trace_id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
     "status": {"type": String, "nullable": False, "index": True},
-    "start_time_ns": {"type": BigInteger, "nullable": False, "index": True},
-    "end_time_ns": {"type": BigInteger, "nullable": False},
+    "start_time": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
+    "end_time": {"type": String, "nullable": False},  # ISO 8601 datetime string
     "duration_ms": {"type": BigInteger, "nullable": False},
     "run_id": {"type": String, "nullable": True, "index": True},
     "session_id": {"type": String, "nullable": True, "index": True},
@@ -106,7 +106,7 @@ TRACE_TABLE_SCHEMA = {
     "agent_id": {"type": String, "nullable": True, "index": True},
     "team_id": {"type": String, "nullable": True, "index": True},
     "workflow_id": {"type": String, "nullable": True, "index": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
 SPAN_TABLE_SCHEMA = {
@@ -122,11 +122,11 @@ SPAN_TABLE_SCHEMA = {
     "span_kind": {"type": String, "nullable": False},
     "status_code": {"type": String, "nullable": False},
     "status_message": {"type": String, "nullable": True},
-    "start_time_ns": {"type": BigInteger, "nullable": False, "index": True},
-    "end_time_ns": {"type": BigInteger, "nullable": False},
+    "start_time": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
+    "end_time": {"type": String, "nullable": False},  # ISO 8601 datetime string
     "duration_ms": {"type": BigInteger, "nullable": False},
     "attributes": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {

@@ -2077,7 +2077,7 @@ class SqliteDb(BaseDb):
 
                 if existing:
                     update_values = {
-                        "end_time_ns": trace.end_time_ns,
+                        "end_time": trace.end_time.isoformat(),
                         "duration_ms": trace.duration_ms,
                         "status": trace.status,
                         # Update name only if new name looks like a root span (contains ".run" or ".arun")
@@ -2095,6 +2095,8 @@ class SqliteDb(BaseDb):
                         update_values["agent_id"] = trace.agent_id
                     if trace.team_id is not None:
                         update_values["team_id"] = trace.team_id
+                    if trace.workflow_id is not None:
+                        update_values["workflow_id"] = trace.workflow_id
 
                     log_debug(
                         f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
@@ -2158,7 +2160,7 @@ class SqliteDb(BaseDb):
                     return None
 
                 # Order by most recent and get first result
-                stmt = stmt.order_by(table.c.start_time_ns.desc()).limit(1)
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
                 result = sess.execute(stmt).fetchone()
 
                 if result:
@@ -2177,8 +2179,8 @@ class SqliteDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         status: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List, int]:
@@ -2191,8 +2193,8 @@ class SqliteDb(BaseDb):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             status: Filter by status (OK, ERROR, UNSET).
-            start_time: Filter traces starting after this timestamp (nanoseconds).
-            end_time: Filter traces ending before this timestamp (nanoseconds).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
 
@@ -2235,9 +2237,11 @@ class SqliteDb(BaseDb):
                 if status:
                     base_stmt = base_stmt.where(table.c.status == status)
                 if start_time:
-                    base_stmt = base_stmt.where(table.c.start_time_ns >= start_time)
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
                 if end_time:
-                    base_stmt = base_stmt.where(table.c.end_time_ns <= end_time)
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -2246,7 +2250,7 @@ class SqliteDb(BaseDb):
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(table.c.start_time_ns.desc()).limit(limit).offset(offset)
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
                 log_debug(f"Returning page {page} with {len(results)} traces")
@@ -2263,8 +2267,8 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -2274,8 +2278,8 @@ class SqliteDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            start_time: Filter sessions with traces created after this timestamp (Unix seconds).
-            end_time: Filter sessions with traces created before this timestamp (Unix seconds).
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 
@@ -2319,9 +2323,11 @@ class SqliteDb(BaseDb):
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
                 if start_time:
-                    base_stmt = base_stmt.where(table.c.created_at >= start_time)
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
                 if end_time:
-                    base_stmt = base_stmt.where(table.c.created_at <= end_time)
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -2335,19 +2341,30 @@ class SqliteDb(BaseDb):
                 results = sess.execute(paginated_stmt).fetchall()
                 log_debug(f"Returning page {page} with {len(results)} session stats")
 
-                # Convert to list of dicts
-                stats_list = [
-                    {
-                        "session_id": row.session_id,
-                        "user_id": row.user_id,
-                        "agent_id": row.agent_id,
-                        "team_id": row.team_id,
-                        "total_traces": row.total_traces,
-                        "first_trace_at": row.first_trace_at,
-                        "last_trace_at": row.last_trace_at,
-                    }
-                    for row in results
-                ]
+                # Convert to list of dicts with datetime objects
+                from datetime import datetime, timezone
+
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects
+                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
 
                 return stats_list, total_count
 
