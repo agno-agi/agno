@@ -2,16 +2,22 @@
 
 Run `pip install ddgs sqlalchemy openai` to install dependencies."""
 
-from urllib.parse import quote_plus
+from os import getenv
 
 from agno.agent import Agent
 from agno.db.singlestore.singlestore import SingleStoreDb
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-password = "CYmqkI1V6Z*Y66XykCib=mV{]y"
-encoded_password = quote_plus(password)
+# Configure SingleStore DB connection
+USERNAME = getenv("SINGLESTORE_USERNAME")
+PASSWORD = getenv("SINGLESTORE_PASSWORD")
+HOST = getenv("SINGLESTORE_HOST")
+PORT = getenv("SINGLESTORE_PORT")
+DATABASE = getenv("SINGLESTORE_DATABASE")
 
-db_url = f"mysql+pymysql://manu-e79af:{encoded_password}@svc-3482219c-a389-4079-b18b-d50662524e8a-shared-dml.aws-virginia-6.svc.singlestore.com:3333/db_manu_fd070"
+db_url = (
+    f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}?charset=utf8mb4"
+)
 db = SingleStoreDb(db_url=db_url)
 
 # Create an agent with SingleStore db
@@ -19,6 +25,6 @@ agent = Agent(
     db=db,
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,
-    enable_agentic_memory=True,
 )
-agent.print_response("please remember i like sushi")
+agent.print_response("How many people live in Canada?")
+agent.print_response("What is their national anthem called?")
