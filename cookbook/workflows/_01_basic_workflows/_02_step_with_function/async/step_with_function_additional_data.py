@@ -158,7 +158,6 @@ if __name__ == "__main__":
             },
             markdown=True,
             stream=True,
-            stream_events=True,
         )
     )
 

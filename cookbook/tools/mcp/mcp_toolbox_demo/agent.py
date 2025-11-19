@@ -38,7 +38,7 @@ async def run_agent(message: str) -> None:
         )
 
         # Run an interactive command-line interface to interact with the agent.
-        await agent.acli_app(input=message, stream=True, stream_events=True)
+        await agent.acli_app(input=message, stream=True)
 
 
 async def run_agent_manual_loading(message: str) -> None:
@@ -82,7 +82,7 @@ async def run_agent_manual_loading(message: str) -> None:
             debug_mode=True,
         )
 
-        await agent.acli_app(input=message, stream=True, stream_events=True)
+        await agent.acli_app(input=message, stream=True)
 
 
 if __name__ == "__main__":
