@@ -105,8 +105,13 @@ class Llama(Model):
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
         else:
             # Use global sync client when no custom http_client is provided
             client_params["http_client"] = get_default_sync_client()
@@ -124,8 +129,15 @@ class Llama(Model):
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
             # Use global async client when no custom http_client is provided
             client_params["http_client"] = get_default_async_client()

@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional
 import httpx
 
 from agno.models.openai.like import OpenAILike
-from agno.utils.http import get_default_async_client
-from agno.utils.log import log_debug
+from agno.utils.http import get_default_async_client, get_default_sync_client
+from agno.utils.log import log_warning
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
@@ -100,7 +100,12 @@ class AzureOpenAI(OpenAILike):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_debug("http_client is not an instance of httpx.Client.")
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["http_client"] = get_default_sync_client()
 
         # Create client
         self.client = AzureOpenAIClient(**_client_params)
@@ -118,8 +123,15 @@ class AzureOpenAI(OpenAILike):
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            _client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["http_client"] = get_default_async_client()
         else:
             # Use global async client when no custom http_client is provided
             _client_params["http_client"] = get_default_async_client()

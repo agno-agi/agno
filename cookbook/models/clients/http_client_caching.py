@@ -14,15 +14,14 @@ Install:
     pip install agno openai httpx
 """
 
-import uuid
 import logging
+import uuid
 from datetime import datetime
-import httpx
 
+import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.utils.http import set_default_sync_client
-
 
 # ----------------------------------------------------------------------------
 # Logging Setup
