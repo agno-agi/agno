@@ -138,7 +138,7 @@ async def async_reasoning_demo():
 
     # Run async with streaming and reasoning
     await coordinated_reasoning_team.aprint_response(
-        query, stream=True, stream_events=True, show_full_reasoning=True
+        query, stream=True, show_full_reasoning=True
     )
 
 
@@ -156,7 +156,7 @@ def sync_reasoning_demo():
 
     # Run with detailed reasoning output
     coordinated_reasoning_team.print_response(
-        query, stream=True, stream_events=True, show_full_reasoning=True
+        query, stream=True, show_full_reasoning=True
     )
 
 
