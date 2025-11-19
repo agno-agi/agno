@@ -183,6 +183,11 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
@@ -398,11 +403,10 @@ class SingleStoreDb(BaseDb):
                 version=version,
                 created_at=current_datetime,  # Store as ISO format string
             )  # type: ignore
-            # Use ON DUPLICATE KEY UPDATE to do nothing on conflict
+            # Update version if table_name already exists
             stmt = stmt.on_duplicate_key_update(
-                version=stmt.inserted.version,
-                table_name=stmt.inserted.table_name,
-                created_at=stmt.inserted.created_at,
+                version=version,
+                updated_at=current_datetime,
             )
             sess.execute(stmt)
 
@@ -431,11 +435,12 @@ class SingleStoreDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            
+
             # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-            
+            if table_name != self.versions_table_name:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not is_valid_table(

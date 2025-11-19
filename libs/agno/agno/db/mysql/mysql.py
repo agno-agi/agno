@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import Index, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
     apply_sorting,
@@ -19,7 +20,6 @@ from agno.db.mysql.utils import (
     is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
-from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -226,11 +226,11 @@ class MySQLDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            
-            # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-            
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -320,12 +320,13 @@ class MySQLDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            
+
             created_table = self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
-            
-            # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
             return created_table
 
@@ -370,11 +371,11 @@ class MySQLDb(BaseDb):
                 version=version,
                 created_at=current_datetime,  # Store as ISO format string
             )
-            # Use ON DUPLICATE KEY UPDATE to do nothing on conflict
+            # Update version if table_name already exists
             stmt = stmt.on_duplicate_key_update(
-                version=stmt.inserted.version,
-                table_name=stmt.inserted.table_name,
-                created_at=stmt.inserted.created_at,
+                version=version,
+                created_at=current_datetime,
+                updated_at=current_datetime,
             )
             sess.execute(stmt)
 

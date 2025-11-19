@@ -140,11 +140,11 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            
-            # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-            
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             await self._create_table(table_name=table_name, table_type=table_type)
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -308,11 +308,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
-            
-            # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-            
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -362,9 +362,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 version=version,
                 created_at=current_datetime,  # Store as ISO format string
             )  # type: ignore
-            # Ignore conflicts - do nothing if the combination already exists
-            stmt = stmt.on_conflict_do_nothing(
-                index_elements=["version", "table_name"]
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
             )
             await sess.execute(stmt)
 

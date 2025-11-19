@@ -109,9 +109,10 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 
 
 VERSIONS_TABLE_SCHEMA = {
-    "version": {"type": lambda: String(10), "nullable": False, "primary_key": True},
     "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
+    "version": {"type": lambda: String(10), "nullable": False},
     "created_at": {"type": lambda: String(128), "nullable": False, "index": True},
+    "updated_at": {"type": lambda: String(128), "nullable": True},
 }
 
 

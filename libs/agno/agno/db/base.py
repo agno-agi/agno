@@ -369,11 +369,11 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_latest_schema_version(self):
+    async def get_latest_schema_version(self, table_name: str) -> str:
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_schema_version(self, version: str) -> None:
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         raise NotImplementedError
 

@@ -130,11 +130,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            
             # Also store the schema version for the created table
             latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-            
+            await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -291,11 +290,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
-            
-            # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-            
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not await ais_valid_table(
@@ -313,7 +312,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
-                               
+
                 return table
 
         except Exception as e:
@@ -351,8 +350,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 version=version,
                 created_at=current_datetime,  # Store as ISO format string
             )  # type: ignore
-            # Ensure only one combination of table_name and version exists
-            stmt = stmt.on_conflict_do_nothing(index_elements=["version", "table_name"])  # type: ignore
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )  # type: ignore
             await sess.execute(stmt)
 
     # -- Session methods --

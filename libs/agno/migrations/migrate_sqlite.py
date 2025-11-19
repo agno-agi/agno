@@ -1,17 +1,17 @@
 import asyncio
 
 from agno.db.migrations.manager import MigrationManager
-from agno.db.postgres import AsyncPostgresDb, PostgresDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 
 # Create your database connection here
-db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+db = SqliteDb(
+    db_file="tmp/data.db",
     session_table="agno_sessions",
     memory_table="agno_memories",
 )
 # Or for asynchronous operations
-async_db = AsyncPostgresDb(
-    db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai",
+async_db = AsyncSqliteDb(
+    db_file="tmp/data.db",
     session_table="agno_sessions",
     memory_table="agno_memories",
 )

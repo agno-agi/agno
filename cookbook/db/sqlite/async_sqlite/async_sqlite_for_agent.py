@@ -9,7 +9,7 @@ from agno.db.sqlite import AsyncSqliteDb
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Initialize AsyncSqliteDb
-db = AsyncSqliteDb(db_file="agent_storage.db")
+db = AsyncSqliteDb(db_file="tmp/data.db")
 
 agent = Agent(
     db=db,

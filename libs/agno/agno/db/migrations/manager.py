@@ -1,9 +1,8 @@
 import importlib
-from typing import Optional
-from typing import Union
+from typing import Optional, Union
+
 from packaging import version as packaging_version
 from packaging.version import Version
-
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.utils.log import log_error, log_info
@@ -19,7 +18,7 @@ class MigrationManager:
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
         self.db = db
-        
+
     @property
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
@@ -56,32 +55,40 @@ class MigrationManager:
                 log_info(
                     f"Target version {_target_version} is less or equal to current version {current_version} for table {table_name}. Skipping migration."
                 )
+                log_info("----------------------------------------------------------")
                 continue
 
-            log_info(f"Starting database migration. Current version: {current_version}. Target version: {_target_version}.")
+            log_info(
+                f"Starting database migration for table {table_name}. Current version: {current_version}. Target version: {_target_version}."
+            )
 
             # Find files after the current version
             latest_version = None
+            migration_executed = False
             for version, normalised_version in self.available_versions:
                 if normalised_version > current_version:
                     if target_version and normalised_version > _target_version:
                         break
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
-                    self._up_migration(version, table_type, table_name)
-                    log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
+                    migration_executed = await self._up_migration(version, table_type, table_name)
+                    if migration_executed:
+                        log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
+                    else:
+                        log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
 
                     latest_version = normalised_version.public
 
-            if latest_version:
+            if migration_executed and latest_version:
                 log_info(f"Storing version {latest_version} in database for table {table_name}")
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_schema_version(table_name, latest_version)
                 else:
                     self.db.upsert_schema_version(table_name, latest_version)
                 log_info(f"Successfully stored version {latest_version} in database for table {table_name}")
+            log_info("----------------------------------------------------------")
 
-    async def _up_migration(self, version: str, table_type: str, table_name: str):
+    async def _up_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle an up migration.
 
         Args:
@@ -91,9 +98,9 @@ class MigrationManager:
 
         try:
             if isinstance(self.db, AsyncBaseDb):
-                await migration_module.async_up(self.db, table_type, table_name)
+                return await migration_module.async_up(self.db, table_type, table_name)
             else:
-                migration_module.up(self.db, table_type, table_name)
+                return migration_module.up(self.db, table_type, table_name)
         except Exception as e:
             log_error(f"Error running migration to version {version}: {e}")
             raise
@@ -105,7 +112,7 @@ class MigrationManager:
             target_version: The version to migrate to. e.g. "v2.3.0"
         """
         _target_version = packaging_version.parse(target_version)
-        
+
         for table_type, table_name in [
             ("memories", self.db.memory_table_name),
             ("sessions", self.db.session_table_name),
@@ -114,43 +121,48 @@ class MigrationManager:
             ("knowledge", self.db.knowledge_table_name),
             ("culture", self.db.culture_table_name),
         ]:
-            current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+            if isinstance(self.db, AsyncBaseDb):
+                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+            else:
+                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
 
             if _target_version >= current_version:
                 raise ValueError(
                     f"Target version {_target_version} is greater or equal to current version: {current_version}. Skipping migration."
                 )
 
-            latest_version = None
+            migration_executed = False
             # Run down migration for all versions between target and current (include down of current version)
             # Apply down migrations in reverse order to ensure dependencies are met
             for version, normalised_version in reversed(self.available_versions):
                 if normalised_version > _target_version:
-                    log_info(f"Reverting migration {version} on table {table_name}")
-                    self._down_migration(version, table_type, table_name)
-                    log_info(f"Successfully reverted migration {version} on table {table_name}")
-                    latest_version = version
+                    log_info(f"Reverting migration {normalised_version} on table {table_name}")
+                    migration_executed = await self._down_migration(version, table_type, table_name)
+                    if migration_executed:
+                        log_info(f"Successfully reverted migration {normalised_version} on table {table_name}")
+                    else:
+                        log_info(f"Skipping revert of migration {normalised_version} on table {table_name}")
 
-            if latest_version:
-                log_info(f"Storing version {latest_version} in database for table {table_name}")
+            if migration_executed:
+                log_info(f"Storing version {_target_version} in database for table {table_name}")
                 if isinstance(self.db, AsyncBaseDb):
-                    await self.db.upsert_schema_version(table_name, latest_version)
+                    await self.db.upsert_schema_version(table_name, _target_version.public)
                 else:
-                    self.db.upsert_schema_version(table_name, latest_version)
-                log_info(f"Successfully stored version {latest_version} in database for table {table_name}")
+                    self.db.upsert_schema_version(table_name, _target_version.public)
+                log_info(f"Successfully stored version {_target_version} in database for table {table_name}")
 
-    async def _down_migration(self, version: str, table_type: str, table_name: str):
+    async def _down_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle a down migration.
 
         Args:
             version: The version to migrate to, e.g. "v3.0.0"
         """
-        migration_module = importlib.import_module(f"agno.db.migrations.versions.{version}.py")
+        migration_module = importlib.import_module(f"agno.db.migrations.versions.{version}")
         try:
             if isinstance(self.db, AsyncBaseDb):
-                await migration_module.async_down(self.db, table_type, table_name)
+                return await migration_module.async_down(self.db, table_type, table_name)
             else:
-                migration_module.down(self.db, table_type, table_name)
+                return migration_module.down(self.db, table_type, table_name)
         except Exception as e:
             log_error(f"Error running migration to version {version}: {e}")
             raise

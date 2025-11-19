@@ -1794,10 +1794,12 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Database not found")
 
         if target_version:
+            
+            # Use the session table as proxy for the database schema version
             if isinstance(db, AsyncBaseDb):
-                current_version = await db.get_latest_schema_version()
+                current_version = await db.get_latest_schema_version(db.session_table_name)
             else:
-                current_version = db.get_latest_schema_version()
+                current_version = db.get_latest_schema_version(db.session_table_name)
 
             if version.parse(target_version) > version.parse(current_version):  # type: ignore
                 MigrationManager(db).up(target_version)  # type: ignore

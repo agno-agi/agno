@@ -115,9 +115,10 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 }
 
 VERSIONS_TABLE_SCHEMA = {
-    "version": {"type": String, "nullable": False, "primary_key": True},
     "table_name": {"type": String, "nullable": False, "primary_key": True},
+    "version": {"type": String, "nullable": False},
     "created_at": {"type": String, "nullable": False, "index": True},
+    "updated_at": {"type": String, "nullable": True},
 }
 
 
