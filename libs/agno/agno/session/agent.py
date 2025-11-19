@@ -9,6 +9,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
+from agno.utils.session_loader import ensure_message_continuity
 
 
 @dataclass
@@ -216,6 +217,9 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
+        # Validate and fix tool messages before returning
+        messages_from_history = ensure_message_continuity(messages_from_history)
+        
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
@@ -289,7 +293,14 @@ class AgentSession:
     def get_chat_history(self) -> List[Message]:
         """Get the chat history for the session"""
 
-        messages = []
+        messages: List[Message] = []
         for run in self.runs or []:
-            messages.extend([msg for msg in run.messages or [] if not msg.from_history])
+            if not run or not run.messages:
+                continue
+
+            run_messages = [msg for msg in run.messages or [] if not msg.from_history]
+            if not run_messages:
+                continue
+
+            messages.extend(ensure_message_continuity(run_messages))
         return messages

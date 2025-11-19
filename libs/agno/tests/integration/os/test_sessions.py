@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunOutput
@@ -252,6 +253,53 @@ def test_get_session_runs_with_epoch_timestamp(session_with_runs, shared_db):
 
     data = response.json()
     assert len(data) >= 1  # Should have at least some runs from today
+
+
+def test_get_session_runs_restores_tool_results(test_os_client):
+    """Router should synthesize missing tool result messages for legacy runs."""
+    client, shared_db, agent = test_os_client
+    session_id = "session-missing-tool"
+
+    run = RunOutput(
+        run_id="missing-tool-run",
+        agent_id=agent.id,
+        user_id="router-test-user",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Ping?"),
+            Message(
+                role="assistant",
+                content="Let me check that",
+                tool_calls=[
+                    {
+                        "id": "router-tool-1",
+                        "type": "function",
+                        "function": {"name": "lookup_router_status", "arguments": '{"region": "iad"}'},
+                    }
+                ],
+            ),
+            Message(role="assistant", content="Looks good!"),
+        ],
+    )
+
+    session = AgentSession(
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id="router-test-user",
+        runs=[run],
+        created_at=int(time.time()),
+        updated_at=int(time.time()),
+    )
+    shared_db.upsert_session(session)
+
+    response = client.get(f"/sessions/{session_id}/runs")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert len(data) == 1
+    tool_message = data[0]["messages"][2]
+    assert tool_message["role"] == "tool"
+    assert tool_message["tool_call_id"] == "router-tool-1"
 
 
 def test_get_session_runs_with_invalid_timestamp_type(session_with_runs, shared_db):
