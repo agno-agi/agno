@@ -68,25 +68,24 @@ run_response = agent.run(
     "Fetch 2 articles about the topic 'python'. You can choose which source to use, but only use one source."
 )
 while run_response.is_paused:
-    for tool_exc in run_response.tools_requiring_confirmation:  # type: ignore
-        # Ask for confirmation
-        console.print(
-            f"Tool name [bold blue]{tool_exc.tool_name}({tool_exc.tool_args})[/] requires confirmation."
-        )
-        message = (
-            Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
-            .strip()
-            .lower()
-        )
-
-        if message == "n":
-            tool.confirmed = False
-            tool.confirmation_note = (
-                "This is not the right tool to use. Use the other tool!"
+    for requirement in run_response.active_requirements:
+        if requirement.needs_confirmation:
+            # Ask for confirmation
+            console.print(
+                f"Tool name [bold blue]{requirement.tool.tool_name}({requirement.tool.tool_args})[/] requires confirmation."
             )
-        else:
-            # We update the tools in place
-            tool.confirmed = True
+            message = (
+                Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
+
+            if message == "n":
+                requirement.reject(
+                    "This is not the right tool to use. Use the other tool!"
+                )
+            else:
+                requirement.confirm()
 
     run_response = agent.continue_run(run_response=run_response)
     pprint.pprint_run_response(run_response)

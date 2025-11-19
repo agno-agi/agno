@@ -46,18 +46,17 @@ agent = Agent(
 run_response = asyncio.run(agent.arun("What files do I have in my current directory?"))
 
 # Keep executing externally-required tools until the run completes
-while (
-    run_response.is_paused and len(run_response.tools_awaiting_external_execution) > 0
-):
-    for external_tool in run_response.tools_awaiting_external_execution:
-        if external_tool.tool_name == execute_shell_command.name:
-            print(
-                f"Executing {external_tool.tool_name} with args {external_tool.tool_args} externally"
-            )
-            result = execute_shell_command.entrypoint(**external_tool.tool_args)
-            external_tool.result = result
-        else:
-            print(f"Skipping unsupported external tool: {external_tool.tool_name}")
+while run_response.is_paused:
+    for requirement in run_response.active_requirements:
+        if requirement.needs_external_execution:
+            if requirement.tool.tool_name == execute_shell_command.name:
+                print(
+                    f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally"
+                )
+                result = execute_shell_command.entrypoint(**requirement.tool.tool_args)
+                requirement.set_result(result)
+            else:
+                print(f"Skipping unsupported external tool: {requirement.tool.tool_name}")
 
     run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
 

@@ -63,28 +63,29 @@ run_response = agent.run("Send an email with the body 'What is the weather in To
 
 # We use a while loop to continue the running until the agent is satisfied with the user input
 while run_response.is_paused:
-    for tool in run_response.tools_requiring_user_input:
-        input_schema: List[UserInputField] = tool.user_input_schema  # type: ignore
+    for requirement in run_response.active_requirements:
+        if requirement.needs_user_input:
+            input_schema: List[UserInputField] = requirement.user_input_schema  # type: ignore
 
-        for field in input_schema:
-            # Get user input for each field in the schema
-            field_type = field.field_type  # type: ignore
-            field_description = field.description  # type: ignore
+            for field in input_schema:
+                # Get user input for each field in the schema
+                field_type = field.field_type  # type: ignore
+                field_description = field.description  # type: ignore
 
-            # Display field information to the user
-            print(f"\nField: {field.name}")  # type: ignore
-            print(f"Description: {field_description}")
-            print(f"Type: {field_type}")
+                # Display field information to the user
+                print(f"\nField: {field.name}")  # type: ignore
+                print(f"Description: {field_description}")
+                print(f"Type: {field_type}")
 
-            # Get user input
-            if field.value is None:  # type: ignore
-                user_value = input(f"Please enter a value for {field.name}: ")  # type: ignore
-            else:
-                print(f"Value: {field.value}")  # type: ignore
-                user_value = field.value  # type: ignore
+                # Get user input
+                if field.value is None:  # type: ignore
+                    user_value = input(f"Please enter a value for {field.name}: ")  # type: ignore
+                else:
+                    print(f"Value: {field.value}")  # type: ignore
+                    user_value = field.value  # type: ignore
 
-            # Update the field value
-            field.value = user_value  # type: ignore
+                # Update the field value
+                field.value = user_value  # type: ignore
 
     run_response = agent.continue_run(run_response=run_response)
     if not run_response.is_paused:
@@ -95,28 +96,29 @@ while run_response.is_paused:
 run_response = agent.run("Get me all my emails")
 
 while run_response.is_paused:
-    for tool in run_response.tools_requiring_user_input:
-        input_schema: Dict[str, Any] = tool.user_input_schema  # type: ignore
+    for requirement in run_response.active_requirements:
+        if requirement.needs_user_input:
+            input_schema: Dict[str, Any] = requirement.user_input_schema  # type: ignore
 
-        for field in input_schema:
-            # Get user input for each field in the schema
-            field_type = field.field_type  # type: ignore
-            field_description = field.description  # type: ignore
+            for field in input_schema:
+                # Get user input for each field in the schema
+                field_type = field.field_type  # type: ignore
+                field_description = field.description  # type: ignore
 
-            # Display field information to the user
-            print(f"\nField: {field.name}")  # type: ignore
-            print(f"Description: {field_description}")
-            print(f"Type: {field_type}")
+                # Display field information to the user
+                print(f"\nField: {field.name}")  # type: ignore
+                print(f"Description: {field_description}")
+                print(f"Type: {field_type}")
 
-            # Get user input
-            if field.value is None:  # type: ignore
-                user_value = input(f"Please enter a value for {field.name}: ")  # type: ignore
-            else:
-                print(f"Value: {field.value}")  # type: ignore
-                user_value = field.value  # type: ignore
+                # Get user input
+                if field.value is None:  # type: ignore
+                    user_value = input(f"Please enter a value for {field.name}: ")  # type: ignore
+                else:
+                    print(f"Value: {field.value}")  # type: ignore
+                    user_value = field.value  # type: ignore
 
-            # Update the field value
-            field.value = user_value  # type: ignore
+                # Update the field value
+                field.value = user_value  # type: ignore
 
     run_response = agent.continue_run(run_response=run_response)
     if not run_response.is_paused:

@@ -70,11 +70,11 @@ run_response = agent.run(
     "Fetch the top 2 hackernews stories and email them to john@doe.com."
 )
 if run_response.is_paused:
-    for tool in run_response.tools:  # type: ignore
-        if tool.requires_confirmation:
+    for requirement in run_response.active_requirements:
+        if requirement.needs_confirmation:
             # Ask for confirmation
             console.print(
-                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+                f"Tool name [bold blue]{requirement.tool.tool_name}({requirement.tool.tool_args})[/] requires confirmation."
             )
             message = (
                 Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
@@ -83,11 +83,12 @@ if run_response.is_paused:
             )
 
             if message == "n":
-                tool.confirmed = False
+                requirement.reject()
             else:
-                # We update the tools in place
-                tool.confirmed = True
-        else:
+                requirement.confirm()
+
+    for tool in run_response.tools:  # type: ignore
+        if not tool.requires_confirmation and tool.is_completed:
             console.print(
                 f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.duration:.2f}[/] seconds."  # type: ignore
             )

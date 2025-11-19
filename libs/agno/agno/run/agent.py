@@ -518,11 +518,11 @@ class RunRequirement:
         self.user_input_schema = tool_execution.user_input_schema
         self.needs_external_execution = tool_execution.external_execution_required or False
 
-    def solve(self, user_response: str):
+    def answer(self, user_response: str):
         if not self.needs_user_input:
             raise ValueError("This requirement does not require user input")
-        self.is_valid_user_response(user_response)
         self.user_input = user_response
+        self.tool.answered = True
 
     def confirm(self):
         if not self.needs_confirmation:
@@ -535,13 +535,6 @@ class RunRequirement:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = False
         self.tool.confirmed = False
-
-    def is_valid_user_response(self, user_response: str):
-        """Return True if the given user response fits the current user input schema"""
-        if not self.user_input_schema:
-            return False
-        ...
-        return True
 
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
