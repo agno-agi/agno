@@ -46,6 +46,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.team.team import Team
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
@@ -333,8 +334,7 @@ class AgentOS:
             if agent.tools:
                 for tool in agent.tools:
                     # Checking if the tool is a MCPTools or MultiMCPTools instance
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
+                    if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
                         if tool not in self.mcp_tools:
                             self.mcp_tools.append(tool)
 
