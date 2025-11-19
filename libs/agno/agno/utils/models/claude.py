@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_warning, log_debug
 
 try:
     from anthropic.types import (
@@ -221,12 +221,13 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     return None
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def format_messages(messages: List[Message], compression_manager: Optional[Any] = None) -> Tuple[List[Dict[str, str]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compression_manager: Optional compression manager for tool result compression.
 
     Returns:
         Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
@@ -301,13 +302,54 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     )
         elif message.role == "tool":
             content = []
-            content.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
-                    "content": str(message.content),
-                }
-            )
+            
+            # Determine which content to use based on compression
+            tool_content = message.content
+            
+            # Check for compression - handle both individual and combined messages
+            if compression_manager and compression_manager.compress_tool_results:
+                # Individual message with compressed_content field
+                if message.compressed_content and not isinstance(message.content, list):
+                    tool_content = message.compressed_content
+                    orig_len = len(str(message.content)) if message.content else 0
+                    comp_len = len(str(tool_content)) if tool_content else 0
+                    log_debug(
+                        f"[Anthropic] Individual message (compressed): "
+                        f"original={orig_len}B, compressed={comp_len}B, using=message.compressed_content"
+                    )
+                # Combined message - multiple tool results in tool_calls array
+                elif message.tool_calls and isinstance(message.content, list):
+                    # Iterate through tool_calls to create multiple tool_result blocks
+                    log_debug(
+                        f"[Anthropic] Processing combined message with {len(message.tool_calls)} tool results"
+                    )
+                    for idx, tool_call in enumerate(message.tool_calls):
+                        original = message.content[idx] if idx < len(message.content) else ""
+                        compressed = tool_call.get("content", original)
+                        orig_len = len(str(original)) if original else 0
+                        comp_len = len(str(compressed)) if compressed else 0
+                        
+                        log_debug(
+                            f"  [Anthropic {idx}] Combined message: "
+                            f"original={orig_len}B, compressed={comp_len}B, using=tool_calls[]['content']"
+                        )
+                        
+                        content.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.get("tool_call_id", ""),
+                            "content": str(compressed),
+                        })
+                    # Skip the default append below since we handled it
+                    if content:
+                        chat_messages.append({"role": ROLE_MAP[message.role], "content": content})
+                        continue
+            
+            # Default handling for non-compressed or individual messages
+            content.append({
+                "type": "tool_result",
+                "tool_use_id": message.tool_call_id,
+                "content": str(tool_content),
+            })
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:

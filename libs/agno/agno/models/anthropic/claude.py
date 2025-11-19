@@ -16,7 +16,7 @@ from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
-
+from agno.utils.log import log_debug, log_error, log_warning
 try:
     from anthropic import Anthropic as AnthropicClient
     from anthropic import (
@@ -315,6 +315,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
@@ -323,7 +324,7 @@ class Claude(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self._has_beta_features():
@@ -371,6 +372,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Any:
         """
         Stream a response from the Anthropic API.
@@ -386,7 +388,7 @@ class Claude(Model):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
-        chat_messages, system_message = format_messages(messages)
+        chat_messages, system_message = format_messages(messages, compression_manager)
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
@@ -438,6 +440,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
@@ -446,7 +449,7 @@ class Claude(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             # Beta features
@@ -495,6 +498,7 @@ class Claude(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
@@ -511,7 +515,7 @@ class Claude(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self._has_beta_features():
