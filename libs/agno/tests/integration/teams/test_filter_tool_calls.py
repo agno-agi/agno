@@ -72,7 +72,7 @@ def test_tool_calls_in_db(team):
     team.run("What is the weather in Mumbai?")
 
     # Database should have all 4 runs
-    session_messages = team.get_messages_for_session()
+    session_messages = team.get_session_messages()
     assert session_messages is not None
 
     # Count all tool calls in database
