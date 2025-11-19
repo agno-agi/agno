@@ -410,7 +410,7 @@ class Agent:
 
     # --- Context Compression ---
     # If True, compress tool call results to save context
-    compress_tool_calls: bool = False
+    compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
 
@@ -450,7 +450,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        compress_tool_calls: bool = False,
+        compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
@@ -556,7 +556,7 @@ class Agent:
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compression settings
-        self.compress_tool_calls = compress_tool_calls
+        self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
 
         self.add_history_to_context = add_history_to_context
@@ -830,7 +830,7 @@ class Agent:
             )
 
     def _set_compression_manager(self) -> None:
-        if self.compress_tool_calls and self.compression_manager is None:
+        if self.compress_tool_results and self.compression_manager is None:
             self.compression_manager = CompressionManager(
                 model=self.model,
             )
@@ -868,7 +868,7 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
-        if self.compress_tool_calls or self.compression_manager is not None:
+        if self.compress_tool_results or self.compression_manager is not None:
             self._set_compression_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
@@ -1068,7 +1068,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager if self.compress_tool_calls else None,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -1917,7 +1917,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                compression_manager=self.compression_manager if self.compress_tool_calls else None,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -4767,7 +4767,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager if self.compress_tool_calls else None,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4848,7 +4848,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager if self.compress_tool_calls else None,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -7673,7 +7673,7 @@ class Agent:
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set
+                # Filter tool calls from history if limit is set (before adding to run_messages)
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
@@ -7886,7 +7886,7 @@ class Agent:
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                # Filter tool calls from history if limit is set
+                # Filter tool calls from history if limit is set (before adding to run_messages)
                 if self.max_tool_calls_from_history is not None:
                     filter_tool_calls(history_copy, self.max_tool_calls_from_history)
 
@@ -9878,7 +9878,7 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -9979,7 +9979,7 @@ class Agent:
 
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
-            
+
         if stream:
             await aprint_response_stream(
                 agent=self,
