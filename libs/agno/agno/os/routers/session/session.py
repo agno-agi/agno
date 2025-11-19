@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
@@ -30,6 +30,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.utils.session_loader import ensure_message_dict_continuity
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,19 @@ def get_session_router(
 
 
 def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+    def _sanitize_run_messages(run: Dict[str, Any]) -> None:
+        """Ensure persisted run dictionaries always include tool result messages."""
+
+        if not isinstance(run, dict):
+            return
+
+        if run.get("messages"):
+            run["messages"] = ensure_message_dict_continuity(run["messages"])
+
+        if run.get("member_responses"):
+            for member_response in run["member_responses"]:
+                _sanitize_run_messages(member_response)
+
     @router.get(
         "/sessions",
         response_model=PaginatedResponse[SessionSchema],
@@ -579,6 +593,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if not filtered_runs:
             return []
+
+        for run in filtered_runs:
+            _sanitize_run_messages(run)
 
         run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
 
