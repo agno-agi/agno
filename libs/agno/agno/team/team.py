@@ -66,7 +66,6 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.agent import (
-    aget_chat_history_util,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -80,7 +79,6 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    get_chat_history_util,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -195,12 +193,15 @@ class Team:
 
     # --- Team execution settings ---
     # If True, the team leader won't process responses from the members and instead will return them directly
-    # Should not be used in combination with delegate_task_to_all_members
+    # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
     # If True, the team leader will delegate the task to all members, instead of deciding for a subset
-    delegate_task_to_all_members: bool = False
+    delegate_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
+
+    # Deprecated. Use delegate_to_all_members instead.
+    delegate_task_to_all_members: bool = False
 
     # --- User settings ---
     # Default user ID for this team
@@ -448,6 +449,7 @@ class Team:
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
         delegate_task_to_all_members: bool = False,
+        delegate_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -538,6 +540,9 @@ class Team:
         exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
+        if delegate_task_to_all_members:
+            log_warning("`delegate_task_to_all_members` is deprecated. Use `delegate_to_all_members` instead.")
+
         self.members = members
 
         self.model = model  # type: ignore[assignment]
@@ -548,7 +553,7 @@ class Team:
 
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
-        self.delegate_task_to_all_members = delegate_task_to_all_members
+        self.delegate_to_all_members = delegate_to_all_members or delegate_task_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
@@ -921,9 +926,9 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-        if self.delegate_task_to_all_members and self.respond_directly:
+        if self.delegate_to_all_members and self.respond_directly:
             log_warning(
-                "`delegate_task_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
+                "`delegate_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
             )
             self.respond_directly = False
 
@@ -3864,8 +3869,6 @@ class Team:
         input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -3884,6 +3887,7 @@ class Team:
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
+        show_member_responses: Optional[bool] = None,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
@@ -3904,16 +3908,12 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
+            
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if show_member_responses is None:
+            show_member_responses = self.show_members_responses
 
         if stream:
             print_response_stream(
@@ -3923,6 +3923,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -3932,7 +3933,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
@@ -3950,6 +3951,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -3974,8 +3976,6 @@ class Team:
         input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -3994,6 +3994,7 @@ class Team:
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
+        show_member_responses: Optional[bool] = None,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
@@ -4009,16 +4010,12 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
+            
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if show_member_responses is None:
+            show_member_responses = self.show_members_responses
 
         if stream:
             await aprint_response_stream(
@@ -4028,6 +4025,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -4037,7 +4035,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
@@ -4055,6 +4053,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -5365,7 +5364,7 @@ class Team:
 
             system_message_content += "\n<how_to_respond>\n"
 
-            if self.delegate_task_to_all_members:
+            if self.delegate_to_all_members:
                 system_message_content += (
                     "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                     "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -5665,7 +5664,7 @@ class Team:
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if self.delegate_task_to_all_members:
+        if self.delegate_to_all_members:
             system_message_content += (
                 "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
@@ -5912,10 +5911,10 @@ class Team:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id if self.parent_team_id is not None else None,
             )
 
@@ -6044,10 +6043,10 @@ class Team:
             skip_role = (
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
-            history = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id,
             )
 
@@ -6528,9 +6527,7 @@ class Team:
 
             history: List[Dict[str, Any]] = []
 
-            all_chats = session.get_messages_from_last_n_runs(
-                team_id=self.id,
-            )
+            all_chats = session.get_messages(team_id=self.id)
 
             if len(all_chats) == 0:
                 return ""
@@ -6564,9 +6561,7 @@ class Team:
 
             history: List[Dict[str, Any]] = []
 
-            all_chats = session.get_messages_from_last_n_runs(
-                team_id=self.id,
-            )
+            all_chats = session.get_messages(team_id=self.id)
 
             if len(all_chats) == 0:
                 return ""
@@ -6738,18 +6733,20 @@ class Team:
         member_agent_id = member_agent.id if isinstance(member_agent, Agent) else None
         member_team_id = member_agent.id if isinstance(member_agent, Team) else None
 
+        if not member_agent_id and not member_team_id:
+            return []
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
         skip_role = self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
 
-        history = session.get_messages_from_last_n_runs(
-            last_n=member_agent.num_history_runs or self.num_history_runs,
-            last_n_messages=member_agent.num_history_messages,
-            skip_role=skip_role,
-            agent_id=member_agent_id,
+        history = session.get_messages(
+            last_n_runs=member_agent.num_history_runs or self.num_history_runs,
+            limit=member_agent.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            member_ids=[member_agent_id] if member_agent_id else None,
             team_id=member_team_id,
-            member_runs=True,
         )
 
         if len(history) > 0:
@@ -7487,7 +7484,7 @@ class Team:
             # After all the member runs, switch back to the team logger
             use_team_logger()
 
-        if self.delegate_task_to_all_members:
+        if self.delegate_to_all_members:
             if async_mode:
                 delegate_function = adelegate_task_to_members  # type: ignore
             else:
@@ -7795,7 +7792,13 @@ class Team:
                 loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
             # We have a workflow team, so we are loading a WorkflowSession
             else:
-                loaded_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(
+                    WorkflowSession,
+                    self._read_session(
+                        session_id=session_id_to_load,  # type: ignore
+                        session_type=SessionType.WORKFLOW,
+                    ),
+                )
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
@@ -7836,7 +7839,13 @@ class Team:
                 loaded_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
             # We have a workflow team, so we are loading a WorkflowSession
             else:
-                loaded_session = cast(WorkflowSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(
+                    WorkflowSession,
+                    await self._aread_session(
+                        session_id=session_id_to_load,  # type: ignore
+                        session_type=SessionType.WORKFLOW,
+                    ),
+                )
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
@@ -7917,7 +7926,7 @@ class Team:
         gen_session_name_prompt = "Team Conversation\n"
 
         # Get team session messages for generating the name
-        messages_for_generating_session_name = self.get_messages_for_session()
+        messages_for_generating_session_name = self.get_session_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -8118,39 +8127,29 @@ class Team:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
 
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            raise Exception("Session ID is not set")
-
-        return get_chat_history_util(self, session_id=session_id)
-
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            raise Exception("Session ID is not set")
-
-        return await aget_chat_history_util(self, session_id=session_id)
-
-    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    def get_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        member_ids: Optional[List[str]] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+        skip_member_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            member_ids: The ids of the members to get the messages from.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+            skip_member_messages: Skip messages created by members of the team.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -8160,21 +8159,44 @@ class Team:
             return []
 
         session = self.get_session(session_id=session_id)  # type: ignore
-
         if session is None:
             log_warning(f"Session {session_id} not found")
             return []
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        return session.get_messages(
             team_id=self.id,
+            member_ids=member_ids,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+            skip_member_messages=skip_member_messages,
         )
 
-    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    async def aget_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        member_ids: Optional[List[str]] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+        skip_member_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            member_ids: The ids of the members to get the messages from.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+            skip_member_messages: Skip messages created by members of the team.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -8184,14 +8206,47 @@ class Team:
             return []
 
         session = await self.aget_session(session_id=session_id)  # type: ignore
-
         if session is None:
             log_warning(f"Session {session_id} not found")
             return []
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        return session.get_messages(
             team_id=self.id,
+            member_ids=member_ids,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+            skip_member_messages=skip_member_messages,
+        )
+
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        return self.get_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
+        )
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Read the chat history from the session
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
