@@ -467,7 +467,6 @@ class Gemini(Model):
         formatted_messages: List = []
         file_content: Optional[Union[GeminiFile, Part]] = None
         system_message = None
-        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
 
         for message in messages:
             role = message.role
@@ -479,7 +478,7 @@ class Gemini(Model):
             role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
-            content = message.get_tool_result(use_compression=use_compression)
+            content = message.get_tool_result(compression_manager)
 
             # Log if compression is being used for tool messages
             if message.role == "function" and message.compressed_content:
@@ -792,12 +791,11 @@ class Gemini(Model):
         combined_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
-        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
 
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
                 # Use compressed content if available via get_tool_result()
-                content = result.get_tool_result(use_compression=use_compression)
+                content = result.get_tool_result(compression_manager)
                 combined_content.append(content)
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": content}

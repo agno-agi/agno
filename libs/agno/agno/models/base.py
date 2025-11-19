@@ -351,7 +351,7 @@ class Model(ABC):
         log_debug("🔄 Starting model response loop")
         log_debug(f"   Initial messages count: {len(messages)}")
         if compression_manager:
-            log_debug(f"Compression enabled: threshold={compression_manager.compress_tool_results_limit}")
+            log_debug(f"   Compression enabled: threshold={compression_manager.compress_tool_results_limit}")
 
         iteration_count = 0
         while True:
@@ -465,7 +465,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    compression_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug("🔍 Post-compression state:")
@@ -668,7 +668,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    compression_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug("🔍 Post-compression state:")
@@ -1069,7 +1069,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    compression_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug("🔍 Post-compression state:")
@@ -1299,7 +1299,7 @@ class Model(ABC):
                 # Compress tool results BEFORE formatting
                 if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    compression_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug("🔍 Post-compression state:")

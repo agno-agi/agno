@@ -444,13 +444,11 @@ class OpenAIResponses(Model):
                     if isinstance(fc_id, str) and isinstance(call_id, str):
                         fc_id_to_call_id[fc_id] = call_id
 
-        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
-
         for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.get_tool_result(use_compression=use_compression),
+                    "content": message.get_tool_result(compression_manager),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -474,7 +472,7 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                tool_result = message.get_tool_result(use_compression=use_compression)
+                tool_result = message.get_tool_result(compression_manager)
 
                 # Log if compression is being used
                 if message.compressed_content:

@@ -126,14 +126,14 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def get_tool_result(self, use_compression: bool = False) -> Optional[Union[List[Any], str]]:
+    def get_tool_result(self, compression_manager: Optional[Any] = None) -> Optional[Union[List[Any], str]]:
         """Return tool result content to send to API
 
         Args:
-            use_compression: If True and compressed_content exists, return compressed version.
-                            Otherwise return original content.
+            compression_manager: Optional compression manager. If provided and compression is enabled,
+                                returns compressed_content. Otherwise returns original content.
         """
-        if use_compression and self.compressed_content:
+        if compression_manager and compression_manager.compress_tool_results and self.compressed_content is not None:
             return self.compressed_content
         return self.content
 

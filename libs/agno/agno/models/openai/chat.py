@@ -313,8 +313,7 @@ class OpenAIChat(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
-        tool_result = message.get_tool_result(use_compression=use_compression)
+        tool_result = message.get_tool_result(compression_manager)
 
         # Log for tool messages with compression
         if message.role == "tool" and message.compressed_content:

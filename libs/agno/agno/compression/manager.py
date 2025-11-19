@@ -99,12 +99,14 @@ class CompressionManager:
             log_debug(f"Compression failed: {e}. Using original content as fallback.")
             return tool_content
 
-    def compress_tool_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
-        # Log input state
+    def compress(self, messages: List[Message], function_call_results: List[Message]) -> None:
+        if not self.compress_tool_results:
+            log_debug("🗜️ Compression disabled, skipping")
+            return
+
         log_debug(f"🗜️ Compression starting:")
         log_debug(f"   Input: {len(messages)} history messages, {len(function_call_results)} new results")
 
-        # Count tool messages in history
         history_tools = [m for m in messages if m.role == "tool"]
         history_compressed = [m for m in history_tools if m.compressed_content is not None]
         history_uncompressed = [m for m in history_tools if m.compressed_content is None]
