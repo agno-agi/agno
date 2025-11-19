@@ -1,10 +1,19 @@
+from typing import List
+from unittest.mock import Mock, patch
+
 import pytest
+
+from agno.knowledge.document import Document
+from agno.utils.log import log_debug
+from agno.vectordb.distance import Distance
+from agno.vectordb.milvus import Milvus
 
 # Ensure Milvus is available and usable in the current environment.
 # This handles some CI errors when running Milvus in GitHub Actions.
 try:
     import pymilvus
 
+    log_debug(f"PyMilvus available. Version: {pymilvus.__version__}")
     MILVUS_AVAILABLE = True
     MILVUS_SKIP_REASON = ""
 except (ImportError, TypeError) as e:
@@ -16,14 +25,6 @@ pytestmark = pytest.mark.skipif(not MILVUS_AVAILABLE, reason=MILVUS_SKIP_REASON)
 if not MILVUS_AVAILABLE:
     pytest.skip(MILVUS_SKIP_REASON, allow_module_level=True)
 
-from typing import List
-from unittest.mock import Mock, patch
-
-import pytest
-
-from agno.knowledge.document import Document
-from agno.vectordb.distance import Distance
-from agno.vectordb.milvus import Milvus
 
 # Try to import Milvus, skip all tests if not available
 try:
