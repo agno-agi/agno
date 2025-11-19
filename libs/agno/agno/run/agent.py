@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
@@ -8,9 +9,10 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
-from agno.models.response import ToolExecution, ToolRequirement
+from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.tools.function import UserInputField
 from agno.utils.log import logger
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -490,6 +492,63 @@ def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
 
 
 @dataclass
+class RunRequirement:
+    """Requirement to complete a paused run (used in HITL flows)"""
+
+    tool_execution: Optional[ToolExecution] = None
+    created_at: datetime = datetime.now(timezone.utc)
+
+    # User confirmation
+    needs_confirmation: bool = False
+    confirmation_note: Optional[str] = None
+    confirmation: Optional[bool] = None
+
+    # User input
+    needs_user_input: bool = False
+    user_input_schema: Optional[List[UserInputField]] = None
+    user_input: Optional[str] = None
+
+    # External execution
+    needs_external_execution: bool = False
+
+    def __init__(self, tool_execution: ToolExecution):
+        self.tool = tool_execution
+        self.needs_confirmation = tool_execution.requires_confirmation or False
+        self.needs_user_input = tool_execution.requires_user_input or False
+        self.user_input_schema = tool_execution.user_input_schema
+        self.needs_external_execution = tool_execution.external_execution_required or False
+
+    def solve(self, user_response: str):
+        if not self.needs_user_input:
+            raise ValueError("This requirement does not require user input")
+        self.is_valid_user_response(user_response)
+        self.user_input = user_response
+
+    def confirm(self):
+        if not self.needs_confirmation:
+            raise ValueError("This requirement does not require confirmation")
+        self.confirmation = True
+        self.tool.confirmed = True
+
+    def reject(self):
+        if not self.needs_confirmation:
+            raise ValueError("This requirement does not require confirmation")
+        self.confirmation = False
+        self.tool.confirmed = False
+
+    def is_valid_user_response(self, user_response: str):
+        """Return True if the given user response fits the current user input schema"""
+        if not self.user_input_schema:
+            return False
+        ...
+        return True
+
+    def is_resolved(self) -> bool:
+        """Return True if the requirement has been resolved"""
+        return bool(self.confirmation or self.user_input)
+
+
+@dataclass
 class RunOutput:
     """Response returned by Agent.run() or Workflow.run() functions"""
 
@@ -539,17 +598,13 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[List[RunRequirement]] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
-
-    def get_tool_requirements(self) -> List[ToolRequirement]:
-        """Return a list of ToolRequirement objects for the paused tools"""
-        if not self.tools:
-            return []
-
-        return [ToolRequirement(tool=tool) for tool in self.tools if tool.is_paused]
 
     @property
     def is_paused(self):

@@ -21,11 +21,13 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
+from agno.utils import pprint
 from rich.console import Console
 
 console = Console()
 
 
+# This tool will require user confirmation before execution (HITL flow)
 @tool(requires_confirmation=True)
 def get_top_hackernews_stories(num_stories: int) -> str:
     """Fetch top stories from Hacker News.
@@ -61,20 +63,16 @@ agent = Agent(
 )
 
 
-# Handle HITL manually
+# Run the agent with the tool
 run_output = agent.run("Fetch the top 2 hackernews stories.")
 
+# Handle the requirement
 if run_output.is_paused:
-    for requirement in run_output.get_tool_requirements():
-        # Handle user confirmation flow
+    for requirement in run_output.requirements or []:
         if requirement.needs_confirmation:
-            ...
             requirement.confirm()  # or requirement.reject()
 
-        # Handle user input flow
-        if requirement.needs_user_input:
-            ...
-            requirement.answer("yes")
 
-breakpoint()
-agent.continue_run(run_response=run_output)
+# The requirement has been confirmed, and we can now continue the run
+res = agent.continue_run(run_response=run_output)
+pprint.pprint_run_response(res)

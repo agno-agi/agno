@@ -29,7 +29,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent, RunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
@@ -417,9 +417,20 @@ class Model(ABC):
                             ]
                             and function_call_response.tool_executions is not None
                         ):
+                            # Record the tool execution in the model response
                             if model_response.tool_executions is None:
                                 model_response.tool_executions = []
                             model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                            # If the tool is currently paused (HITL flow), add the requirement to the run response
+                            if (
+                                function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                and run_response is not None
+                            ):
+                                current_tool_execution = function_call_response.tool_executions[-1]
+                                if not run_response.requirements:
+                                    run_response.requirements = []
+                                run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
 
                         elif function_call_response.event not in [
                             ModelResponseEvent.tool_call_started.value,
@@ -581,9 +592,21 @@ class Model(ABC):
                             ]
                             and function_call_response.tool_executions is not None
                         ):
+                            # Record the tool execution in the model response
                             if model_response.tool_executions is None:
                                 model_response.tool_executions = []
                             model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                            # If the tool is currently paused (HITL flow), add the requirement to the run response
+                            if (
+                                function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                and run_response is not None
+                            ):
+                                current_tool_execution = function_call_response.tool_executions[-1]
+                                if not run_response.requirements:
+                                    run_response.requirements = []
+                                run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
+
                         elif function_call_response.event not in [
                             ModelResponseEvent.tool_call_started.value,
                             ModelResponseEvent.tool_call_completed.value,

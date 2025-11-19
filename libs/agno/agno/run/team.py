@@ -10,7 +10,7 @@ from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, RunRequirement, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -514,6 +514,9 @@ class TeamRunOutput:
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
 
     status: RunStatus = RunStatus.running
+
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[List[RunRequirement]] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
