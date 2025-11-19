@@ -35,4 +35,3 @@ class MemoryOptimizationStrategyFactory:
         from agno.memory.strategies.summarize import SummarizeStrategy
 
         return SummarizeStrategy(**kwargs)
-
