@@ -7,8 +7,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
-workflow_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-
 # Define agents for the workflow
 researcher_agent = Agent(
     name="Research Agent",
@@ -49,7 +47,7 @@ writing_step = Step(
 content_workflow = Workflow(
     name="Content Creation Workflow",
     description="Research and create content on any topic via Slack",
-    db=workflow_db,
+    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     steps=[research_step, writing_step],
     session_id="slack_workflow_session",
 )
