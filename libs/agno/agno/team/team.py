@@ -7135,7 +7135,6 @@ class Team:
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
                         continue # Don't yield TeamRunOutput or RunOutput, only yield events
 
-
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_event)
 
