@@ -428,9 +428,9 @@ class Model(ABC):
                                 and run_response is not None
                             ):
                                 current_tool_execution = function_call_response.tool_executions[-1]
-                                if not run_response.requirements:
+                                if run_response.requirements is None:
                                     run_response.requirements = []
-                                run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))
+                                run_response.requirements.append(RunRequirement(tool_execution=current_tool_execution))  # type: ignore
 
                         elif function_call_response.event not in [
                             ModelResponseEvent.tool_call_started.value,

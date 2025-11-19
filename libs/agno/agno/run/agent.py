@@ -599,7 +599,7 @@ class RunOutput:
     status: RunStatus = RunStatus.running
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
-    requirements: Optional[List[RunRequirement]] = None
+    requirements: Optional[list[RunRequirement]] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
@@ -607,7 +607,7 @@ class RunOutput:
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
 
     @property
-    def active_requirements(self) -> List[RunRequirement]:
+    def active_requirements(self) -> list[RunRequirement]:
         if not self.requirements:
             return []
         return [requirement for requirement in self.requirements if not requirement.is_resolved()]
@@ -853,58 +853,3 @@ class RunOutput:
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             return json.dumps(self.content, **kwargs)
-
-
-@dataclass
-class RunRequirement:
-    """Requirement to complete a paused run (used in HITL flows)"""
-
-    tool_execution: Optional[ToolExecution] = None
-    created_at: datetime = datetime.now(timezone.utc)
-
-    # User confirmation
-    needs_confirmation: bool = False
-    confirmation_note: Optional[str] = None
-    confirmation: Optional[bool] = None
-
-    # User input
-    needs_user_input: bool = False
-    user_input_schema: Optional[List[UserInputField]] = None
-    user_input: Optional[str] = None
-
-    # External execution
-    needs_external_execution: bool = False
-
-    def __init__(self, tool: ToolExecution):
-        self.tool = tool
-        self.needs_confirmation = tool.requires_confirmation or False
-        self.needs_user_input = tool.requires_user_input or False
-        self.user_input_schema = tool.user_input_schema
-        self.needs_external_execution = tool.external_execution_required or False
-
-    def solve(self, user_response: str):
-        if not self.needs_user_input:
-            raise ValueError("This requirement does not require user input")
-        self.is_valid_user_response(user_response)
-        self.user_input = user_response
-
-    def confirm(self):
-        if not self.needs_confirmation:
-            raise ValueError("This requirement does not require confirmation")
-        self.confirmation = True
-
-    def reject(self):
-        if not self.needs_confirmation:
-            raise ValueError("This requirement does not require confirmation")
-        self.confirmation = False
-
-    def is_valid_user_response(self, user_response: str):
-        """Return True if the given user response fits the current user input schema"""
-        if not self.user_input_schema:
-            return False
-        ...
-        return True
-
-    def is_resolved(self) -> bool:
-        """Return True if the requirement has been resolved"""
-        return bool(self.confirmation or self.user_input)

@@ -516,12 +516,18 @@ class TeamRunOutput:
     status: RunStatus = RunStatus.running
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
-    requirements: Optional[List[RunRequirement]] = None
+    requirements: Optional[list[RunRequirement]] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
     @property
     def is_paused(self):
