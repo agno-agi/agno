@@ -310,6 +310,7 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        tool_call_limits: Optional[Dict[str, int]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> ModelResponse:
@@ -322,6 +323,7 @@ class Model(ABC):
             tools: List of tools to use. This includes the original Function objects and dicts for built-in tools.
             tool_choice: Tool choice to use
             tool_call_limit: Tool call limit
+            tool_call_limits: Individual tool call limits by tool name
             run_response: Run response to use
             send_media_to_model: Whether to send media to the model
         """
@@ -342,6 +344,7 @@ class Model(ABC):
         model_response = ModelResponse()
 
         function_call_count = 0
+        remaining_tool_limits = tool_call_limits or {}
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -382,6 +385,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    remaining_tool_limits=remaining_tool_limits,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -484,6 +488,7 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        tool_call_limits: Optional[Dict[str, int]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
     ) -> ModelResponse:
@@ -507,7 +512,7 @@ class Model(ABC):
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
+        remaining_tool_limits = tool_call_limits or {}
         function_call_count = 0
 
         while True:
@@ -546,6 +551,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    remaining_tool_limits=remaining_tool_limits,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -858,6 +864,7 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        tool_call_limits: Optional[Dict[str, int]] = None,
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
@@ -890,7 +897,7 @@ class Model(ABC):
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
+        remaining_tool_limits = tool_call_limits or {}
         function_call_count = 0
 
         while True:
@@ -944,6 +951,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    remaining_tool_limits=remaining_tool_limits,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -1040,6 +1048,7 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        tool_call_limits: Optional[Dict[str, int]] = None,
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
@@ -1072,7 +1081,7 @@ class Model(ABC):
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
+        remaining_tool_limits = tool_call_limits or {}
         function_call_count = 0
 
         while True:
@@ -1127,6 +1136,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    remaining_tool_limits=remaining_tool_limits,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -1399,10 +1409,17 @@ class Model(ABC):
             **kwargs,  # type: ignore
         )
 
-    def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
+    def create_tool_call_limit_error_result(
+        self, function_call: FunctionCall, is_individual_tool: bool = False
+    ) -> Message:
+        if is_individual_tool:
+            content = f"Call limit reached for {function_call.function.name}. Don't try to execute this tool again."
+        else:
+            content = f"Tool call limit reached. Tool call {function_call.function.name} not executed. Don't try to execute it again."
+
         return Message(
             role=self.tool_message_role,
-            content=f"Tool call limit reached. Tool call {function_call.function.name} not executed. Don't try to execute it again.",
+            content=content,
             tool_call_id=function_call.call_id,
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
@@ -1553,6 +1570,7 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        remaining_tool_limits: Optional[Dict[str, int]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -1566,6 +1584,12 @@ class Model(ABC):
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     continue
 
+            # Check if individual tool has exceeded its call limit
+            if remaining_tool_limits and fc.function.name in remaining_tool_limits:
+                if remaining_tool_limits[fc.function.name] <= 0:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc, is_individual_tool=True))
+                    continue
+                remaining_tool_limits[fc.function.name] -= 1
             paused_tool_executions = []
 
             # The function cannot be executed without user confirmation
@@ -1697,6 +1721,7 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
+        remaining_tool_limits: Optional[Dict[str, int]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -1711,6 +1736,13 @@ class Model(ABC):
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     # Skip this function call
                     continue
+
+            # Check if individual tool has exceeded its call limit
+            if remaining_tool_limits and fc.function.name in remaining_tool_limits:
+                if remaining_tool_limits[fc.function.name] <= 0:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc, is_individual_tool=True))
+                    continue
+                remaining_tool_limits[fc.function.name] -= 1
             function_calls_to_run.append(fc)
 
         # Yield tool_call_started events for all function calls or pause them
