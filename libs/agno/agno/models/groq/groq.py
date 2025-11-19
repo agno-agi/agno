@@ -12,6 +12,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import images_to_message
 
@@ -93,7 +94,7 @@ class Groq(Model):
 
     def get_client(self) -> GroqClient:
         """
-        Returns a Groq client.
+        Returns a Groq client. Caches the client to avoid recreating it on every request.
 
         Returns:
             GroqClient: An instance of the Groq client.
@@ -103,14 +104,22 @@ class Groq(Model):
 
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
 
         self.client = GroqClient(**client_params)
         return self.client
 
     def get_async_client(self) -> AsyncGroqClient:
         """
-        Returns an asynchronous Groq client.
+        Returns an asynchronous Groq client. Caches the client to avoid recreating it on every request.
 
         Returns:
             AsyncGroqClient: An instance of the asynchronous Groq client.
@@ -119,15 +128,20 @@ class Groq(Model):
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
-            if self.http_client:
-                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
+
+        # Create and cache the client
         self.async_client = AsyncGroqClient(**client_params)
         return self.async_client
 
