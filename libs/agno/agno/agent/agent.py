@@ -6466,8 +6466,19 @@ class Agent:
         if session is None:
             raise Exception("Session not found")
 
-        # Only filter by agent_id if this is part of a team
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
         return session.get_messages(
+            # Only filter by agent_id if this is part of a team
             agent_id=self.id if self.team_id is not None else None,
             last_n_runs=last_n_runs,
             limit=limit,
@@ -6506,6 +6517,17 @@ class Agent:
         session = await self.aget_session(session_id=session_id)
         if session is None:
             raise Exception("Session not found")
+
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
 
         # Only filter by agent_id if this is part of a team
         return session.get_messages(
