@@ -72,7 +72,6 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    aget_chat_history_util,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -86,7 +85,6 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    get_chat_history_util,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -6168,36 +6166,6 @@ class Agent:
                 self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return get_chat_history_util(self, session_id=session_id)
-
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return await aget_chat_history_util(self, session_id=session_id)
-
     # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """
@@ -6311,7 +6279,7 @@ class Agent:
 
         gen_session_name_prompt = "Conversation\n"
 
-        messages_for_generating_session_name = session.get_messages_for_session()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -6467,11 +6435,25 @@ class Agent:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
 
-    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    def get_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
-            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            session_id: The session ID to get the messages for. If not provided, the latest used session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6481,20 +6463,49 @@ class Agent:
             return []
 
         session = self.get_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(  # type: ignore
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
+        return session.get_messages(
+            # Only filter by agent_id if this is part of a team
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
         )
 
-    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    async def aget_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6504,13 +6515,50 @@ class Agent:
             return []
 
         session = await self.aget_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
         # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(  # type: ignore
+        return session.get_messages(
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+        )
+
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return self.get_session_messages(session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"])
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"]
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
@@ -6518,6 +6566,7 @@ class Agent:
 
         Args:
             session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+
         Returns:
             SessionSummary: The session summary.
         """
@@ -7628,10 +7677,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7841,10 +7890,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -9416,7 +9465,7 @@ class Agent:
             import json
 
             history: List[Dict[str, Any]] = []
-            all_chats = session.get_messages_for_session()
+            all_chats = session.get_messages()
 
             if len(all_chats) == 0:
                 return ""
@@ -9848,7 +9897,7 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -9949,7 +9998,7 @@ class Agent:
 
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
-            
+
         if stream:
             await aprint_response_stream(
                 agent=self,
