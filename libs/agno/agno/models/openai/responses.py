@@ -398,12 +398,15 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
-    def _format_messages(self, messages: List[Message]) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
+    def _format_messages(
+        self, messages: List[Message], compression_manager: Optional[Any] = None
+    ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             messages (List[Message]): The message to format.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -444,11 +447,13 @@ class OpenAIResponses(Model):
                     if isinstance(fc_id, str) and isinstance(call_id, str):
                         fc_id_to_call_id[fc_id] = call_id
 
+        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
+
         for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.get_tool_result(),
+                    "content": message.get_tool_result(use_compression=use_compression),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -472,7 +477,7 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                tool_result = message.get_tool_result()
+                tool_result = message.get_tool_result(use_compression=use_compression)
 
                 # Log if compression is being used
                 if message.compressed_content:
@@ -532,6 +537,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
@@ -548,7 +554,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compression_manager),  # type: ignore
                 **request_params,
             )
 
@@ -601,6 +607,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
@@ -617,7 +624,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compression_manager),  # type: ignore
                 **request_params,
             )
 
@@ -670,6 +677,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
@@ -687,7 +695,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compression_manager),  # type: ignore
                 stream=True,
                 **request_params,
             ):
@@ -743,6 +751,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
@@ -760,7 +769,7 @@ class OpenAIResponses(Model):
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compression_manager),  # type: ignore
                 stream=True,
                 **request_params,
             )
@@ -810,7 +819,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         function_call_results: List[Message],
         tool_call_ids: List[str],
-        context_manager=None,
+        compression_manager=None,
     ) -> None:
         """
         Handle the results of function calls.
@@ -819,7 +828,7 @@ class OpenAIResponses(Model):
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
-            context_manager (Optional): Context manager for compression.
+            compression_manager (Optional): Compression manager for compression.
         """
         log_debug(f"[OpenAI] Formatting {len(function_call_results)} results, tool_call_ids count={len(tool_call_ids)}")
         if len(function_call_results) > 0:

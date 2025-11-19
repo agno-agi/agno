@@ -126,9 +126,16 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def get_tool_result(self) -> Optional[Union[List[Any], str]]:
-        """Return tool result content to send to API"""
-        return self.compressed_content if self.compressed_content else self.content
+    def get_tool_result(self, use_compression: bool = False) -> Optional[Union[List[Any], str]]:
+        """Return tool result content to send to API
+
+        Args:
+            use_compression: If True and compressed_content exists, return compressed version.
+                            Otherwise return original content.
+        """
+        if use_compression and self.compressed_content:
+            return self.compressed_content
+        return self.content
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":

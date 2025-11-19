@@ -44,24 +44,19 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
 
 
 @dataclass
-class ContextManager:
+class CompressionManager:
     model: Optional[Model] = None
+    compress_tool_calls: bool = True
     compress_tool_calls_limit: int = 3
-    tool_compression_instructions: Optional[str] = None
+    compress_tool_call_instructions: Optional[str] = None
 
     def _is_tool_result_message(self, msg: Message) -> bool:
-        if msg.role == "tool":
-            return True
-
-        # Bedrock format: role="user"
-        if msg.role == "user" and isinstance(msg.content, list):
-            for item in msg.content:
-                if isinstance(item, dict) and "toolResult" in item:
-                    return True
-
-        return False
+        return msg.role == "tool"
 
     def should_compress(self, messages: List[Message]) -> bool:
+        if not self.compress_tool_calls:
+            return False
+
         uncompressed_tools_count = len(
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )
@@ -73,11 +68,11 @@ class ContextManager:
 
         return should_compress
 
-    def _compress_tool_result(self, tool_results: List[Message]) -> Optional[str]:
-        if not tool_results:
+    def _compress_tool_result(self, tool_result: Message) -> Optional[str]:
+        if not tool_result:
             return None
 
-        tool_content = "\n---\n".join(f"Tool: {msg.tool_name or 'unknown'}\n{msg.content}" for msg in tool_results)
+        tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
         original_size = len(tool_content)
 
         self.model = get_model(self.model)
@@ -85,7 +80,7 @@ class ContextManager:
             log_warning("No compression model available")
             return None
 
-        compression_prompt = self.tool_compression_instructions or DEFAULT_COMPRESSION_PROMPT
+        compression_prompt = self.compress_tool_call_instructions or DEFAULT_COMPRESSION_PROMPT
         compression_message = "Tool Results to Compress: " + tool_content + "\n"
 
         try:
@@ -105,39 +100,45 @@ class ContextManager:
             return tool_content
 
     def compress_tool_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
-        # Phase 1: Compress NEW results
-        existing_tool_count = len([m for m in messages if m.role == "tool"])
-        log_debug(f"🗜️  Compression starting:")
-        log_debug(f"   Existing tools in messages: {existing_tool_count}")
-        log_debug(f"   New results to process: {len(function_call_results)}")
+        # Log input state
+        log_debug(f"🗜️ Compression starting:")
+        log_debug(f"   Input: {len(messages)} history messages, {len(function_call_results)} new results")
+
+        # Count tool messages in history
+        history_tools = [m for m in messages if m.role == "tool"]
+        history_compressed = [m for m in history_tools if m.compressed_content is not None]
+        history_uncompressed = [m for m in history_tools if m.compressed_content is None]
+
+        log_debug(
+            f"   History: {len(history_tools)} tool messages ({len(history_compressed)} compressed, {len(history_uncompressed)} uncompressed)"
+        )
+        log_debug(f"   New results: {len(function_call_results)} tool messages")
         log_debug(f"   Compression model: {self.model.id if self.model else 'None'}")
 
-        # Phase 1: Compress NEW results
-        log_debug(f"  📝 Phase 1: Compressing new results...")
-        for idx, result in enumerate(function_call_results):
-            if result.compressed_content is None:
-                compressed = self._compress_tool_result([result])
-                if compressed:
-                    result.compressed_content = compressed
-                    original_len = len(str(result.content)) if result.content else 0
-                    compressed_len = len(compressed)
-                    log_debug(f"  NEW[{idx}] {result.tool_name}: {original_len}→{compressed_len}B")
+        # Collect all uncompressed tool results from both new results and history
+        all_messages = messages + function_call_results
+        uncompressed_tools = [msg for msg in all_messages if msg.role == "tool" and msg.compressed_content is None]
 
-        phase1_compressed = sum(1 for r in function_call_results if r.compressed_content is not None)
-        log_debug(f"  ✅ Phase 1 complete: {phase1_compressed}/{len(function_call_results)} new results compressed")
+        if not uncompressed_tools:
+            log_debug("   No uncompressed tool results to compress")
+            return
 
-        # Phase 2: Compress old tool messages
-        log_debug(f"  📝 Phase 2: Compressing old tool messages...")
-        old_count = 0
-        for msg in messages:
-            if msg.role == "tool" and msg.compressed_content is None:
-                compressed = self._compress_tool_result([msg])
-                if compressed:
-                    original_len = len(str(msg.content)) if msg.content else 0
-                    compressed_len = len(compressed)
-                    msg.compressed_content = compressed
-                    old_count += 1
-                    log_debug(f"  OLD message {msg.tool_name}: {original_len}→{compressed_len}B (retroactive)")
+        log_debug(f"   Total to compress: {len(uncompressed_tools)} uncompressed tool results")
 
-        if old_count > 0:
-            log_debug(f"  ✅ Phase 2 complete: {old_count} old tool messages compressed")
+        # Compress all tool results
+        compressed_count = 0
+        failed_count = 0
+        for idx, tool_msg in enumerate(uncompressed_tools):
+            compressed = self._compress_tool_result(tool_msg)
+            if compressed:
+                tool_msg.compressed_content = compressed
+                original_len = len(str(tool_msg.content)) if tool_msg.content else 0
+                compressed_len = len(compressed)
+                reduction = int((1 - compressed_len / original_len) * 100) if original_len > 0 else 0
+                compressed_count += 1
+                log_debug(f"  [{idx}] {tool_msg.tool_name}: {original_len}→{compressed_len}B ({reduction}% saved)")
+            else:
+                failed_count += 1
+                log_debug(f"  [{idx}] {tool_msg.tool_name}: Compression failed")
+
+        log_debug(f"✅ Compression complete: {compressed_count} compressed, {failed_count} failed")

@@ -280,11 +280,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compression_manager)
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
@@ -325,11 +326,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compression_manager)
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -368,11 +370,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compression_manager)
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -414,11 +417,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compression_manager)
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -452,16 +456,19 @@ class Gemini(Model):
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def _format_messages(self, messages: List[Message]):
+    def _format_messages(self, messages: List[Message], compression_manager: Optional[Any] = None):
         """
         Converts a list of Message objects to the Gemini-compatible format.
 
         Args:
             messages (List[Message]): The list of messages to convert.
+            compression_manager: Optional compression manager for tool result compression.
         """
         formatted_messages: List = []
         file_content: Optional[Union[GeminiFile, Part]] = None
         system_message = None
+        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
+
         for message in messages:
             role = message.role
             if role in ["system", "developer"]:
@@ -472,7 +479,7 @@ class Gemini(Model):
             role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
-            content = message.get_tool_result()
+            content = message.get_tool_result(use_compression=use_compression)
 
             # Log if compression is being used for tool messages
             if message.role == "function" and message.compressed_content:
@@ -776,7 +783,7 @@ class Gemini(Model):
         return None
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
+        self, messages: List[Message], function_call_results: List[Message], compression_manager=None, **kwargs
     ) -> None:
         """
         Format function call results for Gemini.
@@ -785,15 +792,12 @@ class Gemini(Model):
         combined_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
+        use_compression = bool(compression_manager and compression_manager.compress_tool_calls)
+
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
-                # Only use compressed content if context_manager is active
-                using_compressed = context_manager is not None and result.compressed_content is not None
-                log_debug(f"  [{idx}] {result.tool_name}: using_compressed={using_compressed}")
-                if using_compressed:
-                    content = result.compressed_content
-                else:
-                    content = result.content
+                # Use compressed content if available via get_tool_result()
+                content = result.get_tool_result(use_compression=use_compression)
                 combined_content.append(content)
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": content}

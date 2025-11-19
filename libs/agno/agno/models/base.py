@@ -312,7 +312,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        context_manager: Optional[Any] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -348,10 +348,10 @@ class Model(ABC):
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         # Debug: Log compression setup
-        log_debug(f"🔄 Starting model response loop")
+        log_debug("🔄 Starting model response loop")
         log_debug(f"   Initial messages count: {len(messages)}")
-        if context_manager:
-            log_debug(f"   Compression enabled: threshold={context_manager.compress_tool_calls_limit}")
+        if compression_manager:
+            log_debug(f"   Compression enabled: threshold={compression_manager.compress_tool_calls_limit}")
 
         iteration_count = 0
         while True:
@@ -371,6 +371,7 @@ class Model(ABC):
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
+                compression_manager=compression_manager,
             )
 
             # Add assistant message to messages
@@ -449,11 +450,11 @@ class Model(ABC):
                 log_debug(
                     f"📊 Tool execution complete: {len(function_call_results)} new results, {len(messages)} existing messages"
                 )
-                log_debug(f"   Context manager: {'Active' if context_manager else 'None'}")
+                log_debug(f"   Compression manager: {'Active' if compression_manager else 'None'}")
 
                 # Debug: Log compression eligibility check
-                if context_manager:
-                    log_debug(f"🔍 Checking compression eligibility:")
+                if compression_manager:
+                    log_debug("🔍 Checking compression eligibility:")
                     for idx, r in enumerate(function_call_results):
                         content_len = len(str(r.content)) if r.content else 0
                         has_comp = r.compressed_content is not None
@@ -462,12 +463,12 @@ class Model(ABC):
                     log_debug(f"   Old uncompressed tools in messages: {len(old_tools)}")
 
                 # Compress tool results BEFORE formatting
-                if context_manager and context_manager.should_compress(messages + function_call_results):
+                if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
-                    log_debug(f"🔍 Post-compression state:")
+                    log_debug("🔍 Post-compression state:")
                     for idx, result in enumerate(function_call_results):
                         has_comp = result.compressed_content is not None
                         content_len = len(str(result.content)) if result.content else 0
@@ -475,7 +476,7 @@ class Model(ABC):
                         log_debug(
                             f"   NEW[{idx}] {result.tool_name}: content={content_len}B, compressed={comp_len}B, has_comp={has_comp}"
                         )
-                elif context_manager:
+                elif compression_manager:
                     log_debug("⏭️  Compression threshold not reached, skipping compression")
 
                 # Format and add results to messages
@@ -483,7 +484,7 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
-                    context_manager=context_manager,
+                    compression_manager=compression_manager,
                     **model_response.extra or {},
                 )
                 log_debug(f"✅ Formatting complete, messages array now has {len(messages)} messages")
@@ -538,7 +539,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        context_manager: Optional[Any] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -574,6 +575,7 @@ class Model(ABC):
                 tools=_tool_dicts,
                 tool_choice=tool_choice or self._tool_choice,
                 run_response=run_response,
+                compression_manager=compression_manager,
             )
 
             # Add assistant message to messages
@@ -651,11 +653,11 @@ class Model(ABC):
                 log_debug(
                     f"📊 Tool execution complete: {len(function_call_results)} new results, {len(messages)} existing messages"
                 )
-                log_debug(f"   Context manager: {'Active' if context_manager else 'None'}")
+                log_debug(f"   Compression manager: {'Active' if compression_manager else 'None'}")
 
                 # Debug: Log compression eligibility check
-                if context_manager:
-                    log_debug(f"🔍 Checking compression eligibility:")
+                if compression_manager:
+                    log_debug("🔍 Checking compression eligibility:")
                     for idx, r in enumerate(function_call_results):
                         content_len = len(str(r.content)) if r.content else 0
                         has_comp = r.compressed_content is not None
@@ -664,12 +666,12 @@ class Model(ABC):
                     log_debug(f"   Old uncompressed tools in messages: {len(old_tools)}")
 
                 # Compress tool results BEFORE formatting
-                if context_manager and context_manager.should_compress(messages + function_call_results):
+                if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
-                    log_debug(f"🔍 Post-compression state:")
+                    log_debug("🔍 Post-compression state:")
                     for idx, result in enumerate(function_call_results):
                         has_comp = result.compressed_content is not None
                         content_len = len(str(result.content)) if result.content else 0
@@ -677,7 +679,7 @@ class Model(ABC):
                         log_debug(
                             f"   NEW[{idx}] {result.tool_name}: content={content_len}B, compressed={comp_len}B, has_comp={has_comp}"
                         )
-                elif context_manager:
+                elif compression_manager:
                     log_debug("⏭️  Compression threshold not reached, skipping compression")
 
                 # Format and add results to messages
@@ -685,7 +687,7 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
-                    context_manager=context_manager,
+                    compression_manager=compression_manager,
                     **model_response.extra or {},
                 )
                 log_debug(f"✅ Formatting complete, messages array now has {len(messages)} messages")
@@ -740,6 +742,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -755,6 +758,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
+            compression_manager=compression_manager,
         )
 
         # Populate the assistant message
@@ -795,6 +799,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -810,6 +815,7 @@ class Model(ABC):
             tool_choice=tool_choice or self._tool_choice,
             assistant_message=assistant_message,
             run_response=run_response,
+            compression_manager=compression_manager,
         )
 
         # Populate the assistant message
@@ -952,7 +958,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        context_manager: Optional[Any] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1048,11 +1054,11 @@ class Model(ABC):
                 log_debug(
                     f"📊 Tool execution complete: {len(function_call_results)} new results, {len(messages)} existing messages"
                 )
-                log_debug(f"   Context manager: {'Active' if context_manager else 'None'}")
+                log_debug(f"   Compression manager: {'Active' if compression_manager else 'None'}")
 
                 # Debug: Log compression eligibility check
-                if context_manager:
-                    log_debug(f"🔍 Checking compression eligibility:")
+                if compression_manager:
+                    log_debug("🔍 Checking compression eligibility:")
                     for idx, r in enumerate(function_call_results):
                         content_len = len(str(r.content)) if r.content else 0
                         has_comp = r.compressed_content is not None
@@ -1061,12 +1067,12 @@ class Model(ABC):
                     log_debug(f"   Old uncompressed tools in messages: {len(old_tools)}")
 
                 # Compress tool results BEFORE formatting
-                if context_manager and context_manager.should_compress(messages + function_call_results):
+                if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
-                    log_debug(f"🔍 Post-compression state:")
+                    log_debug("🔍 Post-compression state:")
                     for idx, result in enumerate(function_call_results):
                         has_comp = result.compressed_content is not None
                         content_len = len(str(result.content)) if result.content else 0
@@ -1074,7 +1080,7 @@ class Model(ABC):
                         log_debug(
                             f"   NEW[{idx}] {result.tool_name}: content={content_len}B, compressed={comp_len}B, has_comp={has_comp}"
                         )
-                elif context_manager:
+                elif compression_manager:
                     log_debug("⏭️  Compression threshold not reached, skipping compression")
 
                 # Format and add results to messages
@@ -1083,19 +1089,21 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        context_manager=context_manager,
+                        compression_manager=compression_manager,
                         **stream_data.extra,
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        context_manager=context_manager,
+                        compression_manager=compression_manager,
                         **model_response.extra,
                     )
                 else:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, context_manager=context_manager
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        compression_manager=compression_manager,
                     )
                 log_debug(f"✅ Formatting complete, messages array now has {len(messages)} messages")
 
@@ -1178,7 +1186,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        context_manager: Optional[Any] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1240,6 +1248,7 @@ class Model(ABC):
                     tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
+                    compression_manager=compression_manager,
                 )
                 if self.cache_response:
                     streaming_responses.append(model_response)
@@ -1275,11 +1284,11 @@ class Model(ABC):
                 log_debug(
                     f"📊 Tool execution complete: {len(function_call_results)} new results, {len(messages)} existing messages"
                 )
-                log_debug(f"   Context manager: {'Active' if context_manager else 'None'}")
+                log_debug(f"   Compression manager: {'Active' if compression_manager else 'None'}")
 
                 # Debug: Log compression eligibility check
-                if context_manager:
-                    log_debug(f"🔍 Checking compression eligibility:")
+                if compression_manager:
+                    log_debug("🔍 Checking compression eligibility:")
                     for idx, r in enumerate(function_call_results):
                         content_len = len(str(r.content)) if r.content else 0
                         has_comp = r.compressed_content is not None
@@ -1288,9 +1297,9 @@ class Model(ABC):
                     log_debug(f"   Old uncompressed tools in messages: {len(old_tools)}")
 
                 # Compress tool results BEFORE formatting
-                if context_manager and context_manager.should_compress(messages + function_call_results):
+                if compression_manager and compression_manager.should_compress(messages + function_call_results):
                     log_debug("✅ Compression threshold exceeded, starting compression...")
-                    context_manager.compress_tool_results(messages, function_call_results)
+                    compression_manager.compress_tool_results(messages, function_call_results)
                     log_debug("✅ Compression complete")
                     # Debug: Verify compression actually happened
                     log_debug("🔍 Post-compression state:")
@@ -1301,7 +1310,7 @@ class Model(ABC):
                         log_debug(
                             f"   NEW[{idx}] {result.tool_name}: content={content_len}B, compressed={comp_len}B, has_comp={has_comp}"
                         )
-                elif context_manager:
+                elif compression_manager:
                     log_debug("⏭️  Compression threshold not reached, skipping compression")
 
                 # Format and add results to messages
@@ -1310,19 +1319,21 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        context_manager=context_manager,
+                        compression_manager=compression_manager,
                         **stream_data.extra,
                     )
                 elif model_response and model_response.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        context_manager=context_manager,
+                        compression_manager=compression_manager,
                         **model_response.extra or {},
                     )
                 else:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, context_manager=context_manager
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        compression_manager=compression_manager,
                     )
                 log_debug(f"✅ Formatting complete, messages array now has {len(messages)} messages")
 
@@ -2266,7 +2277,7 @@ class Model(ABC):
         return function_calls_to_run
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], context_manager=None, **kwargs
+        self, messages: List[Message], function_call_results: List[Message], compression_manager=None, **kwargs
     ) -> None:
         """Format function call results by appending to messages."""
         log_debug(f"[Base] Formatting {len(function_call_results)} results")

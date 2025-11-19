@@ -28,7 +28,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.context.manager import ContextManager
+from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -411,8 +411,8 @@ class Agent:
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_calls: bool = False
-    # Context manager for compression
-    context_manager: Optional[ContextManager] = None
+    # Compression manager for compressing tool call results
+    compression_manager: Optional[CompressionManager] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -451,7 +451,7 @@ class Agent:
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_calls: bool = False,
-        context_manager: Optional[ContextManager] = None,
+        compression_manager: Optional[CompressionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -557,7 +557,7 @@ class Agent:
 
         # Context compression settings
         self.compress_tool_calls = compress_tool_calls
-        self.context_manager = context_manager
+        self.compression_manager = compression_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -829,15 +829,15 @@ class Agent:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
-    def _set_context_manager(self) -> None:
-        if self.compress_tool_calls and self.context_manager is None:
-            self.context_manager = ContextManager(
+    def _set_compression_manager(self) -> None:
+        if self.compress_tool_calls and self.compression_manager is None:
+            self.compression_manager = CompressionManager(
                 model=self.model,
             )
 
-        if self.context_manager is not None:
-            if self.context_manager.model is None:
-                self.context_manager.model = self.model
+        if self.compression_manager is not None:
+            if self.compression_manager.model is None:
+                self.compression_manager.model = self.model
 
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
@@ -868,8 +868,8 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
-        if self.compress_tool_calls or self.context_manager is not None:
-            self._set_context_manager()
+        if self.compress_tool_calls or self.compression_manager is not None:
+            self._set_compression_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -1068,7 +1068,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
-                context_manager=self.context_manager if self.compress_tool_calls else None,
+                compression_manager=self.compression_manager if self.compress_tool_calls else None,
             )
 
             # Check for cancellation after model call
@@ -1917,7 +1917,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                context_manager=self.context_manager if self.compress_tool_calls else None,
+                compression_manager=self.compression_manager if self.compress_tool_calls else None,
             )
 
             # Check for cancellation after model call
@@ -4767,7 +4767,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            context_manager=self.context_manager if self.compress_tool_calls else None,
+            compression_manager=self.compression_manager if self.compress_tool_calls else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4848,7 +4848,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            context_manager=self.context_manager if self.compress_tool_calls else None,
+            compression_manager=self.compression_manager if self.compress_tool_calls else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore

@@ -6,7 +6,7 @@ Run: `python cookbook/agents/context_management/tool_call_compression.py`
 """
 
 from agno.agent import Agent
-from agno.context.manager import ContextManager
+from agno.context.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.aws import AwsBedrock
 from agno.models.deepseek import DeepSeek
@@ -15,24 +15,24 @@ from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.log import log_info
 
-# Create agent with custom context manager
+# Create agent with compression enabled
 agent = Agent(
     name="Competitive Intelligence Agent",
-    model=AwsBedrock(
-        id="us.anthropic.claude-sonnet-4-20250514-v1:0"
-    ),
+    # model=AwsBedrock(id="us.anthropic.claude-sonnet-4-20250514-v1:0"),
     # model="google:gemini-2.5-pro",
-    # model=Gemini(id="gemini-2.5-pro", vertexai=True),
+    model=Gemini(id="gemini-2.5-pro", vertexai=True),
     # model=DeepSeek(id="deepseek-reasoner"),
     # model="openai:gpt-4o",
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     compress_tool_calls=True,
     markdown=True,
-    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_.db"),
+    session_id="competitive_intelligence_agent",
+    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_gemini_4.db"),
     add_history_to_context=True,
     num_history_runs=6,
     instructions="Use the search tools and always use the latest information and data.",
+    debug_mode=True,
 )
 
 
@@ -67,11 +67,11 @@ def print_compression_stats(run_response):
         log_info("=" * 80)
     else:
         log_info(
-            f"ℹ️  No compression triggered yet ({total_tools} tool calls, threshold: {context_manager.compress_tool_calls_limit})"
+            f"ℹ️  No compression triggered yet ({total_tools} tool calls, threshold: 3)"
         )
 
 
-response = agent.run(
+agent.print_response(
     """
     Use the search tools and alwayd for the latest information and data.
     Research recent activities (last 3 months) for these AI companies:
@@ -83,8 +83,3 @@ response = agent.run(
    
     For each, find specific actions with dates and numbers.""",
 )
-
-agent.run("What is the latest news about OpenAI?")
-agent.run("What is the latest news about Anthropic?")
-agent.run("What is the latest news about Google DeepMind?")
-agent.run("What is the latest news about Meta AI?")

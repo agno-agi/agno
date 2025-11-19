@@ -6,7 +6,7 @@ Run: `python cookbook/agents/context_management/tool_call_compression.py`
 """
 
 from agno.agent import Agent
-from agno.context.manager import ContextManager
+from agno.context.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.aws import AwsBedrock
 from agno.models.deepseek import DeepSeek
@@ -45,14 +45,14 @@ Example:
 - TechCo - Feb 10, 2024: Acquired DataStart for $150M, gaining 500 enterprise customers
 """
 
-# Create context manager with custom compression
-context_manager = ContextManager(
+# Create compression manager with custom compression
+compression_manager = CompressionManager(
     model=OpenAIChat(id="gpt-4o-mini"),
     compress_tool_calls_limit=1,
-    tool_compression_instructions=custom_compression_prompt,  # Custom prompt!
+    compress_tool_call_instructions=custom_compression_prompt,  # Custom prompt!
 )
 
-# Create agent with custom context manager
+# Create agent with custom compression manager
 agent = Agent(
     name="Competitive Intelligence Agent",
     # model=AwsBedrock(
@@ -63,7 +63,7 @@ agent = Agent(
     model=DeepSeek(id="deepseek-reasoner"),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
-    context_manager=context_manager,
+    compression_manager=compression_manager,
     compress_tool_calls=True,
     markdown=True,
     db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_.db"),
@@ -106,7 +106,7 @@ def print_compression_stats(run_response):
         log_info("=" * 80)
     else:
         log_info(
-            f"ℹ️  No compression triggered yet ({total_tools} tool calls, threshold: {context_manager.compress_tool_calls_limit})"
+            f"ℹ️  No compression triggered yet ({total_tools} tool calls, threshold: 3)"
         )
 
 
