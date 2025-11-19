@@ -117,11 +117,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         status: Optional[str] = Query(default=None, description="Filter by status (OK, ERROR)"),
         start_time: Optional[str] = Query(
             default=None,
-            description="Filter traces starting after this time (ISO 8601 format, e.g., '2025-11-19T10:00:00Z')",
+            description="Filter traces starting after this time (ISO 8601 format with timezone, e.g., '2025-11-19T10:00:00Z' or '2025-11-19T15:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         end_time: Optional[str] = Query(
             default=None,
-            description="Filter traces ending before this time (ISO 8601 format, e.g., '2025-11-19T11:00:00Z')",
+            description="Filter traces ending before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of traces per page", ge=1, le=100),
@@ -138,23 +138,40 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to datetime objects for database query
+            # Convert to UTC for consistent comparison with database (which stores UTC)
             start_time_dt = None
             end_time_dt = None
             if start_time:
                 try:
-                    start_time_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    # Convert to UTC if timezone-aware, otherwise assume UTC
+                    if dt.tzinfo is not None:
+                        from datetime import timezone as tz
+                        start_time_dt = dt.astimezone(tz.utc)
+                    else:
+                        # If naive datetime, assume it's UTC
+                        from datetime import timezone as tz
+                        start_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Invalid start_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                        detail=f"Invalid start_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
                     )
             if end_time:
                 try:
-                    end_time_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    # Convert to UTC if timezone-aware, otherwise assume UTC
+                    if dt.tzinfo is not None:
+                        from datetime import timezone as tz
+                        end_time_dt = dt.astimezone(tz.utc)
+                    else:
+                        # If naive datetime, assume it's UTC
+                        from datetime import timezone as tz
+                        end_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Invalid end_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                        detail=f"Invalid end_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
                     )
 
             if isinstance(db, AsyncBaseDb):
@@ -451,11 +468,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
         start_time: Optional[str] = Query(
             default=None,
-            description="Filter sessions with traces created after this time (ISO 8601 format, e.g., '2025-11-19T10:00:00Z')",
+            description="Filter sessions with traces created after this time (ISO 8601 format with timezone, e.g., '2025-11-19T10:00:00Z' or '2025-11-19T15:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         end_time: Optional[str] = Query(
             default=None,
-            description="Filter sessions with traces created before this time (ISO 8601 format, e.g., '2025-11-19T11:00:00Z')",
+            description="Filter sessions with traces created before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
@@ -476,23 +493,40 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to datetime objects for database query
+            # Convert to UTC for consistent comparison with database (which stores UTC)
             start_time_dt = None
             end_time_dt = None
             if start_time:
                 try:
-                    start_time_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    # Convert to UTC if timezone-aware, otherwise assume UTC
+                    if dt.tzinfo is not None:
+                        from datetime import timezone as tz
+                        start_time_dt = dt.astimezone(tz.utc)
+                    else:
+                        # If naive datetime, assume it's UTC
+                        from datetime import timezone as tz
+                        start_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Invalid start_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                        detail=f"Invalid start_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
                     )
             if end_time:
                 try:
-                    end_time_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    # Convert to UTC if timezone-aware, otherwise assume UTC
+                    if dt.tzinfo is not None:
+                        from datetime import timezone as tz
+                        end_time_dt = dt.astimezone(tz.utc)
+                    else:
+                        # If naive datetime, assume it's UTC
+                        from datetime import timezone as tz
+                        end_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Invalid end_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                        detail=f"Invalid end_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
                     )
 
             if isinstance(db, AsyncBaseDb):
