@@ -503,9 +503,72 @@ class Gemini(Model):
                     )
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
+                is_combined = isinstance(content, list)
+                log_debug(
+                    f"[READ_GEMINI] Processing tool message: "
+                    f"is_combined={is_combined}, "
+                    f"tool_calls_count={len(message.tool_calls)}, "
+                    f"compression_active={compression_manager and compression_manager.compress_tool_results if compression_manager else False}"
+                )
+
                 for idx, tool_call in enumerate(message.tool_calls):
-                    # Log what content is being sent from tool_calls array
-                    tc_content = tool_call.get("content", "")
+                    # content (from line 481) could be:
+                    # - For individual messages: string (original)
+                    # - For combined messages: list of originals
+                    #
+                    # For combined messages, compressed versions are in tool_calls[]["content"]
+                    # For individual messages, compressed version is in message.compressed_content
+
+                    # Try to extract from content list first
+                    if isinstance(content, list) and idx < len(content):
+                        # Combined message - content is a list of originals
+                        original_from_list = content[idx]
+                        original_len = len(str(original_from_list)) if original_from_list else 0
+
+                        # Check if we should use compressed from tool_calls instead
+                        if compression_manager and compression_manager.compress_tool_results:
+                            # Prefer compressed from tool_calls if available
+                            compressed_from_tool_call = tool_call.get("content")
+                            compressed_len = len(str(compressed_from_tool_call)) if compressed_from_tool_call else 0
+                            tc_content = compressed_from_tool_call if compressed_from_tool_call else original_from_list
+                            used_source = "tool_calls[]['content']" if compressed_from_tool_call else "content[]"
+                        else:
+                            # Use original from content list
+                            tc_content = original_from_list
+                            compressed_len = original_len
+                            used_source = "content[]"
+
+                        log_debug(
+                            f"  [READ {idx}] Combined message: "
+                            f"original={original_len}B, "
+                            f"compressed_available={compressed_len}B, "
+                            f"using={used_source}"
+                        )
+                    else:
+                        # Individual message - check if compression is available
+                        # First priority: use message.compressed_content if compression is active
+                        if (
+                            compression_manager
+                            and compression_manager.compress_tool_results
+                            and message.compressed_content
+                        ):
+                            tc_content = message.compressed_content
+                            original_len = len(str(content)) if content else 0
+                            compressed_len = len(str(tc_content)) if tc_content else 0
+                            used_source = "message.compressed_content"
+                            log_debug(
+                                f"  [READ {idx}] Individual message (compressed): "
+                                f"original={original_len}B, compressed={compressed_len}B, "
+                                f"using={used_source}"
+                            )
+                        else:
+                            # Fallback: use tool_call content or message content
+                            tc_content = tool_call.get("content")
+                            if tc_content is None:
+                                tc_content = content
+                            used_source = "tool_calls[]['content']" if tool_call.get("content") else "message.content"
+                            log_debug(f"  [READ {idx}] Individual message (uncompressed): using={used_source}")
+
                     tc_content_len = len(str(tc_content)) if tc_content else 0
                     tool_name = tool_call.get("tool_name", "unknown")
                     tool_call_id = tool_call.get("tool_call_id", "unknown")
@@ -515,9 +578,7 @@ class Gemini(Model):
                     )
 
                     message_parts.append(
-                        Part.from_function_response(
-                            name=tool_call["tool_name"], response={"result": tool_call["content"]}
-                        )
+                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tc_content})
                     )
             # Regular text content
             else:
@@ -786,26 +847,55 @@ class Gemini(Model):
     ) -> None:
         """
         Format function call results for Gemini.
+
+        For combined messages:
+        - content: list of ORIGINAL content (for preservation)
+        - tool_calls[i]["content"]: compressed content if available (for API sending)
+
+        This allows the message to be saved with both original and compressed versions.
         """
         log_debug(f"[Gemini] Formatting {len(function_call_results)} results")
-        combined_content: List = []
+        combined_original_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
 
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
-                # Use compressed content if available via get_tool_result()
-                content = result.get_tool_result(compression_manager)
-                combined_content.append(content)
+                # Always store ORIGINAL content in the main content list
+                original_len = len(str(result.content)) if result.content else 0
+                combined_original_content.append(result.content)
+
+                # Store compressed content (if available) in tool_calls array
+                # This preserves compressed versions when saved to DB
+                compressed_content = result.get_tool_result(compression_manager)
+                compressed_len = len(str(compressed_content)) if compressed_content else 0
+
+                log_debug(
+                    f"  [CREATE {idx}] {result.tool_name}: "
+                    f"original={original_len}B, "
+                    f"compressed={compressed_len}B, "
+                    f"has_compressed_field={result.compressed_content is not None}"
+                )
+
                 combined_function_result.append(
-                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": content}
+                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
                 message_metrics += result.metrics
 
-        if combined_content:
+        if combined_original_content:
+            # Combined message has:
+            # - content: list of originals (main storage)
+            # - tool_calls[]["content"]: compressed versions (used when sending to API if compression is active)
+            log_debug(
+                f"[Gemini] Created combined message with {len(combined_original_content)} results. "
+                f"Storing originals in content[], compressed in tool_calls[]['content']"
+            )
             messages.append(
                 Message(
-                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="tool",
+                    content=combined_original_content,
+                    tool_calls=combined_function_result,
+                    metrics=message_metrics,
                 )
             )
 
