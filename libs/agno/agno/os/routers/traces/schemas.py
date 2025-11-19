@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -10,8 +11,8 @@ class TraceNode(BaseModel):
     name: str = Field(..., description="Span name (e.g., 'agent.run', 'llm.invoke')")
     type: str = Field(..., description="Span kind (AGENT, LLM, TOOL)")
     duration: str = Field(..., description="Human-readable duration (e.g., '123ms', '1.5s')")
-    start_time: int = Field(..., description="Start time in nanoseconds")
-    end_time: int = Field(..., description="End time in nanoseconds")
+    start_time: str = Field(..., description="Start time in ISO 8601 format (UTC)")
+    end_time: str = Field(..., description="End time in ISO 8601 format (UTC)")
     status: str = Field(..., description="Status code (OK, ERROR)")
     input: Optional[str] = Field(None, description="Input to the span")
     output: Optional[str] = Field(None, description="Output from the span")
@@ -72,13 +73,17 @@ class TraceNode(BaseModel):
         if user_id := span.attributes.get("user.id"):
             metadata["user_id"] = user_id
 
+        # Convert nanoseconds to ISO 8601 datetime strings
+        start_time_str = datetime.fromtimestamp(span.start_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+        end_time_str = datetime.fromtimestamp(span.end_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+
         return cls(
             id=span.span_id,
             name=span.name,
             type=span_kind,
             duration=duration_str,
-            start_time=span.start_time_ns,
-            end_time=span.end_time_ns,
+            start_time=start_time_str,
+            end_time=end_time_str,
             status=span.status_code,
             input=input_val,
             output=output_val,
@@ -96,7 +101,7 @@ class TraceSummary(BaseModel):
     name: str = Field(..., description="Trace name (usually root span name)")
     status: str = Field(..., description="Overall status (OK, ERROR, UNSET)")
     duration: str = Field(..., description="Human-readable total duration")
-    start_time: int = Field(..., description="Trace start time in nanoseconds")
+    start_time: str = Field(..., description="Trace start time in ISO 8601 format (UTC)")
     total_spans: int = Field(..., description="Total number of spans in this trace")
     error_count: int = Field(..., description="Number of spans with errors")
     input: Optional[str] = Field(None, description="Input to the agent")
@@ -105,7 +110,7 @@ class TraceSummary(BaseModel):
     user_id: Optional[str] = Field(None, description="Associated user ID")
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
     team_id: Optional[str] = Field(None, description="Associated team ID")
-    created_at: int = Field(..., description="Unix timestamp when trace was created")
+    created_at: str = Field(..., description="Time when trace was created in ISO 8601 format (UTC)")
 
     @classmethod
     def from_trace(cls, trace: Any, input: Optional[str] = None) -> "TraceSummary":
@@ -116,12 +121,17 @@ class TraceSummary(BaseModel):
         else:
             duration_str = f"{duration_ms / 1000:.2f}s"
 
+        # Convert nanoseconds to ISO 8601 datetime string
+        start_time_str = datetime.fromtimestamp(trace.start_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+        # Convert Unix timestamp (seconds) to ISO 8601 datetime string
+        created_at_str = datetime.fromtimestamp(trace.created_at, tz=timezone.utc).isoformat()
+
         return cls(
             trace_id=trace.trace_id,
             name=trace.name,
             status=trace.status,
             duration=duration_str,
-            start_time=trace.start_time_ns,
+            start_time=start_time_str,
             total_spans=trace.total_spans,
             error_count=trace.error_count,
             input=input,
@@ -130,7 +140,7 @@ class TraceSummary(BaseModel):
             user_id=trace.user_id,
             agent_id=trace.agent_id,
             team_id=trace.team_id,
-            created_at=trace.created_at,
+            created_at=created_at_str,
         )
 
 
@@ -142,8 +152,8 @@ class TraceSessionStats(BaseModel):
     agent_id: Optional[str] = Field(None, description="Agent ID(s) used in the session")
     team_id: Optional[str] = Field(None, description="Team ID associated with the session")
     total_traces: int = Field(..., description="Total number of traces in this session")
-    first_trace_at: int = Field(..., description="Unix timestamp of first trace in session")
-    last_trace_at: int = Field(..., description="Unix timestamp of last trace in session")
+    first_trace_at: str = Field(..., description="Time of first trace in session (ISO 8601 format, UTC)")
+    last_trace_at: str = Field(..., description="Time of last trace in session (ISO 8601 format, UTC)")
 
 
 class TraceDetail(BaseModel):
@@ -153,8 +163,8 @@ class TraceDetail(BaseModel):
     name: str = Field(..., description="Trace name (usually root span name)")
     status: str = Field(..., description="Overall status (OK, ERROR, UNSET)")
     duration: str = Field(..., description="Human-readable total duration")
-    start_time: int = Field(..., description="Trace start time in nanoseconds")
-    end_time: int = Field(..., description="Trace end time in nanoseconds")
+    start_time: str = Field(..., description="Trace start time in ISO 8601 format (UTC)")
+    end_time: str = Field(..., description="Trace end time in ISO 8601 format (UTC)")
     total_spans: int = Field(..., description="Total number of spans in this trace")
     error_count: int = Field(..., description="Number of spans with errors")
     input: Optional[str] = Field(None, description="Input to the agent/workflow")
@@ -165,7 +175,7 @@ class TraceDetail(BaseModel):
     user_id: Optional[str] = Field(None, description="Associated user ID")
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
     team_id: Optional[str] = Field(None, description="Associated team ID")
-    created_at: int = Field(..., description="Unix timestamp when trace was created")
+    created_at: str = Field(..., description="Time when trace was created in ISO 8601 format (UTC)")
     tree: List[TraceNode] = Field(..., description="Hierarchical tree of spans (root nodes)")
 
     @classmethod
@@ -210,13 +220,19 @@ class TraceDetail(BaseModel):
         # Build span tree with token totals
         span_tree = cls._build_span_tree(spans, total_input_tokens, total_output_tokens)
 
+        # Convert nanoseconds to ISO 8601 datetime strings
+        start_time_str = datetime.fromtimestamp(trace.start_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+        end_time_str = datetime.fromtimestamp(trace.end_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+        # Convert Unix timestamp (seconds) to ISO 8601 datetime string
+        created_at_str = datetime.fromtimestamp(trace.created_at, tz=timezone.utc).isoformat()
+
         return cls(
             trace_id=trace.trace_id,
             name=trace.name,
             status=trace.status,
             duration=duration_str,
-            start_time=trace.start_time_ns,
-            end_time=trace.end_time_ns,
+            start_time=start_time_str,
+            end_time=end_time_str,
             total_spans=trace.total_spans,
             error_count=trace.error_count,
             input=trace_input,
@@ -227,7 +243,7 @@ class TraceDetail(BaseModel):
             user_id=trace.user_id,
             agent_id=trace.agent_id,
             team_id=trace.team_id,
-            created_at=trace.created_at,
+            created_at=created_at_str,
             tree=span_tree,
         )
 
@@ -271,6 +287,10 @@ class TraceDetail(BaseModel):
                 duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
+                # Convert nanoseconds to ISO 8601 datetime strings
+                start_time_str = datetime.fromtimestamp(span.start_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+                end_time_str = datetime.fromtimestamp(span.end_time_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+
                 # Skip input/output/error for root span (already at top level of TraceDetail)
 
                 return TraceNode(
@@ -278,8 +298,8 @@ class TraceDetail(BaseModel):
                     name=span.name,
                     type=span_kind,
                     duration=duration_str,
-                    start_time=span.start_time_ns,
-                    end_time=span.end_time_ns,
+                    start_time=start_time_str,
+                    end_time=end_time_str,
                     status=span.status_code,
                     input=None,  # Skip for root span (already at TraceDetail level)
                     output=None,  # Skip for root span (already at TraceDetail level)

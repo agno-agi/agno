@@ -1,7 +1,5 @@
 """Run `pip install requests` to install dependencies."""
 
-from pathlib import Path
-
 from agno.agent import Agent
 from agno.models.response import FileType
 from agno.tools.models_labs import ModelsLabTools

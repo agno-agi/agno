@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Union
 
 from fastapi import Depends, HTTPException, Query
@@ -83,7 +84,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "name": "Stock_Price_Agent.run",
                                     "status": "OK",
                                     "duration": "1.2s",
-                                    "start_time": 1234567890000000,
+                                    "start_time": "2025-11-19T10:30:00.000000+00:00",
                                     "total_spans": 4,
                                     "error_count": 0,
                                     "input": "What is the stock price of NVDA?",
@@ -92,7 +93,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "user_id": "user789",
                                     "agent_id": "agent_stock",
                                     "team_id": None,
-                                    "created_at": 1234567890,
+                                    "created_at": "2025-11-19T10:30:00+00:00",
                                 }
                             ],
                             "meta": {
@@ -108,16 +109,22 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_traces(
-        run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        status: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
-        page: int = 1,
-        limit: int = 20,
+        run_id: Optional[str] = Query(default=None, description="Filter by run ID"),
+        session_id: Optional[str] = Query(default=None, description="Filter by session ID"),
+        user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
+        agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
+        team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
+        status: Optional[str] = Query(default=None, description="Filter by status (OK, ERROR)"),
+        start_time: Optional[str] = Query(
+            default=None,
+            description="Filter traces starting after this time (ISO 8601 format, e.g., '2025-11-19T10:00:00Z')",
+        ),
+        end_time: Optional[str] = Query(
+            default=None,
+            description="Filter traces ending before this time (ISO 8601 format, e.g., '2025-11-19T11:00:00Z')",
+        ),
+        page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
+        limit: int = Query(default=20, description="Number of traces per page", ge=1, le=100),
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
@@ -130,6 +137,28 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             start_time_ms = time_module.time() * 1000
 
+            # Convert ISO datetime strings to nanoseconds for database query
+            start_time_ns = None
+            end_time_ns = None
+            if start_time:
+                try:
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    start_time_ns = int(dt.timestamp() * 1_000_000_000)
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid start_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                    )
+            if end_time:
+                try:
+                    dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    end_time_ns = int(dt.timestamp() * 1_000_000_000)
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid end_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                    )
+
             if isinstance(db, AsyncBaseDb):
                 traces_result = await db.get_traces(
                     run_id=run_id,
@@ -138,8 +167,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     agent_id=agent_id,
                     team_id=team_id,
                     status=status,
-                    start_time=start_time,
-                    end_time=end_time,
+                    start_time=start_time_ns,
+                    end_time=end_time_ns,
                     limit=limit,
                     page=page,
                 )
@@ -151,8 +180,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     agent_id=agent_id,
                     team_id=team_id,
                     status=status,
-                    start_time=start_time,
-                    end_time=end_time,
+                    start_time=start_time_ns,
+                    end_time=end_time_ns,
                     limit=limit,
                     page=page,
                 )
@@ -250,8 +279,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "name": "Stock_Price_Agent.run",
                                     "status": "OK",
                                     "duration": "1.2s",
-                                    "start_time": 1234567890000000,
-                                    "end_time": 1234567891200000,
+                                    "start_time": "2025-11-19T10:30:00.000000+00:00",
+                                    "end_time": "2025-11-19T10:30:01.200000+00:00",
                                     "total_spans": 4,
                                     "error_count": 0,
                                     "input": "What is Tesla stock price?",
@@ -262,7 +291,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "user_id": "user789",
                                     "agent_id": "stock_agent",
                                     "team_id": None,
-                                    "created_at": 1234567890,
+                                    "created_at": "2025-11-19T10:30:00+00:00",
                                     "tree": [
                                         {
                                             "id": "span1",
@@ -401,8 +430,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "agent_id": "hackernews-agent",
                                     "team_id": None,
                                     "total_traces": 5,
-                                    "first_trace_at": 1762156516,
-                                    "last_trace_at": 1762156890,
+                                    "first_trace_at": "2025-11-19T10:15:16+00:00",
+                                    "last_trace_at": "2025-11-19T10:21:30+00:00",
                                 }
                             ],
                             "meta": {
@@ -470,7 +499,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Calculate total pages
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
-            # Convert stats to response models
+            # Convert stats to response models with datetime conversion
             stats_response = [
                 TraceSessionStats(
                     session_id=stat["session_id"],
@@ -478,8 +507,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     agent_id=stat.get("agent_id"),
                     team_id=stat.get("team_id"),
                     total_traces=stat["total_traces"],
-                    first_trace_at=stat["first_trace_at"],
-                    last_trace_at=stat["last_trace_at"],
+                    first_trace_at=datetime.fromtimestamp(stat["first_trace_at"], tz=timezone.utc).isoformat(),
+                    last_trace_at=datetime.fromtimestamp(stat["last_trace_at"], tz=timezone.utc).isoformat(),
                 )
                 for stat in stats_list
             ]
