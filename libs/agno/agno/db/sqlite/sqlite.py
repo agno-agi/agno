@@ -2342,7 +2342,7 @@ class SqliteDb(BaseDb):
                 log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
-                from datetime import datetime, timezone
+                from datetime import datetime
 
                 stats_list = []
                 for row in results:
