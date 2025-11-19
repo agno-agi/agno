@@ -40,13 +40,14 @@ agent = Agent(
 
 run_response = agent.run("What files do I have in my current directory?")
 if run_response.is_paused:
-    for tool in run_response.tools_awaiting_external_execution:
-        if tool.tool_name == execute_shell_command.name:
-            print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
-            # We execute the tool ourselves. You can also execute something completely external here.
-            result = execute_shell_command.entrypoint(**tool.tool_args)  # type: ignore
-            # We have to set the result on the tool execution object so that the agent can continue
-            tool.result = result
+    for requirement in run_response.active_requirements:
+        if requirement.needs_external_execution:
+            if requirement.tool.tool_name == execute_shell_command.name:
+                print(f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally")
+                # We execute the tool ourselves. You can also execute something completely external here.
+                result = execute_shell_command.entrypoint(**requirement.tool.tool_args)  # type: ignore
+                # We have to set the result on the tool execution object so that the agent can continue
+                requirement.set_result(result)
 
     run_response = agent.continue_run(run_response=run_response)
     pprint.pprint_run_response(run_response)

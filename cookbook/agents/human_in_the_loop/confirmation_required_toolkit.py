@@ -32,22 +32,22 @@ agent = Agent(
 
 run_response = agent.run("What is the current stock price of Apple?")
 if run_response.is_paused:  # Or agent.run_response.is_paused
-    for tool in run_response.tools_requiring_confirmation:  # type: ignore
-        # Ask for confirmation
-        console.print(
-            f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
-        )
-        message = (
-            Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
-            .strip()
-            .lower()
-        )
+    for requirement in run_response.active_requirements:
+        if requirement.needs_confirmation:
+            # Ask for confirmation
+            console.print(
+                f"Tool name [bold blue]{requirement.tool.tool_name}({requirement.tool.tool_args})[/] requires confirmation."
+            )
+            message = (
+                Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
 
-        if message == "n":
-            tool.confirmed = False
-        else:
-            # We update the tools in place
-            tool.confirmed = True
+            if message == "n":
+                requirement.reject()
+            else:
+                requirement.confirm()
 
     run_response = agent.continue_run(run_response=run_response)
     pprint.pprint_run_response(run_response)
