@@ -49,3 +49,10 @@ team.print_response(
     "What is the current stock price of NVDA?",
     stream=True,
 )
+
+# You can also hide member responses for a specific call
+team.print_response(
+    "What is the latest news for TSLA?",
+    stream=True,
+    show_member_responses=False,  # Does not show member responses for this call only
+)
