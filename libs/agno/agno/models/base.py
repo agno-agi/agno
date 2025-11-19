@@ -447,35 +447,35 @@ class Model(ABC):
                     **model_response.extra or {},
                 )
 
-                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                        # Handle function call media
-                        self._handle_function_call_media(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            send_media_to_model=send_media_to_model,
-                        )
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                    # Handle function call media
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
-                    for function_call_result in function_call_results:
+                for function_call_result in function_call_results:
                         function_call_result.log(metrics=True)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                    break
 
-                    # Continue loop to get next response
-                    continue
+                # Continue loop to get next response
+                continue
 
                 # No tool calls or finished processing them
                 break
@@ -626,37 +626,37 @@ class Model(ABC):
                     **model_response.extra or {},
                 )
 
-                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                        # Handle function call media
-                        self._handle_function_call_media(
-                            messages=messages,
-                            function_call_results=function_call_results,
-                            send_media_to_model=send_media_to_model,
-                        )
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                    # Handle function call media
+                    self._handle_function_call_media(
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        send_media_to_model=send_media_to_model,
+                    )
 
-                    for function_call_result in function_call_results:
+                for function_call_result in function_call_results:
                         function_call_result.log(metrics=True)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                    break
 
-                    # Continue loop to get next response
-                    continue
+                # Continue loop to get next response
+                continue
 
-                # No tool calls or finished processing them
+            # No tool calls or finished processing them
                 break
 
             log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
@@ -1028,7 +1028,7 @@ class Model(ABC):
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True)
 
-                    # Check if we should stop after tool calls
+                # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
                         break
 
@@ -1236,7 +1236,7 @@ class Model(ABC):
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True)
 
-                    # Check if we should stop after tool calls
+                # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
                         break
 
