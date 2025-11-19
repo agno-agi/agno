@@ -326,10 +326,11 @@ class Model(ABC):
             send_media_to_model: Whether to send media to the model
         """
         try:
-
             # Check cache if enabled
             if self.cache_response:
-                cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+                cache_key = self._get_model_cache_key(
+                    messages, stream=False, response_format=response_format, tools=tools
+                )
                 cached_data = self._get_cached_model_response(cache_key)
 
                 if cached_data:
@@ -477,10 +478,10 @@ class Model(ABC):
                 self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
         finally:
             # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                self.client.close()
+            if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
+                self.client.close()  # type: ignore
                 self.client = None
-                
+
         return model_response
 
     async def aresponse(
@@ -497,10 +498,11 @@ class Model(ABC):
         Generate an asynchronous response from the model.
         """
         try:
-
             # Check cache if enabled
             if self.cache_response:
-                cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+                cache_key = self._get_model_cache_key(
+                    messages, stream=False, response_format=response_format, tools=tools
+                )
                 cached_data = self._get_cached_model_response(cache_key)
 
                 if cached_data:
@@ -649,7 +651,7 @@ class Model(ABC):
             if self.__class__.__name__ == "Gemini" and self.client is not None:
                 await self.client.aio.aclose()
                 self.client = None
-                
+
         return model_response
 
     def _process_model_response(
@@ -881,7 +883,9 @@ class Model(ABC):
             # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
             cache_key = None
             if self.cache_response:
-                cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+                cache_key = self._get_model_cache_key(
+                    messages, stream=True, response_format=response_format, tools=tools
+                )
                 cached_data = self._get_cached_model_response(cache_key)
 
                 if cached_data:
@@ -974,7 +978,9 @@ class Model(ABC):
                             messages=messages, function_call_results=function_call_results, **model_response.extra
                         )
                     else:
-                        self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                        self.format_function_call_results(
+                            messages=messages, function_call_results=function_call_results
+                        )
 
                     # Handle function call media
                     if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -1068,7 +1074,9 @@ class Model(ABC):
             # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
             cache_key = None
             if self.cache_response:
-                cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+                cache_key = self._get_model_cache_key(
+                    messages, stream=True, response_format=response_format, tools=tools
+                )
                 cached_data = self._get_cached_model_response(cache_key)
 
                 if cached_data:
@@ -1162,7 +1170,9 @@ class Model(ABC):
                             messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                         )
                     else:
-                        self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                        self.format_function_call_results(
+                            messages=messages, function_call_results=function_call_results
+                        )
 
                     # Handle function call media
                     if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -1202,13 +1212,13 @@ class Model(ABC):
             # Save streaming responses to cache if enabled
             if self.cache_response and cache_key and streaming_responses:
                 self._save_streaming_responses_to_cache(cache_key, streaming_responses)
-        
+
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
                 await self.client.aio.aclose()
                 self.client = None
-                
+
     def _populate_assistant_message_from_stream_data(
         self, assistant_message: Message, stream_data: MessageData
     ) -> None:
