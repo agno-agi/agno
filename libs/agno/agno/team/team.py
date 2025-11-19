@@ -2269,6 +2269,7 @@ class Team:
                     await memory_task
                 except asyncio.CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2590,6 +2591,7 @@ class Team:
                     await memory_task
                 except asyncio.CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3909,7 +3911,7 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -4011,7 +4013,7 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 

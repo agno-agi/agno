@@ -7,6 +7,7 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 from uuid import uuid4
+
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
@@ -845,7 +846,9 @@ class Gemini(Model):
                     if hasattr(part, "thought_signature") and part.thought_signature:
                         if model_response.provider_data is None:
                             model_response.provider_data = {}
-                        model_response.provider_data["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
+                        model_response.provider_data["thought_signature"] = base64.b64encode(
+                            part.thought_signature
+                        ).decode("ascii")
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     # Handle audio responses (for TTS models)
@@ -880,8 +883,7 @@ class Gemini(Model):
 
                     # Capture thought signature for function calls
                     if hasattr(part, "thought_signature") and part.thought_signature:
-                        tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
-                        
+                        tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
 
                     model_response.tool_calls.append(tool_call)
 
@@ -978,7 +980,9 @@ class Gemini(Model):
                         if hasattr(part, "thought_signature") and part.thought_signature:
                             if model_response.provider_data is None:
                                 model_response.provider_data = {}
-                            model_response.provider_data["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
+                            model_response.provider_data["thought_signature"] = base64.b64encode(
+                                part.thought_signature
+                            ).decode("ascii")
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         # Audio responses
@@ -1015,7 +1019,7 @@ class Gemini(Model):
 
                         # Capture thought signature for function calls
                         if hasattr(part, "thought_signature") and part.thought_signature:
-                            tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
+                            tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
 
                         model_response.tool_calls.append(tool_call)
 

@@ -1724,12 +1724,6 @@ class Agent:
                     )
                 else:
                     return run_response
-            finally:
-                # Close the Gemini client
-                if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:
-                    self.model.client.close()
-                    self.model.client = None
-                    
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -2009,12 +2003,7 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
-            
-            # Close the Gemini client
-            if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:
-                await self.model.client.aio.aclose()
-                self.model.client = None
-                
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2377,11 +2366,6 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
-            
-            # Close the Gemini client
-            if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:
-                await self.model.client.aio.aclose()
-                self.model.client = None
 
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -9865,7 +9849,7 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -9966,7 +9950,7 @@ class Agent:
 
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
-            
+
         if stream:
             await aprint_response_stream(
                 agent=self,
