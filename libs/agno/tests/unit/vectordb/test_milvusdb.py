@@ -1,3 +1,21 @@
+import pytest
+
+# Ensure Milvus is available and usable in the current environment.
+# This handles some CI errors when running Milvus in GitHub Actions.
+try:
+    import pymilvus
+
+    MILVUS_AVAILABLE = True
+    MILVUS_SKIP_REASON = ""
+except (ImportError, TypeError) as e:
+    MILVUS_AVAILABLE = False
+    MILVUS_SKIP_REASON = f"Milvus not available: {str(e)}"
+
+pytestmark = pytest.mark.skipif(not MILVUS_AVAILABLE, reason=MILVUS_SKIP_REASON)
+
+if not MILVUS_AVAILABLE:
+    pytest.skip(MILVUS_SKIP_REASON, allow_module_level=True)
+
 from typing import List
 from unittest.mock import Mock, patch
 
@@ -16,7 +34,7 @@ except (ImportError, TypeError) as e:
     MILVUS_AVAILABLE = False
     MILVUS_SKIP_REASON = f"Milvus not available: {str(e)}"
 
-# Skip entire module if Milvus not available
+# Skip test file if Milvus not available
 pytestmark = pytest.mark.skipif(not MILVUS_AVAILABLE, reason=MILVUS_SKIP_REASON if not MILVUS_AVAILABLE else "")
 
 
