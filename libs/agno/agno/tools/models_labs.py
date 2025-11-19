@@ -4,10 +4,8 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.response import FileType
-from agno.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_info, logger

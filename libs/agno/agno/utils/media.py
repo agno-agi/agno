@@ -55,7 +55,6 @@ def download_image(url: str, output_path: str) -> bool:
         return False
 
 
-
 def download_audio(url: str, output_path: str) -> str:
     """Download audio from URL"""
     response = httpx.get(url)
