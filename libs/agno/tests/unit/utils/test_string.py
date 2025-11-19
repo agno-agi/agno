@@ -142,7 +142,9 @@ def test_parse_invalid_json():
     """Test parsing invalid JSON"""
     content = '{"name": "test", value: "123"}'  # Missing quotes around value
     result = parse_response_model_str(content, MockModel)
-    assert result is None
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
 
 
 def test_parse_empty_string():
@@ -172,6 +174,26 @@ def test_parse_json_with_code_blocks_in_fields():
         "description": "A function that prints hello"
     }
     ```
+    """
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert "def hello()" in result.value
+    assert "print('Hello, world!')" in result.value
+    assert result.description == "A function that prints hello"
+
+
+def test_parse_json_with_code_blocks_in_fields_without_json():
+    """Test parsing JSON with code blocks in field values"""
+    content = """
+    {
+        "name": "test",
+        "value": "```python
+    def hello():
+        print('Hello, world!')
+    ```",
+        "description": "A function that prints hello"
+    }
     """
     result = parse_response_model_str(content, MockModel)
     assert result is not None
@@ -343,6 +365,6 @@ def test_parse_json_with_python_code_in_value():
     assert result.function_name == "calculate_factorial"
     assert (
         result.code
-        == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
+        == "def factorial(n):\n    # Calculate factorial of n\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)"
     )
     assert result.description == "A recursive factorial function with comments and multiplication"

@@ -35,6 +35,7 @@ dependencies = [
   "gitpython",
   "h11>=0.16.0",
   "httpx",
+  "json-repair",
   "packaging",
   "pydantic-settings",
   "pydantic",
