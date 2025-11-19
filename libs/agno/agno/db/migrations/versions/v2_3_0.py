@@ -538,7 +538,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
                     text(
                         f"""
                         ALTER TABLE `{db_schema}`.`{table_name}`
-                        ALTER COLUMN `created_at` SET NOT NULL
+                        MODIFY COLUMN `created_at` BIGINT NOT NULL
                         """
                     )
                 )
@@ -852,11 +852,40 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
             log_info(f"Table {table_name} does not exist, skipping revert")
             return False
         if table_type == "memories":
-            sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN IF EXISTS `feedback`"))
-            sess.execute(
-                text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP INDEX IF EXISTS `idx_{table_name}_created_at`")
-            )
-            sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN IF EXISTS `created_at`"))
+            # Get existing columns
+            existing_columns = {
+                row[0]
+                for row in sess.execute(
+                    text(
+                        """
+                        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name
+                        """
+                    ),
+                    {"schema": db_schema, "table_name": table_name},
+                )
+            }
+            # Drop feedback column if it exists
+            if "feedback" in existing_columns:
+                sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN `feedback`"))
+            # Drop created_at index if it exists
+            index_exists = sess.execute(
+                text(
+                    """
+                    SELECT COUNT(1) FROM INFORMATION_SCHEMA.STATISTICS
+                    WHERE TABLE_SCHEMA = :schema
+                    AND TABLE_NAME = :table_name
+                    AND INDEX_NAME = :index_name
+                    """
+                ),
+                {"schema": db_schema, "table_name": table_name, "index_name": f"idx_{table_name}_created_at"},
+            ).scalar()
+            if index_exists:
+                sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP INDEX `idx_{table_name}_created_at`"))
+            # Drop created_at column if it exists
+            if "created_at" in existing_columns:
+                sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN `created_at`"))
+
         sess.commit()
         return True
 

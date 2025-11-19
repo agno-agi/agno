@@ -5,7 +5,7 @@ from packaging import version as packaging_version
 from packaging.version import Version
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_error, log_info, log_warning
 
 
 class MigrationManager:
@@ -53,7 +53,7 @@ class MigrationManager:
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version:
                 log_info(
-                    f"Target version {_target_version} is less or equal to current version {current_version} for table {table_name}. Skipping migration."
+                    f"Skipping up migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
                 )
                 log_info("----------------------------------------------------------")
                 continue
@@ -127,9 +127,10 @@ class MigrationManager:
                 current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
 
             if _target_version >= current_version:
-                raise ValueError(
-                    f"Target version {_target_version} is greater or equal to current version: {current_version}. Skipping migration."
+                log_warning(
+                    f"Skipping down migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
                 )
+                continue
 
             migration_executed = False
             # Run down migration for all versions between target and current (include down of current version)
