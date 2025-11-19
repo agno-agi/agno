@@ -2050,6 +2050,8 @@ class MongoDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -2059,6 +2061,8 @@ class MongoDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            start_time: Filter sessions with traces created after this timestamp (Unix seconds).
+            end_time: Filter sessions with traces created before this timestamp (Unix seconds).
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 

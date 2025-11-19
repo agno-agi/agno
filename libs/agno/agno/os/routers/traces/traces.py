@@ -451,6 +451,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
+        start_time: Optional[str] = Query(
+            default=None,
+            description="Filter sessions with traces created after this time (ISO 8601 format, e.g., '2025-11-19T10:00:00Z')",
+        ),
+        end_time: Optional[str] = Query(
+            default=None,
+            description="Filter sessions with traces created before this time (ISO 8601 format, e.g., '2025-11-19T11:00:00Z')",
+        ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
@@ -469,11 +477,35 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             start_time_ms = time_module.time() * 1000
 
+            # Convert ISO datetime strings to Unix timestamps (seconds) for database query
+            start_time_unix = None
+            end_time_unix = None
+            if start_time:
+                try:
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    start_time_unix = int(dt.timestamp())
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid start_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                    )
+            if end_time:
+                try:
+                    dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                    end_time_unix = int(dt.timestamp())
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid end_time format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z'): {e}",
+                    )
+
             if isinstance(db, AsyncBaseDb):
                 stats_result = await db.get_trace_stats(
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    start_time=start_time_unix,
+                    end_time=end_time_unix,
                     limit=limit,
                     page=page,
                 )
@@ -482,6 +514,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    start_time=start_time_unix,
+                    end_time=end_time_unix,
                     limit=limit,
                     page=page,
                 )

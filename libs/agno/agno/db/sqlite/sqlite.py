@@ -2263,6 +2263,8 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -2272,6 +2274,8 @@ class SqliteDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            start_time: Filter sessions with traces created after this timestamp (Unix seconds).
+            end_time: Filter sessions with traces created before this timestamp (Unix seconds).
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
 
@@ -2282,7 +2286,8 @@ class SqliteDb(BaseDb):
             from sqlalchemy import func
 
             log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
             )
 
             table = self._get_table(table_type="traces")
@@ -2313,6 +2318,10 @@ class SqliteDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.team_id == team_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time)
+                if end_time:
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time)
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
