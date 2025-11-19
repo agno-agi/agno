@@ -29,7 +29,7 @@ from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 try:
-    from redis import Redis
+    from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -38,7 +38,7 @@ class RedisDb(BaseDb):
     def __init__(
         self,
         id: Optional[str] = None,
-        redis_client: Optional[Redis] = None,
+        redis_client: Optional[Union[Redis, RedisCluster]] = None,
         db_url: Optional[str] = None,
         db_prefix: str = "agno",
         expire: Optional[int] = None,
@@ -56,6 +56,8 @@ class RedisDb(BaseDb):
             1. Use the redis_client if provided
             2. Use the db_url
             3. Raise an error if neither is provided
+
+        db_url only supports single-node Redis connections, if you need Redis Cluster support, provide a redis_client.
 
         Args:
             id (Optional[str]): The ID of the database.
@@ -99,6 +101,10 @@ class RedisDb(BaseDb):
             raise ValueError("One of redis_client or db_url must be provided")
 
     # -- DB methods --
+
+    def table_exists(self, table_name: str) -> bool:
+        """Redis implementation, always returns True."""
+        return True
 
     def _get_table_name(self, table_type: str) -> str:
         """Get the active table name for the given table type."""
@@ -326,8 +332,6 @@ class RedisDb(BaseDb):
 
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
-                return None
-            if session_type is not None and session.get("session_type") != session_type:
                 return None
 
             if not deserialize:

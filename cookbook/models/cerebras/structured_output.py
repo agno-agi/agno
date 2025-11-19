@@ -25,11 +25,26 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses a JSON schema output
-json_schema_output_agent = Agent(
-    model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
-    description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
+# Agent that uses structured outputs with strict_output=True (default)
+structured_output_agent = Agent(
+    model=Cerebras(id="qwen-3-32b"),
+    description="You write movie scripts.",
     output_schema=MovieScript,
 )
 
-json_schema_output_agent.print_response("New York")
+
+# Agent with strict_output=False (guided mode)
+guided_output_agent = Agent(
+    model=Cerebras(id="qwen-3-32b", strict_output=False),
+    description="You write movie scripts.",
+    output_schema=MovieScript,
+)
+
+
+# Get the response in a variable
+# structured_output_response: RunOutput = structured_output_agent.run("New York")
+# pprint(structured_output_response.content)
+
+
+structured_output_agent.print_response("New York")
+guided_output_agent.print_response("New York")

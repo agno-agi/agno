@@ -12,6 +12,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.llama import format_message
 
@@ -61,7 +62,7 @@ class Llama(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # OpenAI clients
@@ -104,8 +105,16 @@ class Llama(Model):
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
         self.client = LlamaAPIClient(**client_params)
         return self.client
 
@@ -116,18 +125,26 @@ class Llama(Model):
         Returns:
             AsyncLlamaAPIClient: An instance of the asynchronous Llama client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
-            client_params["http_client"] = self.http_client
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
-        return AsyncLlamaAPIClient(**client_params)
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
+
+        # Create and cache the client
+        self.async_client = AsyncLlamaAPIClient(**client_params)
+        return self.async_client
 
     def get_request_params(
         self,

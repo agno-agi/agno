@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -46,7 +46,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.team.team import Team
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -109,6 +109,7 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        auto_provision_dbs: bool = True,
         os_id: Optional[str] = None,  # Deprecated
         enable_mcp: bool = False,  # Deprecated
         fastapi_app: Optional[FastAPI] = None,  # Deprecated
@@ -148,7 +149,7 @@ class AgentOS:
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-
+        self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
 
         if base_app:
@@ -187,54 +188,111 @@ class AgentOS:
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
 
-        if self.agents:
-            for agent in self.agents:
-                # Track all MCP tools to later handle their connection
-                if agent.tools:
-                    for tool in agent.tools:
-                        # Checking if the tool is a MCPTools or MultiMCPTools instance
-                        type_name = type(tool).__name__
-                        if type_name in ("MCPTools", "MultiMCPTools"):
-                            if tool not in self.mcp_tools:
-                                self.mcp_tools.append(tool)
-
-                agent.initialize_agent()
-
-                # Required for the built-in routes to work
-                agent.store_events = True
-
-        if self.teams:
-            for team in self.teams:
-                # Track all MCP tools recursively
-                collect_mcp_tools_from_team(team, self.mcp_tools)
-
-                team.initialize_team()
-
-                for member in team.members:
-                    if isinstance(member, Agent):
-                        member.team_id = None
-                        member.initialize_agent()
-                    elif isinstance(member, Team):
-                        member.initialize_team()
-
-                # Required for the built-in routes to work
-                team.store_events = True
-
-        if self.workflows:
-            for workflow in self.workflows:
-                # Track MCP tools recursively in workflow members
-                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
-
-                if not workflow.id:
-                    workflow.id = generate_id_from_name(workflow.name)
-
-                # Required for the built-in routes to work
-                workflow.store_events = True
+        self._initialize_agents()
+        self._initialize_teams()
+        self._initialize_workflows()
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
 
             log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+
+    def _add_agent_os_to_lifespan_function(self, lifespan):
+        """
+        Inspect a lifespan function and wrap it to pass agent_os if it accepts it.
+
+        Returns:
+            A wrapped lifespan that passes agent_os if the lifespan function expects it.
+        """
+        # Getting the actual function inside the lifespan
+        lifespan_function = lifespan
+        if hasattr(lifespan, "__wrapped__"):
+            lifespan_function = lifespan.__wrapped__
+
+        try:
+            from inspect import signature
+
+            # Inspecting the lifespan function signature to find its parameters
+            sig = signature(lifespan_function)
+            params = list(sig.parameters.keys())
+
+            # If the lifespan function expects the 'agent_os' parameter, add it
+            if "agent_os" in params:
+                return partial(lifespan, agent_os=self)
+            else:
+                return lifespan
+
+        except (ValueError, TypeError):
+            return lifespan
+
+    def resync(self, app: FastAPI) -> None:
+        """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
+        self._initialize_agents()
+        self._initialize_teams()
+        self._initialize_workflows()
+        self._auto_discover_databases()
+        self._auto_discover_knowledge_instances()
+
+        if self.enable_mcp_server:
+            from agno.os.mcp import get_mcp_server
+
+            self._mcp_app = get_mcp_server(self)
+
+        self._reprovision_routers(app=app)
+
+    def _reprovision_routers(self, app: FastAPI) -> None:
+        """Re-provision all routes for the AgentOS."""
+        updated_routers = [
+            get_session_router(dbs=self.dbs),
+            get_metrics_router(dbs=self.dbs),
+            get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+        ]
+
+        # Clear all previously existing routes
+        app.router.routes = [
+            route
+            for route in app.router.routes
+            if hasattr(route, "path")
+            and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
+            or route.path.startswith("/mcp")  # type: ignore
+        ]
+
+        # Add the built-in routes
+        self._add_built_in_routes(app=app)
+
+        # Add the updated routes
+        for router in updated_routers:
+            self._add_router(app, router)
+
+        # Mount MCP if needed
+        if self.enable_mcp_server and self._mcp_app:
+            app.mount("/", self._mcp_app)
+
+    def _add_built_in_routes(self, app: FastAPI) -> None:
+        """Add all AgentOSbuilt-in routes to the given app."""
+        # Add the home router if MCP server is not enabled
+        if not self.enable_mcp_server:
+            self._add_router(app, get_home_router(self))
+
+        self._add_router(app, get_health_router(health_endpoint="/health"))
+        self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        # Add A2A interface if relevant
+        has_a2a_interface = False
+        for interface in self.interfaces:
+            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+                has_a2a_interface = True
+            interface_router = interface.get_router()
+            self._add_router(app, interface_router)
+        if self.a2a_interface and not has_a2a_interface:
+            from agno.os.interfaces.a2a import A2A
+
+            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(a2a_interface)
+            self._add_router(app, a2a_interface.get_router())
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -265,6 +323,63 @@ class AgentOS:
             lifespan=app_lifespan,
         )
 
+    def _initialize_agents(self) -> None:
+        """Initialize and configure all agents for AgentOS usage."""
+        if not self.agents:
+            return
+
+        for agent in self.agents:
+            # Track all MCP tools to later handle their connection
+            if agent.tools:
+                for tool in agent.tools:
+                    # Checking if the tool is a MCPTools or MultiMCPTools instance
+                    type_name = type(tool).__name__
+                    if type_name in ("MCPTools", "MultiMCPTools"):
+                        if tool not in self.mcp_tools:
+                            self.mcp_tools.append(tool)
+
+            agent.initialize_agent()
+
+            # Required for the built-in routes to work
+            agent.store_events = True
+
+    def _initialize_teams(self) -> None:
+        """Initialize and configure all teams for AgentOS usage."""
+        if not self.teams:
+            return
+
+        for team in self.teams:
+            # Track all MCP tools recursively
+            collect_mcp_tools_from_team(team, self.mcp_tools)
+
+            team.initialize_team()
+
+            for member in team.members:
+                if isinstance(member, Agent):
+                    member.team_id = None
+                    member.initialize_agent()
+                elif isinstance(member, Team):
+                    member.initialize_team()
+
+            # Required for the built-in routes to work
+            team.store_events = True
+
+    def _initialize_workflows(self) -> None:
+        """Initialize and configure all workflows for AgentOS usage."""
+        if not self.workflows:
+            return
+
+        if self.workflows:
+            for workflow in self.workflows:
+                # Track MCP tools recursively in workflow members
+                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
+                if not workflow.id:
+                    workflow.id = generate_id_from_name(workflow.name)
+
+                # Required for the built-in routes to work
+                workflow.store_events = True
+
     def get_app(self) -> FastAPI:
         if self.base_app:
             fastapi_app = self.base_app
@@ -278,17 +393,23 @@ class AgentOS:
             # Collect all lifespans that need to be combined
             lifespans = []
 
+            # The user provided lifespan
+            if self.lifespan:
+                # Wrap the user lifespan with agent_os parameter
+                wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
+                lifespans.append(wrapped_lifespan)
+
+            # The provided app's existing lifespan
             if fastapi_app.router.lifespan_context:
                 lifespans.append(fastapi_app.router.lifespan_context)
 
+            # The MCP tools lifespan
             if self.mcp_tools:
                 lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
+            # The /mcp server lifespan
             if self.enable_mcp_server and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
-
-            if self.lifespan:
-                lifespans.append(self.lifespan)
 
             # Combine lifespans and set them in the app
             if lifespans:
@@ -304,11 +425,14 @@ class AgentOS:
 
                 final_lifespan = self._mcp_app.lifespan  # type: ignore
                 if self.lifespan is not None:
+                    # Wrap the user lifespan with agent_os parameter
+                    wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
+
                     # Combine both lifespans
                     @asynccontextmanager
                     async def combined_lifespan(app: FastAPI):
                         # Run both lifespans
-                        async with self.lifespan(app):  # type: ignore
+                        async with wrapped_lifespan(app):  # type: ignore
                             async with self._mcp_app.lifespan(app):  # type: ignore
                                 yield
 
@@ -316,28 +440,14 @@ class AgentOS:
 
                 fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
-                fastapi_app = self._make_app(lifespan=self.lifespan)
+                # Wrap the user lifespan with agent_os parameter
+                wrapped_user_lifespan = None
+                if self.lifespan is not None:
+                    wrapped_user_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
 
-        # Add routes
-        self._add_router(fastapi_app, get_base_router(self, settings=self.settings))
-        self._add_router(fastapi_app, get_websocket_router(self, settings=self.settings))
-        self._add_router(fastapi_app, get_health_router())
-        self._add_router(fastapi_app, get_home_router(self))
+                fastapi_app = self._make_app(lifespan=wrapped_user_lifespan)
 
-        has_a2a_interface = False
-        for interface in self.interfaces:
-            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
-                has_a2a_interface = True
-            interface_router = interface.get_router()
-            self._add_router(fastapi_app, interface_router)
-
-        # Add A2A interface if requested and not provided in self.interfaces
-        if self.a2a_interface and not has_a2a_interface:
-            from agno.os.interfaces.a2a import A2A
-
-            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
-            self.interfaces.append(a2a_interface)
-            self._add_router(fastapi_app, a2a_interface.get_router())
+        self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
@@ -356,29 +466,27 @@ class AgentOS:
         # Mount MCP if needed
         if self.enable_mcp_server and self._mcp_app:
             fastapi_app.mount("/", self._mcp_app)
-        else:
-            # Add the home router
-            self._add_router(fastapi_app, get_home_router(self))
 
         if not self._app_set:
 
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
+                log_error(f"HTTP exception: {exc.status_code} {exc.detail}")
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"detail": str(exc.detail)},
                 )
 
-            async def general_exception_handler(request: Request, call_next):
-                try:
-                    return await call_next(request)
-                except Exception as e:
-                    return JSONResponse(
-                        status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
-                        content={"detail": str(e)},
-                    )
+            @fastapi_app.exception_handler(Exception)
+            async def general_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+                import traceback
 
-            fastapi_app.middleware("http")(general_exception_handler)
+                log_error(f"Unhandled exception:\n{traceback.format_exc(limit=5)}")
+
+                return JSONResponse(
+                    status_code=getattr(exc, "status_code", 500),
+                    content={"detail": str(exc)},
+                )
 
         # Update CORS middleware
         update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
@@ -410,7 +518,7 @@ class AgentOS:
                 # Skip conflicting AgentOS routes, prefer user's existing routes
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
-                    logger.debug(
+                    log_debug(
                         f"Skipping conflicting AgentOS route: {methods_str} {conflict['path']} - "
                         f"Using existing custom route instead"
                     )
@@ -429,7 +537,7 @@ class AgentOS:
                 # Log warnings but still add all routes (AgentOS routes will override)
                 for conflict in conflicts:
                     methods_str = ", ".join(conflict["methods"])  # type: ignore
-                    logger.warning(
+                    log_warning(
                         f"Route conflict detected: {methods_str} {conflict['path']} - "
                         f"AgentOS route will override existing custom route"
                     )
@@ -461,11 +569,12 @@ class AgentOS:
         }
 
     def _auto_discover_databases(self) -> None:
-        """Auto-discover the databases used by all contextual agents, teams and workflows."""
-        from agno.db.base import AsyncBaseDb, BaseDb
+        """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
 
-        dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}
-        knowledge_dbs: Dict[str, Union[BaseDb, AsyncBaseDb]] = {}  # Track databases specifically used for knowledge
+        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
+        knowledge_dbs: Dict[
+            str, List[Union[BaseDb, AsyncBaseDb]]
+        ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
             if agent.db:
@@ -496,48 +605,97 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-    def _register_db_with_validation(self, registered_dbs: Dict[str, Any], db: Union[BaseDb, AsyncBaseDb]) -> None:
+        # Initialize/scaffold all discovered databases
+        if self.auto_provision_dbs:
+            import asyncio
+            import concurrent.futures
+
+            try:
+                # If we're already in an event loop, run in a separate thread
+                asyncio.get_running_loop()
+
+                def run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(self._initialize_databases())
+                    finally:
+                        new_loop.close()
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(run_in_new_loop)
+                    future.result()  # Wait for completion
+
+            except RuntimeError:
+                # No event loop running, use asyncio.run
+                asyncio.run(self._initialize_databases())
+
+    async def _initialize_databases(self) -> None:
+        """Initialize all discovered databases and create all Agno tables that don't exist yet."""
+        from itertools import chain
+
+        # Collect all database instances and remove duplicates by identity
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
+
+        # Separate sync and async databases
+        sync_dbs: List[Tuple[str, BaseDb]] = []
+        async_dbs: List[Tuple[str, AsyncBaseDb]] = []
+
+        for db in unique_dbs:
+            target = async_dbs if isinstance(db, AsyncBaseDb) else sync_dbs
+            target.append((db.id, db))  # type: ignore
+
+        # Initialize sync databases
+        for db_id, db in sync_dbs:
+            try:
+                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                    db._create_all_tables()
+                else:
+                    log_debug(f"No table initialization needed for {db.__class__.__name__}")
+
+            except Exception as e:
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db_id}): {e}")
+
+        # Initialize async databases
+        for db_id, db in async_dbs:
+            try:
+                log_debug(f"Initializing async {db.__class__.__name__} (id: {db_id})")
+
+                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                    await db._create_all_tables()
+                else:
+                    log_debug(f"No table initialization needed for async {db.__class__.__name__}")
+
+            except Exception as e:
+                log_warning(f"Failed to initialize async database {db.__class__.__name__} (id: {db_id}): {e}")
+
+    def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
+        """Get the table names for a database"""
+        table_names = {
+            "session_table_name": db.session_table_name,
+            "culture_table_name": db.culture_table_name,
+            "memory_table_name": db.memory_table_name,
+            "metrics_table_name": db.metrics_table_name,
+            "evals_table_name": db.eval_table_name,
+            "knowledge_table_name": db.knowledge_table_name,
+        }
+        return {k: v for k, v in table_names.items() if v is not None}
+
+    def _register_db_with_validation(
+        self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: Union[BaseDb, AsyncBaseDb]
+    ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
-            existing_db = registered_dbs[db.id]
-            if not self._are_db_instances_compatible(existing_db, db):
-                raise ValueError(
-                    f"Database ID conflict detected: Two different database instances have the same ID '{db.id}'. "
-                    f"Database instances with the same ID must point to the same database with identical configuration."
-                )
-        registered_dbs[db.id] = db
-
-    def _are_db_instances_compatible(self, db1: Union[BaseDb, AsyncBaseDb], db2: Union[BaseDb, AsyncBaseDb]) -> bool:
-        """
-        Return True if the two given database objects are compatible
-        Two database objects are compatible if they point to the same database with identical configuration.
-        """
-        # If they're the same object reference, they're compatible
-        if db1 is db2:
-            return True
-
-        if type(db1) is not type(db2):
-            return False
-
-        if hasattr(db1, "db_url") and hasattr(db2, "db_url"):
-            if db1.db_url != db2.db_url:  # type: ignore
-                return False
-
-        if hasattr(db1, "db_file") and hasattr(db2, "db_file"):
-            if db1.db_file != db2.db_file:  # type: ignore
-                return False
-
-        # If table names are different, they're not compatible
-        if (
-            db1.session_table_name != db2.session_table_name
-            or db1.memory_table_name != db2.memory_table_name
-            or db1.metrics_table_name != db2.metrics_table_name
-            or db1.eval_table_name != db2.eval_table_name
-            or db1.knowledge_table_name != db2.knowledge_table_name
-        ):
-            return False
-
-        return True
+            registered_dbs[db.id].append(db)
+        else:
+            registered_dbs[db.id] = [db]
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
@@ -574,13 +732,15 @@ class AgentOS:
             session_config.dbs = []
 
         dbs_with_specific_config = [db.db_id for db in session_config.dbs]
-
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.session_table_name for db in dbs))
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=SessionDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -594,12 +754,15 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
 
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.memory_table_name for db in dbs))
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MemoryDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -633,12 +796,15 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
 
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.metrics_table_name for db in dbs))
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=MetricsDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 
@@ -652,12 +818,15 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
 
-        for db_id in self.dbs.keys():
+        for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.eval_table_name for db in dbs))
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
                         domain_config=EvalsDomainConfig(display_name=db_id),
+                        tables=unique_tables,
                     )
                 )
 

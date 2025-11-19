@@ -9,6 +9,12 @@ from agno.media import Audio, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
@@ -24,6 +30,9 @@ class WorkflowRunEvent(str, Enum):
     workflow_completed = "WorkflowCompleted"
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
+
+    workflow_agent_started = "WorkflowAgentStarted"
+    workflow_agent_completed = "WorkflowAgentCompleted"
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
@@ -118,6 +127,21 @@ class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution starts"""
 
     event: str = WorkflowRunEvent.workflow_started.value
+
+
+@dataclass
+class WorkflowAgentStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent starts (before deciding to run workflow or answer directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_started.value
+
+
+@dataclass
+class WorkflowAgentCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent completes (after running workflow or answering directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_completed.value
+    content: Optional[Any] = None
 
 
 @dataclass
@@ -397,6 +421,8 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
+    WorkflowAgentStartedEvent,
+    WorkflowAgentCompletedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
     WorkflowCancelledEvent,
@@ -422,6 +448,8 @@ WorkflowRunOutputEvent = Union[
 # Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
+    WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
+    WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
     WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
@@ -485,6 +513,10 @@ class WorkflowRunOutput:
     # Store agent/team responses separately with parent_run_id references
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
 
+    # Workflow agent run - stores the full agent RunOutput when workflow agent is used
+    # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
+    workflow_agent_run: Optional[RunOutput] = None
+
     # Store events from workflow execution
     events: Optional[List[WorkflowRunOutputEvent]] = None
 
@@ -516,6 +548,7 @@ class WorkflowRunOutput:
                 "step_executor_runs",
                 "events",
                 "metrics",
+                "workflow_agent_run",
             ]
         }
 
@@ -550,6 +583,9 @@ class WorkflowRunOutput:
 
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
+
+        if self.workflow_agent_run is not None:
+            _dict["workflow_agent_run"] = self.workflow_agent_run.to_dict()
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
@@ -598,19 +634,20 @@ class WorkflowRunOutput:
                 else:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
+        workflow_agent_run_data = data.pop("workflow_agent_run", None)
+        workflow_agent_run = None
+        if workflow_agent_run_data:
+            if isinstance(workflow_agent_run_data, dict):
+                workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
+            elif isinstance(workflow_agent_run_data, RunOutput):
+                workflow_agent_run = workflow_agent_run_data
+
         metadata = data.pop("metadata", None)
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
-
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
-
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         events_data = data.pop("events", [])
         final_events = []
@@ -633,8 +670,15 @@ class WorkflowRunOutput:
 
         input_data = data.pop("input", None)
 
+        # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             step_results=parsed_step_results,
+            workflow_agent_run=workflow_agent_run,
             metadata=metadata,
             images=images,
             videos=videos,
@@ -644,7 +688,7 @@ class WorkflowRunOutput:
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
             input=input_data,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

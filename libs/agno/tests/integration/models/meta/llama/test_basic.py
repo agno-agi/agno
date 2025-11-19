@@ -6,6 +6,12 @@ from agno.db.sqlite import SqliteDb
 from agno.models.meta.llama import Llama
 
 
+@pytest.fixture(scope="module")
+def llama_model():
+    """Fixture that provides a Llama model and reuses it across all tests in the module."""
+    return Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8")
+
+
 def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
@@ -18,8 +24,8 @@ def _assert_metrics(response: RunOutput):
     assert total_tokens == input_tokens + output_tokens
 
 
-def test_basic():
-    agent = Agent(model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
+def test_basic(llama_model):
+    agent = Agent(model=llama_model, markdown=True, telemetry=False)
 
     response: RunOutput = agent.run("Share a 2 sentence horror story")
 
@@ -31,8 +37,8 @@ def test_basic():
     _assert_metrics(response)
 
 
-def test_basic_stream():
-    agent = Agent(model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
+def test_basic_stream(llama_model):
+    agent = Agent(model=llama_model, markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -46,8 +52,8 @@ def test_basic_stream():
 
 
 @pytest.mark.asyncio
-async def test_async_basic():
-    agent = Agent(model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
+async def test_async_basic(llama_model):
+    agent = Agent(model=llama_model, markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -59,17 +65,17 @@ async def test_async_basic():
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream():
-    agent = Agent(model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
+async def test_async_basic_stream(llama_model):
+    agent = Agent(model=llama_model, markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
 
-def test_with_memory():
+def test_with_memory(llama_model):
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=llama_model,
         add_history_to_context=True,
         num_history_runs=5,
         markdown=True,
@@ -94,14 +100,14 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_structured_output():
+def test_structured_output(llama_model):
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=llama_model,
         output_schema=MovieScript,
         telemetry=False,
     )
@@ -115,14 +121,14 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
-def test_json_response_mode():
+def test_json_response_mode(llama_model):
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=llama_model,
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -137,9 +143,9 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-def test_history():
+def test_history(llama_model):
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=llama_model,
         db=SqliteDb(db_file="tmp/meta/llama/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
@@ -156,3 +162,48 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_client_persistence(llama_model):
+    """Test that the same Llama client instance is reused across multiple calls"""
+    agent = Agent(model=llama_model, markdown=True, telemetry=False)
+
+    # First call should create a new client
+    agent.run("Hello")
+    first_client = llama_model.client
+    assert first_client is not None
+
+    # Second call should reuse the same client
+    agent.run("Hello again")
+    second_client = llama_model.client
+    assert second_client is not None
+    assert first_client is second_client, "Client should be persisted and reused"
+
+    # Third call should also reuse the same client
+    agent.run("Hello once more")
+    third_client = llama_model.client
+    assert third_client is not None
+    assert first_client is third_client, "Client should still be the same instance"
+
+
+@pytest.mark.asyncio
+async def test_async_client_persistence(llama_model):
+    """Test that the same async Llama client instance is reused across multiple calls"""
+    agent = Agent(model=llama_model, markdown=True, telemetry=False)
+
+    # First call should create a new async client
+    await agent.arun("Hello")
+    first_client = llama_model.async_client
+    assert first_client is not None
+
+    # Second call should reuse the same async client
+    await agent.arun("Hello again")
+    second_client = llama_model.async_client
+    assert second_client is not None
+    assert first_client is second_client, "Async client should be persisted and reused"
+
+    # Third call should also reuse the same async client
+    await agent.arun("Hello once more")
+    third_client = llama_model.async_client
+    assert third_client is not None
+    assert first_client is third_client, "Async client should still be the same instance"

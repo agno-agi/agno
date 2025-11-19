@@ -9,6 +9,12 @@ from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIChat
 
 
+@pytest.fixture(scope="module")
+def openai_model():
+    """Fixture that provides an OpenAI model and reuses it across all tests in the module."""
+    return OpenAIChat(id="gpt-4o-mini")
+
+
 def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
@@ -21,8 +27,8 @@ def _assert_metrics(response: RunOutput):
     assert total_tokens == input_tokens + output_tokens
 
 
-def test_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
+def test_basic(openai_model):
+    agent = Agent(model=openai_model, markdown=True, telemetry=False)
 
     # Print the response in the terminal
     response: RunOutput = agent.run("Share a 2 sentence horror story")
@@ -34,17 +40,29 @@ def test_basic():
     _assert_metrics(response)
 
 
-def test_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
+def test_basic_stream(openai_model, shared_db):
+    agent = Agent(model=openai_model, db=shared_db, markdown=True, telemetry=False)
 
     run_stream = agent.run("Say 'hi'", stream=True)
     for chunk in run_stream:
         assert chunk.content is not None
 
+    run_output = agent.get_last_run_output()
+
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
+
 
 @pytest.mark.asyncio
-async def test_async_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
+async def test_async_basic(openai_model):
+    agent = Agent(model=openai_model, markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -56,11 +74,23 @@ async def test_async_basic():
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
+async def test_async_basic_stream(openai_model, shared_db):
+    agent = Agent(model=openai_model, db=shared_db, markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
+
+    run_output = agent.get_last_run_output()
+
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 def test_exception_handling():
@@ -75,10 +105,10 @@ def test_exception_handling():
     assert exc.value.status_code == 404
 
 
-def test_with_memory():
+def test_with_memory(openai_model):
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=openai_model,
         add_history_to_context=True,
         markdown=True,
         telemetry=False,
@@ -101,7 +131,7 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_structured_output_json_mode():
+def test_structured_output_json_mode(openai_model):
     """Test structured output with Pydantic models."""
 
     class MovieScript(BaseModel):
@@ -111,7 +141,7 @@ def test_structured_output_json_mode():
         release_date: Optional[str] = Field(None, description="Release date of the movie")
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=openai_model,
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -126,7 +156,7 @@ def test_structured_output_json_mode():
     assert response.content.plot is not None
 
 
-def test_structured_output():
+def test_structured_output(openai_model):
     """Test native structured output with the responses API."""
 
     class MovieScript(BaseModel):
@@ -136,7 +166,7 @@ def test_structured_output():
         release_date: Optional[str] = Field(None, description="Release date of the movie")
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=openai_model,
         output_schema=MovieScript,
         telemetry=False,
     )
@@ -150,9 +180,9 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
-def test_history():
+def test_history(openai_model):
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=openai_model,
         db=SqliteDb(db_file="tmp/openai/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
@@ -174,9 +204,9 @@ def test_history():
     assert len(run_output.messages) == 8
 
 
-def test_cache_read_tokens():
+def test_cache_read_tokens(openai_model):
     """Assert cache_read_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
+    agent = Agent(model=openai_model, markdown=True, telemetry=False)
 
     # Multiple + one large prompt to ensure token caching is triggered
     agent.run("Share a 2 sentence horror story" * 250)
@@ -200,3 +230,48 @@ def test_reasoning_tokens():
     reasoning_tokens = response.metrics.reasoning_tokens
     assert reasoning_tokens is not None
     assert reasoning_tokens > 0
+
+
+def test_client_persistence(openai_model):
+    """Test that the same OpenAI client instance is reused across multiple calls"""
+    agent = Agent(model=openai_model, markdown=True, telemetry=False)
+
+    # First call should create a new client
+    agent.run("Hello")
+    first_client = openai_model.client
+    assert first_client is not None
+
+    # Second call should reuse the same client
+    agent.run("Hello again")
+    second_client = openai_model.client
+    assert second_client is not None
+    assert first_client is second_client, "Client should be persisted and reused"
+
+    # Third call should also reuse the same client
+    agent.run("Hello once more")
+    third_client = openai_model.client
+    assert third_client is not None
+    assert first_client is third_client, "Client should still be the same instance"
+
+
+@pytest.mark.asyncio
+async def test_async_client_persistence(openai_model):
+    """Test that the same async OpenAI client instance is reused across multiple calls"""
+    agent = Agent(model=openai_model, markdown=True, telemetry=False)
+
+    # First call should create a new async client
+    await agent.arun("Hello")
+    first_client = openai_model.async_client
+    assert first_client is not None
+
+    # Second call should reuse the same async client
+    await agent.arun("Hello again")
+    second_client = openai_model.async_client
+    assert second_client is not None
+    assert first_client is second_client, "Async client should be persisted and reused"
+
+    # Third call should also reuse the same async client
+    await agent.arun("Hello once more")
+    third_client = openai_model.async_client
+    assert third_client is not None
+    assert first_client is third_client, "Async client should still be the same instance"

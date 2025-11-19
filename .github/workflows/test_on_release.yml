@@ -5,11 +5,10 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
-        description: 'Branch to run checks on'
+        description: "Branch to run checks on"
         required: true
         type: string
 
@@ -18,42 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  style-check:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9"]
-      fail-fast: true # Stop all matrix jobs if one fails
-
-    defaults:
-      run:
-        working-directory: libs/agno
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-venv
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest types-pyyaml
-          pip install --no-deps -r requirements.txt
-      - name: Ruff format
-        run: |
-          ruff format .
-      - name: Ruff check
-        run: |
-          ruff check .
-      - name: Mypy
-        run: |
-          mypy .
-
   # Run tests for OpenAI
   test-openai:
     runs-on: ubuntu-latest
@@ -868,6 +831,72 @@ jobs:
           pip install a2a-sdk
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
+  test-clean:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_basic.py
+
+  test-clean-os:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_os_basic.py
+
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest
@@ -899,3 +928,44 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py ./libs/agno/tests/integration
+
+  test-dev-setup:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Make dev_setup.sh executable
+        run: chmod +x ./scripts/dev_setup.sh
+      - name: Run dev setup script
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Verify virtual environment was created
+        run: |
+          if [ ! -d ".venv" ]; then
+            echo "Error: .venv directory not found"
+            exit 1
+          fi
+          echo "✓ Virtual environment created successfully"
+      - name: Verify agno installation
+        run: |
+          source .venv/bin/activate
+          python -c "import agno; print(f'✓ agno version: {agno.__version__}')" || exit 1
+      - name: Verify agno_infra installation
+        run: |
+          source .venv/bin/activate
+          pip show agno-infra || exit 1
+      - name: List installed packages
+        run: |
+          source .venv/bin/activate
+          pip list

@@ -66,6 +66,10 @@ class JsonDb(BaseDb):
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
 
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
+
     def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
 
@@ -200,9 +204,6 @@ class JsonDb(BaseDb):
             for session_data in sessions:
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
                         continue
 
                     if not deserialize:
