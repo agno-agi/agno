@@ -110,8 +110,10 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 
 VERSIONS_TABLE_SCHEMA = {
     "version": {"type": lambda: String(10), "nullable": False, "primary_key": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
+    "created_at": {"type": lambda: String(128), "nullable": False, "index": True},
 }
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """

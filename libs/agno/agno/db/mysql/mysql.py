@@ -19,6 +19,7 @@ from agno.db.mysql.utils import (
     is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -225,6 +226,11 @@ class MySQLDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+            
             self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -314,8 +320,14 @@ class MySQLDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
+            
+            created_table = self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return created_table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -334,21 +346,36 @@ class MySQLDb(BaseDb):
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
-    def get_latest_schema_version(self):
+    def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
         with self.Session() as sess:
-            stmt = select(table).order_by(table.c.version.desc()).limit(1)  # type: ignore
+            # Latest version for the given table
+            stmt = select(table).where(table.c.table_name == table_name).order_by(table.c.version.desc()).limit(1)  # type: ignore
             result = sess.execute(stmt).fetchone()
             if result is None:
-                return "v2.0.0"
-            return result[0]
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
 
-    def upsert_schema_version(self, version: str) -> None:
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
         with self.Session() as sess, sess.begin():
-            stmt = mysql.insert(table).values(version=version, created_at=int(time.time()))  # type: ignore
+            stmt = mysql.insert(table).values(  # type: ignore
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+            )
+            # Use ON DUPLICATE KEY UPDATE to do nothing on conflict
+            stmt = stmt.on_duplicate_key_update(
+                version=stmt.inserted.version,
+                table_name=stmt.inserted.table_name,
+                created_at=stmt.inserted.created_at,
+            )
             sess.execute(stmt)
 
     # -- Session methods --

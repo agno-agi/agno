@@ -51,12 +51,13 @@ class BaseDb(ABC):
         """Create all tables for this database."""
         pass
 
+    # --- Schema Version ---
     @abstractmethod
-    def get_latest_schema_version(self):
+    def get_latest_schema_version(self, table_name: str):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_schema_version(self, version: str) -> None:
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         raise NotImplementedError
 

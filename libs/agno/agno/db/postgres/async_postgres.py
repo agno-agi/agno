@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     abulk_upsert_metrics,
@@ -129,6 +130,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+            
             await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -285,6 +291,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
+            
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+            
             return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not await ais_valid_table(
@@ -302,35 +313,46 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
+                               
                 return table
 
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
-    async def get_latest_schema_version(self):
+    async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
         table = await self._get_table(table_type="versions")
         if table is None:
-            return "v2.0.0"
+            return "2.0.0"
 
         async with self.async_session_factory() as sess:
-            stmt = select(table).order_by(table.c.version.desc()).limit(1)
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
             result = await sess.execute(stmt)
             row = result.fetchone()
             if row is None:
-                return "v2.0.0"
+                return "2.0.0"
 
             version_dict = dict(row._mapping)
-            return version_dict.get("version") or "v2.0.0"
+            return version_dict.get("version") or "2.0.0"
 
-    async def upsert_schema_version(self, version: str) -> None:
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         table = await self._get_table(table_type="versions")
         if table is None:
             return
+        current_datetime = datetime.now().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
-            stmt = postgresql.insert(table).values(version=version, created_at=int(time.time()))
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+            )  # type: ignore
+            # Ensure only one combination of table_name and version exists
+            stmt = stmt.on_conflict_do_nothing(index_elements=["version", "table_name"])  # type: ignore
             await sess.execute(stmt)
 
     # -- Session methods --

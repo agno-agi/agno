@@ -42,7 +42,7 @@ class UserMemory:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserMemory":
         data = dict(data)
-        
+
         if created_at := data.get("created_at"):
             if isinstance(created_at, (int, float)):
                 data["created_at"] = datetime.fromtimestamp(created_at, tz=timezone.utc)

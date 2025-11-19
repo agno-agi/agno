@@ -288,6 +288,7 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
+
 def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
     Get the expected schema definition for the given table.

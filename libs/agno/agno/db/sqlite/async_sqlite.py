@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -139,6 +140,11 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
+            
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+            
             await self._create_table(table_name=table_name, table_type=table_type)
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -302,6 +308,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
+            
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+            
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -322,27 +333,39 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error loading existing table {table_name}: {e}")
             raise e
 
-    async def get_latest_schema_version(self):
+    async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
         table = await self._get_table(table_type="versions")
         if table is None:
-            return "v2.0.0"
+            return "2.0.0"
         async with self.async_session_factory() as sess:
-            stmt = select(table).order_by(table.c.version.desc()).limit(1)
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
             result = await sess.execute(stmt)
             row = result.fetchone()
             if row is None:
-                return "v2.0.0"
+                return "2.0.0"
             version_dict = dict(row._mapping)
-            return version_dict.get("version") or "v2.0.0"
+            return version_dict.get("version") or "2.0.0"
 
-    async def upsert_schema_version(self, version: str) -> None:
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         table = await self._get_table(table_type="versions")
         if table is None:
             return
+        current_datetime = datetime.now().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
-            stmt = sqlite.insert(table).values(version=version, created_at=int(time.time()))
+            stmt = sqlite.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+            )  # type: ignore
+            # Ignore conflicts - do nothing if the combination already exists
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["version", "table_name"]
+            )
             await sess.execute(stmt)
 
     # -- Session methods --
