@@ -7,6 +7,18 @@ from agno.knowledge.document import Document
 from agno.vectordb.distance import Distance
 from agno.vectordb.milvus import Milvus
 
+# Try to import Milvus, skip all tests if not available
+try:
+    from agno.vectordb.milvus import Milvus
+
+    MILVUS_AVAILABLE = True
+except (ImportError, TypeError) as e:
+    MILVUS_AVAILABLE = False
+    MILVUS_SKIP_REASON = f"Milvus not available: {str(e)}"
+
+# Skip entire module if Milvus not available
+pytestmark = pytest.mark.skipif(not MILVUS_AVAILABLE, reason=MILVUS_SKIP_REASON if not MILVUS_AVAILABLE else "")
+
 
 @pytest.fixture
 def mock_milvus_client():
