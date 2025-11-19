@@ -7879,7 +7879,7 @@ class Agent:
             )
 
             if len(history) > 0:
-                # Create a deep copy of the history messages
+                # Create a deep copy of the history messages to avoid modifying the original messages
                 history_copy = [deepcopy(msg) for msg in history]
 
                 # Tag each message as coming from history
