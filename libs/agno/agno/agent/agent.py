@@ -2001,6 +2001,7 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
