@@ -26,6 +26,8 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     - Change String to Text for long fields (PostgreSQL)
     - Add default values to metrics table (MySQL)
 
+    Notice only the changes related to the given table_type are applied.
+
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
@@ -56,6 +58,8 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     - Change String to Text for long fields (PostgreSQL)
     - Add default values to metrics table (MySQL)
 
+    Notice only the changes related to the given table_type are applied.
+
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
@@ -79,6 +83,11 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     Revert the following changes to the database:
     - Remove created_at, feedback columns from memories table
     - Revert JSONB to JSON for PostgreSQL (if needed)
+
+    Notice only the changes related to the given table_type are reverted.
+
+    Returns:
+        bool: True if any migration was reverted, False otherwise.
     """
     db_type = type(db).__name__
 
@@ -104,6 +113,11 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Revert the following changes to the database:
     - Remove created_at, feedback columns from memories table
     - Revert JSONB to JSON for PostgreSQL (if needed)
+
+    Notice only the changes related to the given table_type are reverted.
+
+    Returns:
+        bool: True if any migration was reverted, False otherwise.
     """
     db_type = type(db).__name__
 
@@ -124,9 +138,9 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate PostgreSQL database."""
     from sqlalchemy import text
 
-    db_schema = db.db_schema or "public" # type: ignore
+    db_schema = db.db_schema or "public"  # type: ignore
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(
@@ -460,9 +474,9 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate MySQL database."""
     from sqlalchemy import text
 
-    db_schema = db.db_schema or "agno" # type: ignore
+    db_schema = db.db_schema or "agno"  # type: ignore
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(
@@ -548,7 +562,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
 def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(
@@ -670,9 +684,9 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SingleStore database."""
     from sqlalchemy import text
 
-    db_schema = db.db_schema or "agno" # type: ignore
+    db_schema = db.db_schema or "agno"  # type: ignore
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(
@@ -750,9 +764,9 @@ def _revert_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert PostgreSQL migration."""
     from sqlalchemy import text
 
-    db_schema = db.db_schema or "agno" # type: ignore
+    db_schema = db.db_schema or "agno"  # type: ignore
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(
@@ -817,9 +831,9 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert MySQL migration."""
     from sqlalchemy import text
 
-    db_schema = db.db_schema or "agno" # type: ignore
+    db_schema = db.db_schema or "agno"  # type: ignore
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(
@@ -865,9 +879,9 @@ def _revert_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert SingleStore migration."""
     from sqlalchemy import text
 
-    db_schema = db.db_schema or "agno" # type: ignore
+    db_schema = db.db_schema or "agno"  # type: ignore
 
-    with db.Session() as sess, sess.begin(): # type: ignore
+    with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
         table_exists = sess.execute(
             text(

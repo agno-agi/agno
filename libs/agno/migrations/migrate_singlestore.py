@@ -1,17 +1,17 @@
 import asyncio
-from urllib.parse import quote_plus
+from os import getenv
 
 from agno.db.migrations.manager import MigrationManager
 from agno.db.singlestore import SingleStoreDb
 
 # Create your database connection here
-username = "xxxxxx"
-encoded_password = quote_plus("xxxxxx")
-host = "xxxxxxxxxxx.aws-virginia-6.svc.singlestore.com"
-port = "3333"
-database = "xxxxxx"
+USERNAME = getenv("SINGLESTORE_USERNAME")
+PASSWORD = getenv("SINGLESTORE_PASSWORD")
+HOST = getenv("SINGLESTORE_HOST")
+PORT = getenv("SINGLESTORE_PORT")
+DATABASE = getenv("SINGLESTORE_DATABASE")
 
-db_url = f"mysql+pymysql://{username}:{encoded_password}@{host}:{port}/{database}"
+db_url = f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}"
 db = SingleStoreDb(db_url=db_url)
 
 
