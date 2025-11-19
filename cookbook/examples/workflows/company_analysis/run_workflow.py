@@ -132,5 +132,4 @@ if __name__ == "__main__":
     procurement_workflow.print_response(
         input=analysis_details,
         stream=True,
-        stream_events=True,
     )

@@ -1,12 +1,12 @@
 from agno.agent import Agent
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow import Step, Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.types import StepInput, StepOutput
 
 # Create agents
-researcher = Agent(name="Researcher", tools=[HackerNewsTools(), GoogleSearchTools()])
+researcher = Agent(name="Researcher", tools=[HackerNewsTools(), DuckDuckGoTools()])
 writer = Agent(name="Writer")
 reviewer = Agent(name="Reviewer")
 
