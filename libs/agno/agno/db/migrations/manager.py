@@ -52,10 +52,9 @@ class MigrationManager:
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version:
-                log_info(
+                log_warning(
                     f"Skipping up migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
                 )
-                log_info("----------------------------------------------------------")
                 continue
 
             log_info(
