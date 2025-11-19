@@ -607,6 +607,12 @@ class RunOutput:
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
 
     @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
+    @property
     def is_paused(self):
         return self.status == RunStatus.paused
 

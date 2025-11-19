@@ -67,10 +67,9 @@ agent = Agent(
 run_output = agent.run("Fetch the top 2 hackernews stories.")
 
 # Handle the requirement
-if run_output.is_paused:
-    for requirement in run_output.requirements or []:
-        if requirement.needs_confirmation:
-            requirement.confirm()  # or requirement.reject()
+for requirement in run_output.active_requirements:
+    if requirement.needs_confirmation:
+        requirement.confirm()  # or requirement.reject()
 
 
 # The requirement has been confirmed, and we can now continue the run
