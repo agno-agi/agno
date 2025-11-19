@@ -5,7 +5,7 @@ from typing import List, Optional
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
     You are compressing tool call results to save context space while preserving critical information.
