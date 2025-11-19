@@ -1,3 +1,4 @@
+import base64
 import json
 import time
 from collections.abc import AsyncIterator
@@ -6,7 +7,6 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 from uuid import uuid4
-
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
@@ -482,7 +482,7 @@ class Gemini(Model):
                     content_str = content if isinstance(content, str) else str(content)
                     part = Part.from_text(text=content_str)
                     if message.provider_data and "thought_signature" in message.provider_data:
-                        part.thought_signature = message.provider_data["thought_signature"]
+                        part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts.append(part)
                 for tool_call in message.tool_calls:
                     part = Part.from_function_call(
@@ -490,7 +490,7 @@ class Gemini(Model):
                         args=json.loads(tool_call["function"]["arguments"]),
                     )
                     if "thought_signature" in tool_call:
-                        part.thought_signature = tool_call["thought_signature"]
+                        part.thought_signature = base64.b64decode(tool_call["thought_signature"])
                     message_parts.append(part)
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
@@ -505,7 +505,7 @@ class Gemini(Model):
                 if isinstance(content, str):
                     part = Part.from_text(text=content)
                     if message.provider_data and "thought_signature" in message.provider_data:
-                        part.thought_signature = message.provider_data["thought_signature"]
+                        part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts = [part]
 
             if role == "user" and message.tool_calls is None:
@@ -845,7 +845,7 @@ class Gemini(Model):
                     if hasattr(part, "thought_signature") and part.thought_signature:
                         if model_response.provider_data is None:
                             model_response.provider_data = {}
-                        model_response.provider_data["thought_signature"] = part.thought_signature
+                        model_response.provider_data["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     # Handle audio responses (for TTS models)
@@ -880,7 +880,8 @@ class Gemini(Model):
 
                     # Capture thought signature for function calls
                     if hasattr(part, "thought_signature") and part.thought_signature:
-                        tool_call["thought_signature"] = part.thought_signature
+                        tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
+                        
 
                     model_response.tool_calls.append(tool_call)
 
@@ -977,7 +978,7 @@ class Gemini(Model):
                         if hasattr(part, "thought_signature") and part.thought_signature:
                             if model_response.provider_data is None:
                                 model_response.provider_data = {}
-                            model_response.provider_data["thought_signature"] = part.thought_signature
+                            model_response.provider_data["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         # Audio responses
@@ -1014,7 +1015,7 @@ class Gemini(Model):
 
                         # Capture thought signature for function calls
                         if hasattr(part, "thought_signature") and part.thought_signature:
-                            tool_call["thought_signature"] = part.thought_signature
+                            tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode('ascii')
 
                         model_response.tool_calls.append(tool_call)
 
