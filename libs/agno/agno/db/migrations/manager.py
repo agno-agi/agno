@@ -23,11 +23,12 @@ class MigrationManager:
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
 
-    async def up(self, target_version: Optional[str] = None):
+    async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None):
         """Handle executing an up migration.
 
         Args:
             target_version: The version to migrate to, e.g. "v3.0.0". If not provided, the latest available version will be used.
+            table_type: The type of table to migrate. If not provided, all table types will be considered.
         """
 
         # If not target version is provided, use the latest available version
@@ -36,15 +37,26 @@ class MigrationManager:
         else:
             _target_version = packaging_version.parse(target_version)
 
+        # Select tables to migrate
+        if table_type:
+            if table_type not in ["memory", "session", "metric", "eval", "knowledge", "culture"]:
+                log_warning(
+                    f"Invalid table type: {table_type}. Use one of: memory, session, metric, eval, knowledge, culture"
+                )
+                return
+            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+        else:
+            tables = [
+                ("memories", self.db.memory_table_name),
+                ("sessions", self.db.session_table_name),
+                ("metrics", self.db.metrics_table_name),
+                ("evals", self.db.eval_table_name),
+                ("knowledge", self.db.knowledge_table_name),
+                ("culture", self.db.culture_table_name),
+            ]
+
         # Handle migrations for each table separately (extend in future if needed):
-        for table_type, table_name in [
-            ("memories", self.db.memory_table_name),
-            ("sessions", self.db.session_table_name),
-            ("metrics", self.db.metrics_table_name),
-            ("evals", self.db.eval_table_name),
-            ("knowledge", self.db.knowledge_table_name),
-            ("culture", self.db.culture_table_name),
-        ]:
+        for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
                 current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
             else:
@@ -104,22 +116,34 @@ class MigrationManager:
             log_error(f"Error running migration to version {version}: {e}")
             raise
 
-    async def down(self, target_version: str):
+    async def down(self, target_version: str, table_type: Optional[str] = None):
         """Handle executing a down migration.
 
         Args:
             target_version: The version to migrate to. e.g. "v2.3.0"
+            table_type: The type of table to migrate. If not provided, all table types will be considered.
         """
         _target_version = packaging_version.parse(target_version)
 
-        for table_type, table_name in [
-            ("memories", self.db.memory_table_name),
-            ("sessions", self.db.session_table_name),
-            ("metrics", self.db.metrics_table_name),
-            ("evals", self.db.eval_table_name),
-            ("knowledge", self.db.knowledge_table_name),
-            ("culture", self.db.culture_table_name),
-        ]:
+        # Select tables to migrate
+        if table_type:
+            if table_type not in ["memory", "session", "metric", "eval", "knowledge", "culture"]:
+                log_warning(
+                    f"Invalid table type: {table_type}. Use one of: memory, session, metric, eval, knowledge, culture"
+                )
+                return
+            tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
+        else:
+            tables = [
+                ("memories", self.db.memory_table_name),
+                ("sessions", self.db.session_table_name),
+                ("metrics", self.db.metrics_table_name),
+                ("evals", self.db.eval_table_name),
+                ("knowledge", self.db.knowledge_table_name),
+                ("culture", self.db.culture_table_name),
+            ]
+
+        for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
                 current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
             else:
