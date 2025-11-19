@@ -480,14 +480,18 @@ class Gemini(Model):
             if role == "model" and message.tool_calls is not None and len(message.tool_calls) > 0:
                 if content is not None:
                     content_str = content if isinstance(content, str) else str(content)
-                    message_parts.append(Part.from_text(text=content_str))
+                    part = Part.from_text(text=content_str)
+                    if message.provider_data and "thought_signature" in message.provider_data:
+                        part.thought_signature = message.provider_data["thought_signature"]
+                    message_parts.append(part)
                 for tool_call in message.tool_calls:
-                    message_parts.append(
-                        Part.from_function_call(
-                            name=tool_call["function"]["name"],
-                            args=json.loads(tool_call["function"]["arguments"]),
-                        )
+                    part = Part.from_function_call(
+                        name=tool_call["function"]["name"],
+                        args=json.loads(tool_call["function"]["arguments"]),
                     )
+                    if "thought_signature" in tool_call:
+                        part.thought_signature = tool_call["thought_signature"]
+                    message_parts.append(part)
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
@@ -499,7 +503,10 @@ class Gemini(Model):
             # Regular text content
             else:
                 if isinstance(content, str):
-                    message_parts = [Part.from_text(text=content)]
+                    part = Part.from_text(text=content)
+                    if message.provider_data and "thought_signature" in message.provider_data:
+                        part.thought_signature = message.provider_data["thought_signature"]
+                    message_parts = [part]
 
             if role == "user" and message.tool_calls is None:
                 # Add images to the message for the model
@@ -834,6 +841,12 @@ class Gemini(Model):
                             else:
                                 model_response.content += content_str
 
+                    # Capture thought signature for text parts
+                    if hasattr(part, "thought_signature") and part.thought_signature:
+                        if model_response.provider_data is None:
+                            model_response.provider_data = {}
+                        model_response.provider_data["thought_signature"] = part.thought_signature
+
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     # Handle audio responses (for TTS models)
                     if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
@@ -864,6 +877,10 @@ class Gemini(Model):
                             else "",
                         },
                     }
+
+                    # Capture thought signature for function calls
+                    if hasattr(part, "thought_signature") and part.thought_signature:
+                        tool_call["thought_signature"] = part.thought_signature
 
                     model_response.tool_calls.append(tool_call)
 
@@ -956,6 +973,12 @@ class Gemini(Model):
                             else:
                                 model_response.content += text_content
 
+                        # Capture thought signature for text parts
+                        if hasattr(part, "thought_signature") and part.thought_signature:
+                            if model_response.provider_data is None:
+                                model_response.provider_data = {}
+                            model_response.provider_data["thought_signature"] = part.thought_signature
+
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         # Audio responses
                         if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
@@ -988,6 +1011,10 @@ class Gemini(Model):
                                 else "",
                             },
                         }
+
+                        # Capture thought signature for function calls
+                        if hasattr(part, "thought_signature") and part.thought_signature:
+                            tool_call["thought_signature"] = part.thought_signature
 
                         model_response.tool_calls.append(tool_call)
 
