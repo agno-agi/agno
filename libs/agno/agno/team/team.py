@@ -384,7 +384,7 @@ class Team:
 
     # --- Context Compression ---
     # If True, compress tool call results to save context
-    compress_tool_calls: bool = False
+    compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
 
@@ -527,7 +527,7 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
-        compress_tool_calls: bool = False,
+        compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -656,7 +656,7 @@ class Team:
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compression settings
-        self.compress_tool_calls = compress_tool_calls
+        self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
 
         self.metadata = metadata
@@ -884,7 +884,7 @@ class Team:
             )
 
     def _set_compression_manager(self) -> None:
-        if self.compress_tool_calls and self.compression_manager is None:
+        if self.compress_tool_results and self.compression_manager is None:
             self.compression_manager = CompressionManager(
                 model=self.model,
             )
@@ -970,7 +970,7 @@ class Team:
             self._set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
-        if self.compress_tool_calls or self.compression_manager is not None:
+        if self.compress_tool_results or self.compression_manager is not None:
             self._set_compression_manager()
 
         log_debug(f"Team ID: {self.id}", center=True)
@@ -1400,7 +1400,7 @@ class Team:
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager if self.compress_tool_calls else None,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -2214,7 +2214,7 @@ class Team:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                compression_manager=self.compression_manager if self.compress_tool_calls else None,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )  # type: ignore
 
             # Check for cancellation after model call
@@ -2999,7 +2999,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager if self.compress_tool_calls else None,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3085,7 +3085,7 @@ class Team:
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
             run_response=run_response,
-            compression_manager=self.compression_manager if self.compress_tool_calls else None,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(
@@ -3939,7 +3939,7 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -4041,7 +4041,7 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 

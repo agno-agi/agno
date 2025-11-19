@@ -6,7 +6,7 @@ Run: `python cookbook/agents/context_management/tool_call_compression.py`
 """
 
 from agno.agent import Agent
-from agno.context.manager import CompressionManager
+from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.aws import AwsBedrock
 from agno.models.deepseek import DeepSeek
@@ -48,7 +48,7 @@ Example:
 # Create compression manager with custom compression
 compression_manager = CompressionManager(
     model=OpenAIChat(id="gpt-4o-mini"),
-    compress_tool_calls_limit=1,
+    compress_tool_results_limit=1,
     compress_tool_call_instructions=custom_compression_prompt,  # Custom prompt!
 )
 
@@ -64,7 +64,7 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     compression_manager=compression_manager,
-    compress_tool_calls=True,
+    compress_tool_results=True,
     markdown=True,
     db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_.db"),
     session_id="competitive_intelligence_agent",

@@ -71,7 +71,7 @@ research_team = Team(
     markdown=True,
     show_members_responses=True,
     debug_mode=True,
-    compress_tool_calls=True,
+    compress_tool_results=True,
 )
 
 if __name__ == "__main__":

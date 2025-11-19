@@ -6,7 +6,7 @@ Run: `python cookbook/agents/context_management/tool_call_compression.py`
 """
 
 from agno.agent import Agent
-from agno.context.manager import CompressionManager
+from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.aws import AwsBedrock
 from agno.models.deepseek import DeepSeek
@@ -25,7 +25,7 @@ agent = Agent(
     # model="openai:gpt-4o",
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
-    compress_tool_calls=True,
+    compress_tool_results=True,
     markdown=True,
     session_id="competitive_intelligence_agent",
     db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent_gemini_4.db"),

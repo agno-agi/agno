@@ -351,7 +351,7 @@ class Model(ABC):
         log_debug("🔄 Starting model response loop")
         log_debug(f"   Initial messages count: {len(messages)}")
         if compression_manager:
-            log_debug(f"   Compression enabled: threshold={compression_manager.compress_tool_calls_limit}")
+            log_debug(f"Compression enabled: threshold={compression_manager.compress_tool_results_limit}")
 
         iteration_count = 0
         while True:

@@ -46,24 +46,24 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
 @dataclass
 class CompressionManager:
     model: Optional[Model] = None
-    compress_tool_calls: bool = True
-    compress_tool_calls_limit: int = 3
+    compress_tool_results: bool = True
+    compress_tool_results_limit: int = 3
     compress_tool_call_instructions: Optional[str] = None
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
 
     def should_compress(self, messages: List[Message]) -> bool:
-        if not self.compress_tool_calls:
+        if not self.compress_tool_results:
             return False
 
         uncompressed_tools_count = len(
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )
-        should_compress = uncompressed_tools_count > self.compress_tool_calls_limit
+        should_compress = uncompressed_tools_count > self.compress_tool_results_limit
 
         log_debug(
-            f"Compression check: {uncompressed_tools_count} uncompressed tools, threshold: {self.compress_tool_calls_limit}, compress: {should_compress}"
+            f"Compression check: {uncompressed_tools_count} uncompressed tools, threshold: {self.compress_tool_results_limit}, compress: {should_compress}"
         )
 
         return should_compress
