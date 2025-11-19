@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
@@ -12,6 +13,7 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
 
@@ -105,6 +107,7 @@ class Claude(Model):
     api_key: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     client: Optional[AnthropicClient] = None
@@ -155,6 +158,16 @@ class Claude(Model):
             return self.client
 
         _client_params = self._get_client_params()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["http_client"] = get_default_sync_client()
         self.client = AnthropicClient(**_client_params)
         return self.client
 
@@ -166,6 +179,18 @@ class Claude(Model):
             return self.async_client
 
         _client_params = self._get_client_params()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["http_client"] = get_default_async_client()
+        else:
+            # Use global async client when no custom http_client is provided
+            _client_params["http_client"] = get_default_async_client()
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
