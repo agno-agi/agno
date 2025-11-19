@@ -1,4 +1,4 @@
-"""Memory optimization strategies for managing and compressing user memories."""
+"""Memory optimization strategy types and factory."""
 
 from enum import Enum
 
@@ -35,3 +35,4 @@ class MemoryOptimizationStrategyFactory:
         from agno.memory.strategies.summarize import SummarizeStrategy
 
         return SummarizeStrategy(**kwargs)
+

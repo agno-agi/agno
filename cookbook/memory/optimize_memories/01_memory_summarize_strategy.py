@@ -11,7 +11,7 @@ Run: python cookbook/memory/09_memory_summarize_strategy.py
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.memory import MemoryManager, SummarizeStrategy
-from agno.memory.strategy import MemoryOptimizationStrategyType
+from agno.memory.strategies.types import MemoryOptimizationStrategyType
 from agno.models.openai import OpenAIChat
 
 db_file = "tmp/memory_summarize_strategy.db"

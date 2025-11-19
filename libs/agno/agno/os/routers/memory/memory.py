@@ -559,7 +559,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> OptimizeMemoriesResponse:
         """Optimize user memories using the default summarize strategy."""
         from agno.memory import MemoryManager
-        from agno.memory.strategy import MemoryOptimizationStrategyType
+        from agno.memory.strategies.types import MemoryOptimizationStrategyType
 
         try:
             # Get database instance

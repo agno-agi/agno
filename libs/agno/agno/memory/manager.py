@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
-from agno.memory.strategy import (
-    MemoryOptimizationStrategy,
+from agno.memory.strategies import MemoryOptimizationStrategy
+from agno.memory.strategies.types import (
     MemoryOptimizationStrategyFactory,
     MemoryOptimizationStrategyType,
 )
