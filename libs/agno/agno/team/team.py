@@ -3888,6 +3888,7 @@ class Team:
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
+        show_member_responses: Optional[bool] = None,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
@@ -3912,6 +3913,9 @@ class Team:
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
+        if show_member_responses is None:
+            show_member_responses = self.show_members_responses
+
         if stream:
             print_response_stream(
                 team=self,
@@ -3920,6 +3924,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -3947,6 +3952,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -3989,6 +3995,7 @@ class Team:
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
+        show_member_responses: Optional[bool] = None,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
@@ -4008,6 +4015,9 @@ class Team:
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
+        if show_member_responses is None:
+            show_member_responses = self.show_members_responses
+
         if stream:
             await aprint_response_stream(
                 team=self,
@@ -4016,6 +4026,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -4043,6 +4054,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
