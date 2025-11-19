@@ -5,7 +5,7 @@ from typing import List, Optional
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_error
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
     You are compressing tool call results to save context space while preserving critical information.
@@ -61,11 +61,6 @@ class CompressionManager:
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )
         should_compress = uncompressed_tools_count > self.compress_tool_results_limit
-
-        log_debug(
-            f"Compression check: {uncompressed_tools_count} uncompressed tools, threshold: {self.compress_tool_results_limit}, compress: {should_compress}"
-        )
-
         return should_compress
 
     def _compress_tool_result(self, tool_result: Message) -> Optional[str]:
@@ -73,7 +68,6 @@ class CompressionManager:
             return None
 
         tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
-        original_size = len(tool_content)
 
         self.model = get_model(self.model)
         if not self.model:
@@ -90,57 +84,24 @@ class CompressionManager:
                     Message(role="user", content=compression_message),
                 ]
             )
-            if response.content:
-                compressed_size = len(response.content)
-                reduction = int((1 - compressed_size / original_size) * 100) if original_size > 0 else 0
-                log_debug(f"  Compressed: {original_size}→{compressed_size}B ({reduction}% reduction)")
             return response.content
         except Exception as e:
-            log_debug(f"Compression failed: {e}. Using original content as fallback.")
+            log_error(f"Error compressing tool result: {e}")
             return tool_content
 
     def compress(self, messages: List[Message], function_call_results: List[Message]) -> None:
         if not self.compress_tool_results:
-            log_debug("🗜️ Compression disabled, skipping")
             return
-
-        log_debug(f"🗜️ Compression starting:")
-        log_debug(f"   Input: {len(messages)} history messages, {len(function_call_results)} new results")
-
-        history_tools = [m for m in messages if m.role == "tool"]
-        history_compressed = [m for m in history_tools if m.compressed_content is not None]
-        history_uncompressed = [m for m in history_tools if m.compressed_content is None]
-
-        log_debug(
-            f"   History: {len(history_tools)} tool messages ({len(history_compressed)} compressed, {len(history_uncompressed)} uncompressed)"
-        )
-        log_debug(f"   New results: {len(function_call_results)} tool messages")
-        log_debug(f"   Compression model: {self.model.id if self.model else 'None'}")
 
         # Collect all uncompressed tool results from both new results and history
         all_messages = messages + function_call_results
         uncompressed_tools = [msg for msg in all_messages if msg.role == "tool" and msg.compressed_content is None]
 
         if not uncompressed_tools:
-            log_debug("   No uncompressed tool results to compress")
             return
 
-        log_debug(f"   Total to compress: {len(uncompressed_tools)} uncompressed tool results")
-
         # Compress all tool results
-        compressed_count = 0
-        failed_count = 0
-        for idx, tool_msg in enumerate(uncompressed_tools):
+        for tool_msg in uncompressed_tools:
             compressed = self._compress_tool_result(tool_msg)
             if compressed:
                 tool_msg.compressed_content = compressed
-                original_len = len(str(tool_msg.content)) if tool_msg.content else 0
-                compressed_len = len(compressed)
-                reduction = int((1 - compressed_len / original_len) * 100) if original_len > 0 else 0
-                compressed_count += 1
-                log_debug(f"  [{idx}] {tool_msg.tool_name}: {original_len}→{compressed_len}B ({reduction}% saved)")
-            else:
-                failed_count += 1
-                log_debug(f"  [{idx}] {tool_msg.tool_name}: Compression failed")
-
-        log_debug(f"✅ Compression complete: {compressed_count} compressed, {failed_count} failed")

@@ -315,12 +315,6 @@ class OpenAIChat(Model):
         """
         tool_result = message.get_tool_result(compression_manager)
 
-        # Log for tool messages with compression
-        if message.role == "tool" and message.compressed_content:
-            orig_len = len(str(message.content)) if message.content else 0
-            comp_len = len(str(tool_result)) if tool_result else 0
-            log_debug(f"[OpenAI Chat API] Sending compressed tool result: {comp_len}B (original: {orig_len}B)")
-
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
             "content": tool_result,
