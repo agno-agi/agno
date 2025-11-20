@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -153,8 +154,6 @@ class Workflow:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Workflow
     stream_events: bool = False
-    # [Deprecated] Stream the intermediate steps from the Workflow
-    stream_intermediate_steps: bool = False
     # Stream events from executors (agents/teams/functions) within steps
     stream_executor_events: bool = True
 
@@ -183,6 +182,9 @@ class Workflow:
     add_workflow_history_to_steps: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
+
+    # Deprecated. Use stream_events instead.
+    stream_intermediate_steps: bool = False
 
     def __init__(
         self,
@@ -224,8 +226,6 @@ class Workflow:
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
         self.stream = stream
-        self.stream_events = stream_events
-        self.stream_intermediate_steps = stream_intermediate_steps
         self.stream_executor_events = stream_executor_events
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
@@ -236,6 +236,14 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self.stream_events = stream_events or stream_intermediate_steps
 
         # Warn if workflow history is enabled without a database
         if self.add_workflow_history_to_steps and self.db is None:
@@ -3664,6 +3672,12 @@ class Workflow:
         if background:
             if stream and websocket:
                 # Consider both stream_events and stream_intermediate_steps (deprecated)
+                if stream_intermediate_steps is not None:
+                    warnings.warn(
+                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
                 stream_events = stream_events or stream_intermediate_steps or False
 
                 # Background + Streaming + WebSocket = Real-time events
