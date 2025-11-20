@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.utils.media import (
@@ -26,8 +26,9 @@ knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
-    contents_db=SqliteDb(
-        db_file="tmp/knowledge_contents.db",
+    contents_db=PostgresDb(
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        table_name="knowledge_contents",
     ),
 )
 
