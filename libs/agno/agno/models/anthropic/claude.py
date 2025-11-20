@@ -220,18 +220,6 @@ class Claude(Model):
 
         return False
 
-    def _ensure_structured_outputs_beta(self) -> None:
-        """
-        Ensure the structured outputs beta header is included.
-        Called automatically when structured outputs are detected.
-        """
-        if self.betas is None:
-            self.betas = []
-
-        beta_header = "structured-outputs-2025-11-13"
-        if beta_header not in self.betas:
-            self.betas.append(beta_header)
-
     def _has_beta_features(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -360,9 +348,6 @@ class Claude(Model):
         if not self._supports_structured_outputs():
             return None
 
-        # Ensure beta header is included
-        self._ensure_structured_outputs_beta()
-
         # Handle Pydantic BaseModel
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             try:
@@ -388,7 +373,11 @@ class Claude(Model):
 
         return None
 
-    def get_request_params(self) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
         """
@@ -409,8 +398,20 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
-        if self.betas:
-            _request_params["betas"] = self.betas
+        
+        # Build betas list - include existing betas and add new one if needed
+        betas_list = list(self.betas) if self.betas else []
+        
+        # Add structured outputs beta header if using structured outputs
+        if self._using_structured_outputs(response_format, tools):
+            beta_header = "structured-outputs-2025-11-13"
+            if beta_header not in betas_list:
+                betas_list.append(beta_header)
+        
+        # Include betas if any are present
+        if betas_list:
+            _request_params["betas"] = betas_list
+            
         if self.context_management:
             _request_params["context_management"] = self.context_management
         if self.mcp_servers:
@@ -418,7 +419,6 @@ class Claude(Model):
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
         if self.skills:
-            _request_params["betas"] = self.betas
             _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
@@ -468,11 +468,8 @@ class Claude(Model):
         # Validate structured outputs usage
         self._validate_structured_outputs_usage(response_format, tools)
 
-        # Ensure beta header is added BEFORE getting request params if using structured outputs
-        if self._using_structured_outputs(response_format, tools):
-            self._ensure_structured_outputs_beta()
-
-        request_kwargs = self.get_request_params().copy()
+        # Pass response_format and tools to get_request_params for beta header handling
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         if system_message:
             if self.cache_system_prompt:
                 cache_control = (
