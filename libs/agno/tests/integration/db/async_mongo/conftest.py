@@ -7,17 +7,45 @@ import pytest_asyncio
 
 from agno.db.mongo import AsyncMongoDb
 
+# Try to import Motor
 try:
     from motor.motor_asyncio import AsyncIOMotorClient
+    MOTOR_AVAILABLE = True
 except ImportError:
-    pytest.skip("motor not installed", allow_module_level=True)
+    MOTOR_AVAILABLE = False
+    AsyncIOMotorClient = None  # type: ignore
+
+# Try to import PyMongo async
+try:
+    from pymongo import AsyncMongoClient
+    PYMONGO_ASYNC_AVAILABLE = True
+except ImportError:
+    PYMONGO_ASYNC_AVAILABLE = False
+    AsyncMongoClient = None  # type: ignore
+
+# Require at least one library
+if not MOTOR_AVAILABLE and not PYMONGO_ASYNC_AVAILABLE:
+    pytest.skip("Neither motor nor pymongo async installed", allow_module_level=True)
 
 
 @pytest.fixture
 def mock_async_mongo_client():
-    """Create a mock async MongoDB client"""
-    client = Mock(spec=AsyncIOMotorClient)
-    return client
+    """Create a mock async MongoDB client (Motor)"""
+    if MOTOR_AVAILABLE:
+        client = Mock(spec=AsyncIOMotorClient)
+        return client
+    else:
+        pytest.skip("Motor not available for mock client")
+
+
+@pytest.fixture
+def mock_pymongo_async_client():
+    """Create a mock async MongoDB client (PyMongo async)"""
+    if PYMONGO_ASYNC_AVAILABLE:
+        client = Mock(spec=AsyncMongoClient)
+        return client
+    else:
+        pytest.skip("PyMongo async not available for mock client")
 
 
 @pytest.fixture
