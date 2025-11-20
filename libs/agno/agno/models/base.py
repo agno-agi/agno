@@ -435,9 +435,10 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
-                    # Compress tool results BEFORE formatting
-                    if compression_manager and compression_manager.should_compress(messages + function_call_results):
-                        compression_manager.compress(messages, function_call_results)
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -614,9 +615,10 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
-                    # Compress tool results BEFORE formatting
-                    if compression_manager and compression_manager.should_compress(messages + function_call_results):
-                        compression_manager.compress(messages, function_call_results)
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -991,31 +993,32 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
-                # Compress tool results BEFORE formatting
-                if compression_manager and compression_manager.should_compress(messages + function_call_results):
-                    compression_manager.compress(messages, function_call_results)
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
 
-                # Format and add results to messages
-                if stream_data and stream_data.extra is not None:
-                    self.format_function_call_results(
-                        messages=messages,
-                        function_call_results=function_call_results,
-                        compression_manager=compression_manager,
-                        **stream_data.extra,
-                    )
-                elif model_response and model_response.extra is not None:
-                    self.format_function_call_results(
-                        messages=messages,
-                        function_call_results=function_call_results,
-                        compression_manager=compression_manager,
-                        **model_response.extra,
-                    )
-                else:
-                    self.format_function_call_results(
-                        messages=messages,
-                        function_call_results=function_call_results,
-                        compression_manager=compression_manager,
-                    )
+                    # Format and add results to messages
+                    if stream_data and stream_data.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                            **stream_data.extra,
+                        )
+                    elif model_response and model_response.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                            **model_response.extra,
+                        )
+                    else:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                        )
 
                     # Handle function call media
                     if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -1197,9 +1200,10 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
-                # Compress tool results BEFORE formatting
-                if compression_manager and compression_manager.should_compress(messages + function_call_results):
-                    compression_manager.compress(messages, function_call_results)
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1393,15 +1397,7 @@ class Model(ABC):
     def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Parse the tool calls from the model provider into a list of tool calls.
-        Ensures all tool calls have an ID, generating one if not provided by the model.
         """
-        from uuid import uuid4
-
-        for tool_call in tool_calls_data:
-            # Ensure each tool call has an ID, generate one if missing
-            if tool_call.get("id") is None:
-                tool_call["id"] = str(uuid4())
-
         return tool_calls_data
 
     def get_function_call_to_run_from_tool_execution(
@@ -2171,9 +2167,11 @@ class Model(ABC):
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], compression_manager=None, **kwargs
     ) -> None:
-        """Format function call results by appending to messages."""
-        for result in function_call_results:
-            messages.append(result)
+        """
+        Format function call results.
+        """
+        if len(function_call_results) > 0:
+            messages.extend(function_call_results)
 
     def _handle_function_call_media(
         self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True
