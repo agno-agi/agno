@@ -3906,6 +3906,8 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3915,6 +3917,20 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        if stream_events is not None:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if self._has_async_db():
             raise Exception(
                 "This method is not supported with an async DB. Please use the async version of this method."
@@ -3933,6 +3949,11 @@ class Team:
             stream = self.stream or False
 
         if "stream_events" in kwargs:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is now always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             kwargs.pop("stream_events")
 
         if show_member_responses is None:
@@ -4013,6 +4034,8 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4022,6 +4045,20 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        if stream_events is not None:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 

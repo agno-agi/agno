@@ -35,8 +35,8 @@ def print_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_events: bool = False,
-    stream_intermediate_steps: bool = False,
+    stream_events: Optional[bool] = False,
+    stream_intermediate_steps: Optional[bool] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -233,8 +233,8 @@ async def aprint_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_events: bool = False,
-    stream_intermediate_steps: bool = False,
+    stream_events: Optional[bool] = False,
+    stream_intermediate_steps: Optional[bool] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -520,6 +520,8 @@ def print_response(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    stream_events: Optional[bool] = None,
+    stream_intermediate_steps: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -534,6 +536,19 @@ def print_response(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
+    if stream_events is not None:
+        warnings.warn(
+            "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    if stream_intermediate_steps is not None:
+        warnings.warn(
+            "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
@@ -641,6 +656,8 @@ async def aprint_response(
     show_message: bool = True,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    stream_events: Optional[bool] = None,
+    stream_intermediate_steps: Optional[bool] = None,
     tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
     console: Optional[Any] = None,
     add_history_to_context: Optional[bool] = None,
@@ -650,6 +667,19 @@ async def aprint_response(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
+    if stream_events is not None:
+        warnings.warn(
+            "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    if stream_intermediate_steps is not None:
+        warnings.warn(
+            "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)

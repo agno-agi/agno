@@ -627,7 +627,14 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
-        self.stream_events = stream_events
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self.stream_events = stream_events or stream_intermediate_steps
 
         self.store_events = store_events
         self.role = role
@@ -2016,16 +2023,6 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
-
-            if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:  # type: ignore
-                try:
-                    self.model.client.close()  # type: ignore
-                    self.model.client = None  # type: ignore
-                except AttributeError:
-                    log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
-                    )
 
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -9950,6 +9947,11 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         if "stream_events" in kwargs:
+            warnings.warn(
+                "The 'stream_events' parameter is not needed. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             kwargs.pop("stream_events")
 
         if stream:
@@ -10048,6 +10050,11 @@ class Agent:
             stream = self.stream or False
 
         if "stream_events" in kwargs:
+            warnings.warn(
+                "The 'stream_events' parameter is not needed. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             kwargs.pop("stream_events")
 
         if stream:
