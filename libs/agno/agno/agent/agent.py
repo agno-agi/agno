@@ -415,6 +415,12 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
+    # Semantic Compression
+    semanticModel: Optional[Model] = None
+    semanticAgent: Optional[Agent] = None
+    semanticMaxTokens: int = 0
+    enableSemanticCompression: bool = False
+
     def __init__(
         self,
         *,
@@ -513,6 +519,10 @@ class Agent:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
+        semantic_compression: bool = False,
+        semantic_model: Optional[Union[Model, str]] = None,
+        semantic_agent: Optional[Agent] = None,
+        semantic_max_tokens: int = 0,
     ):
         self.model = model  # type: ignore[assignment]
         self.name = name
@@ -645,6 +655,10 @@ class Agent:
             debug_level = 1
         self.debug_level = debug_level
         self.telemetry = telemetry
+        self.semanticModel = semantic_model  # type: ignore[assignment]
+        self.semanticAgent = semantic_agent
+        self.semanticMaxTokens = semantic_max_tokens
+        self.semantic_compression = semantic_compression
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
@@ -827,6 +841,13 @@ class Agent:
             self.parser_model = get_model(self.parser_model)
         if self.output_model is not None:
             self.output_model = get_model(self.output_model)
+        if self.semanticModel is not None:
+            self.semanticModel = get_model(self.semanticModel)
+        
+        # Validate semantic compression configuration
+        if self.semantic_compression:
+            if self.semanticModel is None and self.semanticAgent is None:
+                raise ValueError("semantic_compression is enabled but no semantic_model or semantic_agent provided")
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()
@@ -6696,6 +6717,108 @@ class Agent:
             log_warning(f"Template substitution failed: {e}")
             return message
 
+    def apply_semantic_compression(self, message: str) -> str:
+        """Apply semantic compression to a message if enabled and token count exceeds threshold.
+        
+        Following the same business logic as Go implementation:
+        1. Check if semantic compression is enabled
+        2. Count tokens in the message
+        3. If tokens exceed semantic_max_tokens, compress using semantic_model or semantic_agent
+        4. Return compressed message, or original if compression not needed/failed
+        
+        Args:
+            message: The text message to potentially compress
+            
+        Returns:
+            Compressed message if conditions are met, otherwise original message
+        """
+        # If semantic compression is not enabled, return the original message
+        if not self.semantic_compression:
+            return message
+        
+        try:
+            import tiktoken
+            
+            # Count tokens using tiktoken (same as gpt-3-encoder in Go)
+            encoder = tiktoken.get_encoding("cl100k_base")  # GPT-3/4 encoding
+            tokens = encoder.encode(message)
+            token_count = len(tokens)
+            
+            # If token count is below threshold or threshold is 0, no need to compress
+            if self.semanticMaxTokens == 0 or token_count < self.semanticMaxTokens:
+                if self.debug_mode and token_count > 0:
+                    log_debug(f"[Semantic Compression] Skipping compression - tokens: {token_count} <= threshold: {self.semanticMaxTokens}")
+                return message
+            
+            # Compress using semantic_agent if available
+            if self.semanticAgent is not None:
+                if self.debug_mode:
+                    log_debug(f"[Semantic Compression] Original message tokens: {token_count}")
+                    log_debug(f"[Semantic Compression] Threshold: {self.semanticMaxTokens}")
+                    log_debug("[Semantic Compression] Compressing with semantic_agent...")
+                
+                try:
+                    # Run the semantic agent to compress the message
+                    response = self.semanticAgent.run(input=message)
+                    compressed_message = response.content
+                    
+                    if self.debug_mode:
+                        compressed_tokens = encoder.encode(compressed_message)
+                        token_reduction = token_count - len(compressed_tokens)
+                        reduction_percent = (token_reduction / token_count * 100) if token_count > 0 else 0
+                        log_debug(f"[Semantic Compression] Compressed message tokens: {len(compressed_tokens)}")
+                        log_debug(f"[Semantic Compression] Token reduction: {token_reduction} ({reduction_percent:.1f}%)")
+                    
+                    return compressed_message if compressed_message is not None else ""
+                except Exception as e:
+                    log_warning(f"Semantic agent compression failed: {e}")
+                    return message
+            
+            # Compress using semantic_model if available and no agent is set
+            elif self.semanticModel is not None:
+                if self.debug_mode:
+                    log_debug(f"[Semantic Compression] Original message tokens: {token_count}")
+                    log_debug(f"[Semantic Compression] Threshold: {self.semanticMaxTokens}")
+                    log_debug("[Semantic Compression] Compressing with semantic_model...")
+                
+                try:
+                    # Compression instructions
+                    compression_system_message = (
+                        "Replace the input text with an ultra-concise version using abbreviations, "
+                        "technical notation, and minimal wording. Preserve all essential facts "
+                        "(dates, versions, IDs, deadlines). Return only the compressed result in "
+                        "the same language as the input. Do not add explanations or comments."
+                    )
+                    
+                    # Use the semantic model directly to compress the message
+                    response = self.semanticModel.response(
+                        messages=[
+                            Message(role="system", content=compression_system_message),
+                            Message(role="user", content=message),
+                        ]
+                    )
+                    compressed_message = response.content if response.content is not None else ""
+                    
+                    if self.debug_mode:
+                        log_debug("[Semantic Compression] Compression completed")
+                        compressed_tokens = encoder.encode(compressed_message)
+                        token_reduction = token_count - len(compressed_tokens)
+                        reduction_percent = (token_reduction / token_count * 100) if token_count > 0 else 0
+                        log_debug(f"[Semantic Compression] Compressed message tokens: {len(compressed_tokens)}")
+                        log_debug(f"[Semantic Compression] Token reduction: {token_reduction} ({reduction_percent:.1f}%)")
+                    
+                    return compressed_message if compressed_message is not None else ""
+                except Exception as e:
+                    log_warning(f"Semantic model compression failed: {e}")
+                    return message
+            
+            # If no compression method available, return original
+            return message
+            
+        except Exception as e:
+            log_warning(f"Error in semantic compression: {e}")
+            return message
+
     def get_system_message(
         self,
         session: AgentSession,
@@ -6865,18 +6988,22 @@ class Agent:
         system_message_content: str = ""
         # 3.3.1 First add the Agent description if provided
         if self.description is not None:
-            system_message_content += f"{self.description}\n"
+            description_content = self.apply_semantic_compression(self.description)
+            system_message_content += f"{description_content}\n"
         # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
-            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
+            role_content = self.apply_semantic_compression(self.role)
+            system_message_content += f"\n<your_role>\n{role_content}\n</your_role>\n\n"
         # 3.3.4 Then add instructions for the Agent
         if len(instructions) > 0:
             system_message_content += "<instructions>"
             if len(instructions) > 1:
                 for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+                    compressed_instruction = self.apply_semantic_compression(_upi)
+                    system_message_content += f"\n- {compressed_instruction}"
             else:
-                system_message_content += "\n" + instructions[0]
+                compressed_instruction = self.apply_semantic_compression(instructions[0])
+                system_message_content += "\n" + compressed_instruction
             system_message_content += "\n</instructions>\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
@@ -6901,10 +7028,12 @@ class Agent:
 
         # 3.3.7 Then add the expected output
         if self.expected_output is not None:
-            system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
+            expected_output_content = self.apply_semantic_compression(self.expected_output.strip())
+            system_message_content += f"<expected_output>\n{expected_output_content}\n</expected_output>\n\n"
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
-            system_message_content += f"{self.additional_context}\n"
+            additional_context_content = self.apply_semantic_compression(self.additional_context)
+            system_message_content += f"{additional_context_content}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
