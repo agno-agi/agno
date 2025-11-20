@@ -62,8 +62,8 @@ if not MOTOR_AVAILABLE and not PYMONGO_ASYNC_AVAILABLE:
     raise ImportError(
         "Neither `motor` nor PyMongo async is installed. "
         "Please install one of them using:\n"
-        "  - `pip install -U motor` (legacy, deprecated)\n"
         "  - `pip install -U 'pymongo>=4.9'` (recommended)"
+        "  - `pip install -U motor` (legacy, deprecated)\n"
     )
 
 # Create union types for client, database, and collection
