@@ -9949,11 +9949,6 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         if "stream_events" in kwargs:
-            warnings.warn(
-                "The 'stream_events' parameter is not needed. Event streaming is now enabled by default when using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             kwargs.pop("stream_events")
 
         if stream:
@@ -10052,11 +10047,6 @@ class Agent:
             stream = self.stream or False
 
         if "stream_events" in kwargs:
-            warnings.warn(
-                "The 'stream_events' parameter is not needed. Event streaming is now enabled by default when using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             kwargs.pop("stream_events")
 
         if stream:

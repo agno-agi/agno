@@ -3949,11 +3949,6 @@ class Team:
             stream = self.stream or False
 
         if "stream_events" in kwargs:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is now always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             kwargs.pop("stream_events")
 
         if show_member_responses is None:
@@ -7064,7 +7059,7 @@ class Team:
                     # Do NOT break out of the loop, Iterator need to exit properly
                     if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_output_event  # type: ignore
-                        continue # Don't yield TeamRunOutput or RunOutput, only yield events
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_output_event)
@@ -7192,7 +7187,7 @@ class Team:
                     # Do NOT break out of the loop, AsyncIterator need to exit properly
                     if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
-                        continue # Don't yield TeamRunOutput or RunOutput, only yield events
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_event)
@@ -7306,7 +7301,7 @@ class Team:
                         # Do NOT break out of the loop, Iterator need to exit properly
                         if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
                             member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                            continue # Don't yield TeamRunOutput or RunOutput, only yield events
+                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                         # Check if the run is cancelled
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -7421,7 +7416,7 @@ class Team:
                             # Do NOT break out of the loop, AsyncIterator need to exit properly
                             if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                continue # Don't yield TeamRunOutput or RunOutput, only yield events
+                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (

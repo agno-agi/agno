@@ -35,8 +35,6 @@ def print_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_events: Optional[bool] = False,
-    stream_intermediate_steps: Optional[bool] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -83,15 +81,6 @@ def print_response_stream(
 
         input_content = get_text_from_message(input)
 
-        # Consider both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         for response_event in agent.run(
             input=input,
             session_id=session_id,
@@ -102,7 +91,6 @@ def print_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_events=stream_events,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -233,8 +221,6 @@ async def aprint_response_stream(
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_events: Optional[bool] = False,
-    stream_intermediate_steps: Optional[bool] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
@@ -279,15 +265,6 @@ async def aprint_response_stream(
         if render:
             live_log.update(Group(*panels))
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         result = agent.arun(
             input=input,
             session_id=session_id,
@@ -298,7 +275,6 @@ async def aprint_response_stream(
             videos=videos,
             files=files,
             stream=True,
-            stream_events=stream_events,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
