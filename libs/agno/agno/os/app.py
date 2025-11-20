@@ -152,13 +152,6 @@ class AgentOS:
             self.base_app: Optional[FastAPI] = base_app
             self._app_set = True
             self.on_route_conflict = on_route_conflict
-        elif fastapi_app:
-            self.base_app = fastapi_app
-            self._app_set = True
-            if replace_routes is not None:
-                self.on_route_conflict = "preserve_agentos" if replace_routes else "preserve_base_app"
-            else:
-                self.on_route_conflict = on_route_conflict
         else:
             self.base_app = None
             self._app_set = False
@@ -168,7 +161,7 @@ class AgentOS:
 
         self.name = name
 
-        self.id = id or os_id
+        self.id = id
         if not self.id:
             self.id = generate_id(self.name) if self.name else str(uuid4())
 
@@ -177,7 +170,7 @@ class AgentOS:
 
         self.telemetry = telemetry
 
-        self.enable_mcp_server = enable_mcp or enable_mcp_server
+        self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
 
         # List of all MCP tools used inside the AgentOS
