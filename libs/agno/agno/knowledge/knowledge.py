@@ -1454,7 +1454,7 @@ class Knowledge:
                 valid_filters.update(content.metadata.keys())
 
         return valid_filters
-    
+
     async def async_get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
             log_warning("No contents db provided. This is required for filtering.")
@@ -1467,28 +1467,29 @@ class Knowledge:
 
         return valid_filters
 
-
     def _validate_filters(
-        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], valid_metadata_filters: Set[str]
+        self, filters: Union[Dict[str, Any], List[FilterExpr]], valid_metadata_filters: Set[str]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         if not filters:
-            return None, []
+            return {}, []
 
-        valid_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        valid_filters: Union[Dict[str, Any], List[FilterExpr]] = {}
         invalid_keys = []
-        
+
         if isinstance(filters, dict):
             # If no metadata filters tracked yet, all keys are considered invalid
             if valid_metadata_filters is None or not valid_metadata_filters:
                 invalid_keys = list(filters.keys())
-                log_warning(f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}")
+                log_warning(
+                    f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}"
+                )
                 return {}, invalid_keys
 
             for key, value in filters.items():
                 # Handle both normal keys and prefixed keys like meta_data.key
                 base_key = key.split(".")[-1] if "." in key else key
                 if base_key in valid_metadata_filters or key in valid_metadata_filters:
-                    valid_filters[key] = value
+                    valid_filters[key] = value  # type: ignore
                 else:
                     invalid_keys.append(key)
                     log_warning(f"Invalid filter key: {key} - not present in knowledge base")
@@ -1506,18 +1507,21 @@ class Knowledge:
             # Filter expressions are already validated, return empty dict/list
             # The actual filtering happens in the vector_db layer
             return filters, []
-                    
+
         return valid_filters, invalid_keys
 
-
-    def validate_filters(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+    def validate_filters(
+        self, filters: Union[Dict[str, Any], List[FilterExpr]]
+    ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
 
         return valid_filters, invalid_keys
 
-    async def async_validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+    async def async_validate_filters(
+        self, filters: Union[Dict[str, Any], List[FilterExpr]]
+    ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
         valid_filters_from_db = await self.async_get_valid_filters()
 

@@ -8112,7 +8112,7 @@ class Agent:
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
+        if self.knowledge is not None and filters is not None:
             if validate_filters:
                 valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
@@ -8186,7 +8186,7 @@ class Agent:
             num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
+        if self.knowledge is not None and filters is not None:
             valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
 
             # Warn about invalid filter keys
