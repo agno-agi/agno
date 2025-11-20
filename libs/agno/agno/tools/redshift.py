@@ -300,8 +300,11 @@ class RedshiftTools(Toolkit):
         """
         Shows the execution plan for a SQL query (using EXPLAIN).
 
-        :param query: The SQL query to inspect.
-        :return: The query's execution plan.
+        Args:
+            query: The SQL query to inspect.
+
+        Returns:
+            The query's execution plan.
         """
         return self._execute_query(f"EXPLAIN {query}")
 
@@ -309,9 +312,12 @@ class RedshiftTools(Toolkit):
         """
         Exports a table's data to a local CSV file.
 
-        :param table: The name of the table to export.
-        :param path: The local file path to save the file.
-        :return: A confirmation message with the file path.
+        Args:
+            table: The name of the table to export.
+            path: The local file path to save the file.
+
+        Returns:
+            A confirmation message with the file path.
         """
         log_debug(f"Exporting Table {table} as CSV to local path {path}")
 
@@ -340,7 +346,10 @@ class RedshiftTools(Toolkit):
         """
         Runs a read-only SQL query and returns the result.
 
-        :param query: The SQL query to run.
-        :return: The query result as a formatted string.
+        Args:
+            query: The SQL query to run.
+
+        Returns:
+            The query result as a formatted string.
         """
         return self._execute_query(query)
