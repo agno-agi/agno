@@ -3,12 +3,12 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIResponses
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.media import download_image
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     markdown=True,
 )
 

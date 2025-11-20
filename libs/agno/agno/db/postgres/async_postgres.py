@@ -1,4 +1,5 @@
 import time
+import warnings
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
@@ -75,7 +76,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If none of the tables are provided.
         """
         if db_id is not None:
-            log_warning("db_id is deprecated and will be removed in a future version, use id instead.")
+            warnings.warn(
+                "The 'db_id' parameter is deprecated and will be removed in future versions. Use 'id' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         super().__init__(
             id=id or db_id,
