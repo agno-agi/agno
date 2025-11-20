@@ -39,9 +39,9 @@ class MigrationManager:
 
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metric", "eval", "knowledge", "culture"]:
+            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
                 log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metric, eval, knowledge, culture"
+                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
                 )
                 return
             tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
@@ -127,9 +127,9 @@ class MigrationManager:
 
         # Select tables to migrate
         if table_type:
-            if table_type not in ["memory", "session", "metric", "eval", "knowledge", "culture"]:
+            if table_type not in ["memory", "session", "metrics", "eval", "knowledge", "culture"]:
                 log_warning(
-                    f"Invalid table type: {table_type}. Use one of: memory, session, metric, eval, knowledge, culture"
+                    f"Invalid table type: {table_type}. Use one of: memory, session, metrics, eval, knowledge, culture"
                 )
                 return
             tables = [(table_type, getattr(self.db, f"{table_type}_table_name"))]
