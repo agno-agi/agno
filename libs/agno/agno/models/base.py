@@ -479,8 +479,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
-                self.client.close()  # type: ignore
-                self.client = None
+                try:
+                    self.client.close()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
         return model_response
 
@@ -649,8 +655,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
-                await self.client.aio.aclose()
-                self.client = None
+                try:
+                    await self.client.aio.aclose()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
         return model_response
 
@@ -1023,8 +1035,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
-                self.client.close()
-                self.client = None
+                try:
+                    self.client.close()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
     async def aprocess_response_stream(
         self,
@@ -1216,8 +1234,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
-                await self.client.aio.aclose()
-                self.client = None
+                try:
+                    await self.client.aio.aclose()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
     def _populate_assistant_message_from_stream_data(
         self, assistant_message: Message, stream_data: MessageData

@@ -414,7 +414,7 @@ def print_response_stream(
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
             debug_mode=debug_mode,
-            yield_run_response=True,
+            yield_run_output=True,
             **kwargs,
         )
 
@@ -1258,7 +1258,7 @@ async def aprint_response_stream(
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
-            yield_run_response=True,
+            yield_run_output=True,
             **kwargs,
         ):
             if team_markdown is None:
