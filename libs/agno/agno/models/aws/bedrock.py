@@ -249,7 +249,7 @@ class AwsBedrock(Model):
                 formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
                 formatted_messages.append(formatted_message)
             else:
-                formatted_message: Dict[str, Any] = {"role": message.role, "content": []}
+                formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
