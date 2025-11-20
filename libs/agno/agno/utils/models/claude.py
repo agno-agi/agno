@@ -356,11 +356,11 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
                 "additionalProperties": False,
             },
         }
-        
+
         # Add strict mode if specified (check both function dict and tool_def top level)
         strict_mode = func_def.get("strict") or tool_def.get("strict")
         if strict_mode is True:
             tool["strict"] = True
-        
+
         parsed_tools.append(tool)
     return parsed_tools

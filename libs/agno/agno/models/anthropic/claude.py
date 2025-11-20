@@ -80,15 +80,28 @@ class Claude(Model):
         "claude-3-5-haiku-latest",
     }
 
-    # Models that support native structured outputs
-    # Based on Anthropic documentation: https://docs.anthropic.com/en/api/messages
-    STRUCTURED_OUTPUT_MODELS = {
-        # Claude Sonnet 4.5 family
-        "claude-sonnet-4-5-20250929",
-        "claude-sonnet-4-5",
-        # Claude Opus 4.1 family
-        "claude-opus-4-1-20250805",
-        "claude-opus-4-1",
+    # Models that DO NOT support native structured outputs
+    # All future models are assumed to support structured outputs
+    NON_STRUCTURED_OUTPUT_MODELS = {
+        # Claude 3.x family (all versions)
+        "claude-3-opus-20240229",
+        "claude-3-sonnet-20240229",
+        "claude-3-haiku-20240307",
+        "claude-3-opus",
+        "claude-3-sonnet",
+        "claude-3-haiku",
+        # Claude 3.5 family (all versions except Sonnet 4.5)
+        "claude-3-5-sonnet-20240620",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-sonnet",
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-haiku-latest",
+        "claude-3-5-haiku",
+        # Claude Sonnet 4.x family (versions before 4.5)
+        "claude-sonnet-4-20250514",
+        "claude-sonnet-4",
+        # Claude Opus 4.x family (versions before 4.1)
+        # (Add any Opus 4.x models released before 4.1 if they exist)
     }
 
     id: str = "claude-sonnet-4-5-20250929"
@@ -162,16 +175,26 @@ class Claude(Model):
         Returns:
             bool: True if model supports structured outputs
         """
-        return (
-            self.id in self.STRUCTURED_OUTPUT_MODELS
-            or self.id.startswith("claude-sonnet-4-5")
-            or self.id.startswith("claude-opus-4-1")
-        )
+        # If model is in blacklist, it doesn't support structured outputs
+        if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
+            return False
+
+        # Check for legacy model patterns that don't support structured outputs
+        if self.id.startswith("claude-3-"):
+            return False
+        if self.id.startswith("claude-3-5-") and not self.id.startswith("claude-3-5-sonnet-4-5"):
+            return False
+        if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
+            return False
+        if self.id.startswith("claude-opus-4-") and not self.id.startswith("claude-opus-4-1"):
+            return False
+
+        return True
 
     def _using_structured_outputs(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """
         Check if structured outputs are being used in this request.
@@ -212,7 +235,7 @@ class Claude(Model):
     def _has_beta_features(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """Check if the model has any Anthropic beta features enabled."""
         return (
@@ -321,10 +344,7 @@ class Claude(Model):
                             if isinstance(item, dict):
                                 self._ensure_additional_properties_false(item)
 
-    def _build_output_format(
-        self,
-        response_format: Optional[Union[Dict, Type[BaseModel]]]
-    ) -> Optional[Dict[str, Any]]:
+    def _build_output_format(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
         """
         Build Anthropic output_format parameter from response_format.
 
@@ -348,6 +368,7 @@ class Claude(Model):
             try:
                 # Try to use Anthropic SDK's transform_schema helper if available
                 from anthropic import transform_schema
+
                 schema = transform_schema(response_format.model_json_schema())
             except (ImportError, AttributeError):
                 # Fallback to direct schema conversion
@@ -359,10 +380,7 @@ class Claude(Model):
                     # Recursively ensure all object types have additionalProperties: false
                     self._ensure_additional_properties_false(schema)
 
-            return {
-                "type": "json_schema",
-                "schema": schema
-            }
+            return {"type": "json_schema", "schema": schema}
 
         # Handle dict format (already in correct structure)
         elif isinstance(response_format, dict):
@@ -410,7 +428,7 @@ class Claude(Model):
     def _validate_structured_outputs_usage(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         Validate that structured outputs are only used with supported models.
@@ -422,11 +440,11 @@ class Claude(Model):
             return
 
         if not self._supports_structured_outputs():
-            supported_models = "\n  - ".join(sorted(self.STRUCTURED_OUTPUT_MODELS))
+            legacy_models = "\n  - ".join(sorted(self.NON_STRUCTURED_OUTPUT_MODELS))
             raise ValueError(
                 f"Model '{self.id}' does not support structured outputs.\n\n"
-                f"The following models support structured outputs:\n  - {supported_models}\n\n"
-                f"Structured outputs are available for Claude Sonnet 4.5 and Claude Opus 4.1 only.\n"
+                f"The following legacy models do not support structured outputs:\n  - {legacy_models}\n\n"
+                f"Structured outputs are available for Claude Sonnet 4.5+, Opus 4.1+, and all future models.\n"
                 f"For more information, see: https://docs.anthropic.com/en/api/messages"
             )
 
@@ -434,7 +452,7 @@ class Claude(Model):
         self,
         system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
@@ -505,11 +523,7 @@ class Claude(Model):
                 run_response.metrics.set_time_to_first_token()
 
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(
-                system_message,
-                tools=tools,
-                response_format=response_format
-            )
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -572,11 +586,7 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         chat_messages, system_message = format_messages(messages)
-        request_kwargs = self._prepare_request_kwargs(
-            system_message,
-            tools=tools,
-            response_format=response_format
-        )
+        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
             if run_response and run_response.metrics:
@@ -636,11 +646,7 @@ class Claude(Model):
                 run_response.metrics.set_time_to_first_token()
 
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(
-                system_message,
-                tools=tools,
-                response_format=response_format
-            )
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
@@ -705,11 +711,7 @@ class Claude(Model):
                 run_response.metrics.set_time_to_first_token()
 
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(
-                system_message,
-                tools=tools,
-                response_format=response_format
-            )
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -757,7 +759,7 @@ class Claude(Model):
         self,
         response: Union[AnthropicMessage, BetaMessage],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        **kwargs
+        **kwargs,
     ) -> ModelResponse:
         """
         Parse the Claude response into a ModelResponse.
@@ -785,7 +787,11 @@ class Claude(Model):
                         model_response.content += text_content
 
                     # Handle structured outputs (JSON outputs)
-                    if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                    if (
+                        response_format is not None
+                        and isinstance(response_format, type)
+                        and issubclass(response_format, BaseModel)
+                    ):
                         if text_content:
                             try:
                                 # Parse JSON from text content
@@ -975,7 +981,11 @@ class Claude(Model):
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication
             # The content was already streamed via ContentBlockDeltaEvent chunks
-            if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
                 if accumulated_text:
                     try:
                         # Parse JSON from accumulated text content
