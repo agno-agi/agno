@@ -175,6 +175,4 @@ def test_agent_stream_with_yield_step_output():
     assert "StepStartedEvent" in event_types
     assert "StepCompletedEvent" in event_types
     assert "StepOutputEvent" in event_types
-    assert "StepOutputEvent" in event_types
     assert "RunContentEvent" in event_types
-    assert "StepOutput" in event_types
