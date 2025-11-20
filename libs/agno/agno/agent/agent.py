@@ -374,8 +374,6 @@ class Agent:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
 
     # Persist the events on the run response
     store_events: bool = False
@@ -414,6 +412,9 @@ class Agent:
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
+
+    # Deprecated. Use stream_events instead
+    stream_intermediate_steps: Optional[bool] = None
 
     def __init__(
         self,
@@ -625,6 +626,9 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
+
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         self.stream_events = stream_events or stream_intermediate_steps
 
         self.store_events = store_events
@@ -1614,6 +1618,8 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -1722,6 +1728,21 @@ class Agent:
                     )
                 else:
                     return run_response
+            finally:
+                # Close the Gemini client
+                if (
+                    self.model is not None
+                    and self.model.__class__.__name__ == "Gemini"
+                    and self.model.client is not None
+                ):  # type: ignore
+                    try:
+                        self.model.client.close()  # type: ignore
+                        self.model.client = None  # type: ignore
+                    except AttributeError:
+                        log_warning(
+                            "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                            " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        )
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -2001,6 +2022,16 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
+
+            if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:  # type: ignore
+                try:
+                    self.model.client.close()  # type: ignore
+                    self.model.client = None  # type: ignore
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2365,6 +2396,17 @@ class Agent:
                 except CancelledError:
                     pass
 
+            # Close the Gemini client
+            if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:  # type: ignore
+                try:
+                    self.model.client.close()  # type: ignore
+                    self.model.client = None  # type: ignore
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2507,6 +2549,8 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2789,6 +2833,8 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -3312,6 +3358,8 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled

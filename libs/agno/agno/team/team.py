@@ -199,9 +199,6 @@ class Team:
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
 
-    # Deprecated. Use delegate_to_all_members instead.
-    delegate_task_to_all_members: bool = False
-
     # --- User settings ---
     # Default user ID for this team
     user_id: Optional[str] = None
@@ -437,6 +434,9 @@ class Team:
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
+
+    # Deprecated. Use delegate_to_all_members instead.
+    delegate_task_to_all_members: bool = False
 
     def __init__(
         self,

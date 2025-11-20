@@ -16,7 +16,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
@@ -356,6 +356,8 @@ class Parallel:
                     session_state_copies.append({})
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
@@ -676,6 +678,8 @@ class Parallel:
                     session_state_copies.append({})
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:

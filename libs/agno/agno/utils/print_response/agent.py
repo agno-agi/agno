@@ -83,6 +83,8 @@ def print_response_stream(
         input_content = get_text_from_message(input)
 
         # Consider both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         for response_event in agent.run(
@@ -273,6 +275,8 @@ async def aprint_response_stream(
             live_log.update(Group(*panels))
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         result = agent.arun(

@@ -485,6 +485,8 @@ class Step:
             session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         # Emit StepStartedEvent
@@ -951,6 +953,8 @@ class Step:
             session_state_copy = copy(session_state) if session_state is not None else {}
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:

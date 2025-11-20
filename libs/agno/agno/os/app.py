@@ -140,6 +140,20 @@ class AgentOS:
         if not agents and not workflows and not teams and not knowledge:
             raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 
+        # Warnings for deprecated parameters
+        if os_id is not None:
+            log_warning("os_id is deprecated and will be removed in a future version, use id instead.")
+        if enable_mcp is not None:
+            log_warning(
+                "enable_mcp is deprecated and will be removed in a future version, use enable_mcp_server instead."
+            )
+        if fastapi_app is not None:
+            log_warning("fastapi_app is deprecated and will be removed in a future version, use base_app instead.")
+        if replace_routes is not None:
+            log_warning(
+                "replace_routes is deprecated and will be removed in a future version, use on_route_conflict instead."
+            )
+
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
         self.agents: Optional[List[Agent]] = agents
