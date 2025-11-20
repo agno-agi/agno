@@ -13,6 +13,7 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -1381,7 +1382,7 @@ class Knowledge:
         self,
         query: str,
         max_results: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
@@ -1412,7 +1413,7 @@ class Knowledge:
         self,
         query: str,
         max_results: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
@@ -1453,7 +1454,7 @@ class Knowledge:
                 valid_filters.update(content.metadata.keys())
 
         return valid_filters
-
+    
     async def async_get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
             log_warning("No contents db provided. This is required for filtering.")
@@ -1466,33 +1467,50 @@ class Knowledge:
 
         return valid_filters
 
+
     def _validate_filters(
-        self, filters: Optional[Dict[str, Any]], valid_metadata_filters: Set[str]
-    ) -> Tuple[Dict[str, Any], List[str]]:
+        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], valid_metadata_filters: Set[str]
+    ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         if not filters:
-            return {}, []
+            return None, []
 
-        valid_filters: Dict[str, Any] = {}
+        valid_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
         invalid_keys = []
+        
+        if isinstance(filters, dict):
+            # If no metadata filters tracked yet, all keys are considered invalid
+            if valid_metadata_filters is None or not valid_metadata_filters:
+                invalid_keys = list(filters.keys())
+                log_warning(f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}")
+                return {}, invalid_keys
 
-        # If no metadata filters tracked yet, all keys are considered invalid
-        if valid_metadata_filters is None or not valid_metadata_filters:
-            invalid_keys = list(filters.keys())
-            log_warning(f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}")
-            return {}, invalid_keys
+            for key, value in filters.items():
+                # Handle both normal keys and prefixed keys like meta_data.key
+                base_key = key.split(".")[-1] if "." in key else key
+                if base_key in valid_metadata_filters or key in valid_metadata_filters:
+                    valid_filters[key] = value
+                else:
+                    invalid_keys.append(key)
+                    log_warning(f"Invalid filter key: {key} - not present in knowledge base")
 
-        for key, value in filters.items():
-            # Handle both normal keys and prefixed keys like meta_data.key
-            base_key = key.split(".")[-1] if "." in key else key
-            if base_key in valid_metadata_filters or key in valid_metadata_filters:
-                valid_filters[key] = value
-            else:
-                invalid_keys.append(key)
-                log_warning(f"Invalid filter key: {key} - not present in knowledge base")
-
+        elif isinstance(filters, List):
+            # Validate that list contains FilterExpr instances
+            for i, filter_item in enumerate(filters):
+                if not isinstance(filter_item, FilterExpr):
+                    log_warning(
+                        f"Invalid filter at index {i}: expected FilterExpr instance, "
+                        f"got {type(filter_item).__name__}. "
+                        f"Use filter expressions like EQ('key', 'value'), IN('key', [values]), "
+                        f"AND(...), OR(...), NOT(...) from agno.filters"
+                    )
+            # Filter expressions are already validated, return empty dict/list
+            # The actual filtering happens in the vector_db layer
+            return filters, []
+                    
         return valid_filters, invalid_keys
 
-    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+
+    def validate_filters(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
@@ -1811,10 +1829,7 @@ class Knowledge:
         return ReaderFactory.get_reader_for_extension(extension)
 
     def get_filters(self) -> List[str]:
-        return [
-            "filter_tag_1",
-            "filter_tag2",
-        ]
+        return list(self.valid_metadata_filters)
 
     # --- Convenience Properties for Backward Compatibility ---
 

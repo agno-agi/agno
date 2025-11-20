@@ -38,6 +38,7 @@ from agno.exceptions import (
     RunCancelledException,
     StopAgentRun,
 )
+from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
@@ -71,7 +72,6 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    aget_chat_history_util,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -85,7 +85,6 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    get_chat_history_util,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -233,7 +232,7 @@ class Agent:
     knowledge: Optional[Knowledge] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
-    knowledge_filters: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
     add_knowledge_to_context: bool = False
@@ -450,7 +449,7 @@ class Agent:
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
@@ -1454,12 +1453,13 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1480,12 +1480,13 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1507,12 +1508,13 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1581,7 +1583,7 @@ class Agent:
         dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -1999,6 +2001,7 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2374,6 +2377,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2381,7 +2385,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2399,6 +2403,7 @@ class Agent:
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2406,7 +2411,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2426,6 +2431,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2433,7 +2439,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2530,7 +2536,7 @@ class Agent:
                 merge_dictionaries(metadata, self.metadata)
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,
             session_id=session_id,
             user_id=user_id,
@@ -2656,7 +2662,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2675,7 +2681,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2692,8 +2698,9 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2709,6 +2716,7 @@ class Agent:
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
+            run_context: The run context to use for the run.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for the run.
@@ -2749,7 +2757,7 @@ class Agent:
         dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,  # type: ignore
             session_id=session_id,
             user_id=user_id,
@@ -3215,7 +3223,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3234,7 +3242,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3251,8 +3259,9 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3269,6 +3278,7 @@ class Agent:
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
+            run_context: The run context to use for the run.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for continuing the run.
@@ -3335,7 +3345,7 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Initialize run context
-        run_context = RunContext(
+        run_context = run_context or RunContext(
             run_id=run_id,  # type: ignore
             session_id=session_id,
             user_id=user_id,
@@ -5334,12 +5344,8 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-
-        # Consider both run_context.knowledge_filters and knowledge_filters (deprecated)
-        run_context.knowledge_filters = run_context.knowledge_filters or knowledge_filters
 
         # Add provided tools
         if self.tools is not None:
@@ -5409,13 +5415,9 @@ class Agent:
         run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-
-        # Consider both run_context.knowledge_filters and knowledge_filters (deprecated)
-        run_context.knowledge_filters = run_context.knowledge_filters or knowledge_filters
 
         # Connect MCP tools
         await self._connect_mcp_tools()
@@ -5753,6 +5755,9 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -5763,12 +5768,17 @@ class Agent:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return await self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    def _upsert_session(self, session: AgentSession) -> Optional[AgentSession]:
+    def _upsert_session(
+        self, session: Union[AgentSession, TeamSession, WorkflowSession]
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Upsert a Session into the database."""
 
         try:
@@ -5776,16 +5786,24 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
             return None
 
-    async def _aupsert_session(self, session: AgentSession) -> Optional[AgentSession]:
+    async def _aupsert_session(
+        self, session: Union[AgentSession, TeamSession, WorkflowSession]
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Upsert a Session into the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
             return await self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
             return None
 
@@ -5990,7 +6008,7 @@ class Agent:
     def get_session(
         self,
         session_id: Optional[str] = None,
-    ) -> Optional[AgentSession]:
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Load an AgentSession from database or cache.
 
         Args:
@@ -6051,7 +6069,7 @@ class Agent:
     async def aget_session(
         self,
         session_id: Optional[str] = None,
-    ) -> Optional[AgentSession]:
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Load an AgentSession from database or cache.
 
         Args:
@@ -6106,7 +6124,7 @@ class Agent:
         log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
-    def save_session(self, session: AgentSession) -> None:
+    def save_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         """
         Save the AgentSession to storage
         """
@@ -6128,7 +6146,7 @@ class Agent:
             self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
-    async def asave_session(self, session: AgentSession) -> None:
+    async def asave_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         """
         Save the AgentSession to storage
         """
@@ -6148,36 +6166,6 @@ class Agent:
             else:
                 self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
-
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return get_chat_history_util(self, session_id=session_id)
-
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return await aget_chat_history_util(self, session_id=session_id)
 
     # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
@@ -6204,12 +6192,16 @@ class Agent:
         if session is None:
             raise Exception("Session not found")
 
+        if not hasattr(session, "agent_data"):
+            raise Exception("Session is not an AgentSession")
+
         # -*- Rename Agent
         self.name = name
-        if session.agent_data is not None:
-            session.agent_data["name"] = name
+
+        if session.agent_data is not None:  # type: ignore
+            session.agent_data["name"] = name  # type: ignore
         else:
-            session.agent_data = {"name": name}
+            session.agent_data = {"name": name}  # type: ignore
 
         # -*- Save to storage
         if self._has_async_db():
@@ -6288,7 +6280,7 @@ class Agent:
 
         gen_session_name_prompt = "Conversation\n"
 
-        messages_for_generating_session_name = session.get_messages_for_session()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -6444,11 +6436,25 @@ class Agent:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
 
-    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    def get_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
-            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            session_id: The session ID to get the messages for. If not provided, the latest used session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6458,20 +6464,49 @@ class Agent:
             return []
 
         session = self.get_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
+        return session.get_messages(
+            # Only filter by agent_id if this is part of a team
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
         )
 
-    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    async def aget_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6481,13 +6516,50 @@ class Agent:
             return []
 
         session = await self.aget_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
         # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        return session.get_messages(
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+        )
+
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return self.get_session_messages(session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"])
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"]
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
@@ -6495,6 +6567,7 @@ class Agent:
 
         Args:
             session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+
         Returns:
             SessionSummary: The session summary.
         """
@@ -6507,7 +6580,7 @@ class Agent:
         if session is None:
             raise Exception(f"Session {session_id} not found")
 
-        return session.get_session_summary()
+        return session.get_session_summary()  # type: ignore
 
     async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for the given session ID and user ID.
@@ -6526,7 +6599,7 @@ class Agent:
         if session is None:
             raise Exception(f"Session {session_id} not found")
 
-        return session.get_session_summary()
+        return session.get_session_summary()  # type: ignore
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -7348,7 +7421,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -7363,7 +7436,6 @@ class Agent:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
             knowledge_filters = run_context.knowledge_filters or knowledge_filters
-
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -7606,10 +7678,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7724,7 +7796,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -7819,10 +7891,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -8019,7 +8091,7 @@ class Agent:
         self,
         query: str,
         num_documents: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
@@ -8053,6 +8125,10 @@ class Agent:
                     filters = valid_filters
                     if not filters:
                         log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+            if invalid_keys == [] and valid_filters == {}:
+                log_warning("No valid filters provided. Search will proceed without filters.")
+                filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -8100,7 +8176,7 @@ class Agent:
         self,
         query: str,
         num_documents: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
@@ -8121,6 +8197,10 @@ class Agent:
                 filters = valid_filters
                 if not filters:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+            if invalid_keys == [] and valid_filters == {}:
+                log_warning("No valid filters provided. Search will proceed without filters.")
+                filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -9387,7 +9467,7 @@ class Agent:
             import json
 
             history: List[Dict[str, Any]] = []
-            all_chats = session.get_messages_for_session()
+            all_chats = session.get_messages()
 
             if len(all_chats) == 0:
                 return ""
@@ -9443,7 +9523,7 @@ class Agent:
     def _get_search_knowledge_base_function(
         self,
         run_response: RunOutput,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -9519,7 +9599,7 @@ class Agent:
     def _search_knowledge_base_with_agentic_filters_function(
         self,
         run_response: RunOutput,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -9664,6 +9744,8 @@ class Agent:
                 session_type=SessionType.AGENT,
                 limit=num_history_sessions,
                 user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
             )
 
             all_messages = []
@@ -9790,10 +9872,8 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -9826,15 +9906,8 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             print_response_stream(
@@ -9847,7 +9920,7 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9875,7 +9948,6 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9904,10 +9976,8 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -9934,15 +10004,8 @@ class Agent:
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             await aprint_response_stream(
@@ -9955,7 +10018,7 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -10088,7 +10151,9 @@ class Agent:
 
         return None
 
-    def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _get_effective_filters(
+        self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> Optional[Any]:
         """
         Determine which knowledge filters to use, with priority to run-level filters.
 
@@ -10107,8 +10172,13 @@ class Agent:
         # If run has filters, they override agent filters
         if knowledge_filters:
             if effective_filters:
-                # Merge filters, with run filters taking priority
-                effective_filters.update(knowledge_filters)
+                if isinstance(knowledge_filters, dict):
+                    if isinstance(effective_filters, dict):
+                        effective_filters.update(knowledge_filters)
+                    else:
+                        effective_filters = knowledge_filters
+                elif isinstance(knowledge_filters, list):
+                    effective_filters = [*effective_filters, *knowledge_filters]
             else:
                 effective_filters = knowledge_filters
 

@@ -11,9 +11,10 @@ except ImportError as e:
     msg = "The `surrealdb` package is not installed. Please install it via `pip install surrealdb`."
     raise ImportError(msg) from e
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -318,7 +319,9 @@ class SurrealDb(VectorDb):
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
             self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search for similar documents.
 
         Args:
@@ -330,6 +333,9 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -560,7 +566,7 @@ class SurrealDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Document]:
         """Search for similar documents asynchronously.
 
@@ -573,6 +579,10 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
+            filters = None
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")

@@ -331,6 +331,7 @@ def convert_schema(
             items=items,
             min_items=min_items,
             max_items=max_items,
+            title=title,
         )
 
     elif schema_type == "string":

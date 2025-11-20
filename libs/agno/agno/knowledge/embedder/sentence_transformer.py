@@ -25,10 +25,14 @@ class SentenceTransformerEmbedder(Embedder):
     prompt: Optional[str] = None
     normalize_embeddings: bool = False
 
-    def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
-        if not self.sentence_transformer_client:
+    def __post_init__(self):
+        # Initialize the SentenceTransformer model eagerly to avoid race conditions in async contexts
+        if self.sentence_transformer_client is None:
             self.sentence_transformer_client = SentenceTransformer(model_name_or_path=self.id)
 
+    def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
+        if self.sentence_transformer_client is None:
+            raise RuntimeError("SentenceTransformer model not initialized")
         model = self.sentence_transformer_client
         embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
