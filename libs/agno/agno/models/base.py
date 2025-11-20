@@ -457,7 +457,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -637,7 +637,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -1029,7 +1029,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -1236,7 +1236,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):

@@ -60,6 +60,7 @@ agent = Agent(
     add_history_to_context=True,
     num_history_runs=6,
     instructions="Use the search tools and always use the latest information and data.",
+    debug_mode=True,  # So we can see the compression manager in action
 )
 
 agent.print_response(

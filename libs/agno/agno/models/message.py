@@ -330,7 +330,7 @@ class Message(BaseModel):
             "created_at": self.created_at,
         }
 
-    def log(self, metrics: bool = True, level: Optional[str] = None):
+    def log(self, metrics: bool = True, level: Optional[str] = None, compressed_content: bool = False):
         """Log the message to the console
 
         Args:
@@ -363,10 +363,13 @@ class Message(BaseModel):
         if self.reasoning_content:
             _logger(f"<reasoning>\n{self.reasoning_content}\n</reasoning>")
         if self.content:
-            if isinstance(self.content, str) or isinstance(self.content, list):
-                _logger(self.content)
-            elif isinstance(self.content, dict):
-                _logger(json.dumps(self.content, indent=2))
+            if compressed_content and self.compressed_content:
+                _logger(self.compressed_content)
+            else:
+                if isinstance(self.content, str) or isinstance(self.content, list):
+                    _logger(self.content)
+                elif isinstance(self.content, dict):
+                    _logger(json.dumps(self.content, indent=2))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
