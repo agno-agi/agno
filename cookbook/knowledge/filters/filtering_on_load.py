@@ -29,7 +29,7 @@ knowledge = Knowledge(
     contents_db=PostgresDb(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         knowledge_table="knowledge_contents",
-    ),  
+    ),
     max_results=5,
 )
 

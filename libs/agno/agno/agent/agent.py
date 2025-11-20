@@ -8177,6 +8177,7 @@ class Agent:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
@@ -8187,20 +8188,21 @@ class Agent:
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None and filters is not None:
-            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+            if validate_filters:
+                valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:  # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:  # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature

@@ -1832,9 +1832,6 @@ class Knowledge:
         log_info(f"Selecting reader for extension: {extension}")
         return ReaderFactory.get_reader_for_extension(extension)
 
-    def get_filters(self) -> List[str]:
-        return list(self.valid_metadata_filters)
-
     # --- Convenience Properties for Backward Compatibility ---
 
     def _is_text_mime_type(self, mime_type: str) -> bool:
