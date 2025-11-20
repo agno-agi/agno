@@ -573,7 +573,7 @@ class AwsBedrock(Model):
     ) -> None:
         """
         Handle the results of function calls for Bedrock.
-        Uses compressed_content if context_manager is active.
+        Uses compressed_content if compression_manager is active.
 
         Args:
             messages (List[Message]): The list of conversation messages.

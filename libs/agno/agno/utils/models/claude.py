@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from anthropic.types import (
@@ -305,39 +305,37 @@ def format_messages(
         elif message.role == "tool":
             content = []
 
-            # Determine which content to use based on compression
-            tool_content = message.content
+            # Check if this is a combined message (multiple tool results in one message)
+            if (
+                compression_manager
+                and compression_manager.compress_tool_results
+                and message.tool_calls
+                and isinstance(message.content, list)
+            ):
+                # Combined message - iterate through tool_calls to create multiple tool_result blocks
+                for idx, tool_call in enumerate(message.tool_calls):
+                    original = message.content[idx] if idx < len(message.content) else ""
+                    compressed = tool_call.get("content", original)
 
-            # Check for compression - handle both individual and combined messages
-            if compression_manager and compression_manager.compress_tool_results:
-                # Individual message with compressed_content field
-                if message.compressed_content and not isinstance(message.content, list):
-                    tool_content = message.compressed_content
-                # Combined message - multiple tool results in tool_calls array
-                elif message.tool_calls and isinstance(message.content, list):
-                    # Iterate through tool_calls to create multiple tool_result blocks
-                    for idx, tool_call in enumerate(message.tool_calls):
-                        original = message.content[idx] if idx < len(message.content) else ""
-                        compressed = tool_call.get("content", original)
+                    content.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.get("tool_call_id", ""),
+                            "content": str(compressed),
+                        }
+                    )
+                if content:
+                    chat_messages.append({"role": ROLE_MAP[message.role], "content": content})
+                    continue
 
-                        content.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call.get("tool_call_id", ""),
-                                "content": str(compressed),
-                            }
-                        )
-                    # Skip the default append below since we handled it
-                    if content:
-                        chat_messages.append({"role": ROLE_MAP[message.role], "content": content})
-                        continue
+            # Standard individual message - use the helper method
+            tool_result = message.get_tool_result(compression_manager)
 
-            # Default handling for non-compressed or individual messages
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(tool_content),
+                    "content": str(tool_result),
                 }
             )
 

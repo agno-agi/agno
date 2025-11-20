@@ -833,9 +833,12 @@ class Agent:
                 model=self.model,
             )
 
-        if self.compression_manager is not None:
-            if self.compression_manager.model is None:
-                self.compression_manager.model = self.model
+        if self.compression_manager is not None and self.compression_manager.model is None:
+            self.compression_manager.model = self.model
+
+        # Check compression flag on the compression manager
+        if self.compression_manager is not None and self.compression_manager.compress_tool_results:
+            self.compress_tool_results = True
 
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
@@ -850,6 +853,9 @@ class Agent:
             self.parser_model = get_model(self.parser_model)
         if self.output_model is not None:
             self.output_model = get_model(self.output_model)
+
+        if self.compression_manager is not None and self.compression_manager.model is None:
+            self.compression_manager.model = self.model
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()

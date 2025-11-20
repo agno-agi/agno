@@ -503,14 +503,7 @@ class Gemini(Model):
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 for idx, tool_call in enumerate(message.tool_calls):
-                    # content (from line 481) could be:
-                    # - For individual messages: string (original)
-                    # - For combined messages: list of originals
-                    #
-                    # For combined messages, compressed versions are in tool_calls[]["content"]
-                    # For individual messages, compressed version is in message.compressed_content
 
-                    # Try to extract from content list first
                     if isinstance(content, list) and idx < len(content):
                         # Combined message - content is a list of originals
                         original_from_list = content[idx]
@@ -524,16 +517,9 @@ class Gemini(Model):
                             # Use original from content list
                             tc_content = original_from_list
                     else:
-                        # Individual message - check if compression is available
-                        # First priority: use message.compressed_content if compression is active
-                        if (
-                            compression_manager
-                            and compression_manager.compress_tool_results
-                            and message.compressed_content
-                        ):
-                            tc_content = message.compressed_content
-                        else:
-                            # Fallback: use tool_call content or message content
+                        tc_content = message.get_tool_result(compression_manager)
+
+                        if tc_content is None:
                             tc_content = tool_call.get("content")
                             if tc_content is None:
                                 tc_content = content

@@ -886,6 +886,9 @@ class Team:
             self.compression_manager = CompressionManager(
                 model=self.model,
             )
+        elif self.compression_manager is not None and self.compression_manager.model is None:
+            # If compression manager exists but has no model, use the team's model
+            self.compression_manager.model = self.model
 
         if self.compression_manager is not None:
             if self.compression_manager.model is None:

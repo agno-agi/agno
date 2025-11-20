@@ -89,19 +89,20 @@ class CompressionManager:
             log_error(f"Error compressing tool result: {e}")
             return tool_content
 
-    def compress(self, messages: List[Message], function_call_results: List[Message]) -> None:
+    def compress(self, messages: List[Message]) -> None:
+        """Compress uncompressed tool results"""
         if not self.compress_tool_results:
             return
 
-        # Collect all uncompressed tool results from both new results and history
-        all_messages = messages + function_call_results
-        uncompressed_tools = [msg for msg in all_messages if msg.role == "tool" and msg.compressed_content is None]
+        uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
 
         if not uncompressed_tools:
             return
 
-        # Compress all tool results
+        # Compress uncompressed tool results
         for tool_msg in uncompressed_tools:
             compressed = self._compress_tool_result(tool_msg)
             if compressed:
                 tool_msg.compressed_content = compressed
+            else:
+                log_warning(f"Compression failed for {tool_msg.tool_name}")
