@@ -9,7 +9,7 @@ from agno.db.mongo.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
-    create_collection_indexes,
+    create_collection_indexes_async,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
@@ -167,9 +167,9 @@ class AsyncMongoDb(AsyncBaseDb):
 
             self._event_loop = current_loop
             self._database = None  # Reset database reference
-            # Clear collection caches when switching event loops
+            # Clear collection caches and initialization flags when switching event loops
             for attr in list(vars(self).keys()):
-                if attr.endswith("_collection"):
+                if attr.endswith("_collection") or attr.endswith("_initialized"):
                     delattr(self, attr)
 
         return self._client  # type: ignore
@@ -307,9 +307,8 @@ class AsyncMongoDb(AsyncBaseDb):
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
                     return None
-                # Note: Motor doesn't have sync create_index, so we use it as-is
-                # The indexes are created in the background
-                create_collection_indexes(collection, collection_type)  # type: ignore
+                # Create indexes asynchronously for Motor collections
+                await create_collection_indexes_async(collection, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
                 log_debug(f"Initialized collection '{collection_name}'")
             else:

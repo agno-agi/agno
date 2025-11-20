@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
@@ -10,7 +11,8 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.log import log_debug, log_error
+from agno.utils.http import get_default_async_client, get_default_sync_client
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.cohere import format_messages
 
 try:
@@ -50,6 +52,7 @@ class Cohere(Model):
     # -*- Client parameters
     api_key: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     # -*- Provide the Cohere client manually
     client: Optional[CohereClient] = None
     async_client: Optional[CohereAsyncClient] = None
@@ -65,6 +68,17 @@ class Cohere(Model):
             log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
 
         _client_params["api_key"] = self.api_key
+
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["httpx_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["httpx_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["httpx_client"] = get_default_sync_client()
 
         self.client = CohereClient(**_client_params)
         return self.client  # type: ignore
@@ -82,6 +96,18 @@ class Cohere(Model):
 
         _client_params["api_key"] = self.api_key
 
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["httpx_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["httpx_client"] = get_default_async_client()
+        else:
+            # Use global async client when no custom http_client is provided
+            _client_params["httpx_client"] = get_default_async_client()
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
 

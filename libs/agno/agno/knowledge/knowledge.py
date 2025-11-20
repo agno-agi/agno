@@ -1856,10 +1856,7 @@ class Knowledge:
         return ReaderFactory.get_reader_for_extension(extension)
 
     def get_filters(self) -> List[str]:
-        return [
-            "filter_tag_1",
-            "filter_tag2",
-        ]
+        return list(self.valid_metadata_filters)
 
     # --- Convenience Properties for Backward Compatibility ---
 
