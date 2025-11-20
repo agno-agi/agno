@@ -28,7 +28,7 @@ knowledge = Knowledge(
     vector_db=vector_db,
     contents_db=PostgresDb(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        table_name="knowledge_contents",
+        knowledge_table="knowledge_contents",
     ),
 )
 
