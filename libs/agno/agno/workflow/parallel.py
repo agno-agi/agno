@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
@@ -357,7 +358,11 @@ class Parallel:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
@@ -679,7 +684,11 @@ class Parallel:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:

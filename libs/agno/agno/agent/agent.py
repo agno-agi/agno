@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
@@ -626,10 +627,7 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
-
-        if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
 
         self.store_events = store_events
         self.role = role
@@ -1540,6 +1538,13 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -1619,7 +1624,11 @@ class Agent:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -1728,21 +1737,6 @@ class Agent:
                     )
                 else:
                     return run_response
-            finally:
-                # Close the Gemini client
-                if (
-                    self.model is not None
-                    and self.model.__class__.__name__ == "Gemini"
-                    and self.model.client is not None
-                ):  # type: ignore
-                    try:
-                        self.model.client.close()  # type: ignore
-                        self.model.client = None  # type: ignore
-                    except AttributeError:
-                        log_warning(
-                            "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                            " please upgrade Gemini to the latest version: pip install -U google-genai"
-                        )
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -2396,17 +2390,6 @@ class Agent:
                 except CancelledError:
                     pass
 
-            # Close the Gemini client
-            if self.model is not None and self.model.__class__.__name__ == "Gemini" and self.model.client is not None:  # type: ignore
-                try:
-                    self.model.client.close()  # type: ignore
-                    self.model.client = None  # type: ignore
-                except AttributeError:
-                    log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
-                    )
-
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2499,6 +2482,13 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2550,7 +2540,11 @@ class Agent:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2834,7 +2828,11 @@ class Agent:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -3359,7 +3357,11 @@ class Agent:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled

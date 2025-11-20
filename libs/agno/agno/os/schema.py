@@ -458,7 +458,7 @@ class TeamResponse(BaseModel):
             "reasoning_max_steps": 10,
             # Default tools defaults
             "search_knowledge": True,
-            "read_team_history": False,
+            "read_chat_history": False,
             "get_member_information_tool": False,
             # System message defaults
             "system_message_role": "system",
@@ -556,7 +556,7 @@ class TeamResponse(BaseModel):
 
         default_tools_info = {
             "search_knowledge": team.search_knowledge,
-            "read_team_history": team.read_team_history,
+            "read_chat_history": team.read_chat_history,
             "get_member_information_tool": team.get_member_information_tool,
         }
 

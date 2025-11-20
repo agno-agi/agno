@@ -1,4 +1,5 @@
 import inspect
+import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -13,7 +14,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, StepType
 
@@ -314,7 +315,11 @@ class Condition:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
@@ -598,7 +603,11 @@ class Condition:
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:

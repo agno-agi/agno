@@ -1,4 +1,5 @@
 import json
+import warnings
 from collections.abc import Set
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, cast, get_args
 
@@ -84,7 +85,11 @@ def print_response_stream(
 
         # Consider both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         for response_event in agent.run(
@@ -276,7 +281,11 @@ async def aprint_response_stream(
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         result = agent.arun(

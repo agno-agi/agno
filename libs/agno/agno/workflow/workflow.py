@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -237,7 +238,11 @@ class Workflow:
         self._workflow_session: Optional[WorkflowSession] = None
 
         if stream_intermediate_steps is not None:
-            log_warning("stream_intermediate_steps is deprecated. Use stream_events instead.")
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.stream_events = stream_events or stream_intermediate_steps
 
         # Warn if workflow history is enabled without a database
@@ -3667,6 +3672,12 @@ class Workflow:
         if background:
             if stream and websocket:
                 # Consider both stream_events and stream_intermediate_steps (deprecated)
+                if stream_intermediate_steps is not None:
+                    warnings.warn(
+                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
                 stream_events = stream_events or stream_intermediate_steps or False
 
                 # Background + Streaming + WebSocket = Real-time events

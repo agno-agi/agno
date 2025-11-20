@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import warnings
 from collections import ChainMap, deque
 from copy import copy
 from dataclasses import dataclass
@@ -229,8 +230,6 @@ class Team:
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
 
-    # If True, adds a tool to allow the team to read the team history (this is deprecated and will be removed in a future version)
-    read_team_history: bool = False
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
 
@@ -486,7 +485,6 @@ class Team:
         share_member_interactions: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
-        read_team_history: bool = False,
         read_chat_history: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
@@ -540,7 +538,11 @@ class Team:
         telemetry: bool = True,
     ):
         if delegate_task_to_all_members:
-            log_warning("`delegate_task_to_all_members` is deprecated. Use `delegate_to_all_members` instead.")
+            warnings.warn(
+                "The 'delegate_task_to_all_members' parameter is deprecated and will be removed in future versions. Use 'delegate_to_all_members' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self.members = members
 
@@ -609,7 +611,7 @@ class Team:
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
-        self.read_chat_history = read_chat_history or read_team_history
+        self.read_chat_history = read_chat_history
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
@@ -1826,6 +1828,13 @@ class Team:
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2683,6 +2692,13 @@ class Team:
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2732,6 +2748,12 @@ class Team:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
