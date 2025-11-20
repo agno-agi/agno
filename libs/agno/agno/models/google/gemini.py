@@ -505,16 +505,12 @@ class Gemini(Model):
                 for idx, tool_call in enumerate(message.tool_calls):
 
                     if isinstance(content, list) and idx < len(content):
-                        # Combined message - content is a list of originals
                         original_from_list = content[idx]
 
-                        # Check if we should use compressed from tool_calls instead
                         if compression_manager and compression_manager.compress_tool_results:
-                            # Prefer compressed from tool_calls if available
                             compressed_from_tool_call = tool_call.get("content")
                             tc_content = compressed_from_tool_call if compressed_from_tool_call else original_from_list
                         else:
-                            # Use original from content list
                             tc_content = original_from_list
                     else:
                         tc_content = message.get_tool_result(compression_manager)
@@ -810,22 +806,14 @@ class Gemini(Model):
 
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
-                # Always store ORIGINAL content in the main content list
                 combined_original_content.append(result.content)
-
-                # Store compressed content (if available) in tool_calls array
-                # This preserves compressed versions when saved to DB
                 compressed_content = result.get_tool_result(compression_manager)
-
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
                 message_metrics += result.metrics
 
         if combined_original_content:
-            # Combined message has:
-            # - content: list of originals (main storage)
-            # - tool_calls[]["content"]: compressed versions (used when sending to API if compression is active)
             messages.append(
                 Message(
                     role="tool",

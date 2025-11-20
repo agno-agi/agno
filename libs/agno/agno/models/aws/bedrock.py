@@ -239,8 +239,6 @@ class AwsBedrock(Model):
             if message.role == "system":
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
-                # Convert tool message to Bedrock's format
-                # Use compressed content if available via get_tool_result()
                 content = message.get_tool_result(compression_manager)
                 tool_result = {
                     "toolUseId": message.tool_call_id,
