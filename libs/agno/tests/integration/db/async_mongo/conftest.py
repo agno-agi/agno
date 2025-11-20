@@ -69,6 +69,7 @@ async def async_mongo_db_real():
 
     This fixture connects to a real MongoDB instance running on localhost:27017.
     Make sure MongoDB is running before running these integration tests.
+    Uses auto-selected client type (prefers PyMongo async if available).
     """
     # Use local MongoDB
     db_url = "mongodb://localhost:27017"
@@ -92,6 +93,9 @@ async def async_mongo_db_real():
     except Exception:
         pass  # Ignore cleanup errors
 
-    # Close the client
+    # Close the client (handle both Motor and PyMongo async)
     if db._client:
-        db._client.close()
+        if db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC:
+            await db._client.close()
+        else:
+            db._client.close()
