@@ -88,7 +88,7 @@ def print_agent_memory(agent):
     console = Console()
 
     # Print chat history
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     console.print(
         Panel(
             JSON(

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 try:
-    from redis import Redis
+    from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -41,7 +41,7 @@ class RedisDb(BaseDb):
     def __init__(
         self,
         id: Optional[str] = None,
-        redis_client: Optional[Redis] = None,
+        redis_client: Optional[Union[Redis, RedisCluster]] = None,
         db_url: Optional[str] = None,
         db_prefix: str = "agno",
         expire: Optional[int] = None,
@@ -59,6 +59,8 @@ class RedisDb(BaseDb):
             1. Use the redis_client if provided
             2. Use the db_url
             3. Raise an error if neither is provided
+
+        db_url only supports single-node Redis connections, if you need Redis Cluster support, provide a redis_client.
 
         Args:
             id (Optional[str]): The ID of the database.

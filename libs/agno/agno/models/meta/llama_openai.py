@@ -2,8 +2,6 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
-import httpx
-
 try:
     from openai import AsyncOpenAI as AsyncOpenAIClient
 except ImportError:
@@ -48,6 +46,9 @@ class LlamaOpenAI(OpenAILike):
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
+    # Cached async client
+    openai_async_client: Optional[AsyncOpenAIClient] = None
+
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by Llama API.
@@ -59,20 +60,3 @@ class LlamaOpenAI(OpenAILike):
             Dict[str, Any]: The formatted message.
         """
         return format_message(message, openai_like=True)
-
-    def get_async_client(self):
-        """Override to provide custom httpx client that properly handles redirects"""
-        if self.async_client and not self.async_client.is_closed():
-            return self.async_client
-
-        client_params = self._get_client_params()
-
-        # Llama gives a 307 redirect error, so we need to set up a custom client to allow redirects
-        client_params["http_client"] = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100),
-            follow_redirects=True,
-            timeout=httpx.Timeout(30.0),
-        )
-
-        self.async_client = AsyncOpenAIClient(**client_params)
-        return self.async_client
