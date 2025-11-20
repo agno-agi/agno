@@ -10051,7 +10051,7 @@ class Agent:
 
         if "stream_events" in kwargs:
             warnings.warn(
-                "The 'stream_events' parameter is not needed. Event streaming is always enabled using the aprint_response function.",
+                "The 'stream_events' parameter is not needed. Event streaming is now enabled by default when using the aprint_response function.",
                 DeprecationWarning,
                 stacklevel=2,
             )
