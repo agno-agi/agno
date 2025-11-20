@@ -1,7 +1,11 @@
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
-import redshift_connector
+
+try:
+    import redshift_connector
+except ImportError:
+    raise ImportError("`redshift_connector` not installed. Please install using `pip install redshift-connector`.")
 
 from agno.tools.redshift import RedshiftTools
 
