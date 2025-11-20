@@ -9786,6 +9786,8 @@ class Agent:
                 session_type=SessionType.AGENT,
                 limit=num_history_sessions,
                 user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
             )
 
             all_messages = []
