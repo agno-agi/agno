@@ -7,7 +7,9 @@ import pytest
 try:
     from agno.db.mongo import AsyncMongoDb
 except ImportError:
-    pytest.skip("Neither motor nor pymongo async installed, skipping AsyncMongoDb integration tests", allow_module_level=True)
+    pytest.skip(
+        "Neither motor nor pymongo async installed, skipping AsyncMongoDb integration tests", allow_module_level=True
+    )
 
 
 @pytest.mark.asyncio

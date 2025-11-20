@@ -230,6 +230,7 @@ class TestAsyncMongoDbClientTypeDetection:
         """Test that Motor client is correctly detected"""
         try:
             from motor.motor_asyncio import AsyncIOMotorClient
+
             mock_client = Mock(spec=AsyncIOMotorClient)
             db = AsyncMongoDb(db_client=mock_client, db_name="test_db")
             assert db._client_type == AsyncMongoDb.CLIENT_TYPE_MOTOR
@@ -238,27 +239,32 @@ class TestAsyncMongoDbClientTypeDetection:
 
     def test_detect_pymongo_async_client_type(self):
         """Test that PyMongo async client is correctly detected"""
+        # Check if PyMongo async is available
         try:
-            from pymongo import AsyncMongoClient
-            # Create a mock that will pass isinstance check
-            # We need to make the mock actually be an instance of AsyncMongoClient
-            # or use a real instance if possible, or patch the detection
-            mock_client = Mock()
-            # Set the class name and module to help with fallback detection
-            mock_client.__class__.__name__ = "AsyncMongoClient"
-            mock_client.__class__.__module__ = "pymongo"
-            db = AsyncMongoDb(db_client=mock_client, db_name="test_db")
-            assert db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC
+            import pymongo  # noqa: F401
+            # Verify AsyncMongoClient exists
+            if not hasattr(pymongo, "AsyncMongoClient"):
+                pytest.skip("PyMongo async not available")
         except ImportError:
             pytest.skip("PyMongo async not available")
+
+        # Create a mock that will pass isinstance check
+        # We need to make the mock actually be an instance of AsyncMongoClient
+        # or use a real instance if possible, or patch the detection
+        mock_client = Mock()
+        # Set the class name and module to help with fallback detection
+        mock_client.__class__.__name__ = "AsyncMongoClient"
+        mock_client.__class__.__module__ = "pymongo"
+        db = AsyncMongoDb(db_client=mock_client, db_name="test_db")
+        assert db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC
 
     def test_auto_select_preferred_client_from_url(self):
         """Test that preferred client is auto-selected when creating from URL"""
         # Import availability flags from the module
-        from agno.db.mongo.async_mongo import PYMONGO_ASYNC_AVAILABLE, MOTOR_AVAILABLE
+        from agno.db.mongo.async_mongo import MOTOR_AVAILABLE, PYMONGO_ASYNC_AVAILABLE
 
         db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
-        
+
         # Should prefer PyMongo async if available, else Motor
         if PYMONGO_ASYNC_AVAILABLE:
             assert db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC
@@ -269,7 +275,7 @@ class TestAsyncMongoDbClientTypeDetection:
 
     def test_unknown_client_type_defaults_to_preferred(self):
         """Test that unknown client type defaults to preferred available client"""
-        from agno.db.mongo.async_mongo import PYMONGO_ASYNC_AVAILABLE, MOTOR_AVAILABLE
+        from agno.db.mongo.async_mongo import MOTOR_AVAILABLE, PYMONGO_ASYNC_AVAILABLE
 
         # Create a mock client that doesn't match either type
         mock_client = Mock()
@@ -277,7 +283,7 @@ class TestAsyncMongoDbClientTypeDetection:
         mock_client.__class__.__module__ = "unknown.module"
 
         db = AsyncMongoDb(db_client=mock_client, db_name="test_db")
-        
+
         # Should default to preferred client
         if PYMONGO_ASYNC_AVAILABLE:
             assert db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC
