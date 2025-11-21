@@ -316,16 +316,16 @@ class AgentOS:
         """Initialize and configure all agents for AgentOS usage."""
         if not self.agents:
             return
-
         for agent in self.agents:
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
-                    # Checking if the tool is a MCPTools or MultiMCPTools instance
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
-                        if tool not in self.mcp_tools:
-                            self.mcp_tools.append(tool)
+                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    if hasattr(type(tool), "__mro__"):
+                        mro_names = {cls.__name__ for cls in type(tool).__mro__}
+                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                            if tool not in self.mcp_tools:
+                                self.mcp_tools.append(tool)
 
             agent.initialize_agent()
 
