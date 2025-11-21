@@ -12,6 +12,7 @@ from agno.models.utils import get_model
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
+    OptimizeMemoriesRequest,
     OptimizeMemoriesResponse,
     UserMemoryCreateSchema,
     UserMemorySchema,
@@ -545,17 +546,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def optimize_memories(
-        user_id: str = Query(..., description="User ID to optimize memories for"),
-        model: Optional[str] = Query(
-            default=None,
-            description="Model to use for optimization in format 'provider:model_id' (e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022', 'google:gemini-2.0-flash-exp'). If not specified, uses MemoryManager's default model (gpt-4o).",
-        ),
-        apply: bool = Query(
-            default=True,
-            description="If True, apply optimization changes to database. If False, return preview only without saving.",
-        ),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for optimization"),
-        table: Optional[str] = Query(default=None, description="Table to use for optimization"),
+        request: OptimizeMemoriesRequest,
     ) -> OptimizeMemoriesResponse:
         """Optimize user memories using the default summarize strategy."""
         from agno.memory import MemoryManager
@@ -563,12 +554,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         try:
             # Get database instance
-            db = await get_db(dbs, db_id, table)
+            db = await get_db(dbs, request.db_id, request.table)
 
             # Create memory manager with optional model
-            if model:
+            if request.model:
                 try:
-                    model_instance = get_model(model)
+                    model_instance = get_model(request.model)
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))
                 memory_manager = MemoryManager(model=model_instance, db=db)
@@ -578,12 +569,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             # Get current memories to count tokens before optimization
             if isinstance(db, AsyncBaseDb):
-                memories_before = await memory_manager.aget_user_memories(user_id=user_id)
+                memories_before = await memory_manager.aget_user_memories(user_id=request.user_id)
             else:
-                memories_before = memory_manager.get_user_memories(user_id=user_id)
+                memories_before = memory_manager.get_user_memories(user_id=request.user_id)
 
             if not memories_before:
-                raise HTTPException(status_code=404, detail=f"No memories found for user {user_id}")
+                raise HTTPException(status_code=404, detail=f"No memories found for user {request.user_id}")
 
             # Count tokens before optimization
             from agno.memory.strategies.summarize import SummarizeStrategy
@@ -595,15 +586,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Optimize memories with default SUMMARIZE strategy
             if isinstance(db, AsyncBaseDb):
                 optimized_memories = await memory_manager.aoptimize_memories(
-                    user_id=user_id,
+                    user_id=request.user_id,
                     strategy=MemoryOptimizationStrategyType.SUMMARIZE,
-                    apply=apply,
+                    apply=request.apply,
                 )
             else:
                 optimized_memories = memory_manager.optimize_memories(
-                    user_id=user_id,
+                    user_id=request.user_id,
                     strategy=MemoryOptimizationStrategyType.SUMMARIZE,
-                    apply=apply,
+                    apply=request.apply,
                 )
 
             # Count tokens after optimization
@@ -641,7 +632,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to optimize memories for user {user_id}: {str(e)}")
+            logger.error(f"Failed to optimize memories for user {request.user_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to optimize memories: {str(e)}")
 
     return router
