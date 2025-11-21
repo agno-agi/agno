@@ -23,6 +23,9 @@ class SessionType(str, Enum):
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
+    # We assume the database to be up to date with the 2.0.0 release
+    default_schema_version = "2.0.0"
+
     def __init__(
         self,
         session_table: Optional[str] = None,
@@ -33,6 +36,7 @@ class BaseDb(ABC):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -44,6 +48,7 @@ class BaseDb(ABC):
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
+        self.versions_table_name = versions_table or "agno_schema_versions"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -52,6 +57,16 @@ class BaseDb(ABC):
     def _create_all_tables(self) -> None:
         """Create all tables for this database."""
         pass
+
+    # --- Schema Version ---
+    @abstractmethod
+    def get_latest_schema_version(self, table_name: str):
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_schema_version(self, table_name: str, version: str):
+        """Upsert the schema version into the database."""
+        raise NotImplementedError
 
     # --- Sessions ---
     @abstractmethod
@@ -489,6 +504,7 @@ class AsyncBaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -499,6 +515,7 @@ class AsyncBaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
+        self.versions_table_name = versions_table or "agno_schema_versions"
 
     @abstractmethod
     async def table_exists(self, table_name: str) -> bool:
@@ -513,6 +530,15 @@ class AsyncBaseDb(ABC):
         Returns:
             bool: True if the table exists, False otherwise
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_latest_schema_version(self, table_name: str) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_schema_version(self, table_name: str, version: str):
+        """Upsert the schema version into the database."""
         raise NotImplementedError
 
     # --- Sessions ---

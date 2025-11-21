@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
@@ -374,8 +375,6 @@ class Agent:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
 
     # Persist the events on the run response
     store_events: bool = False
@@ -420,6 +419,8 @@ class Agent:
     # Requires: a database (db) to store traces, and OpenTelemetry packages installed
     # When enabled, all agent runs, model calls, and tool executions are automatically traced
     tracing: bool = False
+    # Deprecated. Use stream_events instead
+    stream_intermediate_steps: Optional[bool] = None
 
     def __init__(
         self,
@@ -632,6 +633,13 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.stream_events = stream_events or stream_intermediate_steps
 
         self.store_events = store_events
@@ -1570,6 +1578,13 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -1648,6 +1663,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2491,6 +2512,13 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2541,6 +2569,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2823,6 +2857,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -3346,6 +3386,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -7220,7 +7266,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.aget_valid_filters()
+            valid_filters = await self.knowledge.async_get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -8126,6 +8172,7 @@ class Agent:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
@@ -8134,6 +8181,7 @@ class Agent:
             query (str): The query to search for.
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            validate_filters (bool): Whether to validate the filters against known valid filter keys.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -8144,23 +8192,23 @@ class Agent:
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            if validate_filters:
+                valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -8209,6 +8257,7 @@ class Agent:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
@@ -8218,22 +8267,22 @@ class Agent:
             num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            if validate_filters:
+                valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:  # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+                # Warn about invalid filter keys
+                if invalid_keys:  # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -9653,7 +9702,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9688,7 +9739,9 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9712,7 +9765,7 @@ class Agent:
 
         return Function.from_callable(
             search_knowledge_base_function,
-            name="search_knowledge_base_with_agentic_filters",
+            name="search_knowledge_base",
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
@@ -9773,6 +9826,8 @@ class Agent:
                 session_type=SessionType.AGENT,
                 limit=num_history_sessions,
                 user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
             )
 
             all_messages = []

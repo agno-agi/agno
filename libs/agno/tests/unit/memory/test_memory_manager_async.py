@@ -175,6 +175,12 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         parent_span_id: Optional[str] = None,
         limit: Optional[int] = 1000,
     ) -> List:
+    # -----------
+    
+    async def get_latest_schema_version(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def upsert_schema_version(self, *args, **kwargs):
         raise NotImplementedError
 
 
