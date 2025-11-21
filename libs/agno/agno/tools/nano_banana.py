@@ -28,8 +28,7 @@ except ImportError as exc:
         missing.append("Pillow")
 
     raise ImportError(
-        f"Missing required package(s): {', '.join(missing)}. "
-        f"Install using: pip install {' '.join(missing)}"
+        f"Missing required package(s): {', '.join(missing)}. Install using: pip install {' '.join(missing)}"
     ) from exc
 
 
@@ -40,12 +39,12 @@ ALLOWED_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9
 
 class NanoBananaTools(Toolkit):
     def __init__(
-            self,
-            model: str = "gemini-2.5-flash-image",
-            aspect_ratio: str = "1:1",
-            api_key: Optional[str] = None,
-            enable_create_image: bool = True,
-            **kwargs,
+        self,
+        model: str = "gemini-2.5-flash-image",
+        aspect_ratio: str = "1:1",
+        api_key: Optional[str] = None,
+        enable_create_image: bool = True,
+        **kwargs,
     ):
         self.model = model
         self.aspect_ratio = aspect_ratio
@@ -53,17 +52,13 @@ class NanoBananaTools(Toolkit):
 
         # Validate model
         if model not in ALLOWED_MODELS:
-            raise ValueError(
-                f"Invalid model '{model}'. Supported: {', '.join(ALLOWED_MODELS)}"
-            )
+            raise ValueError(f"Invalid model '{model}'. Supported: {', '.join(ALLOWED_MODELS)}")
 
         if self.aspect_ratio not in ALLOWED_RATIOS:
-            raise ValueError(
-                f"Invalid aspect_ratio '{self.aspect_ratio}'. Supported: {', '.join(ALLOWED_RATIOS)}"
-            )
+            raise ValueError(f"Invalid aspect_ratio '{self.aspect_ratio}'. Supported: {', '.join(ALLOWED_RATIOS)}")
 
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not set. Export it: export GOOGLE_API_KEY=<your-key>")
+            raise ValueError("GOOGLE_API_KEY not set. Export it: `export GOOGLE_API_KEY=<your-key>`")
 
         tools: List[Any] = []
         if enable_create_image:
@@ -73,9 +68,6 @@ class NanoBananaTools(Toolkit):
 
     def create_image(self, prompt: str) -> ToolResult:
         """Generate an image from a text prompt."""
-        if not self.api_key:
-            return ToolResult(content="Please set GOOGLE_API_KEY environment variable.")
-
         try:
             client = genai.Client(api_key=self.api_key)
             log_debug(f"NanoBanana generating image with prompt: {prompt}")
@@ -94,31 +86,31 @@ class NanoBananaTools(Toolkit):
             generated_images: List[Image] = []
             response_str = ""
 
-            if not hasattr(response, 'candidates') or not response.candidates:
+            if not hasattr(response, "candidates") or not response.candidates:
                 logger.warning("No candidates in response")
                 return ToolResult(content="No images were generated in the response")
 
             # Process each candidate
             for candidate in response.candidates:
-                if not hasattr(candidate, 'content') or not candidate.content:
+                if not hasattr(candidate, "content") or not candidate.content or not candidate.content.parts:
                     continue
 
                 for part in candidate.content.parts:
-                    if hasattr(part, 'text') and part.text:
+                    if hasattr(part, "text") and part.text:
                         response_str += part.text + "\n"
 
-                    if hasattr(part, 'inline_data') and part.inline_data:
+                    if hasattr(part, "inline_data") and part.inline_data:
                         try:
                             # Extract image data from the blob
                             image_data = part.inline_data.data
-                            mime_type = getattr(part.inline_data, 'mime_type', 'image/png')
+                            mime_type = getattr(part.inline_data, "mime_type", "image/png")
 
                             if image_data:
                                 pil_img = PILImage.open(BytesIO(image_data))
 
                                 # Save to buffer with proper format
                                 buffer = BytesIO()
-                                image_format = 'PNG' if 'png' in mime_type.lower() else 'JPEG'
+                                image_format = "PNG" if "png" in mime_type.lower() else "JPEG"
                                 pil_img.save(buffer, format=image_format)
                                 buffer.seek(0)
 
@@ -136,10 +128,12 @@ class NanoBananaTools(Toolkit):
                             logger.error(f"Failed to process image data: {img_exc}")
                             response_str += f"Failed to process image: {img_exc}\n"
 
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                log_debug(f"Token usage - Prompt: {response.usage_metadata.prompt_token_count}, "
-                          f"Response: {response.usage_metadata.candidates_token_count}, "
-                          f"Total: {response.usage_metadata.total_token_count}")
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                log_debug(
+                    f"Token usage - Prompt: {response.usage_metadata.prompt_token_count}, "
+                    f"Response: {response.usage_metadata.candidates_token_count}, "
+                    f"Total: {response.usage_metadata.total_token_count}"
+                )
 
             if generated_images:
                 return ToolResult(

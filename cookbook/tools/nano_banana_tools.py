@@ -1,17 +1,18 @@
-"""Run `pip install google-genai Pillow` to install dependencies."""
+"""
+Example showing how to use the NanoBananaTools toolkit with your Agno Agent.
+
+Usage:
+- Set your Google API key as environment variable: `export GOOGLE_API_KEY="your_api_key"`
+- Run `pip install agno google-genai Pillow` to install dependencies
+"""
 
 from pathlib import Path
+
 from agno.agent import Agent
 from agno.tools.nano_banana import NanoBananaTools
 
-# Set your API key as environment variable:
-# export GOOGLE_API_KEY="your-api-key-here"
-
 # Example 1: Basic NanoBanana agent with default settings
-agent = Agent(
-    tools=[NanoBananaTools()],  # Uses GOOGLE_API_KEY from environment
-    name="NanoBanana Image Generator"
-)
+agent = Agent(tools=[NanoBananaTools()], name="NanoBanana Image Generator")
 
 # Example 2: Custom aspect ratio generator
 portrait_agent = Agent(
@@ -27,7 +28,7 @@ portrait_agent = Agent(
 widescreen_agent = Agent(
     tools=[
         NanoBananaTools(
-            aspect_ratio="16:9",  # Widescreen format
+            aspect_ratio="16:9"  # Widescreen format
         )
     ],
     name="Widescreen NanoBanana Generator",
