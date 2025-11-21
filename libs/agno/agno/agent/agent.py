@@ -1545,7 +1545,7 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
-        if yield_run_response is not None:
+        if yield_run_response:
             warnings.warn(
                 "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
                 DeprecationWarning,
