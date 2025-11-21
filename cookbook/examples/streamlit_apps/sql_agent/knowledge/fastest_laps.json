@@ -1,0 +1,41 @@
+{
+    "table_name": "fastest_laps",
+    "table_description": "Contains data for the fastest laps recorded in races from 1950-2020, including driver and team details.",
+    "table_columns": [
+      {
+          "name": "index",
+          "type": "int",
+          "description": "Unique index for each entry."
+      },
+      {
+          "name": "year",
+          "type": "int",
+          "description": "Year of the race."
+      },
+      {
+          "name": "venue",
+          "type": "text",
+          "description": "Name of the race venue."
+      },
+      {
+          "name": "name",
+          "type": "text",
+          "description": "Name of the driver."
+      },
+      {
+          "name": "driver_tag",
+          "type": "text",
+          "description": "Abbreviated tag of the driver's name."
+      },
+      {
+          "name": "team",
+          "type": "text",
+          "description": "Name of the racing team."
+      },
+      {
+          "name": "lap_time",
+          "type": "text",
+          "description": "Fastest lap time recorded."
+      }
+    ]
+}
