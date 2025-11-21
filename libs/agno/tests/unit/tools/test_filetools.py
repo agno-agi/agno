@@ -21,6 +21,20 @@ def test_save_and_read_file():
         assert read_content == content
 
 
+def test_save_and_read_file_with_unicode():
+    """Test saving and reading a file containing non-ASCII (Czech) characters to ensure UTF-8 encoding works."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        content = "Příliš žluťoučký kůň úpěl ďábelské ódy"
+        result = file_tools.save_file(contents=content, file_name="czech.txt")
+        assert result == "czech.txt"
+
+        read_content = file_tools.read_file(file_name="czech.txt")
+        assert read_content == content
+
+
 def test_list_files_returns_relative_paths():
     """Test that list_files returns relative paths, not absolute paths."""
     with tempfile.TemporaryDirectory() as tmp_dir:
