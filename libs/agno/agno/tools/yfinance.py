@@ -1,8 +1,6 @@
 import json
 from typing import Any, List, Optional
 
-from curl_cffi.requests import Session
-
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
@@ -10,7 +8,6 @@ try:
     import yfinance as yf
 except ImportError:
     raise ImportError("`yfinance` not installed. Please install using `pip install yfinance`.")
-
 
 class YFinanceTools(Toolkit):
     """
@@ -20,7 +17,7 @@ class YFinanceTools(Toolkit):
 
     def __init__(
         self,
-        session: Optional[Session] = None,
+        session: Optional[Any] = None,
         **kwargs,
     ):
         tools: List[Any] = [
