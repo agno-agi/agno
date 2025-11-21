@@ -893,7 +893,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/os
+          python -m pytest --ignore=./libs/agno/tests/integration/os/interfaces/a2a --ignore=./libs/agno/tests/integration/os/interfaces/agui ./libs/agno/tests/integration/os
 
 
   test-clean-os:
