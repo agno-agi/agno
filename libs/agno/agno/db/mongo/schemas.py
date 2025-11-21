@@ -19,6 +19,9 @@ MEMORY_COLLECTION_SCHEMA = [
     {"key": "agent_id"},
     {"key": "team_id"},
     {"key": "topics"},
+    {"key": "input"},
+    {"key": "feedback"},
+    {"key": "created_at"},
     {"key": "updated_at"},
 ]
 

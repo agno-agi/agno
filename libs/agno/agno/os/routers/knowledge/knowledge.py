@@ -942,7 +942,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
-            filters=knowledge.get_filters(),
+            filters=knowledge.get_valid_filters(),
         )
 
     return router

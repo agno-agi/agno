@@ -39,6 +39,8 @@ USER_MEMORY_TABLE_SCHEMA = {
     "team_id": {"type": lambda: String(128), "nullable": True},
     "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
+    "feedback": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
@@ -106,6 +108,14 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 }
 
 
+VERSIONS_TABLE_SCHEMA = {
+    "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
+    "version": {"type": lambda: String(10), "nullable": False},
+    "created_at": {"type": lambda: String(128), "nullable": False, "index": True},
+    "updated_at": {"type": lambda: String(128), "nullable": True},
+}
+
+
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -121,6 +131,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
+        "versions": VERSIONS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

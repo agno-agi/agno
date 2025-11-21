@@ -25,6 +25,7 @@ def test_tool_use():
     assert response.content is not None
 
 
+@pytest.mark.skip(reason="Groq streaming is not working with tools at the moment.")
 def test_tool_use_stream():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
@@ -68,6 +69,7 @@ async def test_async_tool_use():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Groq streaming is not working with tools at the moment.")
 async def test_async_tool_use_stream():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),

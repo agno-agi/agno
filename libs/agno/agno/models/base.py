@@ -489,8 +489,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
-                self.client.close()  # type: ignore
-                self.client = None
+                try:
+                    self.client.close()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
         return model_response
 
@@ -669,8 +675,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
-                await self.client.aio.aclose()
-                self.client = None
+                try:
+                    await self.client.aio.aclose()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
         return model_response
 
@@ -1061,8 +1073,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
-                self.client.close()
-                self.client = None
+                try:
+                    self.client.close()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
     async def aprocess_response_stream(
         self,
@@ -1269,8 +1287,14 @@ class Model(ABC):
         finally:
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
-                await self.client.aio.aclose()
-                self.client = None
+                try:
+                    await self.client.aio.aclose()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
     def _populate_assistant_message_from_stream_data(
         self, assistant_message: Message, stream_data: MessageData
@@ -1538,44 +1562,49 @@ class Model(ABC):
         function_call_output: str = ""
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
-            for item in function_execution_result.result:
-                # This function yields agent/team/workflow run events
-                if (
-                    isinstance(item, tuple(get_args(RunOutputEvent)))
-                    or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
-                    or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
-                ):
-                    # We only capture content events for output accumulation
-                    if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                        if item.content is not None and isinstance(item.content, BaseModel):
-                            function_call_output += item.content.model_dump_json()
-                        else:
-                            # Capture output
-                            function_call_output += item.content or ""
-
-                        if function_call.function.show_result and item.content is not None:
-                            yield ModelResponse(content=item.content)
-
-                    if isinstance(item, CustomEvent):
-                        function_call_output += str(item)
-
-                    # For WorkflowCompletedEvent, extract content for final output
-                    from agno.run.workflow import WorkflowCompletedEvent
-
-                    if isinstance(item, WorkflowCompletedEvent):
-                        if item.content is not None:
-                            if isinstance(item.content, BaseModel):
+            try:
+                for item in function_execution_result.result:
+                    # This function yields agent/team/workflow run events
+                    if (
+                        isinstance(item, tuple(get_args(RunOutputEvent)))
+                        or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
+                        or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
+                    ):
+                        # We only capture content events for output accumulation
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
                             else:
-                                function_call_output += str(item.content)
+                                # Capture output
+                                function_call_output += item.content or ""
 
-                    # Yield the event itself to bubble it up
-                    yield item
+                            if function_call.function.show_result and item.content is not None:
+                                yield ModelResponse(content=item.content)
 
-                else:
-                    function_call_output += str(item)
-                    if function_call.function.show_result and item is not None:
-                        yield ModelResponse(content=str(item))
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+
+                        # For WorkflowCompletedEvent, extract content for final output
+                        from agno.run.workflow import WorkflowCompletedEvent
+
+                        if isinstance(item, WorkflowCompletedEvent):
+                            if item.content is not None:
+                                if isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    function_call_output += str(item.content)
+
+                        # Yield the event itself to bubble it up
+                        yield item
+
+                    else:
+                        function_call_output += str(item)
+                        if function_call.function.show_result and item is not None:
+                            yield ModelResponse(content=str(item))
+            except Exception as e:
+                log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                function_call.error = str(e)
+                function_call_success = False
         else:
             from agno.tools.function import ToolResult
 
@@ -2061,32 +2090,37 @@ class Model(ABC):
                 function_call_output = async_function_call_output
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
-                for item in function_call.result:
-                    # This function yields agent/team/workflow run events
-                    if isinstance(
-                        item,
-                        tuple(get_args(RunOutputEvent))
-                        + tuple(get_args(TeamRunOutputEvent))
-                        + tuple(get_args(WorkflowRunOutputEvent)),
-                    ):
-                        # We only capture content events
-                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                            if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
-                            else:
-                                # Capture output
-                                function_call_output += item.content or ""
+                try:
+                    for item in function_call.result:
+                        # This function yields agent/team/workflow run events
+                        if isinstance(
+                            item,
+                            tuple(get_args(RunOutputEvent))
+                            + tuple(get_args(TeamRunOutputEvent))
+                            + tuple(get_args(WorkflowRunOutputEvent)),
+                        ):
+                            # We only capture content events
+                            if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                                if item.content is not None and isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    # Capture output
+                                    function_call_output += item.content or ""
 
-                            if function_call.function.show_result and item.content is not None:
-                                yield ModelResponse(content=item.content)
-                                continue
+                                if function_call.function.show_result and item.content is not None:
+                                    yield ModelResponse(content=item.content)
+                                    continue
 
-                        # Yield the event itself to bubble it up
-                        yield item
-                    else:
-                        function_call_output += str(item)
-                        if function_call.function.show_result and item is not None:
-                            yield ModelResponse(content=str(item))
+                            # Yield the event itself to bubble it up
+                            yield item
+                        else:
+                            function_call_output += str(item)
+                            if function_call.function.show_result and item is not None:
+                                yield ModelResponse(content=str(item))
+                except Exception as e:
+                    log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                    function_call.error = str(e)
+                    function_call_success = False
             else:
                 from agno.tools.function import ToolResult
 

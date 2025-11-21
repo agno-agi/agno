@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
-from pymongo.cursor import Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
