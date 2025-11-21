@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
+    from sqlalchemy import Column, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -1210,8 +1210,8 @@ class SqliteDb(BaseDb):
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
                 if topics is not None:
-                    topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
-                    stmt = stmt.where(and_(*topic_conditions))
+                    for topic in topics:
+                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
                 if search_content is not None:
                     stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
 
@@ -1286,7 +1286,7 @@ class SqliteDb(BaseDb):
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Pagination
                 if limit is not None:
