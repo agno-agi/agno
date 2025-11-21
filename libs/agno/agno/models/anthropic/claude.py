@@ -400,20 +400,20 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
-        
+
         # Build betas list - include existing betas and add new one if needed
         betas_list = list(self.betas) if self.betas else []
-        
+
         # Add structured outputs beta header if using structured outputs
         if self._using_structured_outputs(response_format, tools):
             beta_header = "structured-outputs-2025-11-13"
             if beta_header not in betas_list:
                 betas_list.append(beta_header)
-        
+
         # Include betas if any are present
         if betas_list:
             _request_params["betas"] = betas_list
-            
+
         if self.context_management:
             _request_params["context_management"] = self.context_management
         if self.mcp_servers:
@@ -442,11 +442,7 @@ class Claude(Model):
             return
 
         if not self._supports_structured_outputs():
-            legacy_models = "\n  - ".join(sorted(self.NON_STRUCTURED_OUTPUT_MODELS))
-            raise ValueError(
-                f"Model '{self.id}' does not support structured outputs.\n\n"
-
-            )
+            raise ValueError(f"Model '{self.id}' does not support structured outputs.\n\n")
 
     def _prepare_request_kwargs(
         self,
