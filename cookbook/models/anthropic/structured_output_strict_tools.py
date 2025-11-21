@@ -56,5 +56,4 @@ agent = Agent(
 )
 
 # The agent will use strict tool validation and return structured output
-response = agent.run("What's the weather like in San Francisco?")
-print(f"Weather Info: {response.content}")
+agent.print_response("What's the weather like in San Francisco?")
