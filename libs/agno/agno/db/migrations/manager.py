@@ -34,6 +34,9 @@ class MigrationManager:
         # If not target version is provided, use the latest available version
         if not target_version:
             _target_version = self.latest_schema_version
+            log_info(
+                f"No target version provided. Will migrate to the latest available version: {str(_target_version)}"
+            )
         else:
             _target_version = packaging_version.parse(target_version)
 
@@ -61,6 +64,10 @@ class MigrationManager:
                 current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
             else:
                 current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+
+            if current_version is None:
+                log_warning(f"Skipping up migration: No version found for table {table_name}.")
+                continue
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version:
