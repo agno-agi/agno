@@ -58,6 +58,7 @@ class TestRedshiftTools:
     def redshift_tools(self, mock_connection, mock_cursor):
         """Create RedshiftTools instance with mocked connection."""
         mock_connection.cursor.return_value = mock_cursor
+        mock_connection.close = Mock()
 
         with patch("redshift_connector.connect", return_value=mock_connection):
             tools = RedshiftTools(
@@ -68,12 +69,10 @@ class TestRedshiftTools:
                 password="testpassword",
                 table_schema="company_data",
             )
-            tools._connection = mock_connection
             yield tools
 
-    def test_connection_properties(self, redshift_tools, mock_connection):
-        """Test that connection is properly configured."""
-        assert redshift_tools._connection == mock_connection
+    def test_connection_properties(self, redshift_tools):
+        """Test that connection properties are properly configured."""
         assert redshift_tools.database == "testdb"
         assert redshift_tools.host == "localhost"
         assert redshift_tools.port == 5439
@@ -153,12 +152,10 @@ class TestRedshiftTools:
     def test_database_error_handling(self, redshift_tools, mock_connection, mock_cursor):
         """Test proper error handling for database errors."""
         mock_cursor.execute.side_effect = redshift_connector.Error("Table does not exist")
-        mock_connection.rollback = Mock()
 
         result = redshift_tools.show_tables()
 
         assert "Error executing query:" in result
-        mock_connection.rollback.assert_called_once()
 
     def test_export_file_error_handling(self, redshift_tools, mock_connection, mock_cursor):
         """Test error handling when file operations fail."""
@@ -168,13 +165,6 @@ class TestRedshiftTools:
             result = redshift_tools.export_table_to_path("employees", "/invalid/path/file.csv")
 
         assert "Error exporting table: Permission denied" in result
-
-    def test_context_manager_support(self, mock_connection):
-        """Test that RedshiftTools works as a context manager."""
-        with patch("redshift_connector.connect", return_value=mock_connection):
-            with RedshiftTools(host="localhost", database="testdb", user="testuser", password="testpass") as tools:
-                assert tools is not None
-                assert hasattr(tools, "close")
 
     def test_sql_injection_prevention(self, redshift_tools, mock_connection, mock_cursor):
         """Test that SQL injection attempts are safely handled."""
@@ -188,8 +178,13 @@ class TestRedshiftTools:
         assert call_args[0][1] == ("company_data", malicious_table)
         assert "DROP TABLE" not in call_args[0][0]
 
-    def test_iam_authentication_config(self, mock_connection):
+    def test_iam_authentication_config(self, mock_connection, mock_cursor):
         """Test IAM authentication configuration."""
+        mock_connection.cursor.return_value = mock_cursor
+        mock_connection.close = Mock()
+        mock_cursor.description = [("result",)]
+        mock_cursor.fetchall.return_value = [(1,)]
+
         with patch("redshift_connector.connect", return_value=mock_connection) as mock_connect:
             tools = RedshiftTools(
                 host="test-workgroup.123456.us-east-1.redshift-serverless.amazonaws.com",
@@ -198,7 +193,8 @@ class TestRedshiftTools:
                 profile="test-profile",
                 table_schema="public",
             )
-            _ = tools.connection
+            # Trigger a connection by running a query
+            tools.run_query("SELECT 1")
 
             mock_connect.assert_called_once()
             call_kwargs = mock_connect.call_args[1]

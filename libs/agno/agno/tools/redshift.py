@@ -12,9 +12,34 @@ from agno.utils.log import log_debug, log_error
 
 
 class RedshiftTools(Toolkit):
+    """
+    A toolkit for interacting with Amazon Redshift databases.
+
+    Supports these authentication methods:
+    - Standard username and password authentication
+    - IAM authentication with AWS profile
+    - IAM authentication with AWS credentials
+
+    Args:
+        host (Optional[str]): Redshift cluster endpoint hostname. Falls back to REDSHIFT_HOST env var.
+        port (int): Redshift cluster port number. Default is 5439.
+        database (Optional[str]): Database name to connect to. Falls back to REDSHIFT_DATABASE env var.
+        user (Optional[str]): Username for standard authentication.
+        password (Optional[str]): Password for standard authentication.
+        iam (bool): Enable IAM authentication. Default is False.
+        cluster_identifier (Optional[str]): Redshift cluster identifier for IAM auth with provisioned clusters. Falls back to REDSHIFT_CLUSTER_IDENTIFIER env var.
+        region (Optional[str]): AWS region for IAM credential retrieval. Falls back to AWS_REGION or AWS_DEFAULT_REGION env vars.
+        db_user (Optional[str]): Database user for IAM auth with provisioned clusters. Falls back to REDSHIFT_DB_USER env var.
+        access_key_id (Optional[str]): AWS access key ID for IAM auth. Falls back to AWS_ACCESS_KEY_ID env var.
+        secret_access_key (Optional[str]): AWS secret access key for IAM auth. Falls back to AWS_SECRET_ACCESS_KEY env var.
+        session_token (Optional[str]): AWS session token for temporary credentials. Falls back to AWS_SESSION_TOKEN env var.
+        profile (Optional[str]): AWS profile name for IAM auth. Falls back to AWS_PROFILE env var.
+        ssl (bool): Enable SSL connection. Default is True.
+        table_schema (str): Default schema for table operations. Default is "public".
+    """
+
     def __init__(
         self,
-        connection: Optional[Any] = None,
         # Connection parameters
         host: Optional[str] = None,
         port: int = 5439,
@@ -37,8 +62,6 @@ class RedshiftTools(Toolkit):
         table_schema: str = "public",
         **kwargs,
     ):
-        self._connection: Optional[Any] = connection
-
         # Connection parameters
         self.host: Optional[str] = host or getenv("REDSHIFT_HOST")
         self.port: int = port
@@ -75,113 +98,80 @@ class RedshiftTools(Toolkit):
 
         super().__init__(name="redshift_tools", tools=tools, **kwargs)
 
-    @property
-    def connection(self) -> Any:
-        """
-        Returns the Redshift connection.
+    def _get_connection_kwargs(self) -> Dict[str, Any]:
+        """Build connection kwargs from instance."""
+        connection_kwargs: Dict[str, Any] = {}
 
-        Supports multiple authentication methods:
-        1. Standard authentication (user/password)
-        2. IAM with AWS profile
-        3. IAM with explicit credentials (access_key_id, secret_access_key, session_token)
+        # Common connection parameters
+        if self.host:
+            connection_kwargs["host"] = self.host
+        if self.port:
+            connection_kwargs["port"] = self.port
+        if self.database:
+            connection_kwargs["database"] = self.database
+        connection_kwargs["ssl"] = self.ssl
 
-        For Serverless endpoints, the connector auto-detects from host pattern.
+        # IAM Authentication
+        if self.iam:
+            connection_kwargs["iam"] = True
 
-        :return redshift_connector.Connection: Redshift connection
-        """
-        if self._connection is None:
-            log_debug("Establishing new Redshift connection.")
-            connection_kwargs: Dict[str, Any] = {}
+            # For provisioned clusters (not serverless)
+            if self.cluster_identifier:
+                connection_kwargs["cluster_identifier"] = self.cluster_identifier
+                # db_user required for provisioned clusters with IAM
+                if self.db_user:
+                    connection_kwargs["db_user"] = self.db_user
 
-            # Common connection parameters
-            if self.host:
-                connection_kwargs["host"] = self.host
-            if self.port:
-                connection_kwargs["port"] = self.port
-            if self.database:
-                connection_kwargs["database"] = self.database
-            connection_kwargs["ssl"] = self.ssl
+            # Region for IAM credential retrieval
+            if self.region:
+                connection_kwargs["region"] = self.region
 
-            # IAM Authentication
-            if self.iam:
-                connection_kwargs["iam"] = True
-
-                # For provisioned clusters (not serverless)
-                if self.cluster_identifier:
-                    connection_kwargs["cluster_identifier"] = self.cluster_identifier
-                    # db_user required for provisioned clusters with IAM
-                    if self.db_user:
-                        connection_kwargs["db_user"] = self.db_user
-
-                # Region for IAM credential retrieval
-                if self.region:
-                    connection_kwargs["region"] = self.region
-
-                # AWS credentials - either profile or explicit
-                if self.profile:
-                    connection_kwargs["profile"] = self.profile
-                else:
-                    # Explicit AWS credentials
-                    if self.access_key_id:
-                        connection_kwargs["access_key_id"] = self.access_key_id
-                    if self.secret_access_key:
-                        connection_kwargs["secret_access_key"] = self.secret_access_key
-                    if self.session_token:
-                        connection_kwargs["session_token"] = self.session_token
-
+            # AWS credentials - either profile or explicit
+            if self.profile:
+                connection_kwargs["profile"] = self.profile
             else:
-                # Standard username/password authentication
-                if self.user:
-                    connection_kwargs["user"] = self.user
-                if self.password:
-                    connection_kwargs["password"] = self.password
+                # Explicit AWS credentials
+                if self.access_key_id:
+                    connection_kwargs["access_key_id"] = self.access_key_id
+                if self.secret_access_key:
+                    connection_kwargs["secret_access_key"] = self.secret_access_key
+                if self.session_token:
+                    connection_kwargs["session_token"] = self.session_token
 
-            self._connection = redshift_connector.connect(**connection_kwargs)
+        else:
+            # Standard username/password authentication
+            if self.user:
+                connection_kwargs["user"] = self.user
+            if self.password:
+                connection_kwargs["password"] = self.password
 
-        return self._connection
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def close(self):
-        """Closes the database connection if it's open."""
-        if self._connection is not None:
-            log_debug("Closing Redshift connection.")
-            try:
-                self._connection.close()
-            except Exception:
-                pass
-            self._connection = None
+        return connection_kwargs
 
     def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
-            with self.connection.cursor() as cursor:
-                log_debug(f"Running Redshift Query: {query} with Params: {params}")
-                cursor.execute(query, params)
+            connection = redshift_connector.connect(**self._get_connection_kwargs())
+            try:
+                with connection.cursor() as cursor:
+                    log_debug("Running Redshift query")
+                    cursor.execute(query, params)
 
-                if cursor.description is None:
-                    # redshift_connector cursor doesn't have statusmessage attribute
-                    return "Query executed successfully."
+                    if cursor.description is None:
+                        return "Query executed successfully."
 
-                columns = [desc[0] for desc in cursor.description]
-                rows = cursor.fetchall()
+                    columns = [desc[0] for desc in cursor.description]
+                    rows = cursor.fetchall()
 
-                if not rows:
-                    return f"Query returned no results.\nColumns: {', '.join(columns)}"
+                    if not rows:
+                        return f"Query returned no results.\nColumns: {', '.join(columns)}"
 
-                header = ",".join(columns)
-                data_rows = [",".join(map(str, row)) for row in rows]
-                return f"{header}\n" + "\n".join(data_rows)
+                    header = ",".join(columns)
+                    data_rows = [",".join(map(str, row)) for row in rows]
+                    return f"{header}\n" + "\n".join(data_rows)
+            finally:
+                connection.close()
 
         except redshift_connector.Error as e:
             log_error(f"Database error: {e}")
-            try:
-                self.connection.rollback()
-            except Exception:
-                pass
             return f"Error executing query: {e}"
         except Exception as e:
             log_error(f"An unexpected error occurred: {e}")
@@ -221,77 +211,81 @@ class RedshiftTools(Toolkit):
             A string containing a summary of the table.
         """
         try:
-            with self.connection.cursor() as cursor:
-                # First, get column information using a parameterized query
-                schema_query = """
-                    SELECT column_name, data_type
-                    FROM information_schema.columns
-                    WHERE table_schema = %s AND table_name = %s;
-                """
-                cursor.execute(schema_query, (self.table_schema, table))
-                columns = cursor.fetchall()
-                if not columns:
-                    return f"Error: Table '{table}' not found in schema '{self.table_schema}'."
+            connection = redshift_connector.connect(**self._get_connection_kwargs())
+            try:
+                with connection.cursor() as cursor:
+                    # First, get column information using a parameterized query
+                    schema_query = """
+                        SELECT column_name, data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = %s;
+                    """
+                    cursor.execute(schema_query, (self.table_schema, table))
+                    columns = cursor.fetchall()
+                    if not columns:
+                        return f"Error: Table '{table}' not found in schema '{self.table_schema}'."
 
-                summary_parts = [f"Summary for table: {table}\n"]
+                    summary_parts = [f"Summary for table: {table}\n"]
 
-                # Redshift uses schema.table format for fully qualified names
-                full_table_name = f'"{self.table_schema}"."{table}"'
+                    # Redshift uses schema.table format for fully qualified names
+                    full_table_name = f'"{self.table_schema}"."{table}"'
 
-                for col in columns:
-                    col_name = col[0]
-                    data_type = col[1]
+                    for col in columns:
+                        col_name = col[0]
+                        data_type = col[1]
 
-                    query = None
-                    if any(
-                        t in data_type.lower()
-                        for t in [
-                            "integer",
-                            "int",
-                            "bigint",
-                            "smallint",
-                            "numeric",
-                            "decimal",
-                            "real",
-                            "double precision",
-                            "float",
-                        ]
-                    ):
-                        query = f"""
-                            SELECT
-                                COUNT(*) AS total_rows,
-                                COUNT("{col_name}") AS non_null_rows,
-                                MIN("{col_name}") AS min,
-                                MAX("{col_name}") AS max,
-                                AVG("{col_name}") AS average,
-                                STDDEV("{col_name}") AS std_deviation
-                            FROM {full_table_name};
-                        """
-                    elif any(t in data_type.lower() for t in ["char", "varchar", "text", "uuid"]):
-                        query = f"""
-                            SELECT
-                                COUNT(*) AS total_rows,
-                                COUNT("{col_name}") AS non_null_rows,
-                                COUNT(DISTINCT "{col_name}") AS unique_values,
-                                AVG(LEN("{col_name}")) as avg_length
-                            FROM {full_table_name};
-                        """
+                        query = None
+                        if any(
+                            t in data_type.lower()
+                            for t in [
+                                "integer",
+                                "int",
+                                "bigint",
+                                "smallint",
+                                "numeric",
+                                "decimal",
+                                "real",
+                                "double precision",
+                                "float",
+                            ]
+                        ):
+                            query = f"""
+                                SELECT
+                                    COUNT(*) AS total_rows,
+                                    COUNT("{col_name}") AS non_null_rows,
+                                    MIN("{col_name}") AS min,
+                                    MAX("{col_name}") AS max,
+                                    AVG("{col_name}") AS average,
+                                    STDDEV("{col_name}") AS std_deviation
+                                FROM {full_table_name};
+                            """
+                        elif any(t in data_type.lower() for t in ["char", "varchar", "text", "uuid"]):
+                            query = f"""
+                                SELECT
+                                    COUNT(*) AS total_rows,
+                                    COUNT("{col_name}") AS non_null_rows,
+                                    COUNT(DISTINCT "{col_name}") AS unique_values,
+                                    AVG(LEN("{col_name}")) as avg_length
+                                FROM {full_table_name};
+                            """
 
-                    if query:
-                        cursor.execute(query)
-                        stats = cursor.fetchone()
-                        summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
-                        if stats is not None:
-                            stats_dict = dict(zip([desc[0] for desc in cursor.description], stats))
-                            for key, value in stats_dict.items():
-                                val_str = (
-                                    f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
-                                )
-                                summary_parts.append(f"  {key}: {val_str}")
-                        else:
-                            summary_parts.append("  No statistics available")
+                        if query:
+                            cursor.execute(query)
+                            stats = cursor.fetchone()
+                            summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
+                            if stats is not None:
+                                stats_dict = dict(zip([desc[0] for desc in cursor.description], stats))
+                                for key, value in stats_dict.items():
+                                    val_str = (
+                                        f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
+                                    )
+                                    summary_parts.append(f"  {key}: {val_str}")
+                            else:
+                                summary_parts.append("  No statistics available")
 
-                return "\n".join(summary_parts)
+                    return "\n".join(summary_parts)
+            finally:
+                connection.close()
 
         except redshift_connector.Error as e:
             return f"Error summarizing table: {e}"
@@ -319,26 +313,30 @@ class RedshiftTools(Toolkit):
         Returns:
             A confirmation message with the file path.
         """
-        log_debug(f"Exporting Table {table} as CSV to local path {path}")
+        log_debug(f"Exporting table {table} to {path}")
 
         full_table_name = f'"{self.table_schema}"."{table}"'
         stmt = f"SELECT * FROM {full_table_name};"
 
         try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(stmt)
+            connection = redshift_connector.connect(**self._get_connection_kwargs())
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(stmt)
 
-                if cursor.description is None:
-                    return f"Error: Query returned no description for table '{table}'."
+                    if cursor.description is None:
+                        return f"Error: Query returned no description for table '{table}'."
 
-                columns = [desc[0] for desc in cursor.description]
+                    columns = [desc[0] for desc in cursor.description]
 
-                with open(path, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(columns)
-                    writer.writerows(cursor)
+                    with open(path, "w", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        writer.writerow(columns)
+                        writer.writerows(cursor)
 
-            return f"Successfully exported table '{table}' to '{path}'."
+                return f"Successfully exported table '{table}' to '{path}'."
+            finally:
+                connection.close()
         except (redshift_connector.Error, IOError) as e:
             return f"Error exporting table: {e}"
 

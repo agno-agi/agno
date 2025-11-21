@@ -16,11 +16,8 @@ from agno.tools.redshift import RedshiftTools
 agent = Agent(
     tools=[
         RedshiftTools(
-            host="your-cluster.abc123.us-east-1.redshift.amazonaws.com",
-            database="dev",
             user="your-username",
             password="your-password",
-            table_schema="public",
         )
     ]
 )
@@ -30,7 +27,6 @@ agent_iam = Agent(
     tools=[
         RedshiftTools(
             iam=True,
-            table_schema="public",
         )
     ]
 )
