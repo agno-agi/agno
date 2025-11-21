@@ -26,6 +26,12 @@ class MovieScript(BaseModel):
     )
 
 
+class TVShow(BaseModel):
+    title: str = Field(..., description="TV show title")
+    seasons: int = Field(..., description="Number of seasons")
+    premise: str = Field(..., description="Show premise")
+
+
 # Agent that uses structured outputs
 structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o-2024-08-06"),
@@ -50,3 +56,8 @@ json_mode_agent = Agent(
 
 asyncio.run(structured_output_agent.aprint_response("New York"))
 asyncio.run(json_mode_agent.aprint_response("New York"))
+
+# Override output_schema for a single run
+print(f"Schema before override: {structured_output_agent.output_schema.__name__}")
+asyncio.run(structured_output_agent.aprint_response("New York", output_schema=TVShow))
+print(f"Schema after override: {structured_output_agent.output_schema.__name__}")
