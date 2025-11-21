@@ -78,7 +78,7 @@ na_sales = Agent(
 
 na_sales.print_response(
     "Revenue performance and top selling products",
-    # Use "location" instead of "region" and we should receive a warning that the key is invalid
+    # Use "location" instead of "region" and we won't receive any content because the key is invalid
     knowledge_filters={"location": "north_america", "data_type": "sales"},
     markdown=True,
 )
