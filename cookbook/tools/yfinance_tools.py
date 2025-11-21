@@ -10,6 +10,8 @@ Run: `pip install yfinance` to install the dependencies
 
 from agno.agent import Agent
 from agno.tools.yfinance import YFinanceTools
+from curl_cffi.requests import Session
+
 
 # Example 1: All financial functions available (default behavior)
 agent_full = Agent(
@@ -88,7 +90,6 @@ agent_analyst = Agent(
 
 
 # If you want to disable SSL verification, you can do it like this:
-from curl_cffi.requests import Session
 session = Session()
 session.verify = False  # Disable SSL verification (use with caution)
 yfinance_tools = YFinanceTools(session=session)

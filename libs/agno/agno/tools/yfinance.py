@@ -1,9 +1,10 @@
 import json
 from typing import Any, List, Optional
 
+from curl_cffi.requests import Session
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
-from curl_cffi.requests import Session
 
 try:
     import yfinance as yf
@@ -65,7 +66,7 @@ class YFinanceTools(Toolkit):
             str: JSON containing company profile and overview.
         """
         try:
-            company_info_full = yf.Ticker(symbol,session=self.session).info
+            company_info_full = yf.Ticker(symbol, session=self.session).info
             if company_info_full is None:
                 return f"Could not fetch company info for {symbol}"
 
@@ -122,7 +123,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching historical prices for {symbol}")
-            stock = yf.Ticker(symbol,session=self.session)
+            stock = yf.Ticker(symbol, session=self.session)
             historical_price = stock.history(period=period, interval=interval)
             return historical_price.to_json(orient="index")
         except Exception as e:
@@ -152,7 +153,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching fundamentals for {symbol}")
-            stock = yf.Ticker(symbol,session=self.session)
+            stock = yf.Ticker(symbol, session=self.session)
             info = stock.info
             fundamentals = {
                 "symbol": symbol,
@@ -183,7 +184,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching income statements for {symbol}")
-            stock = yf.Ticker(symbol,session=self.session)
+            stock = yf.Ticker(symbol, session=self.session)
             financials = stock.financials
             return financials.to_json(orient="index")
         except Exception as e:
@@ -200,7 +201,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching key financial ratios for {symbol}")
-            stock = yf.Ticker(symbol,session=self.session)
+            stock = yf.Ticker(symbol, session=self.session)
             key_ratios = stock.info
             return json.dumps(key_ratios, indent=2)
         except Exception as e:
@@ -217,7 +218,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching analyst recommendations for {symbol}")
-            stock = yf.Ticker(symbol,session=self.session)
+            stock = yf.Ticker(symbol, session=self.session)
             recommendations = stock.recommendations
             return recommendations.to_json(orient="index")
         except Exception as e:
@@ -235,7 +236,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching company news for {symbol}")
-            news = yf.Ticker(symbol,session=self.session).news
+            news = yf.Ticker(symbol, session=self.session).news
             return json.dumps(news[:num_stories], indent=2)
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
@@ -253,7 +254,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching technical indicators for {symbol}")
-            indicators = yf.Ticker(symbol,session=self.session).history(period=period)
+            indicators = yf.Ticker(symbol, session=self.session).history(period=period)
             return indicators.to_json(orient="index")
         except Exception as e:
             return f"Error fetching technical indicators for {symbol}: {e}"
