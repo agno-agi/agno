@@ -237,7 +237,7 @@ class Workflow:
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
 
-        if stream_intermediate_steps is not None:
+        if stream_intermediate_steps:
             warnings.warn(
                 "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
                 DeprecationWarning,
