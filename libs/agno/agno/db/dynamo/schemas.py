@@ -74,6 +74,7 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
+        {"AttributeName": "created_at", "AttributeType": "S"},
         {"AttributeName": "updated_at", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
