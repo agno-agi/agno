@@ -142,6 +142,14 @@ class GcsJsonDb(BaseDb):
             log_error(f"Error writing to the {blob_name} JSON file in GCS: {e}")
             return
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:
