@@ -1,8 +1,9 @@
 import json
-from typing import Any, List
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
+from curl_cffi.requests import Session
 
 try:
     import yfinance as yf
@@ -18,7 +19,7 @@ class YFinanceTools(Toolkit):
 
     def __init__(
         self,
-        session=None,
+        session: Optional[Session] = None,
         **kwargs,
     ):
         tools: List[Any] = [
@@ -32,7 +33,7 @@ class YFinanceTools(Toolkit):
             self.get_technical_indicators,
             self.get_historical_stock_prices,
         ]
-        self.session=session
+        self.session = session
         super().__init__(name="yfinance_tools", tools=tools, **kwargs)
 
     def get_current_stock_price(self, symbol: str) -> str:
@@ -47,7 +48,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching current price for {symbol}")
-            stock = yf.Ticker(symbol,session=self.session)
+            stock = yf.Ticker(symbol, session=self.session)
             # Use "regularMarketPrice" for regular market hours, or "currentPrice" for pre/post market
             current_price = stock.info.get("regularMarketPrice", stock.info.get("currentPrice"))
             return f"{current_price:.4f}" if current_price else f"Could not fetch current price for {symbol}"
