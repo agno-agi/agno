@@ -1258,7 +1258,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = (await sess.execute(count_stmt)).scalar() or 0
+                count = (await sess.execute(count_stmt)).scalar()
+                total_count = int(count) if count is not None else 0
 
                 # Pagination
                 if limit is not None:
