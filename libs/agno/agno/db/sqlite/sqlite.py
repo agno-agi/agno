@@ -2181,9 +2181,18 @@ class SqliteDb(BaseDb):
                     # Only update name if new trace is from a higher or equal level
                     should_update_name = new_level > existing_level
 
+                    # Parse existing start_time to calculate correct duration
+                    existing_start_time_str = existing.start_time
+                    if isinstance(existing_start_time_str, str):
+                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                    else:
+                        existing_start_time = trace.start_time
+                    
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
                     update_values = {
                         "end_time": trace.end_time.isoformat(),
-                        "duration_ms": trace.duration_ms,
+                        "duration_ms": recalculated_duration_ms,
                         "status": trace.status,
                         "name": trace.name if should_update_name else existing.name,
                     }
