@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
@@ -12,6 +13,7 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
 
@@ -24,6 +26,11 @@ try:
     )
     from anthropic import (
         AsyncAnthropic as AsyncAnthropicClient,
+    )
+    from anthropic.lib.streaming._beta_types import (
+        BetaRawContentBlockStartEvent,
+        ParsedBetaContentBlockStopEvent,
+        ParsedBetaMessageStopEvent,
     )
     from anthropic.types import (
         CitationPageLocation,
@@ -39,6 +46,7 @@ try:
     from anthropic.types import (
         Message as AnthropicMessage,
     )
+
 except ImportError as e:
     raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
 
@@ -99,6 +107,7 @@ class Claude(Model):
     api_key: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     client: Optional[AnthropicClient] = None
@@ -149,6 +158,16 @@ class Claude(Model):
             return self.client
 
         _client_params = self._get_client_params()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["http_client"] = get_default_sync_client()
         self.client = AnthropicClient(**_client_params)
         return self.client
 
@@ -160,6 +179,18 @@ class Claude(Model):
             return self.async_client
 
         _client_params = self._get_client_params()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["http_client"] = get_default_async_client()
+        else:
+            # Use global async client when no custom http_client is provided
+            _client_params["http_client"] = get_default_async_client()
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
@@ -634,6 +665,9 @@ class Claude(Model):
             ContentBlockStopEvent,
             MessageStopEvent,
             BetaRawContentBlockDeltaEvent,
+            BetaRawContentBlockStartEvent,
+            ParsedBetaContentBlockStopEvent,
+            ParsedBetaMessageStopEvent,
         ],
     ) -> ModelResponse:
         """
@@ -647,11 +681,11 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
-        if isinstance(response, ContentBlockStartEvent):
+        if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
             if response.content_block.type == "redacted_reasoning_content":
                 model_response.redacted_reasoning_content = response.content_block.data
 
-        if isinstance(response, ContentBlockDeltaEvent):
+        if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
@@ -663,7 +697,7 @@ class Claude(Model):
                     "signature": response.delta.signature,
                 }
 
-        elif isinstance(response, ContentBlockStopEvent):
+        elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
@@ -684,7 +718,7 @@ class Claude(Model):
                 ]
 
         # Capture citations from the final response
-        elif isinstance(response, MessageStopEvent):
+        elif isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)):
             model_response.content = ""
             model_response.citations = Citations(raw=[], urls=[], documents=[])
             for block in response.message.content:  # type: ignore

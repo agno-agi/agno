@@ -24,5 +24,4 @@ reasoning_agent.print_response(
     Compare their market positions, growth metrics, and future outlook.""",
     stream=True,
     show_full_reasoning=True,
-    stream_events=True,
 )
