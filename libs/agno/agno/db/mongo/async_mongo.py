@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
@@ -23,11 +24,6 @@ from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
-
-try:
-    import asyncio
-except ImportError:
-    raise ImportError("`asyncio` not available")
 
 try:
     from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase  # type: ignore
@@ -98,7 +94,7 @@ def _detect_client_type(client: Any) -> str:
     if client is None:
         return _CLIENT_TYPE_UNKNOWN
 
-    # Check PyMongo async first since it's preferred
+    # Check PyMongo async
     if PYMONGO_ASYNC_AVAILABLE and AsyncMongoClient is not None:
         try:
             if isinstance(client, AsyncMongoClient):
@@ -139,7 +135,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
     def __init__(
         self,
-        db_client: Optional[AsyncMongoClientType] = None,
+        db_client: Optional[Union["AsyncIOMotorClient", "AsyncMongoClient"]] = None,
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
@@ -172,7 +168,7 @@ class AsyncMongoDb(AsyncBaseDb):
             id (Optional[str]): ID of the database.
 
         Raises:
-            ValueError: If neither db_url nor db_client is provided.
+            ValueError: If neither db_url nor db_client is provided, or if db_client type is unsupported.
             ImportError: If neither motor nor pymongo async is installed.
         """
         if id is None:
@@ -195,9 +191,9 @@ class AsyncMongoDb(AsyncBaseDb):
         if db_client is not None:
             self._client_type = _detect_client_type(db_client)
             if self._client_type == self.CLIENT_TYPE_UNKNOWN:
-                # Default to PyMongo async if available, else Motor
-                self._client_type = (
-                    self.CLIENT_TYPE_PYMONGO_ASYNC if PYMONGO_ASYNC_AVAILABLE else self.CLIENT_TYPE_MOTOR
+                raise ValueError(
+                    f"Unsupported MongoDB client type: {type(db_client).__name__}. "
+                    "Only Motor (AsyncIOMotorClient) or PyMongo async (AsyncMongoClient) are supported."
                 )
         else:
             # Auto-select preferred library when creating from URL
