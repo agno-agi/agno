@@ -1899,6 +1899,8 @@ class Team:
             dependencies=dependencies,
             output_schema=output_schema,
         )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
 
         # Resolve callable dependencies if present
         if run_context.dependencies is not None:
@@ -2818,6 +2820,8 @@ class Team:
             metadata=metadata,
             output_schema=output_schema,
         )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (

@@ -1616,6 +1616,8 @@ class Agent:
             dependencies=dependencies,
             output_schema=output_schema,
         )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
 
         # Resolve dependencies
         if run_context.dependencies is not None:
@@ -2601,6 +2603,8 @@ class Agent:
             metadata=metadata,
             output_schema=output_schema,
         )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
