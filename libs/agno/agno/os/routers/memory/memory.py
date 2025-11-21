@@ -470,6 +470,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_db(dbs, db_id, table)
         try:
+            # Ensure limit and page are integers
+            limit = int(limit) if limit is not None else 20
+            page = int(page) if page is not None else 1
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 user_stats, total_count = await db.get_user_memory_stats(

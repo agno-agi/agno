@@ -39,6 +39,8 @@ USER_MEMORY_TABLE_SCHEMA = {
     "team_id": {"type": lambda: String(128), "nullable": True},
     "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
+    "feedback": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
@@ -76,20 +78,20 @@ KNOWLEDGE_TABLE_SCHEMA = {
 
 METRICS_TABLE_SCHEMA = {
     "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
-    "agent_runs_count": {"type": BigInteger, "nullable": False},
-    "team_runs_count": {"type": BigInteger, "nullable": False},
-    "workflow_runs_count": {"type": BigInteger, "nullable": False},
-    "agent_sessions_count": {"type": BigInteger, "nullable": False},
-    "team_sessions_count": {"type": BigInteger, "nullable": False},
-    "workflow_sessions_count": {"type": BigInteger, "nullable": False},
-    "users_count": {"type": BigInteger, "nullable": False},
-    "token_metrics": {"type": JSON, "nullable": False},
-    "model_metrics": {"type": JSON, "nullable": False},
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "token_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": lambda: String(20), "nullable": False},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "completed": {"type": Boolean, "nullable": False},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
             "name": "uq_metrics_date_period",
@@ -111,6 +113,13 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "team_id": {"type": lambda: String(128), "nullable": True},
 }
 
+VERSIONS_TABLE_SCHEMA = {
+    "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
+    "version": {"type": lambda: String(10), "nullable": False},
+    "created_at": {"type": lambda: String(128), "nullable": False, "index": True},
+    "updated_at": {"type": lambda: String(128), "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -129,6 +138,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
+        "versions": VERSIONS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

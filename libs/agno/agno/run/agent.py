@@ -703,6 +703,7 @@ class RunOutput:
             else:
                 # Use the factory from response.py for agent events
                 from agno.run.team import team_run_output_event_from_dict
+
                 event = team_run_output_event_from_dict(event)
             final_events.append(event)
         events = final_events
