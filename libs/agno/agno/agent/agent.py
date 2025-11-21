@@ -872,12 +872,13 @@ class Agent:
             for tool in self.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
-                    any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__)
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -5477,7 +5478,11 @@ class Agent:
         if self.tools is not None:
             for tool in self.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                )
+
+                if is_mcp_tool:
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5497,9 +5502,8 @@ class Agent:
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
 
-                    agent_tools.append(tool)
-                else:
-                    agent_tools.append(tool)
+                # Add the tool (MCP tools that passed checks, or any non-MCP tool)
+                agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -10357,7 +10361,9 @@ class Agent:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:

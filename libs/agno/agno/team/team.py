@@ -982,7 +982,8 @@ class Team:
             for tool in self.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
-                    any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__)
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
                     # Connect the MCP server
@@ -4216,7 +4217,9 @@ class Team:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
@@ -4991,7 +4994,9 @@ class Team:
         if self.tools is not None:
             for tool in self.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5034,7 +5039,9 @@ class Team:
         if self.tools is not None:
             for tool in self.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     # Only add the tool if it successfully connected and built its tools
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue

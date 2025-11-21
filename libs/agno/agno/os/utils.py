@@ -512,7 +512,9 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     if team.tools:
         for tool in team.tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+            if hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+            ):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -523,7 +525,9 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
                 if member.tools:
                     for tool in member.tools:
                         # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                        if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                        if hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        ):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -568,7 +572,9 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
             if step.agent.tools:
                 for tool in step.agent.tools:
                     # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                    if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                    if hasattr(type(tool), "__mro__") and any(
+                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                    ):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -591,7 +597,9 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.tools:
             for tool in step.tools:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
