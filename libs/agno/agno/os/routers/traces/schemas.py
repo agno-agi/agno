@@ -146,6 +146,7 @@ class TraceSessionStats(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
     agent_id: Optional[str] = Field(None, description="Agent ID(s) used in the session")
     team_id: Optional[str] = Field(None, description="Team ID associated with the session")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID associated with the session")
     total_traces: int = Field(..., description="Total number of traces in this session")
     first_trace_at: datetime = Field(..., description="Time of first trace (Pydantic auto-serializes to ISO 8601)")
     last_trace_at: datetime = Field(..., description="Time of last trace (Pydantic auto-serializes to ISO 8601)")

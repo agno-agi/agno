@@ -147,10 +147,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     # Convert to UTC if timezone-aware, otherwise assume UTC
                     if dt.tzinfo is not None:
                         from datetime import timezone as tz
+
                         start_time_dt = dt.astimezone(tz.utc)
                     else:
                         # If naive datetime, assume it's UTC
                         from datetime import timezone as tz
+
                         start_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
@@ -163,10 +165,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     # Convert to UTC if timezone-aware, otherwise assume UTC
                     if dt.tzinfo is not None:
                         from datetime import timezone as tz
+
                         end_time_dt = dt.astimezone(tz.utc)
                     else:
                         # If naive datetime, assume it's UTC
                         from datetime import timezone as tz
+
                         end_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
@@ -466,6 +470,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
+        workflow_id: Optional[str] = Query(default=None, description="Filter by workflow ID"),
         start_time: Optional[str] = Query(
             default=None,
             description="Filter sessions with traces created after this time (ISO 8601 format with timezone, e.g., '2025-11-19T10:00:00Z' or '2025-11-19T15:30:00+05:30'). Times are converted to UTC for comparison.",
@@ -502,10 +507,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     # Convert to UTC if timezone-aware, otherwise assume UTC
                     if dt.tzinfo is not None:
                         from datetime import timezone as tz
+
                         start_time_dt = dt.astimezone(tz.utc)
                     else:
                         # If naive datetime, assume it's UTC
                         from datetime import timezone as tz
+
                         start_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
@@ -518,10 +525,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     # Convert to UTC if timezone-aware, otherwise assume UTC
                     if dt.tzinfo is not None:
                         from datetime import timezone as tz
+
                         end_time_dt = dt.astimezone(tz.utc)
                     else:
                         # If naive datetime, assume it's UTC
                         from datetime import timezone as tz
+
                         end_time_dt = dt.replace(tzinfo=tz.utc)
                 except ValueError as e:
                     raise HTTPException(
@@ -534,6 +543,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    workflow_id=workflow_id,
                     start_time=start_time_dt,
                     end_time=end_time_dt,
                     limit=limit,
@@ -544,6 +554,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    workflow_id=workflow_id,
                     start_time=start_time_dt,
                     end_time=end_time_dt,
                     limit=limit,
@@ -567,10 +578,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             stats_response = [
                 TraceSessionStats(
                     session_id=stat["session_id"],
-                    session_name=stat.get("session_name"),
                     user_id=stat.get("user_id"),
                     agent_id=stat.get("agent_id"),
                     team_id=stat.get("team_id"),
+                    workflow_id=stat.get("workflow_id"),
                     total_traces=stat["total_traces"],
                     first_trace_at=stat["first_trace_at"],
                     last_trace_at=stat["last_trace_at"],

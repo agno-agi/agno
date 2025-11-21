@@ -2076,12 +2076,36 @@ class SqliteDb(BaseDb):
                 existing = sess.execute(table.select().where(table.c.trace_id == trace.trace_id)).fetchone()
 
                 if existing:
+                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+
+                    def get_component_level(workflow_id, team_id, agent_id, name):
+                        # Check if name indicates a root span
+                        is_root_name = ".run" in name or ".arun" in name
+
+                        if not is_root_name:
+                            return 0  # Child span (not a root)
+                        elif workflow_id:
+                            return 3  # Workflow root
+                        elif team_id:
+                            return 2  # Team root
+                        elif agent_id:
+                            return 1  # Agent root
+                        else:
+                            return 0  # Unknown
+
+                    existing_level = get_component_level(
+                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
+                    )
+                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                    # Only update name if new trace is from a higher or equal level
+                    should_update_name = new_level > existing_level
+
                     update_values = {
                         "end_time": trace.end_time.isoformat(),
                         "duration_ms": trace.duration_ms,
                         "status": trace.status,
-                        # Update name only if new name looks like a root span (contains ".run" or ".arun")
-                        "name": trace.name if (".run" in trace.name or ".arun" in trace.name) else existing.name,
+                        "name": trace.name if should_update_name else existing.name,
                     }
 
                     # Update context fields ONLY if new value is not None (preserve non-null values)
@@ -2178,6 +2202,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -2192,6 +2217,7 @@ class SqliteDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
             status: Filter by status (OK, ERROR, UNSET).
             start_time: Filter traces starting after this datetime.
             end_time: Filter traces ending before this datetime.
@@ -2234,6 +2260,8 @@ class SqliteDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
                 if team_id:
                     base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
                 if status:
                     base_stmt = base_stmt.where(table.c.status == status)
                 if start_time:
@@ -2267,6 +2295,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
@@ -2278,6 +2307,7 @@ class SqliteDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
@@ -2291,6 +2321,7 @@ class SqliteDb(BaseDb):
 
             log_debug(
                 f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
                 f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
             )
 
@@ -2307,17 +2338,22 @@ class SqliteDb(BaseDb):
                         table.c.user_id,
                         table.c.agent_id,
                         table.c.team_id,
+                        table.c.workflow_id,
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id)
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
                 )
 
                 # Apply filters
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
                 if team_id:
                     base_stmt = base_stmt.where(table.c.team_id == team_id)
                 if agent_id:
@@ -2360,6 +2396,7 @@ class SqliteDb(BaseDb):
                             "user_id": row.user_id,
                             "agent_id": row.agent_id,
                             "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
                             "total_traces": row.total_traces,
                             "first_trace_at": first_trace_at,
                             "last_trace_at": last_trace_at,

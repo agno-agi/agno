@@ -2298,6 +2298,7 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -2312,6 +2313,7 @@ class PostgresDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
             status: Filter by status (OK, ERROR, UNSET).
             start_time: Filter traces starting after this datetime.
             end_time: Filter traces ending before this datetime.
@@ -2328,6 +2330,7 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
@@ -2339,6 +2342,7 @@ class PostgresDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
