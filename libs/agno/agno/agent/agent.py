@@ -1589,6 +1589,10 @@ class Agent:
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
 
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
         # Initialize run context
         run_context = run_context or RunContext(
             run_id=run_id,
@@ -1596,6 +1600,7 @@ class Agent:
             user_id=user_id,
             session_state=session_state,
             dependencies=dependencies,
+            output_schema=output_schema,
         )
 
         # Resolve dependencies
@@ -1615,10 +1620,6 @@ class Agent:
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Store output_schema override in run_context if provided
-        if output_schema is not None:
-            run_context.output_schema = output_schema
 
         # Use stream override value when necessary
         if stream is None:
@@ -1908,7 +1909,9 @@ class Agent:
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
             # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages, run_context=run_context)
+            await self._aparse_response_with_parser_model(
+                model_response=model_response, run_messages=run_messages, run_context=run_context
+            )
 
             # 10. Update the RunOutput with the model response
             self._update_run_response(
@@ -2549,6 +2552,10 @@ class Agent:
             else:
                 merge_dictionaries(metadata, self.metadata)
 
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
         # Initialize run context
         run_context = run_context or RunContext(
             run_id=run_id,
@@ -2558,11 +2565,8 @@ class Agent:
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
             metadata=metadata,
+            output_schema=output_schema,
         )
-
-        # Store output_schema override in run_context if provided
-        if output_schema is not None:
-            run_context.output_schema = output_schema
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -3560,7 +3564,9 @@ class Agent:
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
             # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages, run_context=run_context)
+            await self._aparse_response_with_parser_model(
+                model_response=model_response, run_messages=run_messages, run_context=run_context
+            )
 
             # 9. Update the RunOutput with the model response
             self._update_run_response(
@@ -4305,12 +4311,11 @@ class Agent:
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
-    def _convert_response_to_structured_format(self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None):
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+    def _convert_response_to_structured_format(
+        self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
+    ):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # Convert the response to the structured format if needed
         if output_schema is not None and not isinstance(run_response.content, output_schema):
@@ -4667,11 +4672,8 @@ class Agent:
         run_messages: RunMessages,
         run_context: Optional[RunContext] = None,
     ):
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # Handle structured outputs
         if output_schema is not None and model_response.parsed is not None:
@@ -4763,8 +4765,8 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
-        # run_context override for output_schema
-        output_schema = run_context.output_schema if run_context and run_context.output_schema is not None else self.output_schema
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
         should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
 
         stream_model_response = True
@@ -4849,8 +4851,8 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
-        # run_context override for output_schema
-        output_schema = run_context.output_schema if run_context and run_context.output_schema is not None else self.output_schema
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
         should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
 
         stream_model_response = True
@@ -4962,8 +4964,8 @@ class Agent:
                         model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(model_response, run_context=run_context)
 
-                        # run_context override
-                        output_schema = run_context.output_schema if run_context and run_context.output_schema is not None else self.output_schema  # type: ignore[assignment]
+                        # Get output_schema from run_context
+                        output_schema = run_context.output_schema if run_context else None
                         content_type = output_schema.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
@@ -5562,11 +5564,8 @@ class Agent:
         if processed_tools is not None and len(processed_tools) > 0:
             log_debug("Processing tools for model")
 
-            # run_context override
-            if run_context is not None and run_context.output_schema is not None:
-                output_schema = run_context.output_schema  # type: ignore[assignment]
-            else:
-                output_schema = self.output_schema  # type: ignore[assignment]
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
 
             # Check if we need strict mode for the functions for the model
             strict = False
@@ -5674,11 +5673,8 @@ class Agent:
         return _functions
 
     def _model_should_return_structured_output(self, run_context: Optional[RunContext] = None):
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         self.model = cast(Model, self.model)
         return bool(
@@ -5687,12 +5683,11 @@ class Agent:
             and (not self.use_json_mode or self.structured_outputs)
         )
 
-    def _get_response_format(self, model: Optional[Model] = None, run_context: Optional[RunContext] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+    def _get_response_format(
+        self, model: Optional[Model] = None, run_context: Optional[RunContext] = None
+    ) -> Optional[Union[Dict, Type[BaseModel]]]:
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         model = cast(Model, model or self.model)
         if output_schema is None:
@@ -6740,11 +6735,8 @@ class Agent:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -7100,11 +7092,8 @@ class Agent:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -8068,11 +8057,8 @@ class Agent:
         run_context: Optional[RunContext] = None,
     ) -> List[Message]:
         """Get the messages for the parser model."""
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         system_content = (
             self.parser_model_prompt
@@ -8095,11 +8081,8 @@ class Agent:
         run_context: Optional[RunContext] = None,
     ) -> List[Message]:
         """Get the messages for the parser model."""
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         system_content = (
             self.parser_model_prompt
@@ -9144,20 +9127,21 @@ class Agent:
         else:
             log_warning("Unable to parse response with parser model")
 
-    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None) -> None:
+    def _parse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         """Parse the model response using the parser model."""
         if self.parser_model is None:
             return
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         if output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
-            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format, run_context=run_context)
+            messages_for_parser_model = self._get_messages_for_parser_model(
+                model_response, parser_response_format, run_context=run_context
+            )
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -9178,15 +9162,14 @@ class Agent:
         if self.parser_model is None:
             return
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         if output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
-            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format, run_context=run_context)
+            messages_for_parser_model = self._get_messages_for_parser_model(
+                model_response, parser_response_format, run_context=run_context
+            )
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -9201,15 +9184,16 @@ class Agent:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_events: bool = True, run_context: Optional[RunContext] = None
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_events: bool = True,
+        run_context: Optional[RunContext] = None,
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
-            # run_context override for output_schema
-            if run_context is not None and run_context.output_schema is not None:
-                output_schema = run_context.output_schema  # type: ignore[assignment]
-            else:
-                output_schema = self.output_schema  # type: ignore[assignment]
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
 
             if output_schema is not None:
                 if stream_events:
@@ -9263,15 +9247,16 @@ class Agent:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_events: bool = True, run_context: Optional[RunContext] = None
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_events: bool = True,
+        run_context: Optional[RunContext] = None,
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
-            # run_context override for output_schema
-            if run_context is not None and run_context.output_schema is not None:
-                output_schema = run_context.output_schema  # type: ignore[assignment]
-            else:
-                output_schema = self.output_schema  # type: ignore[assignment]
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
 
             if output_schema is not None:
                 if stream_events:

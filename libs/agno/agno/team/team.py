@@ -1872,6 +1872,10 @@ class Team:
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
 
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
         # Initialize run context
         run_context = run_context or RunContext(
             run_id=run_id,
@@ -1879,11 +1883,8 @@ class Team:
             user_id=user_id,
             session_state=session_state,
             dependencies=dependencies,
+            output_schema=output_schema,
         )
-
-        # Store output_schema override in run_context if provided
-        if output_schema is not None:
-            run_context.output_schema = output_schema
 
         # Resolve callable dependencies if present
         if run_context.dependencies is not None:
@@ -2773,6 +2774,10 @@ class Team:
         if self.knowledge_filters or knowledge_filters:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
         # Initialize run context
         run_context = run_context or RunContext(
             run_id=run_id,
@@ -2782,11 +2787,8 @@ class Team:
             dependencies=dependencies,
             knowledge_filters=effective_filters,
             metadata=metadata,
+            output_schema=output_schema,
         )
-
-        # Store output_schema override in run_context if provided
-        if output_schema is not None:
-            run_context.output_schema = output_schema
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
@@ -2905,11 +2907,8 @@ class Team:
         run_messages: RunMessages,
         run_context: Optional[RunContext] = None,
     ):
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # Handle structured outputs
         if (output_schema is not None) and not self.use_json_mode and (model_response.parsed is not None):
@@ -2988,10 +2987,8 @@ class Team:
             "reasoning_time_taken": 0.0,
         }
 
-        # run_context override for output_schema
-        output_schema = (
-            run_context.output_schema if run_context and run_context.output_schema is not None else self.output_schema
-        )
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
         should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
 
         stream_model_response = True
@@ -3080,10 +3077,8 @@ class Team:
             "reasoning_time_taken": 0.0,
         }
 
-        # run_context override for output_schema
-        output_schema = (
-            run_context.output_schema if run_context and run_context.output_schema is not None else self.output_schema
-        )
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
         should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
 
         stream_model_response = True
@@ -3116,11 +3111,8 @@ class Team:
             ):
                 yield event
 
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # Handle structured outputs
         if (output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
@@ -3211,11 +3203,8 @@ class Team:
                     if parse_structured_output:
                         full_model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(full_model_response, run_context=run_context)
-                        # run_context override
-                        if run_context is not None and run_context.output_schema is not None:
-                            output_schema = run_context.output_schema  # type: ignore[assignment]
-                        else:
-                            output_schema = self.output_schema  # type: ignore[assignment]
+                        # Get output_schema from run_context
+                        output_schema = run_context.output_schema if run_context else None
                         content_type = output_schema.__name__  # type: ignore
                         run_response.content_type = content_type
                     elif self._member_response_model is not None:
@@ -3467,11 +3456,8 @@ class Team:
     def _convert_response_to_structured_format(
         self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse], run_context: Optional[RunContext] = None
     ):
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # Convert the response to the structured format if needed
         if output_schema is not None and not isinstance(run_response.content, output_schema):
@@ -3580,11 +3566,8 @@ class Team:
         self, model: Optional[Model] = None, run_context: Optional[RunContext] = None
     ) -> Optional[Union[Dict, Type[BaseModel]]]:
         model = cast(Model, model or self.model)
-        # run_context override
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         if output_schema is None:
             return None
@@ -3646,11 +3629,8 @@ class Team:
         if self.parser_model is None:
             return
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         if output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
@@ -3674,11 +3654,8 @@ class Team:
         if self.parser_model is None:
             return
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         if output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
@@ -3705,10 +3682,8 @@ class Team:
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
             # run_context override for output_schema
-            if run_context is not None and run_context.output_schema is not None:
-                output_schema = run_context.output_schema  # type: ignore[assignment]
-            else:
-                output_schema = self.output_schema  # type: ignore[assignment]
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
 
             if output_schema is not None:
                 if stream_events:
@@ -3773,10 +3748,8 @@ class Team:
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
             # run_context override for output_schema
-            if run_context is not None and run_context.output_schema is not None:
-                output_schema = run_context.output_schema  # type: ignore[assignment]
-            else:
-                output_schema = self.output_schema  # type: ignore[assignment]
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
 
             if output_schema is not None:
                 if stream_events:
@@ -5192,11 +5165,8 @@ class Team:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # Check if we need strict mode for the model
         strict = False
@@ -5360,11 +5330,8 @@ class Team:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -5667,11 +5634,8 @@ class Team:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -6388,11 +6352,8 @@ class Team:
         from agno.utils.prompts import get_json_output_prompt
 
         """Get the messages for the parser model."""
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         system_content = (
             self.parser_model_prompt
@@ -6417,11 +6378,8 @@ class Team:
         """Get the messages for the parser model."""
         from agno.utils.prompts import get_json_output_prompt
 
-        # run_context override for output_schema
-        if run_context is not None and run_context.output_schema is not None:
-            output_schema = run_context.output_schema  # type: ignore[assignment]
-        else:
-            output_schema = self.output_schema  # type: ignore[assignment]
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         system_content = (
             self.parser_model_prompt
@@ -6535,10 +6493,6 @@ class Team:
         This is added to the system prompt when the output_schema is set and structured_outputs is False.
         """
         import json
-
-        # Use provided output_schema or fall back
-        if output_schema is None:
-            output_schema = self.output_schema
 
         json_output_prompt = "Provide your output as a JSON containing the following fields:"
         if output_schema is not None:
@@ -7009,12 +6963,8 @@ class Team:
             # 2. Handle respond_directly nuances
             if self.respond_directly:
                 # Since we return the response directly from the member agent, we need to set the output schema from the team down.
-                # run_context override for output_schema
-                team_output_schema = (
-                    run_context.output_schema
-                    if run_context and run_context.output_schema is not None
-                    else self.output_schema
-                )
+                # Get output_schema from run_context
+                team_output_schema = run_context.output_schema if run_context else None
                 if not member_agent.output_schema and team_output_schema:
                     member_agent.output_schema = team_output_schema
 
