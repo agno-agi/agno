@@ -4,6 +4,7 @@ Async example using Gemini with tool calls.
 
 import asyncio
 from uuid import uuid4
+
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.google import Gemini
@@ -19,7 +20,11 @@ agent = Agent(
     add_history_to_context=True,
 )
 
-asyncio.run(agent.aprint_response("Whats the current news in France?", session_id=session_id, stream=True))
+asyncio.run(
+    agent.aprint_response(
+        "Whats the current news in France?", session_id=session_id, stream=True
+    )
+)
 
 # Create a new agent with Gemini 3 Pro and re-use the history from the previous session
 agent = Agent(
@@ -30,6 +35,8 @@ agent = Agent(
 )
 asyncio.run(
     agent.aprint_response(
-        "Write a 2 sentence story the biggest news highlight in our conversation.", session_id=session_id, stream=True
+        "Write a 2 sentence story the biggest news highlight in our conversation.",
+        session_id=session_id,
+        stream=True,
     )
 )

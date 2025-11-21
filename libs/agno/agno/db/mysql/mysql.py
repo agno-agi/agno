@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import Index, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
     apply_sorting,
@@ -50,6 +51,7 @@ class MySQLDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -70,6 +72,7 @@ class MySQLDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -90,6 +93,7 @@ class MySQLDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -218,9 +222,15 @@ class MySQLDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -278,6 +288,15 @@ class MySQLDb(BaseDb):
             )
             return self.culture_table
 
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
@@ -302,7 +321,14 @@ class MySQLDb(BaseDb):
             if not create_table_if_not_found:
                 return None
 
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            created_table = self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
+            return created_table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -320,6 +346,39 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
+
+    def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        with self.Session() as sess:
+            # Latest version for the given table
+            stmt = select(table).where(table.c.table_name == table_name).order_by(table.c.version.desc()).limit(1)  # type: ignore
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = mysql.insert(table).values(  # type: ignore
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_duplicate_key_update(
+                version=version,
+                created_at=current_datetime,
+                updated_at=current_datetime,
+            )
+            sess.execute(stmt)
 
     # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
@@ -1287,6 +1346,8 @@ class MySQLDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = mysql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1295,7 +1356,9 @@ class MySQLDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=memory.memory,
@@ -1303,7 +1366,10 @@ class MySQLDb(BaseDb):
                     input=memory.input,
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    updated_at=current_time,
+                    # Preserve created_at on update - don't overwrite existing value
+                    created_at=table.c.created_at,
                 )
                 sess.execute(stmt)
 
@@ -1358,12 +1424,14 @@ class MySQLDb(BaseDb):
             # Prepare bulk data
             bulk_data = []
             current_time = int(time.time())
+
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 bulk_data.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1373,6 +1441,8 @@ class MySQLDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1388,7 +1458,10 @@ class MySQLDb(BaseDb):
                     input=stmt.inserted.input,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
+                    feedback=stmt.inserted.feedback,
                     updated_at=stmt.inserted.updated_at,
+                    # Preserve created_at on update
+                    created_at=table.c.created_at,
                 )
                 sess.execute(stmt, bulk_data)
 

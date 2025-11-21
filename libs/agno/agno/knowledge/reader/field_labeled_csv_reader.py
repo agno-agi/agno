@@ -13,7 +13,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class FieldLabeledCSVReader(Reader):
@@ -105,10 +105,10 @@ class FieldLabeledCSVReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                logger.info(f"Reading: {file}")
+                log_debug(f"Reading: {file}")
                 file_content = file.open(newline="", mode="r", encoding=self.encoding or "utf-8")
             else:
-                logger.info(f"Reading retrieved file: {name or file.name}")
+                log_debug(f"Reading retrieved file: {name or file.name}")
                 file.seek(0)
                 file_content = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -127,15 +127,15 @@ class FieldLabeledCSVReader(Reader):
                 rows = list(csv_reader)
 
                 if not rows:
-                    logger.warning("CSV file is empty")
+                    log_warning("CSV file is empty")
                     return []
 
                 # First row is headers
                 headers = [header.strip() for header in rows[0]]
-                logger.info(f"Found {len(headers)} headers: {headers}")
+                log_debug(f"Found {len(headers)} headers: {headers}")
 
                 data_rows = rows[1:] if len(rows) > 1 else []
-                logger.info(f"Processing {len(data_rows)} data rows")
+                log_debug(f"Processing {len(data_rows)} data rows")
 
                 for row_index, row in enumerate(data_rows):
                     # Ensure row has same length as headers (pad or truncate)
@@ -163,13 +163,13 @@ class FieldLabeledCSVReader(Reader):
                         )
 
                         documents.append(document)
-                        logger.debug(f"Created document for row {row_index + 1}: {len(labeled_text)} chars")
+                        log_debug(f"Created document for row {row_index + 1}: {len(labeled_text)} chars")
 
-            logger.info(f"Successfully created {len(documents)} labeled documents from CSV")
+            log_debug(f"Successfully created {len(documents)} labeled documents from CSV")
             return documents
 
         except Exception as e:
-            logger.error(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
+            log_error(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
             return []
 
     async def async_read(
@@ -185,12 +185,12 @@ class FieldLabeledCSVReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                logger.info(f"Reading async: {file}")
+                log_debug(f"Reading async: {file}")
                 async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
             else:
-                logger.info(f"Reading retrieved file async: {name or file.name}")
+                log_debug(f"Reading retrieved file async: {name or file.name}")
                 file.seek(0)
                 file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -205,17 +205,17 @@ class FieldLabeledCSVReader(Reader):
             rows = list(csv_reader)
 
             if not rows:
-                logger.warning("CSV file is empty")
+                log_warning("CSV file is empty")
                 return []
 
             # First row is headers
             headers = [header.strip() for header in rows[0]]
-            logger.info(f"Found {len(headers)} headers: {headers}")
+            log_debug(f"Found {len(headers)} headers: {headers}")
 
             # Process data rows
             data_rows = rows[1:] if len(rows) > 1 else []
             total_rows = len(data_rows)
-            logger.info(f"Processing {total_rows} data rows")
+            log_debug(f"Processing {total_rows} data rows")
 
             # For small files, process all at once
             if total_rows <= 10:
@@ -282,11 +282,9 @@ class FieldLabeledCSVReader(Reader):
 
                 documents = [doc for page_docs in page_results for doc in page_docs]
 
-            logger.info(f"Successfully created {len(documents)} labeled documents from CSV")
+            log_debug(f"Successfully created {len(documents)} labeled documents from CSV")
             return documents
 
         except Exception as e:
-            logger.error(
-                f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}"
-            )
+            log_error(f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
             return []
