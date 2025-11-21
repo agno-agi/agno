@@ -981,7 +981,7 @@ class Team:
                 # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
                     any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__)
-                    and not tool.initialized
+                    and not tool.initialized  # type: ignore
                 ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
