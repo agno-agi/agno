@@ -332,7 +332,7 @@ class AgentOS:
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
-                    # Checking if the tool is a MCPTools or MultiMCPTools instance
+                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                     if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                         if tool not in self.mcp_tools:
                             self.mcp_tools.append(tool)

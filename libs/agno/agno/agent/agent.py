@@ -861,6 +861,7 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
                     any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__)
                     and not tool.initialized
@@ -5427,6 +5428,7 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     if tool.refresh_connection:  # type: ignore
                         try:
@@ -10297,6 +10299,7 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 

@@ -511,6 +511,7 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools:
         for tool in team.tools:
+            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
@@ -521,6 +522,7 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools:
                     for tool in member.tools:
+                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                         if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
@@ -565,6 +567,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools:
                 for tool in step.agent.tools:
+                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                     if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
@@ -587,6 +590,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools:
             for tool in step.tools:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)

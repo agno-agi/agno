@@ -978,6 +978,7 @@ class Team:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
             for tool in self.tools:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if (
                     any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__)
                     and not tool.initialized
@@ -3910,7 +3911,7 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -4012,7 +4013,7 @@ class Team:
 
         if stream is None:
             stream = self.stream or False
-            
+
         if "stream_events" in kwargs:
             kwargs.pop("stream_events")
 
@@ -4158,6 +4159,7 @@ class Team:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
@@ -4932,6 +4934,7 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     if tool.refresh_connection:  # type: ignore
                         try:
@@ -4974,6 +4977,7 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
                 if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     # Only add the tool if it successfully connected and built its tools
                     if check_mcp_tools and not tool.initialized:  # type: ignore
