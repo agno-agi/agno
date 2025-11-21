@@ -1964,7 +1964,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Initialize the current run
@@ -2821,7 +2821,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Run the team
