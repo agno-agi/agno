@@ -177,12 +177,14 @@ class Claude(Model):
         """
         # If model is in blacklist, it doesn't support structured outputs
         if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
+            log_warning(
+                f"Model '{self.id}' does not support structured outputs. "
+                "Structured output features will not be available for this model."
+            )
             return False
 
         # Check for legacy model patterns that don't support structured outputs
         if self.id.startswith("claude-3-"):
-            return False
-        if self.id.startswith("claude-3-5-") and not self.id.startswith("claude-3-5-sonnet-4-5"):
             return False
         if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
             return False
@@ -443,9 +445,7 @@ class Claude(Model):
             legacy_models = "\n  - ".join(sorted(self.NON_STRUCTURED_OUTPUT_MODELS))
             raise ValueError(
                 f"Model '{self.id}' does not support structured outputs.\n\n"
-                f"The following legacy models do not support structured outputs:\n  - {legacy_models}\n\n"
-                f"Structured outputs are available for Claude Sonnet 4.5+, Opus 4.1+, and all future models.\n"
-                f"For more information, see: https://docs.anthropic.com/en/api/messages"
+
             )
 
     def _prepare_request_kwargs(
