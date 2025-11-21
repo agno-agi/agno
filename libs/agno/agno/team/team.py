@@ -254,7 +254,7 @@ class Team:
     # If True, add the team name to the instructions
     add_name_to_context: bool = False
     # If True, add the tools available to team members to the context
-    add_member_tools_to_context: bool = True
+    add_member_tools_to_context: bool = False
 
     # Provide the system message as a string or function
     system_message: Optional[Union[str, Callable, Message]] = None
@@ -469,7 +469,7 @@ class Team:
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
-        add_member_tools_to_context: bool = True,
+        add_member_tools_to_context: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
