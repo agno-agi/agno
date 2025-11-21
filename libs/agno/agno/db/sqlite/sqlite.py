@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, select, text, update
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
