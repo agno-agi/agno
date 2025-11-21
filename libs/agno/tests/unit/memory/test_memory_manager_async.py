@@ -133,6 +133,12 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def upsert_cultural_knowledge(self, *args, **kwargs):
         raise NotImplementedError
 
+    async def get_latest_schema_version(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def upsert_schema_version(self, *args, **kwargs):
+        raise NotImplementedError
+
 
 @pytest.mark.asyncio
 async def test_acreate_user_memories_with_async_db():

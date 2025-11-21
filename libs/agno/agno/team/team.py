@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import warnings
 from collections import ChainMap, deque
 from copy import copy
 from dataclasses import dataclass
@@ -199,9 +200,6 @@ class Team:
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
 
-    # Deprecated. Use delegate_to_all_members instead.
-    delegate_task_to_all_members: bool = False
-
     # --- User settings ---
     # Default user ID for this team
     user_id: Optional[str] = None
@@ -232,8 +230,6 @@ class Team:
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
 
-    # If True, adds a tool to allow the team to read the team history (this is deprecated and will be removed in a future version)
-    read_team_history: bool = False
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
 
@@ -258,7 +254,7 @@ class Team:
     # If True, add the team name to the instructions
     add_name_to_context: bool = False
     # If True, add the tools available to team members to the context
-    add_member_tools_to_context: bool = True
+    add_member_tools_to_context: bool = False
 
     # Provide the system message as a string or function
     system_message: Optional[Union[str, Callable, Message]] = None
@@ -438,6 +434,9 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
+    # Deprecated. Use delegate_to_all_members instead.
+    delegate_task_to_all_members: bool = False
+
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
@@ -470,7 +469,7 @@ class Team:
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
-        add_member_tools_to_context: bool = True,
+        add_member_tools_to_context: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
@@ -486,7 +485,6 @@ class Team:
         share_member_interactions: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
-        read_team_history: bool = False,
         read_chat_history: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
@@ -540,7 +538,11 @@ class Team:
         telemetry: bool = True,
     ):
         if delegate_task_to_all_members:
-            log_warning("`delegate_task_to_all_members` is deprecated. Use `delegate_to_all_members` instead.")
+            warnings.warn(
+                "The 'delegate_task_to_all_members' parameter is deprecated and will be removed in future versions. Use 'delegate_to_all_members' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self.members = members
 
@@ -609,7 +611,7 @@ class Team:
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
-        self.read_chat_history = read_chat_history or read_team_history
+        self.read_chat_history = read_chat_history
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
@@ -1788,7 +1790,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Type[BaseModel]] = None,
         **kwargs: Any,
@@ -1817,7 +1819,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Type[BaseModel]] = None,
         **kwargs: Any,
@@ -1832,6 +1834,13 @@ class Team:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+            )
+
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
         # Create a run_id for this specific run
@@ -1969,7 +1978,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Initialize the current run
@@ -2666,7 +2675,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Type[BaseModel]] = None,
         **kwargs: Any,
@@ -2695,7 +2704,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Type[BaseModel]] = None,
         **kwargs: Any,
@@ -2705,6 +2714,13 @@ class Team:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+            )
+
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
         # Create a run_id for this specific run
@@ -2756,6 +2772,12 @@ class Team:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2828,7 +2850,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Run the team
@@ -3975,6 +3997,8 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3984,6 +4008,20 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        if stream_events is not None:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if self._has_async_db():
             raise Exception(
                 "This method is not supported with an async DB. Please use the async version of this method."
@@ -4082,6 +4120,8 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4091,6 +4131,20 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        if stream_events is not None:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -5731,7 +5785,7 @@ class Team:
             additional_information.append(f"Your name is: {self.name}.")
 
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.aget_valid_filters()
+            valid_filters = await self.knowledge.async_get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -7116,12 +7170,10 @@ class Team:
                 )
                 member_agent_run_response = None
                 for member_agent_run_output_event in member_agent_run_response_stream:
-                    # If we get the final response, we can break out of the loop
-                    if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
-                        member_agent_run_output_event, RunOutput
-                    ):
+                    # Do NOT break out of the loop, Iterator need to exit properly
+                    if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_output_event  # type: ignore
-                        break
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_output_event)
@@ -7130,7 +7182,7 @@ class Team:
                     member_agent_run_output_event.parent_run_id = (
                         member_agent_run_output_event.parent_run_id or run_response.run_id
                     )
-                    yield member_agent_run_output_event
+                    yield member_agent_run_output_event  # type: ignore
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,  # type: ignore
@@ -7246,12 +7298,10 @@ class Team:
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
-                    # If we get the final response, we can break out of the loop
-                    if isinstance(member_agent_run_response_event, TeamRunOutput) or isinstance(
-                        member_agent_run_response_event, RunOutput
-                    ):
+                    # Do NOT break out of the loop, AsyncIterator need to exit properly
+                    if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
-                        break
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_event)
@@ -7260,7 +7310,7 @@ class Team:
                     member_agent_run_response_event.parent_run_id = (
                         getattr(member_agent_run_response_event, "parent_run_id", None) or run_response.run_id
                     )
-                    yield member_agent_run_response_event
+                    yield member_agent_run_response_event  # type: ignore
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -7362,12 +7412,10 @@ class Team:
                     )
                     member_agent_run_response = None
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
-                        # If we get the final response, we can break out of the loop
-                        if isinstance(member_agent_run_response_chunk, TeamRunOutput) or isinstance(
-                            member_agent_run_response_chunk, RunOutput
-                        ):
+                        # Do NOT break out of the loop, Iterator need to exit properly
+                        if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
                             member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                            break
+                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                         # Check if the run is cancelled
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -7376,7 +7424,7 @@ class Team:
                         member_agent_run_response_chunk.parent_run_id = (
                             member_agent_run_response_chunk.parent_run_id or run_response.run_id
                         )
-                        yield member_agent_run_response_chunk
+                        yield member_agent_run_response_chunk  # type: ignore
 
                 else:
                     member_agent_run_response = member_agent.run(  # type: ignore
@@ -7479,11 +7527,11 @@ class Team:
                     member_agent_run_response = None
                     try:
                         async for member_agent_run_output_event in member_stream:
-                            if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
-                                member_agent_run_output_event, RunOutput
-                            ):
+                            # Do NOT break out of the loop, AsyncIterator need to exit properly
+                            if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                break
+                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id or run_response.run_id
@@ -8583,7 +8631,6 @@ class Team:
             if invalid_keys:
                 # type: ignore
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
                 # Only use valid filters
                 filters = valid_filters
@@ -8651,8 +8698,6 @@ class Team:
             if invalid_keys:
                 # type: ignore
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                # type: ignore
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")
 
                 # Only use valid filters
                 filters = valid_filters
