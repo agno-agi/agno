@@ -342,13 +342,11 @@ class MemoryManager:
             log_warning("Memory DB not provided.")
             return
 
-        if not isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "aclear_user_memories() is not supported with a sync DB. Please use clear_user_memories() instead."
-            )
-
-        # Get all memories for the user
-        memories = await self.aget_user_memories(user_id=user_id)
+        if isinstance(self.db, AsyncBaseDb):
+            memories = await self.aget_user_memories(user_id=user_id)
+        else:
+            memories = self.get_user_memories(user_id=user_id)
+        
         if not memories:
             log_debug(f"No memories found for user {user_id}")
             return
@@ -877,13 +875,12 @@ class MemoryManager:
         if user_id is None:
             user_id = "default"
 
-        if not isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "aoptimize_memories() is not supported with a sync DB. Please use optimize_memories() instead."
-            )
-
-        # Get user memories
-        memories = await self.aget_user_memories(user_id=user_id)
+        # Get user memories - handle both sync and async DBs
+        if isinstance(self.db, AsyncBaseDb):
+            memories = await self.aget_user_memories(user_id=user_id)
+        else:
+            memories = self.get_user_memories(user_id=user_id)
+        
         if not memories:
             log_debug("No memories to optimize")
             return []
