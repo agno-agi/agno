@@ -15,7 +15,6 @@ from agno.os.config import AgentOSConfig
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
@@ -512,7 +511,7 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools:
         for tool in team.tools:
-            if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+            if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -522,7 +521,7 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools:
                     for tool in member.tools:
-                        if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                        if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -566,7 +565,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools:
                 for tool in step.agent.tools:
-                    if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                    if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -588,7 +587,7 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools:
             for tool in step.tools:
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 

@@ -64,7 +64,6 @@ from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
@@ -979,7 +978,10 @@ class Team:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools) and not tool.initialized:
+                if (
+                    any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__)
+                    and not tool.initialized
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
                     self._mcp_tools_initialized_on_run.append(tool)
@@ -4156,7 +4158,7 @@ class Team:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
@@ -4930,7 +4932,7 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -4972,7 +4974,7 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in tool.__class__.__mro__):
                     # Only add the tool if it successfully connected and built its tools
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
