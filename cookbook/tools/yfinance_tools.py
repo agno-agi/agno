@@ -12,7 +12,6 @@ from agno.agent import Agent
 from agno.tools.yfinance import YFinanceTools
 from curl_cffi.requests import Session
 
-
 # Example 1: All financial functions available (default behavior)
 agent_full = Agent(
     tools=[YFinanceTools()],  # All functions enabled by default

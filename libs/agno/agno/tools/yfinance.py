@@ -9,6 +9,7 @@ try:
 except ImportError:
     raise ImportError("`yfinance` not installed. Please install using `pip install yfinance`.")
 
+
 class YFinanceTools(Toolkit):
     """
     YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
