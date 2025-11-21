@@ -1501,7 +1501,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1545,7 +1545,7 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
-        if yield_run_response:
+        if yield_run_response is not None:
             warnings.warn(
                 "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
                 DeprecationWarning,

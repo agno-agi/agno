@@ -1784,7 +1784,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1812,7 +1812,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1828,7 +1828,7 @@ class Team:
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
 
-        if yield_run_response:
+        if yield_run_response is not None:
             warnings.warn(
                 "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
                 DeprecationWarning,
@@ -2653,7 +2653,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -2681,7 +2681,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -2692,7 +2692,7 @@ class Team:
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
 
-        if yield_run_response:
+        if yield_run_response is not None:
             warnings.warn(
                 "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
                 DeprecationWarning,
