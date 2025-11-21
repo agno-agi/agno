@@ -1252,8 +1252,7 @@ class SqliteDb(BaseDb):
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                count = sess.execute(count_stmt).scalar()
-                total_count = int(count) if count is not None else 0
+                total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Pagination
                 if limit is not None:
