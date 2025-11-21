@@ -51,9 +51,6 @@ class Knowledge:
             self.vector_db.create()
 
         self.construct_readers()
-        self.valid_metadata_filters = set()
-
-    # --- SDK Specific Methods ---
 
     # --- Add Contents ---
     @overload
@@ -269,7 +266,7 @@ class Knowledge:
             return
 
         if not skip_if_exists:
-            log_info("skip_if_exists is disabled, disabling upsert")
+            log_debug("skip_if_exists is disabled, disabling upsert")
             upsert = False
 
         content = None
@@ -431,7 +428,7 @@ class Knowledge:
 
                 else:
                     reader = ReaderFactory.get_reader_for_extension(path.suffix)
-                    log_info(f"Using Reader: {reader.__class__.__name__}")
+                    log_debug(f"Using Reader: {reader.__class__.__name__}")
                     if reader:
                         # TODO: We will refactor this to eventually pass authorization to all readers
                         import inspect
@@ -652,7 +649,7 @@ class Knowledge:
             content_io = io.BytesIO(content_bytes)
 
             if content.reader:
-                log_info(f"Using reader: {content.reader.__class__.__name__} to read content")
+                log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                 read_documents = content.reader.read(content_io, name=name)
             else:
                 text_reader = self.text_reader
@@ -676,7 +673,7 @@ class Knowledge:
 
                 # Respect an explicitly provided reader; otherwise select based on file type
                 if content.reader:
-                    log_info(f"Using reader: {content.reader.__class__.__name__} to read content")
+                    log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
                     reader = self._select_reader(content.file_data.type)
@@ -996,11 +993,6 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ) -> None:
-        log_info(f"Loading content: {content.id}")
-
-        if content.metadata:
-            self.add_filters(content.metadata)
-
         if content.path:
             await self._load_from_path(content, upsert, skip_if_exists, include, exclude)
 
@@ -1174,9 +1166,6 @@ class Knowledge:
             if self.vector_db and content.metadata:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
 
-            if content.metadata:
-                self.add_filters(content.metadata)
-
             return content_row.to_dict()
 
         else:
@@ -1223,13 +1212,13 @@ class Knowledge:
             if self.vector_db and content.metadata:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
 
-            if content.metadata:
-                self.add_filters(content.metadata)
-
             return content_row.to_dict()
 
         else:
-            log_warning(f"Contents DB not found for knowledge base: {self.name}")
+            if self.name:
+                log_warning(f"Contents DB not found for knowledge base: {self.name}")
+            else:
+                log_warning("Contents DB not found for knowledge base")
             return None
 
     async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
@@ -1455,41 +1444,55 @@ class Knowledge:
             return []
 
     def get_valid_filters(self) -> Set[str]:
-        if self.valid_metadata_filters is None:
-            self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(self._get_filters_from_db())
-        return self.valid_metadata_filters
+        if self.contents_db is None:
+            log_warning("No contents db provided. This is required for filtering.")
+            return set()
+        contents, _ = self.get_content()
+        valid_filters: Set[str] = set()
+        for content in contents:
+            if content.metadata:
+                valid_filters.update(content.metadata.keys())
 
-    async def aget_valid_filters(self) -> Set[str]:
-        if self.valid_metadata_filters is None:
-            self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(await self._aget_filters_from_db())
-        return self.valid_metadata_filters
+        return valid_filters
 
-    def _validate_filters(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]) -> Tuple[Any, List[str]]:
-        """Internal method to validate filters against known metadata keys."""
+    async def async_get_valid_filters(self) -> Set[str]:
+        if self.contents_db is None:
+            log_warning("No contents db provided. This is required for filtering.")
+            return set()
+        contents, _ = await self.aget_content()
+        valid_filters: Set[str] = set()
+        for content in contents:
+            if content.metadata:
+                valid_filters.update(content.metadata.keys())
+
+        return valid_filters
+
+    def _validate_filters(
+        self, filters: Union[Dict[str, Any], List[FilterExpr]], valid_metadata_filters: Set[str]
+    ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         if not filters:
-            return None, []
+            return {}, []
 
-        valid_filters: Optional[Dict[str, Any]] = None
+        valid_filters: Union[Dict[str, Any], List[FilterExpr]] = {}
         invalid_keys = []
 
         if isinstance(filters, dict):
             # If no metadata filters tracked yet, all keys are considered invalid
-            if self.valid_metadata_filters is None:
+            if valid_metadata_filters is None or not valid_metadata_filters:
                 invalid_keys = list(filters.keys())
-                log_debug(f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}")
-                return None, invalid_keys
+                log_warning(
+                    f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}"
+                )
+                return {}, invalid_keys
 
-            valid_filters = {}
             for key, value in filters.items():
                 # Handle both normal keys and prefixed keys like meta_data.key
                 base_key = key.split(".")[-1] if "." in key else key
-                if base_key in self.valid_metadata_filters or key in self.valid_metadata_filters:
-                    valid_filters[key] = value
+                if base_key in valid_metadata_filters or key in valid_metadata_filters:
+                    valid_filters[key] = value  # type: ignore
                 else:
                     invalid_keys.append(key)
-                    log_debug(f"Invalid filter key: {key} - not present in knowledge base")
+                    log_warning(f"Invalid filter key: {key} - not present in knowledge base")
 
         elif isinstance(filters, List):
             # Validate that list contains FilterExpr instances
@@ -1501,56 +1504,30 @@ class Knowledge:
                         f"Use filter expressions like EQ('key', 'value'), IN('key', [values]), "
                         f"AND(...), OR(...), NOT(...) from agno.filters"
                     )
-
             # Filter expressions are already validated, return empty dict/list
             # The actual filtering happens in the vector_db layer
             return filters, []
 
         return valid_filters, invalid_keys
 
-    def validate_filters(self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]) -> Tuple[Any, List[str]]:
-        if self.valid_metadata_filters is None:
-            self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(self._get_filters_from_db())
+    def validate_filters(
+        self, filters: Union[Dict[str, Any], List[FilterExpr]]
+    ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        valid_filters_from_db = self.get_valid_filters()
 
-        return self._validate_filters(filters)
+        valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
+
+        return valid_filters, invalid_keys
 
     async def async_validate_filters(
-        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]
-    ) -> Tuple[Any, List[str]]:
-        if self.valid_metadata_filters is None:
-            self.valid_metadata_filters = set()
-        self.valid_metadata_filters.update(await self._aget_filters_from_db())
+        self, filters: Union[Dict[str, Any], List[FilterExpr]]
+    ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
+        valid_filters_from_db = await self.async_get_valid_filters()
 
-        return self._validate_filters(filters)
+        valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
 
-    def add_filters(self, metadata: Dict[str, Any]) -> None:
-        if self.valid_metadata_filters is None:
-            self.valid_metadata_filters = set()
-
-        if metadata is not None:
-            for key in metadata.keys():
-                self.valid_metadata_filters.add(key)
-
-    def _get_filters_from_db(self) -> Set[str]:
-        if self.contents_db is None:
-            return set()
-        contents, _ = self.get_content()
-        valid_filters: Set[str] = set()
-        for content in contents:
-            if content.metadata:
-                valid_filters.update(content.metadata.keys())
-        return valid_filters
-
-    async def _aget_filters_from_db(self) -> Set[str]:
-        if self.contents_db is None:
-            return set()
-        contents, _ = await self.aget_content()
-        valid_filters: Set[str] = set()
-        for content in contents:
-            if content.metadata:
-                valid_filters.update(content.metadata.keys())
-        return valid_filters
+        return valid_filters, invalid_keys
 
     def remove_vector_by_id(self, id: str) -> bool:
         from agno.vectordb import VectorDb
@@ -1854,9 +1831,6 @@ class Knowledge:
         """Select the appropriate reader for a file extension."""
         log_info(f"Selecting reader for extension: {extension}")
         return ReaderFactory.get_reader_for_extension(extension)
-
-    def get_filters(self) -> List[str]:
-        return list(self.valid_metadata_filters)
 
     # --- Convenience Properties for Backward Compatibility ---
 
