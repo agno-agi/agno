@@ -96,5 +96,4 @@ if __name__ == "__main__":
         user="Content Requester",
         emoji="📝",
         stream=True,
-        stream_events=True,
     )

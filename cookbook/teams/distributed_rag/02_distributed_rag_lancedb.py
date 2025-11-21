@@ -145,7 +145,7 @@ async def async_distributed_rag_demo():
 
     # # Run async distributed RAG
     # await distributed_rag_team.aprint_response(
-    #     query, stream=True, stream_events=True
+    #     query, stream=True
     # )
     await distributed_rag_team.aprint_response(input=query)
 

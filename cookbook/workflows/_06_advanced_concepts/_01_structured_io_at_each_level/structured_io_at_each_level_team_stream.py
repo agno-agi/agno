@@ -157,7 +157,7 @@ strategy_team = Team(
 planning_team = Team(
     name="Content Planning Team",
     members=[project_manager, budget_analyst],
-    delegate_task_to_all_members=True,
+    delegate_to_all_members=True,
     model=OpenAIChat(id="gpt-4o"),
     description="A planning team that creates detailed implementation plans",
     output_schema=FinalContentPlan,
@@ -198,5 +198,4 @@ if __name__ == "__main__":
     structured_workflow.print_response(
         input="Latest developments in artificial intelligence and machine learning",
         stream=True,
-        stream_events=True,
     )
