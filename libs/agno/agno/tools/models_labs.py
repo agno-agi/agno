@@ -4,10 +4,8 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.response import FileType
-from agno.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_info, logger
@@ -22,12 +20,14 @@ MODELS_LAB_URLS = {
     "MP4": "https://modelslab.com/api/v6/video/text2video",
     "MP3": "https://modelslab.com/api/v6/voice/music_gen",
     "GIF": "https://modelslab.com/api/v6/video/text2video",
+    "WAV": "https://modelslab.com/api/v6/voice/sfx",
 }
 
 MODELS_LAB_FETCH_URLS = {
     "MP4": "https://modelslab.com/api/v6/video/fetch",
     "MP3": "https://modelslab.com/api/v6/voice/fetch",
     "GIF": "https://modelslab.com/api/v6/video/fetch",
+    "WAV": "https://modelslab.com/api/v6/voice/fetch",
 }
 
 
@@ -78,6 +78,13 @@ class ModelsLabTools(Toolkit):
                 "output_type": self.file_type.value,
             }
             base_payload |= video_template  # Use |= instead of update()
+        elif self.file_type == FileType.WAV:
+            sfx_template = {
+                "duration": 10,
+                "output_format": "wav",
+                "temp": False,
+            }
+            base_payload |= sfx_template  # Use |= instead of update()
         else:
             audio_template = {
                 "base64": False,
@@ -101,7 +108,7 @@ class ModelsLabTools(Toolkit):
         elif self.file_type == FileType.GIF:
             image_artifact = Image(id=str(media_id), url=media_url)
             artifacts["images"].append(image_artifact)
-        elif self.file_type == FileType.MP3:
+        elif self.file_type in [FileType.MP3, FileType.WAV]:
             audio_artifact = Audio(id=str(media_id), url=media_url)
             artifacts["audios"].append(audio_artifact)
 
@@ -131,7 +138,7 @@ class ModelsLabTools(Toolkit):
 
         return False
 
-    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+    def generate_media(self, prompt: str) -> ToolResult:
         """Generate media (video, image, or audio) given a prompt."""
         if not self.api_key:
             return ToolResult(content="Please set the MODELS_LAB_API_KEY")
@@ -157,7 +164,6 @@ class ModelsLabTools(Toolkit):
                 return ToolResult(content=f"Error: {result['error']}")
 
             eta = result.get("eta")
-            url_links = result.get("future_links")
             media_id = str(uuid4())
 
             # Collect all media artifacts
@@ -165,17 +171,21 @@ class ModelsLabTools(Toolkit):
             all_videos = []
             all_audios = []
 
+            if self.file_type == FileType.WAV:
+                url_links = result.get("output", [])
+            else:
+                url_links = result.get("future_links")
             for media_url in url_links:
                 artifacts = self._create_media_artifacts(media_id, media_url, str(eta))
                 all_images.extend(artifacts["images"])
                 all_videos.extend(artifacts["videos"])
                 all_audios.extend(artifacts["audios"])
 
-            if self.wait_for_completion and isinstance(eta, int):
-                if self._wait_for_media(media_id, eta):
-                    log_info("Media generation completed successfully")
-                else:
-                    logger.warning("Media generation timed out")
+                if self.wait_for_completion and isinstance(eta, int):
+                    if self._wait_for_media(media_id, eta):
+                        log_info("Media generation completed successfully")
+                    else:
+                        logger.warning("Media generation timed out")
 
             # Return ToolResult with appropriate media artifacts
             return ToolResult(

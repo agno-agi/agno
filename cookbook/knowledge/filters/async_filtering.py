@@ -97,7 +97,6 @@ agent = Agent(
     db=db,
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
 if __name__ == "__main__":

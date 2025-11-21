@@ -11,7 +11,6 @@ from agno.run import RunContext
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
@@ -147,7 +146,7 @@ class ConsolidatedResearch(BaseModel):
 customer_profile_agent = Agent(
     name="Customer Profile Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools(), DuckDuckGoTools()],
+    tools=[DuckDuckGoTools()],
     output_schema=CustomerProfileResearch,
     instructions=[
         "You are an expert customer profile researcher specializing in comprehensive customer analysis",
@@ -164,7 +163,7 @@ customer_profile_agent = Agent(
 business_goals_agent = Agent(
     name="Business Goals Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools(), HackerNewsTools()],
+    tools=[DuckDuckGoTools(), HackerNewsTools()],
     output_schema=BusinessGoalsResearch,
     instructions=[
         "You are a business strategy and goals research specialist with deep market expertise",
@@ -182,7 +181,7 @@ business_goals_agent = Agent(
 web_intelligence_agent = Agent(
     name="Web Intelligence Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools(), DuckDuckGoTools(), HackerNewsTools()],
+    tools=[DuckDuckGoTools(), HackerNewsTools()],
     output_schema=WebIntelligenceResearch,
     instructions=[
         "You are a web intelligence and market research specialist with expertise in digital analytics",
@@ -774,7 +773,6 @@ if __name__ == "__main__":
 #         input=research_query,
 #         markdown=True,
 #         stream=True,
-#         stream_events=True,
 #     )
 
 #     print("\n" + "=" * 70)
