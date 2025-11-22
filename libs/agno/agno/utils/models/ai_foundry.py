@@ -1,23 +1,31 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agno.models.message import Message
 from agno.utils.log import log_warning
 from agno.utils.openai import images_to_message
 
 
-def format_message(message: Message) -> Dict[str, Any]:
+def format_message(message: Message, compression_manager: Optional[Any] = None) -> Dict[str, Any]:
     """
     Format a message into the format expected by OpenAI.
 
     Args:
         message (Message): The message to format.
+        compression_manager: Optional compression manager for tool result compression.
 
     Returns:
         Dict[str, Any]: The formatted message.
     """
+    # Use compressed content for tool messages if compression is active
+    if message.role == "tool":
+        use_compression = compression_manager is not None and compression_manager.compress_tool_results
+        content = message.get_content(use_compression=use_compression)
+    else:
+        content = message.content
+
     message_dict: Dict[str, Any] = {
         "role": message.role,
-        "content": message.content,
+        "content": content,
         "name": message.name,
         "tool_call_id": message.tool_call_id,
         "tool_calls": message.tool_calls,

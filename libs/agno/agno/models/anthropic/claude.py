@@ -709,7 +709,7 @@ class Claude(Model):
 
             chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
-            
+
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(

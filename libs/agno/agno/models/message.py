@@ -126,14 +126,9 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def get_tool_result(self, compression_manager: Optional[Any] = None) -> Optional[Union[List[Any], str]]:
-        """Return tool result content to send to API
-
-        Args:
-            compression_manager: Optional compression manager. If provided and compression is enabled,
-                                returns compressed_content. Otherwise returns original content.
-        """
-        if compression_manager and compression_manager.compress_tool_results and self.compressed_content is not None:
+    def get_content(self, use_compression: bool = False) -> Optional[Union[List[Any], str]]:
+        """Return tool result content to send to API"""
+        if use_compression and self.compressed_content is not None:
             return self.compressed_content
         return self.content
 
@@ -364,7 +359,7 @@ class Message(BaseModel):
             _logger(f"<reasoning>\n{self.reasoning_content}\n</reasoning>")
         if self.content:
             if compressed_content and self.compressed_content:
-                _logger(self.compressed_content)
+                _logger("Compressed content: " + self.compressed_content)
             else:
                 if isinstance(self.content, str) or isinstance(self.content, list):
                     _logger(self.content)

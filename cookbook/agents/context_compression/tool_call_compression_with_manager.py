@@ -44,7 +44,6 @@ compression_prompt = """
 compression_manager = CompressionManager(
     compress_tool_results_limit=1,
     compress_tool_call_instructions=compression_prompt,
-    compress_tool_results=True,
 )
 
 agent = Agent(
@@ -53,9 +52,7 @@ agent = Agent(
     description="Specialized in tracking competitor activities",
     compression_manager=compression_manager,
     markdown=True,
-    db=SqliteDb(
-        db_file="tmp/dbs/competitive_intelligence_agent.db"
-    ),
+    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent.db"),
     session_id="competitive_intelligence_agent",
     add_history_to_context=True,
     num_history_runs=6,

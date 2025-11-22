@@ -329,7 +329,8 @@ def format_messages(
                     continue
 
             # Standard individual message - use the helper method
-            tool_result = message.get_tool_result(compression_manager)
+            use_compression = compression_manager is not None and compression_manager.compress_tool_results
+            tool_result = message.get_content(use_compression=use_compression)
 
             content.append(
                 {

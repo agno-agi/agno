@@ -205,13 +205,14 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:
@@ -252,6 +253,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[ModelResponse]:
         """
         Stream a response from the Anthropic API.
@@ -268,7 +270,7 @@ class Claude(AnthropicClaude):
             APIStatusError: For other API-related errors
         """
 
-        chat_messages, system_message = format_messages(messages)
+        chat_messages, system_message = format_messages(messages, compression_manager)
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
@@ -310,13 +312,14 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:
@@ -359,6 +362,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
@@ -376,7 +380,7 @@ class Claude(AnthropicClaude):
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compression_manager)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:

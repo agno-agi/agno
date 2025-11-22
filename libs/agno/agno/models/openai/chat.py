@@ -313,7 +313,8 @@ class OpenAIChat(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        tool_result = message.get_tool_result(compression_manager)
+        use_compression = compression_manager is not None and compression_manager.compress_tool_results
+        tool_result = message.get_content(use_compression=use_compression)
 
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],

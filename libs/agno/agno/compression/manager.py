@@ -5,7 +5,7 @@ from typing import List, Optional
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
     You are compressing tool call results to save context space while preserving critical information.
@@ -61,6 +61,12 @@ class CompressionManager:
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )
         should_compress = uncompressed_tools_count > self.compress_tool_results_limit
+
+        if should_compress:
+            log_info(
+                f"Tool call compression threshold hit ({uncompressed_tools_count} > {self.compress_tool_results_limit}) -> Compressing tool results"
+            )
+
         return should_compress
 
     def _compress_tool_result(self, tool_result: Message) -> Optional[str]:

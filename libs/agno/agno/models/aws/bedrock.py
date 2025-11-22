@@ -239,7 +239,8 @@ class AwsBedrock(Model):
             if message.role == "system":
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
-                content = message.get_tool_result(compression_manager)
+                use_compression = compression_manager is not None and compression_manager.compress_tool_results
+                content = message.get_content(use_compression=use_compression)
                 tool_result = {
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],

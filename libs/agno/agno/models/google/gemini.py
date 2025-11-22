@@ -479,7 +479,8 @@ class Gemini(Model):
             role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
-            content = message.get_tool_result(compression_manager)
+            use_compression = compression_manager is not None and compression_manager.compress_tool_results
+            content = message.get_content(use_compression=use_compression)
 
             # Initialize message_parts to be used for Gemini
             message_parts: List[Any] = []
@@ -503,7 +504,6 @@ class Gemini(Model):
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 for idx, tool_call in enumerate(message.tool_calls):
-
                     if isinstance(content, list) and idx < len(content):
                         original_from_list = content[idx]
 
@@ -513,7 +513,8 @@ class Gemini(Model):
                         else:
                             tc_content = original_from_list
                     else:
-                        tc_content = message.get_tool_result(compression_manager)
+                        use_compression = compression_manager is not None and compression_manager.compress_tool_results
+                        tc_content = message.get_content(use_compression=use_compression)
 
                         if tc_content is None:
                             tc_content = tool_call.get("content")
@@ -807,7 +808,8 @@ class Gemini(Model):
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
                 combined_original_content.append(result.content)
-                compressed_content = result.get_tool_result(compression_manager)
+                use_compression = compression_manager is not None and compression_manager.compress_tool_results
+                compressed_content = result.get_content(use_compression=use_compression)
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
