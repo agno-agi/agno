@@ -1,6 +1,5 @@
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
@@ -11,7 +10,9 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.utils import get_model
 from agno.tools.function import Function
+from agno.utils.dttm import now_epoch_s
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -66,7 +67,7 @@ class MemoryManager:
 
     def __init__(
         self,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         system_message: Optional[str] = None,
         memory_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
@@ -77,9 +78,7 @@ class MemoryManager:
         clear_memories: bool = False,
         debug_mode: bool = False,
     ):
-        self.model = model
-        if self.model is not None and isinstance(self.model, str):
-            raise ValueError("Model must be a Model object, not a string")
+        self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
@@ -89,8 +88,12 @@ class MemoryManager:
         self.add_memories = add_memories
         self.clear_memories = clear_memories
         self.debug_mode = debug_mode
-        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
+
+        self._get_models()
+
+    def _get_models(self) -> None:
+        if self.model is not None:
+            self.model = get_model(self.model)
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -224,7 +227,7 @@ class MemoryManager:
             memory.user_id = user_id
 
             if not memory.updated_at:
-                memory.updated_at = datetime.now()
+                memory.updated_at = now_epoch_s()
 
             self._upsert_db_memory(memory=memory)
             return memory.memory_id
@@ -252,7 +255,7 @@ class MemoryManager:
                 user_id = "default"
 
             if not memory.updated_at:
-                memory.updated_at = datetime.now()
+                memory.updated_at = now_epoch_s()
 
             memory.memory_id = memory_id
             memory.user_id = user_id
@@ -668,7 +671,7 @@ class MemoryManager:
             # If updated_at is None, place at the beginning of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.min,
+                key=lambda m: m.updated_at if m.updated_at is not None else 0,
             )
         else:
             sorted_memories_list = []
@@ -691,6 +694,7 @@ class MemoryManager:
         if memories is None:
             memories = {}
 
+        MAX_UNIX_TS = 2**63 - 1
         memories_list = memories.get(user_id, [])
         # Sort memories by updated_at timestamp if available
         if memories_list:
@@ -698,7 +702,7 @@ class MemoryManager:
             # If updated_at is None, place at the end of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.max,
+                key=lambda m: m.updated_at if m.updated_at is not None else MAX_UNIX_TS,
             )
 
         else:
@@ -710,22 +714,25 @@ class MemoryManager:
         return sorted_memories_list
 
     # --Memory Manager Functions--
-    def determine_tools_for_model(self, tools: List[Callable]) -> None:
+    def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
         # Have to reset each time, because of different user IDs
-        self._tools_for_model = []
-        self._functions_for_model = {}
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
 
         for tool in tools:
             try:
                 function_name = tool.__name__
-                if function_name not in self._functions_for_model:
-                    func = Function.from_callable(tool, strict=True)  # type: ignore
-                    func.strict = True
-                    self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Added function {func.name}")
+                if function_name in _function_names:
+                    continue
+                _function_names.append(function_name)
+                func = Function.from_callable(tool, strict=True)  # type: ignore
+                func.strict = True
+                _functions.append(func)
+                log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
+
+        return _functions
 
     def get_system_message(
         self,
@@ -833,7 +840,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
+        _tools = self.determine_tools_for_model(
             self._get_db_tools(
                 user_id,
                 db,
@@ -842,7 +849,7 @@ class MemoryManager:
                 team_id=team_id,
                 enable_add_memory=add_memories,
                 enable_update_memory=update_memories,
-                enable_delete_memory=False,
+                enable_delete_memory=True,
                 enable_clear_memory=False,
             ),
         )
@@ -853,7 +860,7 @@ class MemoryManager:
                 existing_memories=existing_memories,
                 enable_update_memory=update_memories,
                 enable_add_memory=add_memories,
-                enable_delete_memory=False,
+                enable_delete_memory=True,
                 enable_clear_memory=False,
             ),
             *messages,
@@ -862,8 +869,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -897,7 +903,7 @@ class MemoryManager:
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         if isinstance(db, AsyncBaseDb):
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 await self._aget_db_tools(
                     user_id,
                     db,
@@ -906,12 +912,12 @@ class MemoryManager:
                     team_id=team_id,
                     enable_add_memory=add_memories,
                     enable_update_memory=update_memories,
-                    enable_delete_memory=False,
+                    enable_delete_memory=True,
                     enable_clear_memory=False,
                 ),
             )
         else:
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 self._get_db_tools(
                     user_id,
                     db,
@@ -920,7 +926,7 @@ class MemoryManager:
                     team_id=team_id,
                     enable_add_memory=add_memories,
                     enable_update_memory=update_memories,
-                    enable_delete_memory=False,
+                    enable_delete_memory=True,
                     enable_clear_memory=False,
                 ),
             )
@@ -931,7 +937,7 @@ class MemoryManager:
                 existing_memories=existing_memories,
                 enable_update_memory=update_memories,
                 enable_add_memory=add_memories,
-                enable_delete_memory=False,
+                enable_delete_memory=True,
                 enable_clear_memory=False,
             ),
             *messages,
@@ -940,8 +946,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -969,7 +974,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.determine_tools_for_model(
+        _tools = self.determine_tools_for_model(
             self._get_db_tools(
                 user_id,
                 db,
@@ -997,8 +1002,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1027,7 +1031,7 @@ class MemoryManager:
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         if isinstance(db, AsyncBaseDb):
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 await self._aget_db_tools(
                     user_id,
                     db,
@@ -1039,7 +1043,7 @@ class MemoryManager:
                 ),
             )
         else:
-            self.determine_tools_for_model(
+            _tools = self.determine_tools_for_model(
                 self._get_db_tools(
                     user_id,
                     db,
@@ -1067,8 +1071,7 @@ class MemoryManager:
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
+            tools=_tools,
         )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
@@ -1131,6 +1134,9 @@ class MemoryManager:
                 str: A message indicating if the memory was updated successfully or not.
             """
             from agno.db.base import UserMemory
+
+            if memory == "":
+                return "Can't update memory with empty string. Use the delete memory function if available."
 
             try:
                 db.upsert_user_memory(
@@ -1250,6 +1256,9 @@ class MemoryManager:
                 str: A message indicating if the memory was updated successfully or not.
             """
             from agno.db.base import UserMemory
+
+            if memory == "":
+                return "Can't update memory with empty string. Use the delete memory function if available."
 
             try:
                 if isinstance(db, AsyncBaseDb):

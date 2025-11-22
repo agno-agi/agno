@@ -14,6 +14,8 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
@@ -64,6 +66,7 @@ class OpenAIChat(Model):
     user: Optional[str] = None
     top_p: Optional[float] = None
     service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -80,6 +83,10 @@ class OpenAIChat(Model):
     default_query: Optional[Any] = None
     http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
+
+    # Cached clients to avoid recreating them on every request
+    client: Optional[OpenAIClient] = None
+    async_client: Optional[AsyncOpenAIClient] = None
 
     # The role to map the message role to.
     default_role_map = {
@@ -118,49 +125,68 @@ class OpenAIChat(Model):
 
     def get_client(self) -> OpenAIClient:
         """
-        Returns an OpenAI client.
+        Returns an OpenAI client. Caches the client to avoid recreating it on every request.
 
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
+        # Return cached client if it exists and is not closed
+        if self.client is not None and not self.client.is_closed():
+            return self.client
+
+        log_debug(f"Creating new sync OpenAI client for model {self.id}")
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client.")
-        return OpenAIClient(**client_params)
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
+
+        # Create and cache the client
+        self.client = OpenAIClient(**client_params)
+        return self.client
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
-        Returns an asynchronous OpenAI client.
+        Returns an asynchronous OpenAI client. Caches the client to avoid recreating it on every request.
 
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
+        # Return cached client if it exists and is not closed
+        if self.async_client is not None and not self.async_client.is_closed():
+            return self.async_client
+
+        log_debug(f"Creating new async OpenAI client for model {self.id}")
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             if isinstance(self.http_client, httpx.AsyncClient):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
-                # Create a new async HTTP client with custom limits
-                client_params["http_client"] = httpx.AsyncClient(
-                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
                 )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
-        return AsyncOpenAIClient(**client_params)
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
+
+        # Create and cache the client
+        self.async_client = AsyncOpenAIClient(**client_params)
+        return self.async_client
 
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -206,7 +232,7 @@ class OpenAIChat(Model):
                     "json_schema": {
                         "name": response_format.__name__,
                         "schema": schema,
-                        "strict": True,
+                        "strict": self.strict_output,
                     },
                 }
             else:
@@ -347,7 +373,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API and parse the response.
@@ -427,7 +453,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -506,7 +532,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
@@ -582,7 +608,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.

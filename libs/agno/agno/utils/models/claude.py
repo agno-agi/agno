@@ -68,6 +68,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        img_type = None
+
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
             content_bytes = image.content
@@ -75,6 +77,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         # Case 1: Image is a URL
         if image.url is not None:
             content_bytes = image.get_content_bytes()  # type: ignore
+
+            # If image URL has a suffix, use it as the type (without dot)
+            import os
+            from urllib.parse import urlparse
+
+            if image.url:
+                parsed_url = urlparse(image.url)
+                _, ext = os.path.splitext(parsed_url.path)
+                if ext:
+                    img_type = ext.lstrip(".").lower()
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -84,6 +96,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             if path.exists() and path.is_file():
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
+
+                # If image file path has a suffix, use it as the type (without dot)
+                path_ext = path.suffix.lstrip(".")
+                if path_ext:
+                    img_type = path_ext.lower()
             else:
                 log_error(f"Image file not found: {image}")
                 return None
@@ -96,15 +113,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        if using_filetype:
-            kind = filetype.guess(content_bytes)
-            if not kind:
-                log_error("Unable to determine image type")
-                return None
+        if not img_type:
+            if using_filetype:
+                kind = filetype.guess(content_bytes)
+                if not kind:
+                    log_error("Unable to determine image type")
+                    return None
 
-            img_type = kind.extension
-        else:
-            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+                img_type = kind.extension
+            else:
+                img_type = imghdr.what(None, h=content_bytes)  # type: ignore
 
         if not img_type:
             log_error("Unable to determine image type")
@@ -302,6 +320,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
     """
     if not tools:
         return None
@@ -334,7 +353,14 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
                 "type": parameters.get("type", "object"),
                 "properties": input_properties,
                 "required": required_params,
+                "additionalProperties": False,
             },
         }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
         parsed_tools.append(tool)
     return parsed_tools

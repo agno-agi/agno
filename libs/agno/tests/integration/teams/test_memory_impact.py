@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import tracemalloc
-from time import time
 from typing import List, Tuple
 
 import pytest
@@ -368,53 +367,9 @@ async def test_team_memory_with_multiple_members(shared_db):
 
         return f"{emoji} Meeting scheduled: {duration_minutes} minutes ({priority} priority)"
 
-    # Mock the model to avoid API calls
-    class MockModel:
-        def __init__(self, id: str):
-            self.id = id
-            self.name = "MockModel"
-            self.provider = "MockProvider"
-            self.assistant_message_role = "assistant"
-
-        def get_instructions_for_model(self, tools: List):
-            return ""
-
-        def get_system_message_for_model(self, tools: List):
-            return ""
-
-        def to_dict(self):
-            return {}
-
-        async def aresponse(self, messages, **kwargs):
-            # Return a mock response
-            return type(
-                "MockResponse",
-                (),
-                {
-                    "content": f"Mock response for {messages[-1].content[:50]}...",
-                    "run_id": f"mock_run_{hash(str(messages))}",
-                    "model": self.name,
-                    "reasoning_content": None,
-                    "citations": None,
-                    "tool_executions": None,
-                    "tool_calls": [],
-                    "audio": None,
-                    "created_at": int(time()),
-                    "usage": type(
-                        "MockUsage", (), {"total_tokens": 100, "prompt_tokens": 50, "completion_tokens": 50}
-                    )(),
-                    "finish_reason": "stop",
-                    "provider_data": None,
-                    "images": [],
-                    "videos": [],
-                    "audios": [],
-                    "files": [],
-                },
-            )()
-
     agent1 = Agent(
         name="Financial Advisor",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         role="Provide financial planning and budget analysis",
         tools=[calculate_budget],
         db=shared_db,
@@ -424,7 +379,7 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     agent2 = Agent(
         name="Health Coach",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         role="Analyze health data and provide wellness recommendations",
         tools=[analyze_health_data],
         db=shared_db,
@@ -434,7 +389,7 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     agent3 = Agent(
         name="Meeting Coordinator",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         role="Help schedule meetings and coordinate team activities",
         tools=[schedule_meeting],
         db=shared_db,
@@ -444,7 +399,7 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     team = Team(
         name="Personal Assistant Team",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         members=[agent1, agent2, agent3],
         respond_directly=True,
         determine_input_for_members=False,

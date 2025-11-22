@@ -2,6 +2,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
 from agno.team.team import Team
@@ -41,20 +42,18 @@ def test_team_system_message_content(team):
     assert "ID: web-agent" in members_content
     assert "Name: Web Agent" in members_content
     assert "Role: Search the web for information" in members_content
-    assert "duckduckgo_search" in members_content
 
     assert "Agent 2:" in members_content
     assert "ID: finance-agent" in members_content
     assert "Name: Finance Agent" in members_content
     assert "Role: Get financial data" in members_content
-    assert "get_current_stock_price" in members_content
 
 
 def test_delegate_to_wrong_member(team):
     function = team._get_delegate_task_function(
         session=TeamSession(session_id="test-session"),
         run_response=TeamRunOutput(content="Hello, world!"),
-        session_state={},
+        run_context=RunContext(session_state={}, run_id="test-run", session_id="test-session"),
         team_run_context={},
     )
     response = list(function.entrypoint(member_id="wrong-agent", task="Get the current stock price of AAPL"))

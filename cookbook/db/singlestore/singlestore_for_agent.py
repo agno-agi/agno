@@ -18,7 +18,6 @@ DATABASE = getenv("SINGLESTORE_DATABASE")
 db_url = (
     f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}?charset=utf8mb4"
 )
-
 db = SingleStoreDb(db_url=db_url)
 
 # Create an agent with SingleStore db

@@ -3,7 +3,7 @@ from textwrap import dedent
 from agno.models.anthropic import Claude
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
-from db import db
+from db import demo_db
 from finance_agent import finance_agent
 from research_agent import research_agent
 
@@ -44,7 +44,7 @@ finance_team = Team(
         5) Output
            - Return only the final consolidated analysis (no internal member responses).
         """),
-    db=db,
+    db=demo_db,
     add_history_to_context=True,
     add_datetime_to_context=True,
     enable_agentic_memory=True,

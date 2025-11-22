@@ -3,8 +3,8 @@
 import json
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import AsyncIterator, List, Set, Tuple, Union
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
 from ag_ui.core import (
     BaseEvent,
@@ -22,12 +22,46 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.core.types import Message as AGUIMessage
+from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
+
+
+def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+    """Validate the given AGUI state is of the expected type (dict)."""
+    if state is None:
+        return None
+
+    if isinstance(state, dict):
+        return state
+
+    if isinstance(state, BaseModel):
+        try:
+            return state.model_dump()
+        except Exception:
+            pass
+
+    if is_dataclass(state):
+        try:
+            return asdict(state)  # type: ignore
+        except Exception:
+            pass
+
+    if hasattr(state, "to_dict") and callable(getattr(state, "to_dict")):
+        try:
+            result = state.to_dict()  # type: ignore
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            pass
+
+    log_warning(f"AGUI state must be a dict, got {type(state).__name__}. State will be ignored. Thread: {thread_id}")
+    return None
 
 
 @dataclass
@@ -264,7 +298,19 @@ def _create_events_from_chunk(
 
     # Handle custom events
     elif chunk.event == RunEvent.custom_event:
-        custom_event = CustomEvent(name=chunk.event, value=chunk.content)
+        # Use the name of the event class if available, otherwise default to the CustomEvent
+        try:
+            custom_event_name = chunk.__class__.__name__
+        except Exception:
+            custom_event_name = chunk.event
+
+        # Use the complete Agno event as value if parsing it works, else the event content field
+        try:
+            custom_event_value = chunk.to_dict()
+        except Exception:
+            custom_event_value = chunk.content  # type: ignore
+
+        custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
 
     return events_to_emit, message_started, message_id

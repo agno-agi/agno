@@ -2,7 +2,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from db import db
+from db import demo_db
 
 memory_manager = Agent(
     name="Memory Manager",
@@ -27,5 +27,5 @@ memory_manager = Agent(
     enable_agentic_memory=True,
     num_history_runs=10,
     markdown=True,
-    db=db,
+    db=demo_db,
 )

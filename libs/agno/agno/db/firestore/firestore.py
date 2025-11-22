@@ -89,6 +89,17 @@ class FirestoreDb(BaseDb):
 
     # -- DB methods --
 
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a collection with the given name exists in the Firestore database.
+
+        Args:
+            table_name: Name of the collection to check
+
+        Returns:
+            bool: True if the collection exists in the database, False otherwise
+        """
+        return table_name in self.db_client.list_collections()
+
     def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
 
@@ -226,6 +237,14 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the database.
 
@@ -280,8 +299,6 @@ class FirestoreDb(BaseDb):
 
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if session_type is not None:
-                query = query.where(filter=FieldFilter("session_type", "==", session_type.value))
 
             docs = query.stream()
             result = None

@@ -4,18 +4,19 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
-    deserialize_cultural_knowledge_from_db,
+    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
-    serialize_cultural_knowledge_for_db,
+    serialize_cultural_knowledge,
 )
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -26,12 +27,12 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Index, String, UniqueConstraint, func, update
+    from sqlalchemy import Index, String, UniqueConstraint, func, select, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -48,6 +49,7 @@ class PostgresDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -68,6 +70,7 @@ class PostgresDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -97,6 +100,7 @@ class PostgresDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            versions_table=versions_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -106,6 +110,37 @@ class PostgresDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the Postgres database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+    def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
+            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
@@ -184,7 +219,7 @@ class PostgresDb(BaseDb):
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {table_name} in schema {db_schema}")
+            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
             return table
 
         except Exception as e:
@@ -246,6 +281,15 @@ class PostgresDb(BaseDb):
             )
             return self.culture_table
 
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
@@ -270,6 +314,11 @@ class PostgresDb(BaseDb):
             if not create_table_if_not_found:
                 return None
 
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not is_valid_table(
@@ -288,8 +337,43 @@ class PostgresDb(BaseDb):
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
-    # -- Session methods --
+    def get_latest_schema_version(self, table_name: str):
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
 
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            sess.execute(stmt)
+
+    # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -383,9 +467,6 @@ class PostgresDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    stmt = stmt.where(table.c.session_type == session_type_value)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -1219,6 +1300,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = postgresql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1227,7 +1310,9 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1237,7 +1322,10 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
+                        feedback=memory.feedback,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
                     ),
                 ).returning(table)
 
@@ -1291,6 +1379,7 @@ class PostgresDb(BaseDb):
 
                 # Use preserved updated_at if flag is set (even if None), otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1300,6 +1389,8 @@ class PostgresDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1311,7 +1402,7 @@ class PostgresDb(BaseDb):
                 update_columns = {
                     col.name: insert_stmt.excluded[col.name]
                     for col in table.columns
-                    if col.name not in ["memory_id"]  # Don't update primary key
+                    if col.name not in ["memory_id", "created_at"]  # Don't update primary key or created_at
                 }
                 stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
                     table
@@ -2030,7 +2121,7 @@ class PostgresDb(BaseDb):
                 if not db_row or not deserialize:
                     return db_row
 
-            return deserialize_cultural_knowledge_from_db(db_row)
+            return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
             log_error(f"Exception reading from cultural knowledge table: {e}")
@@ -2104,7 +2195,7 @@ class PostgresDb(BaseDb):
                 if not deserialize:
                     return db_rows, total_count
 
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+            return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
             log_error(f"Error reading from cultural knowledge table: {e}")
@@ -2134,7 +2225,7 @@ class PostgresDb(BaseDb):
                 cultural_knowledge.id = str(uuid4())
 
             # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+            content_dict = serialize_cultural_knowledge(cultural_knowledge)
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -2149,7 +2240,7 @@ class PostgresDb(BaseDb):
                     agent_id=cultural_knowledge.agent_id,
                     team_id=cultural_knowledge.team_id,
                 )
-                stmt = stmt.on_conflict_do_update(
+                stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["id"],
                     set_=dict(
                         name=cultural_knowledge.name,
@@ -2173,7 +2264,7 @@ class PostgresDb(BaseDb):
             if not db_row or not deserialize:
                 return db_row
 
-            return deserialize_cultural_knowledge_from_db(db_row)
+            return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")

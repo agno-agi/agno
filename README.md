@@ -21,13 +21,13 @@
 
 Agno is a multi-agent framework, runtime and control plane. Built for speed, privacy, and scale.
 
-It provides a rich set of primitives for building:
+It provides a rich set of tools for building:
 
-- **Agents** with persistent state, knowledge retrieval, memory, and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
-- **Multi-Agent Teams** that operate autonomously under a team leader that maintains shared state and context.
-- **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or a regular python functions and can run sequentially, in parallel, in loops, branches, or conditionally.
+- **Agents** with memory, knowledge, session management, and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
+- **Multi-Agent Teams** that operate autonomously under a team leader that maintains shared state and context. Perfect for use cases where the scope exceeds beyond a single agent.
+- **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or regular python functions that run sequentially, in parallel, in loops, branches, or conditionally.
 
-Agno also provides a FastAPI-powered runtime for serving multi-agent systems in production, covering the entire {build → run → deploy} lifecycle. Building Agents is easy, running them is hard, and that's where Agno shines.
+Agno also provides a ready-to-use FastAPI app (called the AgentOS) for serving your agents, teams and workflows in production. Stateless, horizontally scalable and designed for scale, the AgentOS gives you major head start in building your AI product.
 
 ## Getting started
 
@@ -44,7 +44,7 @@ After that, checkout the [examples gallery](https://docs.agno.com/examples/intro
 
 ## Example
 
-Here’s an example of an Agent that connects to an MCP server, manages conversation state in a database, and is served using a FastAPI application that you can interact with using the [AgentOS UI](https://os.agno.com).
+Here’s an example of an Agent that connects to an MCP server, manages conversation state in a database, is served using a FastAPI application that you can chat with using the [AgentOS UI](https://os.agno.com).
 
 ```python agno_agent.py
 from agno.agent import Agent
@@ -79,11 +79,11 @@ if __name__ == "__main__":
 
 ## AgentOS - Production Runtime for Multi-Agent Systems
 
-AgentOS is Agno's high-performance runtime for serving multi-agent systems in production. Key features include:
+Building Agents is easy, running them is hard, and that's where the AgentOS comes in. AgentOS is a high-performance runtime for serving multi-agent systems in production. Key features include:
 
-1. **Pre-built FastAPI Runtime**: AgentOS ships with a ready-to-use FastAPI app for orchestrating your agents, teams, and workflows. This provides a major head start when building an AI product.
+1. **Pre-built FastAPI app**: AgentOS ships with a ready-to-use FastAPI app for orchestrating your agents, teams, and workflows. This gives you a major head start in building your AI product.
 
-2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time. This gives you unmatched visibility and control over your system.
+2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time, giving you unmatched control over your system.
 
 3. **Private by Design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
 
@@ -103,7 +103,7 @@ Agno brings a novel architecture that no other framework provides, your AgentOS 
 
 ## Designed for Agent Engineering
 
-Agno is a remarkably feature-rich framework, purpose-built for large-scale multi-agent deployments.
+Agno is an incredibly feature-rich framework, designed for Agent Engineering. Here are some key features:
 
 | **Category** | **Feature** | **Description** |
 |---------------|-------------|-----------------|

@@ -37,9 +37,16 @@ json_mode_agent = Agent(
     use_json_mode=True,
 )
 
-# Agent that uses structured outputs
+# Agent that uses structured outputs with strict_output=True (default)
 structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    description="You write movie scripts.",
+    output_schema=MovieScript,
+)
+
+# Agent with strict_output=False (guided mode)
+guided_output_agent = Agent(
+    model=OpenAIChat(id="gpt-4o", strict_output=False),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )
@@ -53,3 +60,4 @@ structured_output_agent = Agent(
 
 json_mode_agent.print_response("New York")
 structured_output_agent.print_response("New York")
+guided_output_agent.print_response("New York")
