@@ -980,7 +980,12 @@ class Team:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
                     self._mcp_tools_initialized_on_run.append(tool)
@@ -4211,7 +4216,10 @@ class Team:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
@@ -4985,7 +4993,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5027,7 +5038,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     # Only add the tool if it successfully connected and built its tools
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
