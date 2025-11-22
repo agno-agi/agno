@@ -33,6 +33,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
     try:
         # Preparing the input for the Agent and emitting the run started event
         messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Look for user_id in run_input.forwarded_props
