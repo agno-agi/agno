@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from agno.utils.dttm import now_epoch_s, to_epoch_s
+from agno.utils.dttm import now_epoch_s
 
 
 @dataclass
