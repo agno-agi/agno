@@ -224,6 +224,9 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
+            if "already defined for this MetaData" in str(e):
+                log_debug(f"Table '{table_name}' already exists, skipping creation")
+                return Table(table_name, self.metadata)
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
