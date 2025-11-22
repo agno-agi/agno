@@ -157,6 +157,86 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, dict]]] = None,
+    ) -> int:
+        """
+        Count tokens for messages and tools.
+        
+        Uses a tiered approach:
+        1. tiktoken for OpenAI-compatible models (when available)
+        2. Smart word-based approximation for text
+        3. Patch-based for images, duration-based for video/audio
+        
+        Args:
+            messages: List of messages to count tokens for
+            tools: Optional list of tool/function definitions
+        
+        Returns:
+            Estimated token count
+        
+        Examples:
+            >>> model.count_tokens(messages=[msg1, msg2])
+            150
+        """
+        from agno.utils.tokens import count_tokens
+        
+        return count_tokens(
+            messages=messages,
+            model_id=self.id,
+            provider=self.provider,
+            tools=tools,
+        )
+    
+    def get_context_limit(self) -> Optional[int]:
+        """
+        Get the context window limit for this model in tokens.
+        
+        Returns:
+            Context limit in tokens, or None if unknown
+        
+        Examples:
+            >>> model = OpenAIChat(id="gpt-4o")
+            >>> model.get_context_limit()
+            128000
+        """
+        from agno.utils.model_context_limits import get_context_limit
+        
+        return get_context_limit(self.id, self.provider)
+    
+    def fits_in_context(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, dict]]] = None,
+        reserve_for_output: int = 1000,
+    ) -> bool:
+        """
+        Check if messages and tools fit within the model's context window.
+        
+        Args:
+            messages: Messages to check
+            tools: Optional tool definitions
+            reserve_for_output: Tokens to reserve for model output (default: 1000)
+        
+        Returns:
+            True if content fits, False if it exceeds context limit
+        
+        Examples:
+            >>> if not model.fits_in_context(messages):
+            >>>     # Trim messages or compress tool results
+            >>>     pass
+        """
+        token_count = self.count_tokens(messages, tools)
+        context_limit = self.get_context_limit()
+        
+        # If limit unknown, assume it fits
+        if context_limit is None:
+            return True
+        
+        return (token_count + reserve_for_output) <= context_limit
+
     def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
         """Generate a cache key based on model messages and core parameters."""
         message_data = []

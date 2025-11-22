@@ -49,14 +49,55 @@ class CompressionManager:
     compress_tool_results: bool = True
     compress_tool_results_limit: int = 3
     compress_tool_call_instructions: Optional[str] = None
+    
+    # Token-based compression thresholds (preferred over count-based)
+    compress_when_tokens_exceed: Optional[int] = None  # e.g., 50000
+    compress_when_context_percent: Optional[float] = None  # e.g., 0.7 (70% of context)
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
 
     def should_compress(self, messages: List[Message]) -> bool:
+        """
+        Determine if tool results should be compressed.
+        
+        Supports both token-based (preferred) and count-based thresholds:
+        1. Token-based: Compress when total tokens exceed threshold or context percentage
+        2. Count-based: Compress when uncompressed tool count exceeds limit (backward compatible)
+        
+        Token-based is smarter because it accounts for actual context usage,
+        including multimodal inputs (images, videos, etc.)
+        """
         if not self.compress_tool_results:
             return False
-
+        
+        # Try token-based compression first (if configured and model available)
+        if (self.compress_when_tokens_exceed or self.compress_when_context_percent) and self.model:
+            try:
+                # Count total tokens (includes text + multimodal)
+                total_tokens = self.model.count_tokens(messages)
+                
+                # Check absolute token threshold
+                if self.compress_when_tokens_exceed and total_tokens > self.compress_when_tokens_exceed:
+                    log_info(
+                        f"Token threshold exceeded ({total_tokens} > {self.compress_when_tokens_exceed}) -> Compressing tool results"
+                    )
+                    return True
+                
+                # Check context percentage threshold
+                if self.compress_when_context_percent:
+                    context_limit = self.model.get_context_limit()
+                    if context_limit:
+                        threshold_tokens = int(context_limit * self.compress_when_context_percent)
+                        if total_tokens > threshold_tokens:
+                            log_info(
+                                f"Context usage exceeded ({total_tokens}/{context_limit} = {total_tokens/context_limit*100:.1f}% > {self.compress_when_context_percent*100:.0f}%) -> Compressing tool results"
+                            )
+                            return True
+            except Exception as e:
+                log_warning(f"Token-based compression check failed: {e}. Falling back to count-based.")
+        
+        # Fall back to count-based compression (backward compatible)
         uncompressed_tools_count = len(
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )

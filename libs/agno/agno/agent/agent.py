@@ -304,6 +304,16 @@ class Agent:
     system_message_role: str = "system"
     # Set to False to skip context building
     build_context: bool = True
+    
+    # --- Context trimming settings ---
+    # Automatically trim context to fit within token budget
+    auto_trim_context: bool = False
+    # Strategy for trimming context ("truncate_old", "truncate_middle", "summarize")
+    context_trim_strategy: Literal["truncate_old", "truncate_middle", "summarize"] = "truncate_old"
+    # Maximum tokens to use for context (None = use model's limit)
+    max_context_tokens: Optional[int] = None
+    # Tokens to reserve for model output when trimming
+    reserve_output_tokens: int = 1000
 
     # --- Settings for building the default system message ---
     # A description of the Agent that is added to the start of the system message.
