@@ -312,6 +312,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -359,6 +360,7 @@ class Model(ABC):
                     tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
+                    compression_manager=compression_manager,
                 )
 
                 # Add assistant message to messages
@@ -433,9 +435,17 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
+
                     # Format and add results to messages
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        compression_manager=compression_manager,
+                        **model_response.extra or {},
                     )
 
                     if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -447,7 +457,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -499,6 +509,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -536,6 +547,7 @@ class Model(ABC):
                     tools=_tool_dicts,
                     tool_choice=tool_choice or self._tool_choice,
                     run_response=run_response,
+                    compression_manager=compression_manager,
                 )
 
                 # Add assistant message to messages
@@ -609,9 +621,17 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
+
                     # Format and add results to messages
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                        messages=messages,
+                        function_call_results=function_call_results,
+                        compression_manager=compression_manager,
+                        **model_response.extra or {},
                     )
 
                     if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -623,7 +643,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -675,6 +695,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -690,6 +711,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
+            compression_manager=compression_manager,
         )
 
         # Populate the assistant message
@@ -730,6 +752,7 @@ class Model(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -745,6 +768,7 @@ class Model(ABC):
             tool_choice=tool_choice or self._tool_choice,
             assistant_message=assistant_message,
             run_response=run_response,
+            compression_manager=compression_manager,
         )
 
         # Populate the assistant message
@@ -887,6 +911,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -980,18 +1005,31 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
+
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
                         self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results, **stream_data.extra
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                            **stream_data.extra,
                         )
                     elif model_response and model_response.extra is not None:
                         self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results, **model_response.extra
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                            **model_response.extra,
                         )
                     else:
                         self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
                         )
 
                     # Handle function call media
@@ -1003,7 +1041,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -1084,6 +1122,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1147,6 +1186,7 @@ class Model(ABC):
                         tools=_tool_dicts,
                         tool_choice=tool_choice or self._tool_choice,
                         run_response=run_response,
+                        compression_manager=compression_manager,
                     )
                     if self.cache_response:
                         streaming_responses.append(model_response)
@@ -1178,18 +1218,31 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
+                    all_messages = messages + function_call_results
+                    # Compress tool results
+                    if compression_manager and compression_manager.should_compress(all_messages):
+                        compression_manager.compress(all_messages)
+
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
                         self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results, **stream_data.extra
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                            **stream_data.extra,
                         )
                     elif model_response and model_response.extra is not None:
                         self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
+                            **model_response.extra or {},
                         )
                     else:
                         self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compression_manager=compression_manager,
                         )
 
                     # Handle function call media
@@ -1201,7 +1254,7 @@ class Model(ABC):
                         )
 
                     for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                        function_call_result.log(metrics=True, compressed_content=compression_manager is not None)
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
@@ -2146,7 +2199,7 @@ class Model(ABC):
         return function_calls_to_run
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self, messages: List[Message], function_call_results: List[Message], compression_manager=None, **kwargs
     ) -> None:
         """
         Format function call results.

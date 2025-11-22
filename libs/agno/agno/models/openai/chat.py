@@ -302,19 +302,23 @@ class OpenAIChat(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compression_manager: Optional[Any] = None) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             message (Message): The message to format.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        use_compression = compression_manager is not None and compression_manager.compress_tool_results
+        tool_result = message.get_content(use_compression=use_compression)
+
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
-            "content": message.content,
+            "content": tool_result,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
@@ -374,6 +378,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API and parse the response.
@@ -384,6 +389,7 @@ class OpenAIChat(Model):
             response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
             tools (Optional[List[Dict[str, Any]]]): The tools to use.
             tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             ModelResponse: The chat completion response from the API.
@@ -396,7 +402,7 @@ class OpenAIChat(Model):
 
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -454,6 +460,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -464,6 +471,7 @@ class OpenAIChat(Model):
             response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
             tools (Optional[List[Dict[str, Any]]]): The tools to use.
             tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             ModelResponse: The chat completion response from the API.
@@ -475,7 +483,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -533,12 +541,14 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             Iterator[ModelResponse]: An iterator of model responses.
@@ -552,7 +562,7 @@ class OpenAIChat(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -609,12 +619,14 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             Any: An asynchronous iterator of model responses.
@@ -628,7 +640,7 @@ class OpenAIChat(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(

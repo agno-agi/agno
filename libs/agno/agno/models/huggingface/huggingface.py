@@ -191,19 +191,27 @@ class HuggingFace(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compression_manager: Optional[Any] = None) -> Dict[str, Any]:
         """
         Format a message into the format expected by HuggingFace.
 
         Args:
             message (Message): The message to format.
+            compression_manager: Optional compression manager for tool result compression.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        # Use compressed content for tool messages if compression is active
+        if message.role == "tool":
+            use_compression = compression_manager is not None and compression_manager.compress_tool_results
+            content = message.get_content(use_compression=use_compression)
+        else:
+            content = message.content if message.content is not None else ""
+
         message_dict: Dict[str, Any] = {
             "role": message.role,
-            "content": message.content if message.content is not None else "",
+            "content": content,
             "name": message.name or message.tool_name,
             "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
@@ -236,6 +244,7 @@ class HuggingFace(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the HuggingFace Hub.
@@ -247,7 +256,7 @@ class HuggingFace(Model):
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],
+                messages=[self._format_message(m, compression_manager) for m in messages],
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -269,6 +278,7 @@ class HuggingFace(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
@@ -280,7 +290,7 @@ class HuggingFace(Model):
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],
+                messages=[self._format_message(m, compression_manager) for m in messages],
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -302,6 +312,7 @@ class HuggingFace(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the HuggingFace API.
@@ -314,7 +325,7 @@ class HuggingFace(Model):
 
             stream = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],
+                messages=[self._format_message(m, compression_manager) for m in messages],
                 stream=True,
                 stream_options=ChatCompletionInputStreamOptions(include_usage=True),  # type: ignore
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
@@ -340,6 +351,7 @@ class HuggingFace(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compression_manager: Optional[Any] = None,
     ) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the HuggingFace API.
@@ -351,7 +363,7 @@ class HuggingFace(Model):
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],
+                messages=[self._format_message(m, compression_manager) for m in messages],
                 stream=True,
                 stream_options=ChatCompletionInputStreamOptions(include_usage=True),  # type: ignore
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),

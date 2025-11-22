@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.media import Image
 from agno.models.message import Message
@@ -46,21 +46,29 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
     return message_content_with_image
 
 
-def format_messages(messages: List[Message]) -> List[Dict[str, Any]]:
+def format_messages(messages: List[Message], compression_manager: Optional[Any] = None) -> List[Dict[str, Any]]:
     """
     Format messages for the Cohere API.
 
     Args:
         messages (List[Message]): The list of messages.
+        compression_manager: Optional compression manager for tool result compression.
 
     Returns:
         List[Dict[str, Any]]: The formatted messages.
     """
     formatted_messages = []
     for message in messages:
+        # Use compressed content for tool messages if compression is active
+        if message.role == "tool":
+            use_compression = compression_manager is not None and compression_manager.compress_tool_results
+            content = message.get_content(use_compression=use_compression)
+        else:
+            content = message.content
+
         message_dict = {
             "role": message.role,
-            "content": message.content,
+            "content": content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,

@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agno.agent import Message
 from agno.utils.log import log_warning
@@ -19,13 +19,17 @@ TOOL_CALL_ROLE_MAP = {
 }
 
 
-def format_message(message: Message, openai_like: bool = False, tool_calls: bool = False) -> Dict[str, Any]:
+def format_message(
+    message: Message, openai_like: bool = False, tool_calls: bool = False, compression_manager: Optional[Any] = None
+) -> Dict[str, Any]:
     """
     Format a message into the format expected by Llama API.
 
     Args:
         message (Message): The message to format.
         openai_like (bool): Whether to format the message as an OpenAI-like message.
+        tool_calls (bool): Whether tool calls are present.
+        compression_manager: Optional compression manager for tool result compression.
 
     Returns:
         Dict[str, Any]: The formatted message.
@@ -52,10 +56,14 @@ def format_message(message: Message, openai_like: bool = False, tool_calls: bool
         log_warning("Audio input is currently unsupported.")
 
     if message.role == "tool":
+        # Use compressed content if compression is active
+        use_compression = compression_manager is not None and compression_manager.compress_tool_results
+        content = message.get_content(use_compression=use_compression)
+
         message_dict = {
             "role": "tool",
             "tool_call_id": message.tool_call_id,
-            "content": message.content,
+            "content": content,
         }
 
     if message.role == "assistant":

@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
@@ -221,17 +221,20 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     return None
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def format_messages(
+    messages: List[Message], compression_manager: Optional[Any] = None
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compression_manager: Optional compression manager for tool result compression.
 
     Returns:
-        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    chat_messages: List[Dict[str, str]] = []
+    chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
     for message in messages:
@@ -301,11 +304,39 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     )
         elif message.role == "tool":
             content = []
+
+            # Check if this is a combined message (multiple tool results in one message)
+            if (
+                compression_manager
+                and compression_manager.compress_tool_results
+                and message.tool_calls
+                and isinstance(message.content, list)
+            ):
+                # Combined message - iterate through tool_calls to create multiple tool_result blocks
+                for idx, tool_call in enumerate(message.tool_calls):
+                    original = message.content[idx] if idx < len(message.content) else ""
+                    compressed = tool_call.get("content", original)
+
+                    content.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.get("tool_call_id", ""),
+                            "content": str(compressed),
+                        }
+                    )
+                if content:
+                    chat_messages.append({"role": ROLE_MAP[message.role], "content": content})
+                    continue
+
+            # Standard individual message - use the helper method
+            use_compression = compression_manager is not None and compression_manager.compress_tool_results
+            tool_result = message.get_content(use_compression=use_compression)
+
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(message.content),
+                    "content": str(tool_result),
                 }
             )
 
