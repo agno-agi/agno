@@ -672,7 +672,7 @@ class MemoryManager:
             # If updated_at is None, place at the beginning of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.min,
+                key=lambda m: m.updated_at if m.updated_at is not None else 0,
             )
         else:
             sorted_memories_list = []
@@ -695,6 +695,7 @@ class MemoryManager:
         if memories is None:
             memories = {}
 
+        MAX_UNIX_TS = 2**63 - 1
         memories_list = memories.get(user_id, [])
         # Sort memories by updated_at timestamp if available
         if memories_list:
@@ -702,7 +703,7 @@ class MemoryManager:
             # If updated_at is None, place at the end of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.max,
+                key=lambda m: m.updated_at if m.updated_at is not None else MAX_UNIX_TS,
             )
 
         else:
