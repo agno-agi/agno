@@ -24,7 +24,7 @@ class UserMemory:
     def __post_init__(self) -> None:
         """Automatically set created_at if not provided."""
         if self.created_at is None:
-            self.created_at = now_epoch_s() if self.created_at is None else to_epoch_s(self.created_at)
+            self.created_at = now_epoch_s()
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
