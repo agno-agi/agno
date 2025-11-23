@@ -123,10 +123,10 @@ class GeminiFileSearch(VectorDb):
 
         display_name = name
         try:
-            name = self.get_document_name_by_display_name(display_name)
-            if not name:
+            id = self.get_document_name_by_display_name(display_name)
+            if not id:
                 return False
-            return self.id_exists(name)
+            return self.id_exists(id)
         except ClientError as e:
             logger.error(f"Error checking if document name exists: {e}")
             raise
