@@ -124,6 +124,8 @@ class GeminiFileSearch(VectorDb):
         display_name = name
         try:
             name = self.get_document_name_by_display_name(display_name)
+            if not name:
+                return False
             return self.id_exists(name)
         except ClientError as e:
             logger.error(f"Error checking if document name exists: {e}")
@@ -316,6 +318,8 @@ class GeminiFileSearch(VectorDb):
     def delete_by_name(self, name: str) -> bool:
         """Alias for delete_by_id."""
         id = self.get_document_name_by_display_name(name)
+        if not id:
+            return False
         return self.delete_by_id(id)
 
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
