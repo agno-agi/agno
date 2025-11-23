@@ -6,6 +6,18 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 
 
+@pytest.fixture(autouse=True)
+def reset_async_client():
+    """Reset global async HTTP client between tests to avoid event loop conflicts."""
+    import agno.utils.http as http_utils
+
+    # Reset before test
+    http_utils._global_async_client = None
+    yield
+    # Reset after test
+    http_utils._global_async_client = None
+
+
 class PersonSchema(BaseModel):
     name: str = Field(..., description="Person's name")
     age: int = Field(..., description="Person's age")

@@ -6,6 +6,7 @@ Tests passing output_schema as JSON schema string via AgentOS API endpoints.
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
@@ -15,22 +16,25 @@ from agno.os import AgentOS
 from agno.team import Team
 
 
+@pytest.fixture(autouse=True)
+def reset_async_client():
+    """Reset global async HTTP client between tests to avoid event loop conflicts."""
+    import agno.utils.http as http_utils
+
+    # Reset before test
+    http_utils._global_async_client = None
+    yield
+    # Reset after test
+    http_utils._global_async_client = None
+
+
 class MovieScript(BaseModel):
     title: str = Field(..., description="Movie title")
     genre: str = Field(..., description="Movie genre")
 
 
-def test_agent_with_output_schema():
+def test_agent_with_output_schema(test_os_client: TestClient, test_agent: Agent):
     """Test agent run with simple output schema passed as JSON string."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "MovieScript",
         "type": "object",
@@ -41,8 +45,8 @@ def test_agent_with_output_schema():
         "required": ["title", "genre"],
     }
 
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Write a movie about AI",
             "output_schema": json.dumps(schema),
@@ -61,17 +65,8 @@ def test_agent_with_output_schema():
     assert data["content_type"] == "MovieScript"
 
 
-def test_agent_with_nested_schema():
+def test_agent_with_nested_schema(test_os_client: TestClient, test_agent: Agent):
     """Test agent run with nested object in output schema."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Product",
         "type": "object",
@@ -92,8 +87,8 @@ def test_agent_with_nested_schema():
         "required": ["name", "price", "in_stock", "supplier"],
     }
 
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Create a product: laptop from a tech supplier in USA",
             "output_schema": json.dumps(schema),
@@ -111,17 +106,8 @@ def test_agent_with_nested_schema():
     assert "country" in data["content"]["supplier"]
 
 
-def test_agent_with_array_schema():
+def test_agent_with_array_schema(test_os_client: TestClient, test_agent: Agent):
     """Test agent run with array fields in output schema."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Recipe",
         "type": "object",
@@ -136,8 +122,8 @@ def test_agent_with_array_schema():
         "required": ["name", "ingredients"],
     }
 
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Give me a simple pasta recipe",
             "output_schema": json.dumps(schema),
@@ -154,17 +140,8 @@ def test_agent_with_array_schema():
     assert len(data["content"]["ingredients"]) > 0
 
 
-def test_agent_with_optional_fields():
+def test_agent_with_optional_fields(test_os_client: TestClient, test_agent: Agent):
     """Test agent run with optional fields in output schema."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Config",
         "type": "object",
@@ -177,8 +154,8 @@ def test_agent_with_optional_fields():
         "required": ["host", "port"],
     }
 
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Create a server config for localhost:8080",
             "output_schema": json.dumps(schema),
@@ -194,17 +171,8 @@ def test_agent_with_optional_fields():
     assert "port" in data["content"]
 
 
-def test_agent_streaming_with_schema():
+def test_agent_streaming_with_schema(test_os_client: TestClient, test_agent: Agent):
     """Test agent streaming run with output schema."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Answer",
         "type": "object",
@@ -215,8 +183,8 @@ def test_agent_streaming_with_schema():
         "required": ["answer"],
     }
 
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "What is 2+2?",
             "output_schema": json.dumps(schema),
@@ -229,19 +197,10 @@ def test_agent_streaming_with_schema():
     assert "text/event-stream" in response.headers.get("content-type", "")
 
 
-def test_agent_with_invalid_schema():
+def test_agent_with_invalid_schema(test_os_client: TestClient, test_agent: Agent):
     """Test agent run handles invalid output schema gracefully."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Write a story",
             "output_schema": "not valid json{",
@@ -255,17 +214,8 @@ def test_agent_with_invalid_schema():
     assert isinstance(data["content"], str)
 
 
-def test_agent_with_array_of_objects():
+def test_agent_with_array_of_objects(test_os_client: TestClient, test_agent: Agent):
     """Test agent run with array of objects in output schema."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(agents=[agent])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "MovieCast",
         "type": "object",
@@ -287,8 +237,8 @@ def test_agent_with_array_of_objects():
         "required": ["movie", "actors"],
     }
 
-    response = client.post(
-        f"/agents/{agent.id}/runs",
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Create a cast for a space movie with 2 actors",
             "output_schema": json.dumps(schema),
@@ -307,7 +257,7 @@ def test_agent_with_array_of_objects():
         assert "role" in data["content"]["actors"][0]
 
 
-def test_agent_preconfigured_vs_dynamic_schema():
+def test_agent_preconfigured_vs_dynamic_schema(test_os_client: TestClient, test_agent: Agent):
     """Compare agent with pre-configured schema vs dynamic schema passed via API."""
     agent_with_schema = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -317,22 +267,13 @@ def test_agent_preconfigured_vs_dynamic_schema():
     )
     agent_os1 = AgentOS(agents=[agent_with_schema])
     app1 = agent_os1.get_app()
-    client1 = TestClient(app1)
 
-    response1 = client1.post(
-        f"/agents/{agent_with_schema.id}/runs",
-        data={"message": "Write a sci-fi movie about AI"},
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-
-    agent_without_schema = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os2 = AgentOS(agents=[agent_without_schema])
-    app2 = agent_os2.get_app()
-    client2 = TestClient(app2)
+    with TestClient(app1) as client1:
+        response1 = client1.post(
+            f"/agents/{agent_with_schema.id}/runs",
+            data={"message": "Write a sci-fi movie about AI"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
 
     schema = {
         "title": "MovieScript",
@@ -344,8 +285,8 @@ def test_agent_preconfigured_vs_dynamic_schema():
         "required": ["title", "genre"],
     }
 
-    response2 = client2.post(
-        f"/agents/{agent_without_schema.id}/runs",
+    response2 = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
         data={
             "message": "Write a sci-fi movie about AI",
             "output_schema": json.dumps(schema),
@@ -365,28 +306,8 @@ def test_agent_preconfigured_vs_dynamic_schema():
     assert data1["content_type"] == data2["content_type"] == "MovieScript"
 
 
-def test_team_with_output_schema():
+def test_team_with_output_schema(test_os_client: TestClient, test_team: Team):
     """Test team run with simple output schema passed as JSON string."""
-    agent1 = Agent(
-        name="Writer",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    agent2 = Agent(
-        name="Editor",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Content Team",
-        members=[agent1, agent2],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Report",
         "type": "object",
@@ -397,8 +318,8 @@ def test_team_with_output_schema():
         "required": ["summary", "recommendation"],
     }
 
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Analyze the benefits of remote work",
             "output_schema": json.dumps(schema),
@@ -416,23 +337,8 @@ def test_team_with_output_schema():
     assert data["content_type"] == "Report"
 
 
-def test_team_with_nested_schema():
+def test_team_with_nested_schema(test_os_client: TestClient, test_team: Team):
     """Test team run with nested objects in output schema."""
-    agent1 = Agent(
-        name="Analyst",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Analysis Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Analysis",
         "type": "object",
@@ -457,8 +363,8 @@ def test_team_with_nested_schema():
         "required": ["topic", "findings"],
     }
 
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Analyze electric vehicles",
             "output_schema": json.dumps(schema),
@@ -477,23 +383,8 @@ def test_team_with_nested_schema():
     assert "cons" in data["content"]["findings"]
 
 
-def test_team_streaming_with_schema():
+def test_team_streaming_with_schema(test_os_client: TestClient, test_team: Team):
     """Test team streaming run with output schema."""
-    agent1 = Agent(
-        name="Writer",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Writing Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Result",
         "type": "object",
@@ -504,8 +395,8 @@ def test_team_streaming_with_schema():
         "required": ["output"],
     }
 
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Write a tagline for a tech startup",
             "output_schema": json.dumps(schema),
@@ -518,25 +409,10 @@ def test_team_streaming_with_schema():
     assert "text/event-stream" in response.headers.get("content-type", "")
 
 
-def test_team_without_schema():
+def test_team_without_schema(test_os_client: TestClient, test_team: Team):
     """Test team run without output schema returns plain string."""
-    agent1 = Agent(
-        name="Agent1",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Test Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={"message": "Hello", "stream": "false"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -547,23 +423,8 @@ def test_team_without_schema():
     assert isinstance(data["content"], str)
 
 
-def test_team_with_array_schema():
+def test_team_with_array_schema(test_os_client: TestClient, test_team: Team):
     """Test team run with array fields in output schema."""
-    agent1 = Agent(
-        name="Chef",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Recipe Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Recipe",
         "type": "object",
@@ -578,8 +439,8 @@ def test_team_with_array_schema():
         "required": ["name", "ingredients"],
     }
 
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Give me a simple pasta recipe",
             "output_schema": json.dumps(schema),
@@ -597,23 +458,8 @@ def test_team_with_array_schema():
     assert len(data["content"]["ingredients"]) > 0
 
 
-def test_team_with_optional_fields():
+def test_team_with_optional_fields(test_os_client: TestClient, test_team: Team):
     """Test team run with optional fields in output schema."""
-    agent1 = Agent(
-        name="SysAdmin",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Config Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "Config",
         "type": "object",
@@ -626,8 +472,8 @@ def test_team_with_optional_fields():
         "required": ["host", "port"],
     }
 
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Create a server config for localhost:8080",
             "output_schema": json.dumps(schema),
@@ -644,25 +490,10 @@ def test_team_with_optional_fields():
     assert "port" in data["content"]
 
 
-def test_team_with_invalid_schema():
+def test_team_with_invalid_schema(test_os_client: TestClient, test_team: Team):
     """Test team run handles invalid output schema gracefully."""
-    agent1 = Agent(
-        name="Writer",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Story Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Write a story",
             "output_schema": "not valid json{",
@@ -677,23 +508,8 @@ def test_team_with_invalid_schema():
     assert isinstance(data["content"], str)
 
 
-def test_team_with_array_of_objects():
+def test_team_with_array_of_objects(test_os_client: TestClient, test_team: Team):
     """Test team run with array of objects in output schema."""
-    agent1 = Agent(
-        name="Casting Director",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        telemetry=False,
-    )
-    team = Team(
-        name="Casting Team",
-        members=[agent1],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os = AgentOS(teams=[team])
-    app = agent_os.get_app()
-    client = TestClient(app)
-
     schema = {
         "title": "MovieCast",
         "type": "object",
@@ -715,8 +531,8 @@ def test_team_with_array_of_objects():
         "required": ["movie", "actors"],
     }
 
-    response = client.post(
-        f"/teams/{team.id}/runs",
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Create a cast for a space movie with 2 actors",
             "output_schema": json.dumps(schema),
@@ -736,7 +552,7 @@ def test_team_with_array_of_objects():
         assert "role" in data["content"]["actors"][0]
 
 
-def test_team_preconfigured_vs_dynamic_schema():
+def test_team_preconfigured_vs_dynamic_schema(test_os_client: TestClient, test_team: Team):
     """Compare team with pre-configured schema vs dynamic schema passed via API."""
     team_with_schema = Team(
         name="Writing Team",
@@ -753,29 +569,13 @@ def test_team_preconfigured_vs_dynamic_schema():
     )
     agent_os1 = AgentOS(teams=[team_with_schema])
     app1 = agent_os1.get_app()
-    client1 = TestClient(app1)
 
-    response1 = client1.post(
-        f"/teams/{team_with_schema.id}/runs",
-        data={"message": "Write a sci-fi movie about AI", "stream": "false"},
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-
-    team_without_schema = Team(
-        name="Writing Team",
-        members=[
-            Agent(
-                name="Writer",
-                model=OpenAIChat(id="gpt-4o-mini"),
-                telemetry=False,
-            )
-        ],
-        telemetry=False,
-        markdown=False,
-    )
-    agent_os2 = AgentOS(teams=[team_without_schema])
-    app2 = agent_os2.get_app()
-    client2 = TestClient(app2)
+    with TestClient(app1) as client1:
+        response1 = client1.post(
+            f"/teams/{team_with_schema.id}/runs",
+            data={"message": "Write a sci-fi movie about AI", "stream": "false"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
 
     schema = {
         "title": "MovieScript",
@@ -787,8 +587,8 @@ def test_team_preconfigured_vs_dynamic_schema():
         "required": ["title", "genre"],
     }
 
-    response2 = client2.post(
-        f"/teams/{team_without_schema.id}/runs",
+    response2 = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
         data={
             "message": "Write a sci-fi movie about AI",
             "output_schema": json.dumps(schema),
