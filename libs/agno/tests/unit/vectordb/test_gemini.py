@@ -585,9 +585,10 @@ def test_delete_by_id(mock_gemini_db):
     result = mock_gemini_db.delete_by_id("stores/test_store_id/documents/test_doc_id")
 
     assert result is True
-    mock_gemini_db.client.file_search_stores.documents.delete.assert_called_once_with(
-        name="stores/test_store_id/documents/test_doc_id"
-    )
+    # Verify delete was called (config parameter is a mock so we just check it was called)
+    mock_gemini_db.client.file_search_stores.documents.delete.assert_called_once()
+    call_args = mock_gemini_db.client.file_search_stores.documents.delete.call_args
+    assert call_args[1]["name"] == "stores/test_store_id/documents/test_doc_id"
 
 
 def test_delete_by_id_error(mock_gemini_db):

@@ -306,10 +306,7 @@ class GeminiFileSearch(VectorDb):
             if not self.file_search_store:
                 raise ValueError("File Search store not initialized.")
 
-            self.client.file_search_stores.documents.delete(
-                name=id,
-                config=DeleteDocumentConfigDict(force=True)
-            )
+            self.client.file_search_stores.documents.delete(name=id, config=DeleteDocumentConfigDict(force=True))
             return True
         except Exception as e:
             logger.error(f"Error deleting document by ID: {e}")
