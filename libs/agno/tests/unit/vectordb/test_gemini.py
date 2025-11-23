@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Mock google.genai module before importing GeminiFileSearch
+# This is necessary because the google-genai package may not be installed
 mock_genai = MagicMock()
 mock_types = MagicMock()
 mock_errors = MagicMock()
@@ -24,6 +25,8 @@ sys.modules["google.genai"] = mock_genai
 sys.modules["google.genai.types"] = mock_types
 sys.modules["google.genai.errors"] = mock_errors
 
+# ruff: noqa: E402
+# These imports must come after the mock setup above
 from agno.knowledge.document import Document
 from agno.vectordb.gemini.gemini_file_search import GeminiFileSearch
 from agno.vectordb.search import SearchType
