@@ -140,6 +140,7 @@ class GeminiFileSearch(VectorDb):
 
         try:
             document = self.client.file_search_stores.documents.get(name=id)
+            logger.debug(f"Found document with ID '{id}': with display name '{document.display_name}'")
             return True
         except ClientError as e:
             if e.code == 404:
