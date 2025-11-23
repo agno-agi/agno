@@ -81,9 +81,9 @@ def test_message_ordering(shared_db):
     ]
 
     for content, expected_content in zip(messages[0:-1], expected_contents):
-        assert content.content == expected_content, (
-            f"Message {content.content} content mismatch. Expected: {expected_content}, Got: {content.content}"
-        )
+        assert (
+            content.content == expected_content
+        ), f"Message {content.content} content mismatch. Expected: {expected_content}, Got: {content.content}"
 
 
 def test_message_ordering_with_system_message():

@@ -192,9 +192,9 @@ def test_agent_memory_impact_with_gc_monitoring(shared_db):
 
         # Check that runs are in memory
         assert session_from_storage.runs[0].session_id == session_id, "Session runs not found in memory"
-        assert len(session_from_storage.runs) == len(prompts), (
-            f"Expected {len(prompts)} runs, got {len(session_from_storage.runs[session_id])}"
-        )
+        assert len(session_from_storage.runs) == len(
+            prompts
+        ), f"Expected {len(prompts)} runs, got {len(session_from_storage.runs[session_id])}"
 
         print("✅ Memory impact test completed successfully")
         print(f"✅ Created {len(user_memories)} user memories")
@@ -260,9 +260,9 @@ def test_agent_memory_cleanup_after_session_switch(shared_db):
         for session_id in sessions:
             session_from_storage = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
             assert session_from_storage is not None, f"Session {session_id} was not stored"
-            assert session_from_storage.runs[0].session_id == session_id, (
-                f"Session {session_id} runs not found in memory"
-            )
+            assert (
+                session_from_storage.runs[0].session_id == session_id
+            ), f"Session {session_id} runs not found in memory"
 
         print("✅ Session switching memory test completed successfully")
 

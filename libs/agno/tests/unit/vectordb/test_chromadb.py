@@ -138,9 +138,9 @@ def test_metadata_flattening(chroma_db):
 
     # Ensure all values are ChromaDB-compatible types
     for key, value in flattened.items():
-        assert isinstance(value, (str, int, float, bool)), (
-            f"Value {value} of type {type(value)} is not ChromaDB compatible"
-        )
+        assert isinstance(
+            value, (str, int, float, bool)
+        ), f"Value {value} of type {type(value)} is not ChromaDB compatible"
 
 
 def test_complex_metadata_insertion(chroma_db):

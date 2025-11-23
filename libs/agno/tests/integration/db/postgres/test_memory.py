@@ -355,9 +355,9 @@ def test_upsert_memories_performance(postgres_db_real: PostgresDb):
     assert len(all_memories) == 30
 
     # Bulk should be at least 2x faster
-    assert bulk_time < individual_time / 2, (
-        f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
-    )
+    assert (
+        bulk_time < individual_time / 2
+    ), f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
 
 
 def test_get_user_memory_with_user_id_filter(postgres_db_real: PostgresDb):

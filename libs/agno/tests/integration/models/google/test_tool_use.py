@@ -131,9 +131,9 @@ def test_tool_use_tool_choice_none():
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
-    assert not any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None), (
-        "Tool calls should not be made"
-    )
+    assert not any(
+        msg.tool_calls for msg in response.messages if msg.tool_calls is not None
+    ), "Tool calls should not be made"
     assert response.content is not None
 
 
