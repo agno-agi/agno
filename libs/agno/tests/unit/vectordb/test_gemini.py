@@ -9,18 +9,20 @@ mock_genai = MagicMock()
 mock_types = MagicMock()
 mock_errors = MagicMock()
 
+
 # Create ClientError mock
 class MockClientError(Exception):
     def __init__(self, message):
         super().__init__(message)
         self.code = None
 
+
 mock_errors.ClientError = MockClientError
 
-sys.modules['google'] = MagicMock()
-sys.modules['google.genai'] = mock_genai
-sys.modules['google.genai.types'] = mock_types
-sys.modules['google.genai.errors'] = mock_errors
+sys.modules["google"] = MagicMock()
+sys.modules["google.genai"] = mock_genai
+sys.modules["google.genai.types"] = mock_types
+sys.modules["google.genai.errors"] = mock_errors
 
 from agno.knowledge.document import Document
 from agno.vectordb.gemini.gemini_file_search import GeminiFileSearch
@@ -256,7 +258,7 @@ def test_name_exists_true(mock_gemini_db):
     mock_gemini_db.client.file_search_stores.documents.get.return_value = mock_doc
 
     # Mock the id_exists check to not raise an error
-    with patch.object(mock_gemini_db, 'id_exists', return_value=True):
+    with patch.object(mock_gemini_db, "id_exists", return_value=True):
         assert mock_gemini_db.name_exists("test_document") is True
 
 
@@ -268,7 +270,7 @@ def test_name_exists_false(mock_gemini_db):
     mock_gemini_db.file_search_store = mock_store
 
     mock_gemini_db.client.file_search_stores.documents.list.return_value = []
-    
+
     # Mock id_exists to return False
     mock_error = MockClientError("Not found")
     mock_error.code = 404
@@ -345,7 +347,7 @@ def test_insert_documents(mock_gemini_db, sample_documents):
     mock_gemini_db.client.operations.get.return_value = mock_operation
 
     # Patch the insert method to avoid StringList type check issues
-    with patch.object(mock_gemini_db, 'insert') as mock_insert:
+    with patch.object(mock_gemini_db, "insert") as mock_insert:
         mock_gemini_db.insert(content_hash="test_hash", documents=[sample_documents[0]])
         mock_insert.assert_called_once_with(content_hash="test_hash", documents=[sample_documents[0]])
 
@@ -375,7 +377,7 @@ def test_insert_documents_with_metadata(mock_gemini_db):
     mock_gemini_db.client.operations.get.return_value = mock_operation
 
     # Patch the insert method to avoid StringList type check issues
-    with patch.object(mock_gemini_db, 'insert') as mock_insert:
+    with patch.object(mock_gemini_db, "insert") as mock_insert:
         mock_gemini_db.insert(content_hash="test_hash", documents=[doc])
         mock_insert.assert_called_once_with(content_hash="test_hash", documents=[doc])
 
@@ -416,7 +418,7 @@ def test_insert_wait_for_operation(mock_gemini_db, sample_documents):
     mock_gemini_db.client.operations.get.side_effect = [mock_operation_in_progress, mock_operation_done]
 
     # Patch the insert method to test the polling logic
-    with patch.object(mock_gemini_db, 'insert') as mock_insert:
+    with patch.object(mock_gemini_db, "insert") as mock_insert:
         mock_gemini_db.insert(content_hash="test_hash", documents=[sample_documents[0]])
         mock_insert.assert_called_once()
 
@@ -657,10 +659,12 @@ def test_upsert_documents(mock_gemini_db, sample_documents):
     mock_gemini_db.client.operations.get.return_value = mock_operation
 
     # Patch upsert to test that delete and insert are called
-    with patch.object(mock_gemini_db, 'delete_by_name', return_value=True) as mock_delete, \
-         patch.object(mock_gemini_db, 'insert') as mock_insert:
+    with (
+        patch.object(mock_gemini_db, "delete_by_name", return_value=True) as mock_delete,
+        patch.object(mock_gemini_db, "insert") as mock_insert,
+    ):
         mock_gemini_db.upsert(content_hash="test_hash", documents=[sample_documents[0]])
-        
+
         # Verify delete was called for existing document
         mock_delete.assert_called_once_with("tom_kha")
         # Verify insert was called
@@ -770,7 +774,7 @@ def test_get_document_name_no_store(mock_gemini_db):
 @pytest.mark.asyncio
 async def test_async_create(mock_gemini_db):
     """Test async_create method."""
-    with patch.object(mock_gemini_db, "create") as mock_create, patch("asyncio.to_thread") as mock_to_thread:
+    with patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_gemini_db.async_create()
@@ -818,9 +822,10 @@ async def test_async_search(mock_gemini_db):
     """Test async_search method."""
     expected_results = [Document(content="Test result", name="test")]
 
-    with patch.object(mock_gemini_db, "search", return_value=expected_results), patch(
-        "asyncio.to_thread"
-    ) as mock_to_thread:
+    with (
+        patch.object(mock_gemini_db, "search", return_value=expected_results),
+        patch("asyncio.to_thread") as mock_to_thread,
+    ):
         mock_to_thread.return_value = expected_results
 
         results = await mock_gemini_db.async_search("test query", limit=2)

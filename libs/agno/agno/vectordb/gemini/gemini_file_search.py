@@ -6,9 +6,15 @@ from typing import Any, Dict, List, Optional
 try:
     from google import genai
     from google.genai import types
-    from google.genai.types import CreateFileSearchStoreConfigDict, DeleteDocumentConfigDict, \
-    DeleteFileSearchStoreConfigDict, UploadToFileSearchStoreConfigDict, CustomMetadata, StringList
     from google.genai.errors import ClientError
+    from google.genai.types import (
+        CreateFileSearchStoreConfigDict,
+        CustomMetadata,
+        DeleteDocumentConfigDict,
+        DeleteFileSearchStoreConfigDict,
+        StringList,
+        UploadToFileSearchStoreConfigDict,
+    )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install using `pip install google-genai`")
 
@@ -24,12 +30,12 @@ class GeminiFileSearch(VectorDb):
     """
 
     def __init__(
-            self,
-            file_search_store_name: str,
-            model_name: str = "gemini-2.5-flash-lite",
-            api_key: Optional[str] = None,
-            gemini_client: Optional[genai.Client] = None,
-            **kwargs,
+        self,
+        file_search_store_name: str,
+        model_name: str = "gemini-2.5-flash-lite",
+        api_key: Optional[str] = None,
+        gemini_client: Optional[genai.Client] = None,
+        **kwargs,
     ):
         """
         Initialize the GeminiFileSearch instance.
@@ -63,7 +69,8 @@ class GeminiFileSearch(VectorDb):
         self.file_search_store_name = file_search_store_name
         self.file_search_store: Optional[Any] = None  # Store FileSearchStore reference
         log_debug(
-            f"Initialized GeminiFileSearch with store '{self.file_search_store_name}' and model '{self.model_name}'")
+            f"Initialized GeminiFileSearch with store '{self.file_search_store_name}' and model '{self.model_name}'"
+        )
 
     def create(self) -> None:
         """Initialize or get the File Search store."""
@@ -74,7 +81,8 @@ class GeminiFileSearch(VectorDb):
                 if store.display_name == self.file_search_store_name:
                     self.file_search_store = store
                     log_debug(
-                        f"Found existing File Search store '{self.file_search_store_name}' with name '{store.name}'")
+                        f"Found existing File Search store '{self.file_search_store_name}' with name '{store.name}'"
+                    )
                     return
 
             # Create new File Search store if it doesn't exist
@@ -82,7 +90,8 @@ class GeminiFileSearch(VectorDb):
                 config=CreateFileSearchStoreConfigDict(display_name=self.file_search_store_name)
             )
             log_debug(
-                f"Created new File Search store '{self.file_search_store_name}' with name '{self.file_search_store.name}'")
+                f"Created new File Search store '{self.file_search_store_name}' with name '{self.file_search_store.name}'"
+            )
         except Exception as e:
             logger.error(f"Error initializing File Search store: {e}")
             raise
@@ -168,29 +177,19 @@ class GeminiFileSearch(VectorDb):
                 if document_meta_data:
                     for key, value in document_meta_data.items():
                         if isinstance(value, (int, float)):
-                            custom_metadata.append(CustomMetadata(
-                                key=key,
-                                numeric_value=value
-                            ))
+                            custom_metadata.append(CustomMetadata(key=key, numeric_value=value))
                         elif isinstance(value, StringList):
-                            custom_metadata.append(CustomMetadata(
-                                key=key,
-                                string_list_value=value
-                            ))
+                            custom_metadata.append(CustomMetadata(key=key, string_list_value=value))
                         else:
-                            custom_metadata.append(CustomMetadata(
-                                key=key,
-                                string_value=str(value)
-                            ))
+                            custom_metadata.append(CustomMetadata(key=key, string_value=str(value)))
 
                 # Upload directly to file search store
                 operation = self.client.file_search_stores.upload_to_file_search_store(
                     file=temp_file_path,
                     file_search_store_name=self.file_search_store.name,
                     config=UploadToFileSearchStoreConfigDict(
-                        display_name=display_name,
-                        custom_metadata=custom_metadata
-                    )
+                        display_name=display_name, custom_metadata=custom_metadata
+                    ),
                 )
 
                 # Wait for operation to complete
@@ -202,14 +201,16 @@ class GeminiFileSearch(VectorDb):
 
                 # Clean up temp file
                 import os
+
                 os.unlink(temp_file_path)
 
         except Exception as e:
             logger.error(f"Error inserting documents: {e}")
             raise
 
-    async def async_insert(self, content_hash: str, documents: List[Document],
-                           filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Async version of insert method."""
         await asyncio.to_thread(self.insert, content_hash, documents, filters)
 
@@ -221,18 +222,15 @@ class GeminiFileSearch(VectorDb):
         try:
             # Prepare file search tool configuration
             file_search_config = types.Tool(
-                file_search=types.FileSearch(
-                    file_search_store_names=[self.file_search_store.name]
-                )
+                file_search=types.FileSearch(file_search_store_names=[self.file_search_store.name])
             )
 
             # Add metadata filter if provided
             if filters:
-                metadata_filter = " AND ".join([f"{k}=\"{v}\"" for k, v in filters.items()])
+                metadata_filter = " AND ".join([f'{k}="{v}"' for k, v in filters.items()])
                 file_search_config = types.Tool(
                     file_search=types.FileSearch(
-                        file_search_store_names=[self.file_search_store.name],
-                        metadata_filter=metadata_filter
+                        file_search_store_names=[self.file_search_store.name], metadata_filter=metadata_filter
                     )
                 )
 
@@ -244,18 +242,16 @@ class GeminiFileSearch(VectorDb):
                     tools=[file_search_config],
                     system_instruction="You are a helpful assistant that answers questions based on the provided documents. Provide specific, detailed information from the documents.",
                     temperature=0.1,
-                )
+                ),
             )
 
             # Return the response as a document with grounding metadata
             if response.text:
                 result_doc = Document(content=response.text, name="search_result")
                 # Include citation/grounding metadata if available
-                if hasattr(response, 'candidates') and response.candidates:
-                    if hasattr(response.candidates[0], 'grounding_metadata'):
-                        result_doc.meta_data = {
-                            'grounding_metadata': str(response.candidates[0].grounding_metadata)
-                        }
+                if hasattr(response, "candidates") and response.candidates:
+                    if hasattr(response.candidates[0], "grounding_metadata"):
+                        result_doc.meta_data = {"grounding_metadata": str(response.candidates[0].grounding_metadata)}
                 return [result_doc]
             return []
         except Exception as e:
@@ -263,10 +259,10 @@ class GeminiFileSearch(VectorDb):
             return []
 
     async def async_search(
-            self,
-            query: str,
-            limit: int = 5,
-            filters: Optional[Dict[str, Any]] = None,
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """Async version of search method."""
         return await asyncio.to_thread(self.search, query, limit, filters)
@@ -279,8 +275,7 @@ class GeminiFileSearch(VectorDb):
 
             # Delete the File Search store (force delete to remove all documents)
             self.client.file_search_stores.delete(
-                name=self.file_search_store.name,
-                config=DeleteFileSearchStoreConfigDict(force=True)
+                name=self.file_search_store.name, config=DeleteFileSearchStoreConfigDict(force=True)
             )
             log_debug(f"Deleted File Search store '{self.file_search_store_name}'")
             self.file_search_store = None
@@ -311,7 +306,10 @@ class GeminiFileSearch(VectorDb):
             if not self.file_search_store:
                 raise ValueError("File Search store not initialized.")
 
-            self.client.file_search_stores.documents.delete(name=id)
+            self.client.file_search_stores.documents.delete(
+                name=id,
+                config=DeleteDocumentConfigDict(force=True)
+            )
             return True
         except Exception as e:
             logger.error(f"Error deleting document by ID: {e}")
@@ -332,8 +330,9 @@ class GeminiFileSearch(VectorDb):
                 self.delete_by_name(doc_name)
             self.insert(content_hash, documents, filters)
 
-    async def async_upsert(self, content_hash: str, documents: List[Document],
-                           filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         await asyncio.to_thread(self.upsert, content_hash, documents, filters)
 
     def delete(self) -> bool:
