@@ -123,9 +123,9 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     assert session_from_db.session_data["session_state"] == {"city": "Paris"}
     assert len(session_from_db.runs) == 3, "We should have all previous runs, plus the new agent run"
 
-    assert (
-        len(session_from_db.runs[-1].messages) == 8
-    ), "Original 4 history messages (not system message), plus the new agent run's messages"
+    assert len(session_from_db.runs[-1].messages) == 8, (
+        "Original 4 history messages (not system message), plus the new agent run's messages"
+    )
     assert isinstance(session_from_db.runs[0], RunOutput)
     assert session_from_db.runs[0].agent_id == "weather-agent-id"
     assert session_from_db.runs[0].parent_run_id == session_from_db.runs[1].run_id
@@ -256,7 +256,7 @@ def test_session_sharing_team_to_team_with_history(team_1, team_2):
     assert session_from_db.session_id == session_id
     assert session_from_db.session_data is not None
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
-    assert (
-        len(session_from_db.runs) == 4
-    ), "We should have the first team run and member run, plus the new team run and member run"
+    assert len(session_from_db.runs) == 4, (
+        "We should have the first team run and member run, plus the new team run and member run"
+    )
     assert len(session_from_db.runs[-1].messages) == 9, "Original 4 history messages, plus the new team run's messages"

@@ -486,9 +486,9 @@ async def test_duplicate_tool_call_result_events():
     result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
 
     # Should have exactly one TOOL_CALL_RESULT event (not duplicates)
-    assert (
-        len(result_events) == 1
-    ), f"Expected exactly 1 TOOL_CALL_RESULT event, got {len(result_events)} (Issue #3554 fix)"
+    assert len(result_events) == 1, (
+        f"Expected exactly 1 TOOL_CALL_RESULT event, got {len(result_events)} (Issue #3554 fix)"
+    )
 
     # Verify the result content
     result_event = result_events[0]
@@ -644,9 +644,9 @@ async def test_tool_call_without_result():
 
     # Should NOT have TOOL_CALL_RESULT since result is None
     result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
-    assert (
-        len(result_events) == 0
-    ), f"Expected no TOOL_CALL_RESULT events for tool with no result, got {len(result_events)}"
+    assert len(result_events) == 0, (
+        f"Expected no TOOL_CALL_RESULT events for tool with no result, got {len(result_events)}"
+    )
 
     assert EventType.RUN_FINISHED in event_types
 
@@ -866,9 +866,9 @@ async def test_event_ordering_invariants():
             )
             related_content_indices = [i for i in related_content_indices if i < next_end_idx]
             for content_idx in related_content_indices:
-                assert (
-                    start_idx < content_idx
-                ), f"TEXT_MESSAGE_START at {start_idx} should come before TEXT_MESSAGE_CONTENT at {content_idx}"
+                assert start_idx < content_idx, (
+                    f"TEXT_MESSAGE_START at {start_idx} should come before TEXT_MESSAGE_CONTENT at {content_idx}"
+                )
 
     # 2. TOOL_CALL_START must come before TOOL_CALL_ARGS for same tool
     tool_starts = [(i, e) for i, e in enumerate(events) if e.type == EventType.TOOL_CALL_START]
@@ -877,9 +877,9 @@ async def test_event_ordering_invariants():
     for start_idx, start_event in tool_starts:
         matching_args = [(i, e) for i, e in tool_args if e.tool_call_id == start_event.tool_call_id]
         for args_idx, _ in matching_args:
-            assert (
-                start_idx < args_idx
-            ), f"TOOL_CALL_START at {start_idx} should come before TOOL_CALL_ARGS at {args_idx}"
+            assert start_idx < args_idx, (
+                f"TOOL_CALL_START at {start_idx} should come before TOOL_CALL_ARGS at {args_idx}"
+            )
 
     # 3. RUN_FINISHED must be the last event
     run_finished_idx = event_types.index(EventType.RUN_FINISHED)
@@ -920,9 +920,9 @@ async def test_completion_event_race_condition():
     # All TEXT_MESSAGE_CONTENT events should come before TEXT_MESSAGE_END
     content_indices = [i for i, t in enumerate(event_types) if t == EventType.TEXT_MESSAGE_CONTENT]
     for content_idx in content_indices:
-        assert (
-            content_idx < text_end_idx
-        ), f"TEXT_MESSAGE_CONTENT at {content_idx} should come before TEXT_MESSAGE_END at {text_end_idx}"
+        assert content_idx < text_end_idx, (
+            f"TEXT_MESSAGE_CONTENT at {content_idx} should come before TEXT_MESSAGE_END at {text_end_idx}"
+        )
 
     # TEXT_MESSAGE_END should come before RUN_FINISHED
     assert text_end_idx < run_finished_idx, "TEXT_MESSAGE_END should come before RUN_FINISHED"
@@ -933,9 +933,9 @@ async def test_completion_event_race_condition():
 
     # Should NOT include completion event content (this was the bug)
     assert "Final content in completion event" not in total_content, "Completion event content should not be duplicated"
-    assert (
-        "Chunk 0 Chunk 1 Chunk 2 Chunk 3 Chunk 4 " == total_content
-    ), "Content should be properly sequenced without duplication"
+    assert "Chunk 0 Chunk 1 Chunk 2 Chunk 3 Chunk 4 " == total_content, (
+        "Content should be properly sequenced without duplication"
+    )
 
 
 @pytest.mark.asyncio
@@ -1009,9 +1009,9 @@ async def test_message_id_separation_after_tool_calls():
 
     # Verify tool call references correct parent message (the first message that was ended)
     tool_call_event = tool_call_start_events[0]
-    assert (
-        tool_call_event.parent_message_id == first_message_id
-    ), "Tool call should reference the first message as parent_message_id"
+    assert tool_call_event.parent_message_id == first_message_id, (
+        "Tool call should reference the first message as parent_message_id"
+    )
 
     # Verify content matches expected text
     assert text_content_events[0].delta == "Let me search for that information."
@@ -1159,9 +1159,9 @@ async def test_message_id_consistency_within_message():
     message_id = text_start_events[0].message_id
 
     for event in text_content_events:
-        assert (
-            event.message_id == message_id
-        ), f"Content event message_id {event.message_id} should match start event {message_id}"
+        assert event.message_id == message_id, (
+            f"Content event message_id {event.message_id} should match start event {message_id}"
+        )
 
     assert text_end_events[0].message_id == message_id, f"End event message_id should match start event {message_id}"
 
@@ -1246,26 +1246,26 @@ async def test_message_id_regression_prevention():
     message_ids = [event.message_id for event in text_start_events]
 
     # CRITICAL: All message_ids must be different
-    assert (
-        len(set(message_ids)) == 3
-    ), f"All text message_ids should be unique across tool call boundaries. Got message_ids: {message_ids}"
+    assert len(set(message_ids)) == 3, (
+        f"All text message_ids should be unique across tool call boundaries. Got message_ids: {message_ids}"
+    )
 
     # Tool calls should reference correct parent messages
     tool_1_parent = tool_call_events[0].parent_message_id
     tool_2_parent = tool_call_events[1].parent_message_id
 
-    assert (
-        tool_1_parent == message_ids[0]
-    ), f"First tool call should reference first message. Expected {message_ids[0]}, got {tool_1_parent}"
-    assert (
-        tool_2_parent == message_ids[1]
-    ), f"Second tool call should reference second message. Expected {message_ids[1]}, got {tool_2_parent}"
+    assert tool_1_parent == message_ids[0], (
+        f"First tool call should reference first message. Expected {message_ids[0]}, got {tool_1_parent}"
+    )
+    assert tool_2_parent == message_ids[1], (
+        f"Second tool call should reference second message. Expected {message_ids[1]}, got {tool_2_parent}"
+    )
 
     # Verify no message_id is reused
     all_referenced_ids = set(message_ids + [tool_1_parent, tool_2_parent])
-    assert (
-        len(all_referenced_ids) == 3
-    ), f"Should have exactly 3 unique message IDs in the conversation. Found: {sorted(all_referenced_ids)}"
+    assert len(all_referenced_ids) == 3, (
+        f"Should have exactly 3 unique message IDs in the conversation. Found: {sorted(all_referenced_ids)}"
+    )
 
 
 def test_validate_agui_state_with_valid_dict():

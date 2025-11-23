@@ -892,6 +892,6 @@ def test_upsert_sessions_performance(sqlite_db_real: SqliteDb):
     assert len(all_sessions) == 50
 
     # Asserting bulk upsert is at least 2x faster
-    assert (
-        bulk_time < individual_time / 2
-    ), f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    assert bulk_time < individual_time / 2, (
+        f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    )

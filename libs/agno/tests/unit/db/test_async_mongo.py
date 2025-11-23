@@ -121,9 +121,9 @@ class TestAsyncMongoDbEventLoopHandling:
 
         # Check that ALL _initialized flags are cleared (this is the fix!)
         initialized_flags_after = [attr for attr in vars(db).keys() if attr.endswith("_initialized")]
-        assert (
-            len(initialized_flags_after) == 0
-        ), f"All _initialized flags should be cleared, but found: {initialized_flags_after}"
+        assert len(initialized_flags_after) == 0, (
+            f"All _initialized flags should be cleared, but found: {initialized_flags_after}"
+        )
 
     @pytest.mark.asyncio
     async def test_indexes_awaited_properly(self):

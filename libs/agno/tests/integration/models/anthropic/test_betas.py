@@ -253,6 +253,6 @@ async def test_betas_with_real_client_async(claude_model):
 
     # Verify the model was set correctly
     assert response.model is not None, "Response model should not be None"
-    assert response.model == "claude-sonnet-4-5-20250929" or response.model.startswith(
-        "claude-"
-    ), f"Expected Claude model, got {response.model}"
+    assert response.model == "claude-sonnet-4-5-20250929" or response.model.startswith("claude-"), (
+        f"Expected Claude model, got {response.model}"
+    )

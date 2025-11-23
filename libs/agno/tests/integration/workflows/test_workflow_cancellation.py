@@ -111,9 +111,9 @@ def test_cancel_workflow_with_agents_during_streaming(streaming_workflow_with_ag
     # Verify agent 2 has partial content
     step_2_result = last_run.step_results[1]
     assert step_2_result.step_name == "agent_step_2"
-    assert (
-        step_2_result.content is not None and len(step_2_result.content) > 0
-    ), "Agent 2 should have captured partial content"
+    assert step_2_result.content is not None and len(step_2_result.content) > 0, (
+        "Agent 2 should have captured partial content"
+    )
     assert step_2_result.success is False
     assert "Cancelled during execution" in (step_2_result.error or "")
 
@@ -188,9 +188,9 @@ async def test_cancel_workflow_with_agents_during_async_streaming(streaming_work
     # Verify agent 2 has partial content
     step_2_result = last_run.step_results[1]
     assert step_2_result.step_name == "agent_step_2"
-    assert (
-        step_2_result.content is not None and len(step_2_result.content) > 0
-    ), "Agent 2 should have captured partial content"
+    assert step_2_result.content is not None and len(step_2_result.content) > 0, (
+        "Agent 2 should have captured partial content"
+    )
     assert step_2_result.success is False
     assert "Cancelled during execution" in (step_2_result.error or "")
 

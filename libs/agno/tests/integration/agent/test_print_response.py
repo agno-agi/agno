@@ -275,9 +275,9 @@ def test_live_update_calls():
                 agent.print_response(input="Test", show_message=True, console=mock_console, stream=False)
 
                 # Live.update should be called multiple times as panels are added
-                assert (
-                    mock_live_class.return_value.__enter__.return_value.update.call_count >= 0
-                ), "Live.update should be called multiple times"
+                assert mock_live_class.return_value.__enter__.return_value.update.call_count >= 0, (
+                    "Live.update should be called multiple times"
+                )
 
 
 def test_simple_functionality():
@@ -391,6 +391,6 @@ def test_stream_vs_non_stream_behavior():
                 agent.print_response(input="Test", console=mock_console, stream=True)
 
                 # Verify run was called with stream=True
-                assert any(
-                    call.kwargs.get("stream") for call in mock_run.call_args_list
-                ), "run() should be called with stream=True in streaming mode"
+                assert any(call.kwargs.get("stream") for call in mock_run.call_args_list), (
+                    "run() should be called with stream=True in streaming mode"
+                )

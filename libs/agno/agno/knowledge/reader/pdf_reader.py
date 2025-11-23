@@ -102,9 +102,9 @@ def _clean_page_numbers(
         - If page numbers are found, the function will add formatted page numbers to each page's content if `page_start_numbering_format` or
           `page_end_numbering_format` is provided.
     """
-    assert len(extra_content) == 0 or len(extra_content) == len(
-        page_content_list
-    ), "Please provide an equally sized list of extra content if provided."
+    assert len(extra_content) == 0 or len(extra_content) == len(page_content_list), (
+        "Please provide an equally sized list of extra content if provided."
+    )
 
     # Regex to match potential page numbers at the start or end of a string
     page_number_regex = re.compile(r"^\s*(\d+)\s*|\s*(\d+)\s*$")

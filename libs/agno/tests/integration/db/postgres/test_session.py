@@ -96,9 +96,9 @@ def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
         )
         constraint_names = [row[0] for row in result.fetchall()]
         expected_constraint = f"{postgres_db_real.session_table_name}_uq_session_id"
-        assert (
-            expected_constraint in constraint_names
-        ), f"Session table missing unique constraint {expected_constraint}. Found: {constraint_names}"
+        assert expected_constraint in constraint_names, (
+            f"Session table missing unique constraint {expected_constraint}. Found: {constraint_names}"
+        )
 
 
 def test_insert_agent_session(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
@@ -874,6 +874,6 @@ def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
     assert len(all_sessions) == 50
 
     # Asserting bulk upsert is at least 2x faster
-    assert (
-        bulk_time < individual_time / 2
-    ), f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    assert bulk_time < individual_time / 2, (
+        f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
+    )
