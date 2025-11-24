@@ -54,7 +54,6 @@ def demo_simple_tutoring_cli():
         user="Student",
         emoji="📚",
         stream=True,
-        stream_events=True,
         show_step_details=True,
     )
 

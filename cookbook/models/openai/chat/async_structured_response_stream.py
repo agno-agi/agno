@@ -38,9 +38,7 @@ structured_output_agent = Agent(
 
 
 async def main():
-    await structured_output_agent.aprint_response(
-        "New York", stream=True, stream_events=True
-    )
+    await structured_output_agent.aprint_response("New York", stream=True)
 
 
 if __name__ == "__main__":

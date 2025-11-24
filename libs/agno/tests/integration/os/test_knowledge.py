@@ -48,7 +48,7 @@ def mock_knowledge():
     knowledge.get_content_status = Mock()
     knowledge.aget_content_status = AsyncMock()
     knowledge.get_readers = Mock()
-    knowledge.get_filters = Mock()
+    knowledge.get_valid_filters = Mock()
     knowledge._load_content = Mock()
     knowledge.search = Mock()  # Mock the search method for search endpoint tests
 
@@ -306,7 +306,7 @@ def test_get_config(test_app, mock_knowledge):
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
     # Mock get_filters to return a list
-    mock_knowledge.get_filters.return_value = ["filter_tag_1", "filter_tag2"]
+    mock_knowledge.get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
     # Set vector_db to None so the config endpoint doesn't try to process it
     mock_knowledge.vector_db = None
@@ -334,7 +334,7 @@ def test_get_config_with_vector_db(test_app, mock_knowledge):
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
     # Mock get_filters to return a list
-    mock_knowledge.get_filters.return_value = ["filter_tag_1", "filter_tag2"]
+    mock_knowledge.get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
     # Configure the existing vector_db mock (from fixture) with the properties we need
     mock_knowledge.vector_db.name = "Test Vector DB"
@@ -369,7 +369,7 @@ def test_get_config_with_vector_db_no_name(test_app, mock_knowledge):
     """Test getting configuration with vector database that has no name (returns None)."""
     # Mock the get_readers and filters
     mock_knowledge.get_readers.return_value = {}
-    mock_knowledge.get_filters.return_value = []
+    mock_knowledge.get_valid_filters.return_value = []
 
     # Configure the existing vector_db mock (from fixture) without a name
     mock_knowledge.vector_db.name = None  # No name provided
