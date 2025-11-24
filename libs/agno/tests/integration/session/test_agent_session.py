@@ -31,6 +31,7 @@ def test_get_messages_basic(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="First user message"),
@@ -39,6 +40,7 @@ def test_get_messages_basic(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Second user message"),
@@ -47,6 +49,7 @@ def test_get_messages_basic(shared_db):
         ),
         RunOutput(
             run_id="run3",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Third user message"),
@@ -82,6 +85,7 @@ def test_get_messages_with_limit(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -91,6 +95,7 @@ def test_get_messages_with_limit(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -100,6 +105,7 @@ def test_get_messages_with_limit(shared_db):
         ),
         RunOutput(
             run_id="run3",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -134,6 +140,7 @@ def test_get_messages_with_limit_skip_system_message(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -143,6 +150,7 @@ def test_get_messages_with_limit_skip_system_message(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -152,6 +160,7 @@ def test_get_messages_with_limit_skip_system_message(shared_db):
         ),
         RunOutput(
             run_id="run3",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -181,8 +190,8 @@ def test_get_messages_with_limit_skip_incomplete_tool_results(shared_db):
     # Create multiple runs with system messages
     runs = [
         RunOutput(
-            agent_id="test_agent",
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -228,6 +237,7 @@ def test_get_messages_skip_history_messages(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Old message", from_history=True),
@@ -236,6 +246,7 @@ def test_get_messages_skip_history_messages(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="New message", from_history=False),
@@ -269,6 +280,7 @@ def test_get_messages_skip_role(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -302,6 +314,7 @@ def test_get_messages_skip_status(shared_db):
     runs = [
         RunOutput(
             run_id="run_completed",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Completed run"),
@@ -310,6 +323,7 @@ def test_get_messages_skip_status(shared_db):
         ),
         RunOutput(
             run_id="run_error",
+            agent_id="test_agent",
             status=RunStatus.error,
             messages=[
                 Message(role="user", content="Error run"),
@@ -318,6 +332,7 @@ def test_get_messages_skip_status(shared_db):
         ),
         RunOutput(
             run_id="run_cancelled",
+            agent_id="test_agent",
             status=RunStatus.cancelled,
             messages=[
                 Message(role="user", content="Cancelled run"),
@@ -392,6 +407,7 @@ def test_get_messages_system_message_handling(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -401,6 +417,7 @@ def test_get_messages_system_message_handling(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -444,6 +461,7 @@ def test_get_messages_last_n_with_multiple_runs(shared_db):
     runs = [
         RunOutput(
             run_id=f"run{i}",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content=f"Message {i}"),
@@ -484,11 +502,13 @@ def test_get_messages_with_none_messages_in_run(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=None,
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Valid message"),
@@ -568,6 +588,7 @@ def test_to_dict_basic(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Test message"),
@@ -629,6 +650,7 @@ def test_from_dict_basic(shared_db):
         "runs": [
             {
                 "run_id": "run1",
+                "agent_id": "test_agent",
                 "status": RunStatus.completed,
                 "messages": [
                     {"role": "user", "content": "Test message"},
@@ -715,6 +737,7 @@ def test_upsert_run_update_existing(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Original message"),
@@ -727,6 +750,7 @@ def test_upsert_run_update_existing(shared_db):
     # Update existing run
     updated_run = RunOutput(
         run_id="run1",
+        agent_id="test_agent",
         status=RunStatus.completed,
         messages=[
             Message(role="user", content="Updated message"),
@@ -753,6 +777,7 @@ def test_upsert_run_multiple(shared_db):
     for i in range(3):
         run = RunOutput(
             run_id=f"run{i}",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content=f"Message {i}"),
@@ -774,11 +799,13 @@ def test_get_run_exists(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[Message(role="user", content="Message 1")],
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[Message(role="user", content="Message 2")],
         ),
@@ -801,6 +828,7 @@ def test_get_run_not_exists(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[Message(role="user", content="Message 1")],
         ),
@@ -834,6 +862,7 @@ def test_get_tool_calls_basic(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Use a tool"),
@@ -870,6 +899,7 @@ def test_get_tool_calls_multiple_runs(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(
@@ -880,6 +910,7 @@ def test_get_tool_calls_multiple_runs(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(
@@ -912,6 +943,7 @@ def test_get_tool_calls_with_limit(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(
@@ -943,6 +975,7 @@ def test_get_tool_calls_no_tools(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="No tools here"),
@@ -969,6 +1002,7 @@ def test_get_session_messages_basic(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System prompt"),
@@ -978,6 +1012,7 @@ def test_get_session_messages_basic(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="User message 2"),
@@ -1011,6 +1046,7 @@ def test_get_session_messages_custom_roles(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="User message"),
@@ -1036,6 +1072,7 @@ def test_get_session_messages_skip_history(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Old user", from_history=True),
@@ -1044,6 +1081,7 @@ def test_get_session_messages_skip_history(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="New user"),
@@ -1111,6 +1149,7 @@ def test_get_chat_history_basic(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Message 1"),
@@ -1119,6 +1158,7 @@ def test_get_chat_history_basic(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Message 2"),
@@ -1146,6 +1186,7 @@ def test_get_chat_history_skip_from_history(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="Old message", from_history=True),
@@ -1154,6 +1195,7 @@ def test_get_chat_history_skip_from_history(shared_db):
         ),
         RunOutput(
             run_id="run2",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="user", content="New message", from_history=False),
@@ -1192,6 +1234,7 @@ def test_get_chat_history_default_roles(shared_db):
     runs = [
         RunOutput(
             run_id="run1",
+            agent_id="test_agent",
             status=RunStatus.completed,
             messages=[
                 Message(role="system", content="System message"),
