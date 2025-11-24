@@ -6124,7 +6124,7 @@ class Team:
 
         # 5. Add user message to run_messages (message second as per Dirk's requirement)
         # 5.1 Build user message if message is None, str or list
-        user_message = self._get_user_message(
+        user_message = await self._aget_user_message(
             run_response=run_response,
             run_context=run_context,
             input_message=input_message,
@@ -6238,6 +6238,161 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                        )
+                        if docs_from_knowledge is not None:
+                            references = MessageReferences(
+                                query=user_msg_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references: {e}")
+
+                if self.resolve_in_context:
+                    user_msg_content = self._format_message_with_state_variables(
+                        user_msg_content,
+                        user_id=user_id,
+                        session_state=run_context.session_state,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
+                    )
+
+                # Convert to string for concatenation operations
+                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+                # 4.1 Add knowledge references to user message
+                if (
+                    self.add_knowledge_to_context
+                    and references is not None
+                    and references.references is not None
+                    and len(references.references) > 0
+                ):
+                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                    user_msg_content_str += "<references>\n"
+                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+                    user_msg_content_str += "</references>"
+                # 4.2 Add context to user message
+                if add_dependencies_to_context and run_context.dependencies is not None:
+                    user_msg_content_str += "\n\n<additional context>\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(run_context.dependencies) + "\n"
+                    user_msg_content_str += "</additional context>"
+
+                # Use the string version for the final content
+                user_msg_content = user_msg_content_str
+
+                # Return the user message
+                return Message(
+                    role="user",
+                    content=user_msg_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+    async def _aget_user_message(
+        self,
+        *,
+        run_response: TeamRunOutput,
+        run_context: RunContext,
+        input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        user_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        **kwargs,
+    ):
+        # Get references from the knowledge base to use in the user message
+        references = None
+
+        if input_message is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role="user",
+                    content="",
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+            else:
+                # If the input is None, return None
+                return None
+
+        else:
+            if isinstance(input_message, list):
+                input_content: Union[str, list[Any], list[Message]]
+                if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
+                    # This is multimodal content (text + images/audio/video), preserve the structure
+                    input_content = input_message
+                elif len(input_message) > 0 and isinstance(input_message[0], Message):
+                    # This is a list of Message objects, extract text content from them
+                    input_content = get_text_from_message(input_message)
+                elif all(isinstance(item, str) for item in input_message):
+                    input_content = "\n".join([str(item) for item in input_message])
+                else:
+                    input_content = str(input_message)
+
+                return Message(
+                    role="user",
+                    content=input_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+            # If message is provided as a Message, use it directly
+            elif isinstance(input_message, Message):
+                return input_message
+            # If message is provided as a dict, try to validate it as a Message
+            elif isinstance(input_message, dict):
+                try:
+                    if self.input_schema and is_typed_dict(self.input_schema):
+                        import json
+
+                        content = json.dumps(input_message, indent=2, ensure_ascii=False)
+                        return Message(role="user", content=content)
+                    else:
+                        return Message.model_validate(input_message)
+                except Exception as e:
+                    log_warning(f"Failed to validate input: {e}")
+
+            # If message is provided as a BaseModel, convert it to a Message
+            elif isinstance(input_message, BaseModel):
+                try:
+                    # Create a user message with the BaseModel content
+                    content = input_message.model_dump_json(indent=2, exclude_none=True)
+                    return Message(role="user", content=content)
+                except Exception as e:
+                    log_warning(f"Failed to convert BaseModel to message: {e}")
+            else:
+                user_msg_content = input_message
+                if self.add_knowledge_to_context:
+                    if isinstance(input_message, str):
+                        user_msg_content = input_message
+                    elif callable(input_message):
+                        user_msg_content = input_message(agent=self)
+                    else:
+                        raise Exception("input must be a string or a callable when add_references is True")
+
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
                             query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
                         )
                         if docs_from_knowledge is not None:
