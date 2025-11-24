@@ -7047,7 +7047,7 @@ class Team:
         if not files:
             files = []
 
-        def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task_description: str):
+        def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
             # 1. Initialize the member agent
             self._initialize_member(member_agent)
 
@@ -7084,7 +7084,7 @@ class Team:
             if self.determine_input_for_members is False:
                 member_agent_task = input  # type: ignore
             else:
-                member_agent_task = task_description
+                member_agent_task = task
 
             if team_history_str or team_member_interactions_str:
                 member_agent_task = format_member_agent_task(  # type: ignore
@@ -7178,7 +7178,7 @@ class Team:
 
             _, member_agent = result
             member_agent_task, history = _setup_delegate_task_to_member(
-                member_agent=member_agent, task_description=task
+                member_agent=member_agent, task=task
             )
 
             # Make sure for the member agent, we are using the agent logger
@@ -7306,7 +7306,7 @@ class Team:
 
             _, member_agent = result
             member_agent_task, history = _setup_delegate_task_to_member(
-                member_agent=member_agent, task_description=task
+                member_agent=member_agent, task=task
             )
 
             # Make sure for the member agent, we are using the agent logger
@@ -7424,7 +7424,7 @@ class Team:
             # Run all the members sequentially
             for _, member_agent in enumerate(self.members):
                 member_agent_task, history = _setup_delegate_task_to_member(
-                    member_agent=member_agent, task_description=task
+                    member_agent=member_agent, task=task
                 )
 
                 member_session_state_copy = copy(run_context.session_state)
@@ -7540,7 +7540,7 @@ class Team:
 
                 async def stream_member(agent: Union[Agent, "Team"]) -> None:
                     member_agent_task, history = _setup_delegate_task_to_member(
-                        member_agent=agent, task_description=task
+                        member_agent=agent, task=task
                     )  # type: ignore
                     member_session_state_copy = copy(run_context.session_state)
 
@@ -7618,7 +7618,7 @@ class Team:
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
                     member_agent_task, history = _setup_delegate_task_to_member(
-                        member_agent=current_agent, task_description=task
+                        member_agent=current_agent, task=task
                     )
 
                     async def run_member_agent(agent=current_agent) -> str:
