@@ -312,7 +312,9 @@ class MemoryManager:
                 "clear_user_memories() is not supported with an async DB. Please use aclear_user_memories() instead."
             )
 
-        # Get all memories for the user
+        # TODO: This is inefficient - we fetch all memories just to get their IDs.
+        # Extend delete_user_memories() to accept just user_id and delete all memories
+        # for that user directly without requiring a list of memory_ids.
         memories = self.get_user_memories(user_id=user_id)
         if not memories:
             log_debug(f"No memories found for user {user_id}")
