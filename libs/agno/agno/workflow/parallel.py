@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
@@ -356,6 +357,12 @@ class Parallel:
                     session_state_copies.append({})
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
@@ -676,6 +683,12 @@ class Parallel:
                     session_state_copies.append({})
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:

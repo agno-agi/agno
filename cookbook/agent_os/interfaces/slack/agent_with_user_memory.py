@@ -6,7 +6,7 @@ from agno.memory.manager import MemoryManager
 from agno.models.anthropic.claude import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
@@ -24,7 +24,7 @@ memory_manager = MemoryManager(
 personal_agent = Agent(
     name="Basic Agent",
     model=Claude(id="claude-sonnet-4-20250514"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
@@ -35,7 +35,7 @@ personal_agent = Agent(
     instructions=dedent("""
         You are a personal AI friend in a slack chat, your purpose is to chat with the user about things and make them feel good.
         First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.
-        Use Google Search tool to find latest infromation about things in the conversations
+        Use DuckDuckGo search tool to find latest information about things in the conversations
         You may sometimes recieve messages prepenned with group message when that is the message then reply to whole group instead of treating them as from a single user
                         """),
     debug_mode=True,

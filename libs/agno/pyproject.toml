@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.2.12"
+version = "2.3.2"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -34,7 +34,7 @@ dependencies = [
   "docstring-parser",
   "gitpython",
   "h11>=0.16.0",
-  "httpx",
+  "httpx[http2]",
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -133,6 +133,7 @@ neo4j = ["neo4j"]
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
 async_postgres = ["asyncpg"]
+async_mongo = ["pymongo", "motor"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -257,6 +258,7 @@ storage = [
   "agno[sql]",
   "agno[postgres]",
   "agno[async_postgres]",
+  "agno[async_mongo]",
   "agno[sqlite]",
   "agno[gcs]",
   "agno[firestore]",
@@ -401,7 +403,6 @@ module = [
   "google_maps_places.*",
   "google_auth_oauthlib.*",
   "googleapiclient.*",
-  "googlesearch.*",
   "groq.*",
   "hexbytes.*",
   "huggingface_hub.*",
