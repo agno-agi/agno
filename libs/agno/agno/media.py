@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+from agno.utils.log import log_error
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -413,12 +414,14 @@ class File(BaseModel):
         import httpx
 
         if self.url:
-            if self.url.startswith("file://"):
+            try:
+                response = httpx.get(self.url)
+                content = response.content
+                mime_type = response.headers.get("Content-Type", "").split(";")[0]
+                return content, mime_type
+            except Exception:
+                log_error(f"Failed to download file from {self.url}")
                 return None
-            response = httpx.get(self.url)
-            content = response.content
-            mime_type = response.headers.get("Content-Type", "").split(";")[0]
-            return content, mime_type
         else:
             return None
 
