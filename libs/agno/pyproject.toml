@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.2.13"
+version = "2.3.2"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -34,7 +34,7 @@ dependencies = [
   "docstring-parser",
   "gitpython",
   "h11>=0.16.0",
-  "httpx",
+  "httpx[http2]",
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -403,7 +403,6 @@ module = [
   "google_maps_places.*",
   "google_auth_oauthlib.*",
   "googleapiclient.*",
-  "googlesearch.*",
   "groq.*",
   "hexbytes.*",
   "huggingface_hub.*",

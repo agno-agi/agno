@@ -34,6 +34,8 @@ USER_MEMORY_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
+    "feedback": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
@@ -113,8 +115,15 @@ AGNO_CONFIGS_TABLE_SCHEMA = {
     "config": {"type": JSON, "nullable": False},
     "version": {"type": String, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": String, "nullable": False, "index": True},
+    "updated_at": {"type": String, "nullable": True},
+}
+
+VERSIONS_TABLE_SCHEMA = {
+    "table_name": {"type": String, "nullable": False, "primary_key": True},
+    "version": {"type": String, "nullable": False},
+    "created_at": {"type": String, "nullable": False, "index": True},
+    "updated_at": {"type": String, "nullable": True},
 }
 
 
@@ -136,6 +145,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "configs": AGNO_CONFIGS_TABLE_SCHEMA,
+        "versions": VERSIONS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

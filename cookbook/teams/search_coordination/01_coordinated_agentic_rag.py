@@ -34,7 +34,7 @@ knowledge = Knowledge(
 )
 
 # Add documentation content
-knowledge.add_contents(urls=["https://docs.agno.com/concepts/agents/introduction.md"])
+knowledge.add_contents(urls=["https://docs.agno.com/basics/agents/overview.md"])
 
 # Knowledge Searcher Agent - Specialized in finding relevant information
 knowledge_searcher = Agent(
@@ -106,7 +106,7 @@ def main():
     query = "What are Agents and how do they work with tools and knowledge?"
 
     # Run the coordinated team
-    coordinated_rag_team.print_response(query, stream=True, stream_events=True)
+    coordinated_rag_team.print_response(query, stream=True)
 
 
 if __name__ == "__main__":

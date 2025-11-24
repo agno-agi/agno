@@ -1,6 +1,5 @@
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
@@ -13,6 +12,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.tools.function import Function
+from agno.utils.dttm import now_epoch_s
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -227,7 +227,7 @@ class MemoryManager:
             memory.user_id = user_id
 
             if not memory.updated_at:
-                memory.updated_at = datetime.now()
+                memory.updated_at = now_epoch_s()
 
             self._upsert_db_memory(memory=memory)
             return memory.memory_id
@@ -255,7 +255,7 @@ class MemoryManager:
                 user_id = "default"
 
             if not memory.updated_at:
-                memory.updated_at = datetime.now()
+                memory.updated_at = now_epoch_s()
 
             memory.memory_id = memory_id
             memory.user_id = user_id
@@ -671,7 +671,7 @@ class MemoryManager:
             # If updated_at is None, place at the beginning of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.min,
+                key=lambda m: m.updated_at if m.updated_at is not None else 0,
             )
         else:
             sorted_memories_list = []
@@ -694,6 +694,7 @@ class MemoryManager:
         if memories is None:
             memories = {}
 
+        MAX_UNIX_TS = 2**63 - 1
         memories_list = memories.get(user_id, [])
         # Sort memories by updated_at timestamp if available
         if memories_list:
@@ -701,7 +702,7 @@ class MemoryManager:
             # If updated_at is None, place at the end of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.max,
+                key=lambda m: m.updated_at if m.updated_at is not None else MAX_UNIX_TS,
             )
 
         else:

@@ -320,6 +320,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
     """
     if not tools:
         return None
@@ -352,7 +353,14 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
                 "type": parameters.get("type", "object"),
                 "properties": input_properties,
                 "required": required_params,
+                "additionalProperties": False,
             },
         }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
         parsed_tools.append(tool)
     return parsed_tools

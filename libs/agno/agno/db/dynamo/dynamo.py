@@ -182,6 +182,14 @@ class DynamoDb(BaseDb):
 
         return table_name
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     # --- Sessions ---
 
     def delete_session(self, session_id: Optional[str] = None) -> bool:
