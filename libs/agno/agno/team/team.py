@@ -1021,28 +1021,31 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_team_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+            if self.stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_team_pre_hook_started_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_team_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                    ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+                if self.stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_team_pre_hook_completed_event(
+                            from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1086,14 +1089,15 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_team_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+            if self.stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_team_pre_hook_started_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -1106,14 +1110,15 @@ class Team:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_team_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                    ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+                if self.stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_team_pre_hook_completed_event(
+                            from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1156,30 +1161,32 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_team_post_hook_started_event(  # type: ignore
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if self.stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_team_post_hook_completed_event(  # type: ignore
+                    event=create_team_post_hook_started_event(  # type: ignore
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
                     events_to_skip=self.events_to_skip,
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if self.stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_team_post_hook_completed_event(  # type: ignore
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1216,15 +1223,16 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_team_post_hook_started_event(  # type: ignore
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+            if self.stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_team_post_hook_started_event(  # type: ignore
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -1236,15 +1244,16 @@ class Team:
                 else:
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_output,
-                    event=create_team_post_hook_completed_event(  # type: ignore
-                        from_run_response=run_output,
-                        post_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+                if self.stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_team_post_hook_completed_event(  # type: ignore
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
