@@ -178,7 +178,7 @@ class TestPostgresDb:
         for index in table.indexes:
             for column in index.columns:
                 indexed_columns.append(column.name)
-        assert set(indexed_columns) == {"user_id", "updated_at"}
+        assert set(indexed_columns) == {"user_id", "created_at", "updated_at"}
 
     def test_create_eval_table(self, postgres_db, mock_session):
         """Test creation of eval table with correct schema"""
@@ -306,6 +306,7 @@ class TestPostgresDb:
         """Test creating table when not available"""
         mock_is_available.return_value = False
         postgres_db.Session = Mock(return_value=mock_session)
+        postgres_db.upsert_schema_version = Mock(return_value=None)
 
         mock_table = Mock(spec=Table)
         with patch.object(postgres_db, "_create_table", return_value=mock_table):

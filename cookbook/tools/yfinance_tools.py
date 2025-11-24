@@ -10,6 +10,7 @@ Run: `pip install yfinance` to install the dependencies
 
 from agno.agent import Agent
 from agno.tools.yfinance import YFinanceTools
+from curl_cffi.requests import Session
 
 # Example 1: All financial functions available (default behavior)
 agent_full = Agent(
@@ -86,6 +87,23 @@ agent_analyst = Agent(
     markdown=True,
 )
 
+
+# If you want to disable SSL verification, you can do it like this:
+session = Session()
+session.verify = False  # Disable SSL verification (use with caution)
+yfinance_tools = YFinanceTools(session=session)
+agent_ssl_disabled = Agent(
+    tools=[yfinance_tools],  # All functions enabled by default
+    description="You are a comprehensive investment analyst with access to all financial data functions.",
+    instructions=[
+        "Use any financial function as needed for investment analysis",
+        "Format your response using markdown and use tables to display data",
+        "Provide detailed analysis and insights based on the data",
+        "Include relevant financial metrics and recommendations",
+    ],
+    markdown=True,
+)
+
 # Using the basic agent for the main example
 print("=== Basic Stock Analysis Example ===")
 agent_basic.print_response(
@@ -106,5 +124,11 @@ agent_full.print_response(
 print("\n=== Full Analysis Example ===")
 agent_simple.print_response(
     "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
+    markdown=True,
+)
+
+print("\n=== SSL Disabled Example ===")
+agent_ssl_disabled.print_response(
+    "What is the stock price of TSLA?",
     markdown=True,
 )
