@@ -146,16 +146,14 @@ async def async_distributed_search():
 
     # Add content to both knowledge bases
     await knowledge_primary.add_contents_async(
-        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+        urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
     await knowledge_secondary.add_contents_async(
-        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+        urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
     # Run async distributed search
-    await distributed_search_team.aprint_response(
-        query, stream=True, stream_events=True
-    )
+    await distributed_search_team.aprint_response(query, stream=True)
 
 
 def sync_distributed_search():
@@ -167,14 +165,14 @@ def sync_distributed_search():
 
     # Add content to both knowledge bases
     knowledge_primary.add_contents(
-        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+        urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
     knowledge_secondary.add_contents(
-        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+        urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
     # Run distributed search
-    distributed_search_team.print_response(query, stream=True, stream_events=True)
+    distributed_search_team.print_response(query, stream=True)
 
 
 if __name__ == "__main__":

@@ -131,7 +131,7 @@ def test_delegate_to_all_members_with_structured_output():
 
     team = Team(
         name="Debate Team",
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         model=OpenAIChat("gpt-4o"),
         members=[agent1, agent2],
         instructions=[

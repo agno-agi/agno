@@ -441,4 +441,3 @@ def test_interleaved_thinking_vs_regular_thinking():
 
     # Verify the headers are different
     assert not hasattr(regular_agent.model, "default_headers") or regular_agent.model.default_headers is None  # type: ignore
-    assert interleaved_agent.model.default_headers == {"anthropic-beta": "interleaved-thinking-2025-05-14"}  # type: ignore

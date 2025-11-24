@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import warnings
 from collections import ChainMap, deque
 from copy import copy
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from agno.exceptions import (
     OutputCheckError,
     RunCancelledException,
 )
+from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
@@ -64,7 +66,6 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    aget_chat_history_util,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -78,7 +79,6 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    get_chat_history_util,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -193,10 +193,10 @@ class Team:
 
     # --- Team execution settings ---
     # If True, the team leader won't process responses from the members and instead will return them directly
-    # Should not be used in combination with delegate_task_to_all_members
+    # Should not be used in combination with delegate_to_all_members
     respond_directly: bool = False
     # If True, the team leader will delegate the task to all members, instead of deciding for a subset
-    delegate_task_to_all_members: bool = False
+    delegate_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
 
@@ -230,8 +230,6 @@ class Team:
     # Number of past sessions to include in the search
     num_history_sessions: Optional[int] = None
 
-    # If True, adds a tool to allow the team to read the team history (this is deprecated and will be removed in a future version)
-    read_team_history: bool = False
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
 
@@ -256,7 +254,7 @@ class Team:
     # If True, add the team name to the instructions
     add_name_to_context: bool = False
     # If True, add the tools available to team members to the context
-    add_member_tools_to_context: bool = True
+    add_member_tools_to_context: bool = False
 
     # Provide the system message as a string or function
     system_message: Optional[Union[str, Callable, Message]] = None
@@ -288,7 +286,7 @@ class Team:
     # --- Agent Knowledge ---
     knowledge: Optional[Knowledge] = None
     # Add knowledge_filters to the Agent class attributes
-    knowledge_filters: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
     # Add a tool that allows the Team to update Knowledge.
@@ -436,6 +434,9 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
+    # Deprecated. Use delegate_to_all_members instead.
+    delegate_task_to_all_members: bool = False
+
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
@@ -446,6 +447,7 @@ class Team:
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
         delegate_task_to_all_members: bool = False,
+        delegate_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -467,14 +469,14 @@ class Team:
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
-        add_member_tools_to_context: bool = True,
+        add_member_tools_to_context: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         knowledge: Optional[Knowledge] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
         update_knowledge: bool = False,
@@ -483,7 +485,6 @@ class Team:
         share_member_interactions: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
-        read_team_history: bool = False,
         read_chat_history: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
@@ -536,6 +537,13 @@ class Team:
         exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
+        if delegate_task_to_all_members:
+            warnings.warn(
+                "The 'delegate_task_to_all_members' parameter is deprecated and will be removed in future versions. Use 'delegate_to_all_members' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.members = members
 
         self.model = model  # type: ignore[assignment]
@@ -546,7 +554,7 @@ class Team:
 
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
-        self.delegate_task_to_all_members = delegate_task_to_all_members
+        self.delegate_to_all_members = delegate_to_all_members or delegate_task_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
@@ -603,7 +611,7 @@ class Team:
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
-        self.read_chat_history = read_chat_history or read_team_history
+        self.read_chat_history = read_chat_history
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages
@@ -919,9 +927,9 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-        if self.delegate_task_to_all_members and self.respond_directly:
+        if self.delegate_to_all_members and self.respond_directly:
             log_warning(
-                "`delegate_task_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
+                "`delegate_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
             )
             self.respond_directly = False
 
@@ -1742,7 +1750,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -1769,14 +1777,14 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1797,14 +1805,14 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1818,6 +1826,13 @@ class Team:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+            )
+
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
         # Create a run_id for this specific run
@@ -1949,7 +1964,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Initialize the current run
@@ -2261,6 +2276,7 @@ class Team:
                     await memory_task
                 except asyncio.CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2582,6 +2598,7 @@ class Team:
                     await memory_task
                 except asyncio.CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2602,7 +2619,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2629,14 +2646,14 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -2657,14 +2674,14 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -2673,6 +2690,13 @@ class Team:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+            )
+
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
         # Create a run_id for this specific run
@@ -2724,6 +2748,12 @@ class Team:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2791,7 +2821,7 @@ class Team:
         last_exception = None
         num_attempts = retries + 1
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         for attempt in range(num_attempts):
             # Run the team
@@ -3862,8 +3892,6 @@ class Team:
         input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -3872,20 +3900,37 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
+        show_member_responses: Optional[bool] = None,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        if stream_events is not None:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if self._has_async_db():
             raise Exception(
                 "This method is not supported with an async DB. Please use the async version of this method."
@@ -3903,15 +3948,11 @@ class Team:
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if show_member_responses is None:
+            show_member_responses = self.show_members_responses
 
         if stream:
             print_response_stream(
@@ -3921,6 +3962,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -3930,7 +3972,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
@@ -3948,6 +3990,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -3972,8 +4015,6 @@ class Team:
         input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -3982,20 +4023,37 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
+        show_member_responses: Optional[bool] = None,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        if stream_events is not None:
+            warnings.warn(
+                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -4008,15 +4066,11 @@ class Team:
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if show_member_responses is None:
+            show_member_responses = self.show_members_responses
 
         if stream:
             await aprint_response_stream(
@@ -4026,6 +4080,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -4035,7 +4090,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
@@ -4053,6 +4108,7 @@ class Team:
                 show_message=show_message,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                show_member_responses=show_member_responses,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
                 session_state=session_state,
@@ -5363,7 +5419,7 @@ class Team:
 
             system_message_content += "\n<how_to_respond>\n"
 
-            if self.delegate_task_to_all_members:
+            if self.delegate_to_all_members:
                 system_message_content += (
                     "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
                     "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
@@ -5629,7 +5685,7 @@ class Team:
             additional_information.append(f"Your name is: {self.name}.")
 
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.aget_valid_filters()
+            valid_filters = await self.knowledge.async_get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -5663,7 +5719,7 @@ class Team:
 
         system_message_content += "\n<how_to_respond>\n"
 
-        if self.delegate_task_to_all_members:
+        if self.delegate_to_all_members:
             system_message_content += (
                 "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
@@ -5910,10 +5966,10 @@ class Team:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id if self.parent_team_id is not None else None,
             )
 
@@ -6042,10 +6098,10 @@ class Team:
             skip_role = (
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
-            history = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id,
             )
 
@@ -6068,7 +6124,7 @@ class Team:
 
         # 5. Add user message to run_messages (message second as per Dirk's requirement)
         # 5.1 Build user message if message is None, str or list
-        user_message = self._get_user_message(
+        user_message = await self._aget_user_message(
             run_response=run_response,
             run_context=run_context,
             input_message=input_message,
@@ -6182,6 +6238,161 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                        )
+                        if docs_from_knowledge is not None:
+                            references = MessageReferences(
+                                query=user_msg_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references: {e}")
+
+                if self.resolve_in_context:
+                    user_msg_content = self._format_message_with_state_variables(
+                        user_msg_content,
+                        user_id=user_id,
+                        session_state=run_context.session_state,
+                        dependencies=run_context.dependencies,
+                        metadata=run_context.metadata,
+                    )
+
+                # Convert to string for concatenation operations
+                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+                # 4.1 Add knowledge references to user message
+                if (
+                    self.add_knowledge_to_context
+                    and references is not None
+                    and references.references is not None
+                    and len(references.references) > 0
+                ):
+                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                    user_msg_content_str += "<references>\n"
+                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+                    user_msg_content_str += "</references>"
+                # 4.2 Add context to user message
+                if add_dependencies_to_context and run_context.dependencies is not None:
+                    user_msg_content_str += "\n\n<additional context>\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(run_context.dependencies) + "\n"
+                    user_msg_content_str += "</additional context>"
+
+                # Use the string version for the final content
+                user_msg_content = user_msg_content_str
+
+                # Return the user message
+                return Message(
+                    role="user",
+                    content=user_msg_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+    async def _aget_user_message(
+        self,
+        *,
+        run_response: TeamRunOutput,
+        run_context: RunContext,
+        input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        user_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        **kwargs,
+    ):
+        # Get references from the knowledge base to use in the user message
+        references = None
+
+        if input_message is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role="user",
+                    content="",
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+            else:
+                # If the input is None, return None
+                return None
+
+        else:
+            if isinstance(input_message, list):
+                input_content: Union[str, list[Any], list[Message]]
+                if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
+                    # This is multimodal content (text + images/audio/video), preserve the structure
+                    input_content = input_message
+                elif len(input_message) > 0 and isinstance(input_message[0], Message):
+                    # This is a list of Message objects, extract text content from them
+                    input_content = get_text_from_message(input_message)
+                elif all(isinstance(item, str) for item in input_message):
+                    input_content = "\n".join([str(item) for item in input_message])
+                else:
+                    input_content = str(input_message)
+
+                return Message(
+                    role="user",
+                    content=input_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+            # If message is provided as a Message, use it directly
+            elif isinstance(input_message, Message):
+                return input_message
+            # If message is provided as a dict, try to validate it as a Message
+            elif isinstance(input_message, dict):
+                try:
+                    if self.input_schema and is_typed_dict(self.input_schema):
+                        import json
+
+                        content = json.dumps(input_message, indent=2, ensure_ascii=False)
+                        return Message(role="user", content=content)
+                    else:
+                        return Message.model_validate(input_message)
+                except Exception as e:
+                    log_warning(f"Failed to validate input: {e}")
+
+            # If message is provided as a BaseModel, convert it to a Message
+            elif isinstance(input_message, BaseModel):
+                try:
+                    # Create a user message with the BaseModel content
+                    content = input_message.model_dump_json(indent=2, exclude_none=True)
+                    return Message(role="user", content=content)
+                except Exception as e:
+                    log_warning(f"Failed to convert BaseModel to message: {e}")
+            else:
+                user_msg_content = input_message
+                if self.add_knowledge_to_context:
+                    if isinstance(input_message, str):
+                        user_msg_content = input_message
+                    elif callable(input_message):
+                        user_msg_content = input_message(agent=self)
+                    else:
+                        raise Exception("input must be a string or a callable when add_references is True")
+
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
                             query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
                         )
                         if docs_from_knowledge is not None:
@@ -6526,9 +6737,7 @@ class Team:
 
             history: List[Dict[str, Any]] = []
 
-            all_chats = session.get_messages_from_last_n_runs(
-                team_id=self.id,
-            )
+            all_chats = session.get_messages(team_id=self.id)
 
             if len(all_chats) == 0:
                 return ""
@@ -6562,9 +6771,7 @@ class Team:
 
             history: List[Dict[str, Any]] = []
 
-            all_chats = session.get_messages_from_last_n_runs(
-                team_id=self.id,
-            )
+            all_chats = session.get_messages(team_id=self.id)
 
             if len(all_chats) == 0:
                 return ""
@@ -6736,18 +6943,20 @@ class Team:
         member_agent_id = member_agent.id if isinstance(member_agent, Agent) else None
         member_team_id = member_agent.id if isinstance(member_agent, Team) else None
 
+        if not member_agent_id and not member_team_id:
+            return []
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
         skip_role = self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
 
-        history = session.get_messages_from_last_n_runs(
-            last_n=member_agent.num_history_runs or self.num_history_runs,
-            last_n_messages=member_agent.num_history_messages,
-            skip_role=skip_role,
-            agent_id=member_agent_id,
+        history = session.get_messages(
+            last_n_runs=member_agent.num_history_runs or self.num_history_runs,
+            limit=member_agent.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            member_ids=[member_agent_id] if member_agent_id else None,
             team_id=member_team_id,
-            member_runs=True,
         )
 
         if len(history) > 0:
@@ -7002,12 +7211,10 @@ class Team:
                 )
                 member_agent_run_response = None
                 for member_agent_run_output_event in member_agent_run_response_stream:
-                    # If we get the final response, we can break out of the loop
-                    if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
-                        member_agent_run_output_event, RunOutput
-                    ):
+                    # Do NOT break out of the loop, Iterator need to exit properly
+                    if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_output_event  # type: ignore
-                        break
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_output_event)
@@ -7016,7 +7223,7 @@ class Team:
                     member_agent_run_output_event.parent_run_id = (
                         member_agent_run_output_event.parent_run_id or run_response.run_id
                     )
-                    yield member_agent_run_output_event
+                    yield member_agent_run_output_event  # type: ignore
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,  # type: ignore
@@ -7132,21 +7339,19 @@ class Team:
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
-                    # If we get the final response, we can break out of the loop
-                    if isinstance(member_agent_run_response_event, TeamRunOutput) or isinstance(
-                        member_agent_run_response_event, RunOutput
-                    ):
+                    # Do NOT break out of the loop, AsyncIterator need to exit properly
+                    if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
                         member_agent_run_response = member_agent_run_response_event  # type: ignore
-                        break
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_event)
 
                     # Yield the member event directly
                     member_agent_run_response_event.parent_run_id = (
-                        member_agent_run_response_event.parent_run_id or run_response.run_id
+                        getattr(member_agent_run_response_event, "parent_run_id", None) or run_response.run_id
                     )
-                    yield member_agent_run_response_event
+                    yield member_agent_run_response_event  # type: ignore
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -7248,12 +7453,10 @@ class Team:
                     )
                     member_agent_run_response = None
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
-                        # If we get the final response, we can break out of the loop
-                        if isinstance(member_agent_run_response_chunk, TeamRunOutput) or isinstance(
-                            member_agent_run_response_chunk, RunOutput
-                        ):
+                        # Do NOT break out of the loop, Iterator need to exit properly
+                        if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
                             member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                            break
+                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                         # Check if the run is cancelled
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -7262,7 +7465,7 @@ class Team:
                         member_agent_run_response_chunk.parent_run_id = (
                             member_agent_run_response_chunk.parent_run_id or run_response.run_id
                         )
-                        yield member_agent_run_response_chunk
+                        yield member_agent_run_response_chunk  # type: ignore
 
                 else:
                     member_agent_run_response = member_agent.run(  # type: ignore
@@ -7365,11 +7568,11 @@ class Team:
                     member_agent_run_response = None
                     try:
                         async for member_agent_run_output_event in member_stream:
-                            if isinstance(member_agent_run_output_event, TeamRunOutput) or isinstance(
-                                member_agent_run_output_event, RunOutput
-                            ):
+                            # Do NOT break out of the loop, AsyncIterator need to exit properly
+                            if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                break
+                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id or run_response.run_id
@@ -7485,7 +7688,7 @@ class Team:
             # After all the member runs, switch back to the team logger
             use_team_logger()
 
-        if self.delegate_task_to_all_members:
+        if self.delegate_to_all_members:
             if async_mode:
                 delegate_function = adelegate_task_to_members  # type: ignore
             else:
@@ -7793,7 +7996,13 @@ class Team:
                 loaded_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
             # We have a workflow team, so we are loading a WorkflowSession
             else:
-                loaded_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(
+                    WorkflowSession,
+                    self._read_session(
+                        session_id=session_id_to_load,  # type: ignore
+                        session_type=SessionType.WORKFLOW,
+                    ),
+                )
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
@@ -7834,7 +8043,13 @@ class Team:
                 loaded_session = cast(TeamSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
             # We have a workflow team, so we are loading a WorkflowSession
             else:
-                loaded_session = cast(WorkflowSession, await self._aread_session(session_id=session_id_to_load))  # type: ignore
+                loaded_session = cast(
+                    WorkflowSession,
+                    await self._aread_session(
+                        session_id=session_id_to_load,  # type: ignore
+                        session_type=SessionType.WORKFLOW,
+                    ),
+                )
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
@@ -7915,7 +8130,7 @@ class Team:
         gen_session_name_prompt = "Team Conversation\n"
 
         # Get team session messages for generating the name
-        messages_for_generating_session_name = self.get_messages_for_session()
+        messages_for_generating_session_name = self.get_session_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -8116,39 +8331,29 @@ class Team:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
 
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            raise Exception("Session ID is not set")
-
-        return get_chat_history_util(self, session_id=session_id)
-
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            raise Exception("Session ID is not set")
-
-        return await aget_chat_history_util(self, session_id=session_id)
-
-    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    def get_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        member_ids: Optional[List[str]] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+        skip_member_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            member_ids: The ids of the members to get the messages from.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+            skip_member_messages: Skip messages created by members of the team.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -8158,21 +8363,44 @@ class Team:
             return []
 
         session = self.get_session(session_id=session_id)  # type: ignore
-
         if session is None:
             log_warning(f"Session {session_id} not found")
             return []
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        return session.get_messages(
             team_id=self.id,
+            member_ids=member_ids,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+            skip_member_messages=skip_member_messages,
         )
 
-    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    async def aget_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        member_ids: Optional[List[str]] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+        skip_member_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            member_ids: The ids of the members to get the messages from.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+            skip_member_messages: Skip messages created by members of the team.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -8182,14 +8410,47 @@ class Team:
             return []
 
         session = await self.aget_session(session_id=session_id)  # type: ignore
-
         if session is None:
             log_warning(f"Session {session_id} not found")
             return []
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        return session.get_messages(
             team_id=self.id,
+            member_ids=member_ids,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+            skip_member_messages=skip_member_messages,
+        )
+
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        return self.get_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
+        )
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Read the chat history from the session
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+        Returns:
+            List[Message]: The chat history from the session.
+        """
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
@@ -8391,7 +8652,11 @@ class Team:
         return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
         from agno.knowledge.document import Document
@@ -8407,12 +8672,15 @@ class Team:
             if invalid_keys:
                 # type: ignore
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
                 # Only use valid filters
                 filters = valid_filters
                 if not filters:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+            if invalid_keys == [] and valid_filters == {}:
+                log_warning("No valid filters provided. Search will proceed without filters.")
+                filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -8451,7 +8719,11 @@ class Team:
             raise e
 
     async def aget_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
@@ -8467,13 +8739,15 @@ class Team:
             if invalid_keys:
                 # type: ignore
                 log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                # type: ignore
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")
 
                 # Only use valid filters
                 filters = valid_filters
                 if not filters:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+            if invalid_keys == [] and valid_filters == {}:
+                log_warning("No valid filters provided. Search will proceed without filters.")
+                filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -8531,7 +8805,9 @@ class Team:
 
         return json.dumps(docs, indent=2)
 
-    def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _get_effective_filters(
+        self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> Optional[Any]:
         """
         Determine effective filters for the team, considering:
         1. Team-level filters (self.knowledge_filters)
@@ -8548,7 +8824,15 @@ class Team:
         # Apply run-time filters if they exist
         if knowledge_filters:
             if effective_filters:
-                effective_filters.update(knowledge_filters)
+                if isinstance(effective_filters, dict):
+                    if isinstance(knowledge_filters, dict):
+                        effective_filters.update(cast(Dict[str, Any], knowledge_filters))
+                    else:
+                        # If knowledge_filters is not a dict (e.g., list of FilterExpr), combine as list if effective_filters is dict
+                        # Convert the dict to a list and concatenate
+                        effective_filters = cast(Any, [effective_filters, *knowledge_filters])
+                else:
+                    effective_filters = [*effective_filters, *knowledge_filters]
             else:
                 effective_filters = knowledge_filters
 
@@ -8557,7 +8841,7 @@ class Team:
     def _get_search_knowledge_base_function(
         self,
         run_response: TeamRunOutput,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -8626,7 +8910,7 @@ class Team:
     def _get_search_knowledge_base_with_agentic_filters_function(
         self,
         run_response: TeamRunOutput,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""

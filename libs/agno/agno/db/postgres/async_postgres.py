@@ -1,9 +1,11 @@
 import time
+import warnings
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     abulk_upsert_metrics,
@@ -47,6 +49,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
         """
@@ -68,6 +71,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             db_id: Deprecated, use id instead.
 
         Raises:
@@ -75,7 +79,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If none of the tables are provided.
         """
         if db_id is not None:
-            log_warning("db_id is deprecated and will be removed in a future version, use id instead.")
+            warnings.warn(
+                "The 'db_id' parameter is deprecated and will be removed in future versions. Use 'id' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         super().__init__(
             id=id or db_id,
@@ -85,6 +93,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -122,9 +131,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
+            # Also store the schema version for the created table
+            latest_schema_version = MigrationManager(self).latest_schema_version
+            await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -255,6 +269,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 )
             return self.culture_table
 
+        if table_type == "versions":
+            if not hasattr(self, "versions_table"):
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name, table_type="versions", db_schema=self.db_schema
+                )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -274,6 +295,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
+            if table_name != self.versions_table_name:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not await ais_valid_table(
@@ -291,11 +317,51 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
+
                 return table
 
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
+
+    async def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = await self._get_table(table_type="versions")
+        if table is None:
+            return "2.0.0"
+
+        async with self.async_session_factory() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            if row is None:
+                return "2.0.0"
+
+            version_dict = dict(row._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = await self._get_table(table_type="versions")
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            await sess.execute(stmt)
 
     # -- Session methods --
     async def delete_session(self, session_id: str) -> bool:
@@ -1231,36 +1297,44 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="memories")
 
-            async with self.async_session_factory() as sess, sess.begin():
-                if memory.memory_id is None:
-                    memory.memory_id = str(uuid4())
+            current_time = int(time.time())
 
-                stmt = postgresql.insert(table).values(
-                    memory_id=memory.memory_id,
-                    memory=memory.memory,
-                    input=memory.input,
-                    user_id=memory.user_id,
-                    agent_id=memory.agent_id,
-                    team_id=memory.team_id,
-                    topics=memory.topics,
-                    updated_at=int(time.time()),
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["memory_id"],
-                    set_=dict(
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    if memory.memory_id is None:
+                        memory.memory_id = str(uuid4())
+
+                    stmt = postgresql.insert(table).values(
+                        memory_id=memory.memory_id,
                         memory=memory.memory,
-                        topics=memory.topics,
                         input=memory.input,
+                        user_id=memory.user_id,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
-                    ),
-                ).returning(table)
+                        topics=memory.topics,
+                        feedback=memory.feedback,
+                        created_at=memory.created_at,
+                        updated_at=memory.created_at,
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["memory_id"],
+                        set_=dict(
+                            memory=memory.memory,
+                            topics=memory.topics,
+                            input=memory.input,
+                            agent_id=memory.agent_id,
+                            team_id=memory.team_id,
+                            feedback=memory.feedback,
+                            updated_at=current_time,
+                            # Preserve created_at on update - don't overwrite existing value
+                            created_at=table.c.created_at,
+                        ),
+                    ).returning(table)
 
-                result = await sess.execute(stmt)
-                row = result.fetchone()
-                if row is None:
-                    return None
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
 
             memory_raw = dict(row._mapping)
 

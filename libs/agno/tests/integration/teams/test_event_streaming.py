@@ -970,7 +970,7 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
         model=OpenAIChat(id="o3-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         instructions="You are a discussion master. Forward the task to the member agents.",
     )
 
