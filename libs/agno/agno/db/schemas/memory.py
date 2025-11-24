@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from agno.utils.dttm import now_epoch_s
+
 
 @dataclass
 class UserMemory:
@@ -12,8 +14,8 @@ class UserMemory:
     topics: Optional[List[str]] = None
     user_id: Optional[str] = None
     input: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
     feedback: Optional[str] = None
 
     agent_id: Optional[str] = None
@@ -22,15 +24,15 @@ class UserMemory:
     def __post_init__(self) -> None:
         """Automatically set created_at if not provided."""
         if self.created_at is None:
-            self.created_at = datetime.now(timezone.utc)
+            self.created_at = now_epoch_s()
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             "memory_id": self.memory_id,
             "memory": self.memory,
             "topics": self.topics,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": datetime.fromtimestamp(self.created_at).isoformat() if self.created_at else None,
+            "updated_at": datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at else None,
             "input": self.input,
             "user_id": self.user_id,
             "agent_id": self.agent_id,

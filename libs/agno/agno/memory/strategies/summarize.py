@@ -1,6 +1,5 @@
 """Summarize strategy: Combine all memories into single comprehensive summary."""
 
-from datetime import datetime
 from textwrap import dedent
 from typing import List
 from uuid import uuid4
@@ -9,6 +8,7 @@ from agno.db.schemas import UserMemory
 from agno.memory.strategies import MemoryOptimizationStrategy
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.utils.dttm import now_epoch_s
 from agno.utils.log import log_debug
 
 
@@ -109,7 +109,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
             user_id=user_id,
             agent_id=summarized_agent_id,
             team_id=summarized_team_id,
-            updated_at=datetime.now(),
+            updated_at=now_epoch_s(),
         )
 
         log_debug(
@@ -186,7 +186,7 @@ class SummarizeStrategy(MemoryOptimizationStrategy):
             user_id=user_id,
             agent_id=summarized_agent_id,
             team_id=summarized_team_id,
-            updated_at=datetime.now(),
+            updated_at=now_epoch_s(),
         )
 
         log_debug(
