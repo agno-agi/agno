@@ -145,7 +145,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            await self._create_table(table_name=table_name, table_type=table_type)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -185,8 +185,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData()
-            table = Table(table_name, table_metadata, *columns)
+            table = Table(table_name, self.metadata, *columns)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:

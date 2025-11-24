@@ -105,7 +105,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine)
@@ -139,7 +139,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             latest_schema_version = MigrationManager(self).latest_schema_version
             await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema, create_table_if_not_found=True)
 
     async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
@@ -177,8 +177,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:

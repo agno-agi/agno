@@ -146,7 +146,7 @@ class SqliteDb(BaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            self._create_table(table_name=table_name, table_type=table_type)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -186,8 +186,7 @@ class SqliteDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData()
-            table = Table(table_name, table_metadata, *columns)
+            table = Table(table_name, self.metadata, *columns)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -224,6 +223,8 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
+            from traceback import format_exc
+            print(format_exc())
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
