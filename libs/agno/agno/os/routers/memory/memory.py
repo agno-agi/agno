@@ -547,6 +547,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def optimize_memories(
         request: OptimizeMemoriesRequest,
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for optimization"),
+        table: Optional[str] = Query(default=None, description="Table to use for optimization"),
     ) -> OptimizeMemoriesResponse:
         """Optimize user memories using the default summarize strategy."""
         from agno.memory import MemoryManager
@@ -554,7 +556,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         try:
             # Get database instance
-            db = await get_db(dbs, request.db_id, request.table)
+            db = await get_db(dbs, db_id, table)
 
             # Create memory manager with optional model
             if request.model:

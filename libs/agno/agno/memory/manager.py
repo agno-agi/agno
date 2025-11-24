@@ -842,12 +842,7 @@ class MemoryManager:
 
                     opt_mem.memory_id = str(uuid4())
 
-                # Use replace_user_memory for all (it handles both insert and update)
-                self.replace_user_memory(
-                    memory_id=opt_mem.memory_id,
-                    memory=opt_mem,
-                    user_id=user_id,  # type: ignore
-                )
+                self.db.upsert_user_memory(memory=opt_mem)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
         log_debug(f"Optimization complete. New token count: {optimized_tokens}")
@@ -913,18 +908,9 @@ class MemoryManager:
 
                     opt_mem.memory_id = str(uuid4())
 
-                # Ensure memory has required fields
-                opt_mem.user_id = user_id
-                if not opt_mem.updated_at:
-                    from datetime import datetime
-
-                    opt_mem.updated_at = datetime.now()
-
-                # Use async database method directly since we're in async context
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_user_memory(memory=opt_mem)
                 else:
-                    # Fallback to sync method (shouldn't happen due to check at start)
                     self.db.upsert_user_memory(memory=opt_mem)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)

@@ -74,8 +74,6 @@ class OptimizeMemoriesRequest(BaseModel):
         default=True,
         description="If True, apply optimization changes to database. If False, return preview only without saving.",
     )
-    db_id: Optional[str] = Field(default=None, description="Database ID to use for optimization")
-    table: Optional[str] = Field(default=None, description="Table to use for optimization")
 
 
 class OptimizeMemoriesResponse(BaseModel):
