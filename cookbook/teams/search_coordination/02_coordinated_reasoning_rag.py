@@ -133,7 +133,7 @@ async def async_reasoning_demo():
 
     # Add documentation content
     await knowledge.add_contents_async(
-        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+        urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
     # Run async with streaming and reasoning
@@ -151,7 +151,7 @@ def sync_reasoning_demo():
 
     # Add documentation content
     knowledge.add_contents(
-        urls=["https://docs.agno.com/concepts/agents/introduction.md"]
+        urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 
     # Run with detailed reasoning output

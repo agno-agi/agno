@@ -1,6 +1,7 @@
 import os
 import tempfile
 import uuid
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -133,3 +134,8 @@ def sqlite_db_real(temp_storage_db_file) -> SqliteDb:
         knowledge_table="test_knowledge",
         db_file=temp_storage_db_file,
     )
+
+
+@pytest.fixture
+def image_path():
+    return Path(__file__).parent / "res" / "images" / "golden_gate.png"

@@ -9,7 +9,7 @@ from agno.media import Audio, Image, Video
 from agno.models.google import Gemini
 
 
-def test_image_input():
+def test_image_input(image_path):
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
@@ -20,7 +20,7 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
 
     assert response.content is not None
@@ -91,7 +91,7 @@ def test_image_generation():
     """Test basic image generation capability"""
     agent = Agent(
         model=Gemini(
-            id="gemini-2.0-flash-exp-image-generation",
+            id="gemini-2.5-flash-image",
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
@@ -117,7 +117,7 @@ def test_image_generation_streaming():
     """Test streaming image generation"""
     agent = Agent(
         model=Gemini(
-            id="gemini-2.0-flash-exp-image-generation",
+            id="gemini-2.5-flash-image",
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
@@ -144,11 +144,11 @@ def test_image_generation_streaming():
     assert image_received, "No image was received in the stream"
 
 
-def test_image_editing():
+def test_image_editing(image_path):
     """Test image editing with a sample image"""
     agent = Agent(
         model=Gemini(
-            id="gemini-2.0-flash-exp-image-generation",
+            id="gemini-2.5-flash-image",
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
@@ -160,9 +160,7 @@ def test_image_editing():
         db=InMemoryDb(),
     )
 
-    sample_image_url = "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-
-    response = agent.run("Can you add a rainbow over this bridge?", images=[Image(url=sample_image_url)])
+    response = agent.run("Can you add a rainbow over this bridge?", images=[Image(filepath=image_path)])
 
     # Check images directly from the response
     assert response.images is not None
@@ -177,7 +175,7 @@ def test_image_generation_with_detailed_prompt():
     """Test image generation with a detailed prompt"""
     agent = Agent(
         model=Gemini(
-            id="gemini-2.0-flash-exp-image-generation",
+            id="gemini-2.5-flash-image",
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
@@ -227,7 +225,7 @@ def test_combined_text_and_image_generation():
     """Test generating both text description and image"""
     agent = Agent(
         model=Gemini(
-            id="gemini-2.0-flash-exp-image-generation",
+            id="gemini-2.5-flash-image",
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
