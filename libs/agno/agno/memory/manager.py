@@ -94,9 +94,6 @@ class MemoryManager:
         self.clear_memories = clear_memories
         self.debug_mode = debug_mode
 
-        self._get_models()
-
-    def _get_models(self) -> None:
         if self.model is not None:
             self.model = get_model(self.model)
 
@@ -346,7 +343,7 @@ class MemoryManager:
             memories = await self.aget_user_memories(user_id=user_id)
         else:
             memories = self.get_user_memories(user_id=user_id)
-        
+
         if not memories:
             log_debug(f"No memories found for user {user_id}")
             return
@@ -881,7 +878,7 @@ class MemoryManager:
             memories = await self.aget_user_memories(user_id=user_id)
         else:
             memories = self.get_user_memories(user_id=user_id)
-        
+
         if not memories:
             log_debug("No memories to optimize")
             return []
