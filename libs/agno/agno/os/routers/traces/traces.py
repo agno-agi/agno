@@ -93,6 +93,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "user_id": "user789",
                                     "agent_id": "agent_stock",
                                     "team_id": None,
+                                    "workflow_id": None,
                                     "created_at": "2025-11-19T10:30:00+00:00",
                                 }
                             ],
@@ -114,6 +115,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
+        workflow_id: Optional[str] = Query(default=None, description="Filter by workflow ID"),
         status: Optional[str] = Query(default=None, description="Filter by status (OK, ERROR)"),
         start_time: Optional[str] = Query(
             default=None,
@@ -185,6 +187,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    workflow_id=workflow_id,
                     status=status,
                     start_time=start_time_dt,
                     end_time=end_time_dt,
@@ -198,6 +201,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    workflow_id=workflow_id,
                     status=status,
                     start_time=start_time_dt,
                     end_time=end_time_dt,
@@ -310,6 +314,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "user_id": "user789",
                                     "agent_id": "stock_agent",
                                     "team_id": None,
+                                    "workflow_id": None,
                                     "created_at": "2025-11-19T10:30:00+00:00",
                                     "tree": [
                                         {

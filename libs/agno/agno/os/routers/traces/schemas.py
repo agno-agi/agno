@@ -108,6 +108,7 @@ class TraceSummary(BaseModel):
     user_id: Optional[str] = Field(None, description="Associated user ID")
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
     team_id: Optional[str] = Field(None, description="Associated team ID")
+    workflow_id: Optional[str] = Field(None, description="Associated workflow ID")
     created_at: datetime = Field(..., description="Time when trace was created (Pydantic auto-serializes to ISO 8601)")
 
     @classmethod
@@ -135,6 +136,7 @@ class TraceSummary(BaseModel):
             user_id=trace.user_id,
             agent_id=trace.agent_id,
             team_id=trace.team_id,
+            workflow_id=trace.workflow_id,
             created_at=trace.created_at,
         )
 
@@ -171,6 +173,7 @@ class TraceDetail(BaseModel):
     user_id: Optional[str] = Field(None, description="Associated user ID")
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
     team_id: Optional[str] = Field(None, description="Associated team ID")
+    workflow_id: Optional[str] = Field(None, description="Associated workflow ID")
     created_at: datetime = Field(..., description="Time when trace was created (Pydantic auto-serializes to ISO 8601)")
     tree: List[TraceNode] = Field(..., description="Hierarchical tree of spans (root nodes)")
 
@@ -241,6 +244,7 @@ class TraceDetail(BaseModel):
             user_id=trace.user_id,
             agent_id=trace.agent_id,
             team_id=trace.team_id,
+            workflow_id=trace.workflow_id,
             created_at=trace.created_at,
             tree=span_tree,
         )
