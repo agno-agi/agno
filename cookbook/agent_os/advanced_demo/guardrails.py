@@ -11,7 +11,7 @@ db = SqliteDb(
 )
 
 guardrail_agent = Agent(
-    name="Guardrail Agent",
+    name="Chat Agent",
     model=OpenAIChat(id="gpt-5-mini"),
     pre_hooks=[OpenAIModerationGuardrail() , PromptInjectionGuardrail() , PIIDetectionGuardrail()],
     instructions=[
