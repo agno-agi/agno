@@ -11,7 +11,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -392,6 +392,9 @@ class OpenAIChat(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            # Initialize MessageMetrics if None
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             provider_response = self.get_client().chat.completions.create(
@@ -472,6 +475,9 @@ class OpenAIChat(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            # Initialize MessageMetrics if None
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -548,6 +554,9 @@ class OpenAIChat(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            # Initialize MessageMetrics if None
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().chat.completions.create(
@@ -624,6 +633,9 @@ class OpenAIChat(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            # Initialize MessageMetrics if None
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().chat.completions.create(
