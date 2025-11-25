@@ -123,7 +123,7 @@ class MigrationManager:
             log_error(f"Error running migration to version {version}: {e}")
             raise
 
-    async def down(self, target_version: str, table_type: Optional[str] = None):
+    async def down(self, target_version: str, table_type: Optional[str] = None, force: bool = False):
         """Handle executing a down migration.
 
         Args:
@@ -156,7 +156,7 @@ class MigrationManager:
             else:
                 current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
 
-            if _target_version >= current_version:
+            if _target_version >= current_version and not force:
                 log_warning(
                     f"Skipping down migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
                 )
