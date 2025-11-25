@@ -12,7 +12,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.claude import format_messages
+from agno.utils.models.claude import format_messages, format_tools_for_model
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
@@ -53,6 +53,15 @@ class Claude(AnthropicClaude):
     request_params: Optional[Dict[str, Any]] = None
     # -*- Client parameters
     client_params: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        """Validate model configuration after initialization"""
+        # Validate thinking support immediately at model creation
+        if self.thinking:
+            self._validate_thinking_support()
+        # Overwrite output schema support for AWS Bedrock Claude
+        self.supports_native_structured_outputs = False
+        self.supports_json_schema_outputs = False
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -172,7 +181,11 @@ class Claude(AnthropicClaude):
         )
         return self.async_client
 
-    def get_request_params(self) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
 
@@ -197,6 +210,56 @@ class Claude(AnthropicClaude):
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
+    def _prepare_request_kwargs(
+        self,
+        system_message: str,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Prepare the request keyword arguments for the API call.
+
+        Args:
+            system_message (str): The concatenated system messages.
+            tools: Optional list of tools
+            response_format: Optional response format (Pydantic model or dict)
+
+        Returns:
+            Dict[str, Any]: The request keyword arguments.
+        """
+        # Validate structured outputs usage
+        self._validate_structured_outputs_usage(response_format, tools)
+
+        # Pass response_format and tools to get_request_params for beta header handling
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
+        if system_message:
+            if self.cache_system_prompt:
+                cache_control = (
+                    {"type": "ephemeral", "ttl": "1h"}
+                    if self.extended_cache_time is not None and self.extended_cache_time is True
+                    else {"type": "ephemeral"}
+                )
+                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
+            else:
+                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+
+        # Add code execution tool if skills are enabled
+        if self.skills:
+            code_execution_tool = {"type": "code_execution_20250825", "name": "code_execution"}
+            if tools:
+                # Add code_execution to existing tools, code execution is needed for generating and processing files
+                tools = tools + [code_execution_tool]
+            else:
+                tools = [code_execution_tool]
+
+        # Format tools (this will handle strict mode)
+        if tools:
+            request_kwargs["tools"] = format_tools_for_model(tools)
+
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
+        return request_kwargs
+
     def invoke(
         self,
         messages: List[Message],
@@ -212,7 +275,7 @@ class Claude(AnthropicClaude):
 
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
