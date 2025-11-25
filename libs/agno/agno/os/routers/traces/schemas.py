@@ -67,6 +67,16 @@ class TraceNode(BaseModel):
             if tool_params := span.attributes.get("tool.parameters"):
                 metadata["parameters"] = tool_params
 
+        elif span_kind == "CHAIN":
+            if workflow_description := span.attributes.get("agno.workflow.description"):
+                metadata["description"] = workflow_description
+            if steps_count := span.attributes.get("agno.workflow.steps_count"):
+                metadata["steps_count"] = steps_count
+            if steps := span.attributes.get("agno.workflow.steps"):
+                metadata["steps"] = steps
+            if step_types := span.attributes.get("agno.workflow.step_types"):
+                metadata["step_types"] = step_types
+
         # Add session/user context if present
         if session_id := span.attributes.get("session.id"):
             metadata["session_id"] = session_id
@@ -294,7 +304,7 @@ class TraceDetail(BaseModel):
             # For root span, create custom metadata with token totals
             if is_root:
                 # Build simplified metadata for root with token totals
-                root_metadata = {}
+                root_metadata: Dict[str, Any] = {}
                 if total_input_tokens > 0:
                     root_metadata["total_input_tokens"] = total_input_tokens
                 if total_output_tokens > 0:
@@ -307,6 +317,17 @@ class TraceDetail(BaseModel):
                 
                 duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
+
+                # Add workflow-specific metadata for CHAIN spans (workflow root)
+                if span_kind == "CHAIN":
+                    if workflow_description := span.attributes.get("agno.workflow.description"):
+                        root_metadata["description"] = workflow_description
+                    if steps_count := span.attributes.get("agno.workflow.steps_count"):
+                        root_metadata["steps_count"] = steps_count
+                    if steps := span.attributes.get("agno.workflow.steps"):
+                        root_metadata["steps"] = steps
+                    if step_types := span.attributes.get("agno.workflow.step_types"):
+                        root_metadata["step_types"] = step_types
 
                 # Use datetime objects directly (Pydantic will auto-serialize to ISO 8601)
                 # Skip input/output/error for root span (already at top level of TraceDetail)
