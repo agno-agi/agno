@@ -85,7 +85,7 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
             mistral_message = SystemMessage(role="system", content=message.content)
         elif message.role == "tool":
             # Get compressed content if compression is active
-            tool_content = message.get_content(use_compression=compress_tool_results)
+            tool_content = message.get_content(use_compressed_content=compress_tool_results)
             mistral_message = ToolMessage(name="tool", content=tool_content, tool_call_id=message.tool_call_id)
         else:
             raise ValueError(f"Unknown role: {message.role}")

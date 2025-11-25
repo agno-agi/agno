@@ -74,15 +74,13 @@ class LiteLLM(Model):
         self.client = litellm
         return self.client
 
-    def _format_messages(
-        self, messages: List[Message], compress_tool_results: bool = False
-    ) -> List[Dict[str, Any]]:
+    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
         formatted_messages = []
         for m in messages:
             # Use compressed content for tool messages if compression is active
             if m.role == "tool":
-                content = m.get_content(use_compression=compress_tool_results)
+                content = m.get_content(use_compressed_content=compress_tool_results)
             else:
                 content = m.content if m.content is not None else ""
 

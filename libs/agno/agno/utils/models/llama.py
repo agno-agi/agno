@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from agno.agent import Message
 from agno.utils.log import log_warning
@@ -57,7 +57,7 @@ def format_message(
 
     if message.role == "tool":
         # Use compressed content if compression is active
-        content = message.get_content(use_compression=compress_tool_results)
+        content = message.get_content(use_compressed_content=compress_tool_results)
 
         message_dict = {
             "role": "tool",

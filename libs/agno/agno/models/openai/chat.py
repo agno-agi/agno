@@ -313,7 +313,7 @@ class OpenAIChat(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        tool_result = message.get_content(use_compression=compress_tool_results)
+        tool_result = message.get_content(use_compressed_content=compress_tool_results)
 
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],

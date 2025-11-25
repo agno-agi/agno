@@ -448,7 +448,7 @@ class OpenAIResponses(Model):
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.get_content(use_compression=compress_tool_results),
+                    "content": message.get_content(use_compressed_content=compress_tool_results),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -472,7 +472,7 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                tool_result = message.get_content(use_compression=compress_tool_results)
+                tool_result = message.get_content(use_compressed_content=compress_tool_results)
 
                 if message.tool_call_id and tool_result is not None:
                     function_call_id = message.tool_call_id

@@ -348,7 +348,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-            
+
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             while True:
@@ -535,7 +535,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-            
+
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             function_call_count = 0
@@ -949,7 +949,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-            
+
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             function_call_count = 0
@@ -1167,7 +1167,7 @@ class Model(ABC):
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-            
+
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             function_call_count = 0
@@ -2215,7 +2215,11 @@ class Model(ABC):
         return function_calls_to_run
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], compress_tool_results: bool = False, **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
         Format function call results.

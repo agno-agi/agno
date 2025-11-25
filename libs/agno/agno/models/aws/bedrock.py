@@ -239,7 +239,7 @@ class AwsBedrock(Model):
             if message.role == "system":
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
-                content = message.get_content(use_compression=compress_tool_results)
+                content = message.get_content(use_compressed_content=compress_tool_results)
                 tool_result = {
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
@@ -567,7 +567,11 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], compress_tool_results: bool = False, **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
         Handle the results of function calls for Bedrock.

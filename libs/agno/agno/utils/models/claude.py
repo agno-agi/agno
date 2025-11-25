@@ -306,7 +306,7 @@ def format_messages(
             content = []
 
             # Use compressed content for tool messages if compression is active
-            tool_result = message.get_content(use_compression=compress_tool_results)
+            tool_result = message.get_content(use_compressed_content=compress_tool_results)
 
             content.append(
                 {

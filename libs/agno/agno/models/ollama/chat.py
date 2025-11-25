@@ -160,7 +160,7 @@ class Ollama(Model):
         """
         # Use compressed content for tool messages if compression is active
         if message.role == "tool":
-            content = message.get_content(use_compression=compress_tool_results)
+            content = message.get_content(use_compressed_content=compress_tool_results)
         else:
             content = message.content
 

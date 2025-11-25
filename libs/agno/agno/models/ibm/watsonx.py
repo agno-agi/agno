@@ -156,7 +156,7 @@ class WatsonX(Model):
 
         # Use compressed content for tool messages if compression is active
         if message.role == "tool" and compress_tool_results:
-            message_dict["content"] = message.get_content(use_compression=True)
+            message_dict["content"] = message.get_content(use_compressed_content=True)
         return message_dict
 
     def invoke(

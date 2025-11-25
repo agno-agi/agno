@@ -788,7 +788,11 @@ class Gemini(Model):
         return None
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], compress_tool_results: bool = False, **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
         Format function call results for Gemini.

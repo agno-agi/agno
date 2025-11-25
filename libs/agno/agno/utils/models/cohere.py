@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
 from agno.media import Image
 from agno.models.message import Message
@@ -63,7 +63,7 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
         content = message.content
 
         if message.role == "tool":
-            content = message.get_content(use_compression=compress_tool_results)
+            content = message.get_content(use_compressed_content=compress_tool_results)
 
         message_dict = {
             "role": message.role,
