@@ -1,4 +1,3 @@
-
 """
 Traces with AgentOS
 Requirements:
@@ -6,14 +5,13 @@ Requirements:
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.json import JsonDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
 
-# Set up database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = JsonDb(db_path="tmp/json_db")
 
 # Set up tracing - this instruments ALL agents automatically
 setup_tracing(db=db)
@@ -35,5 +33,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="basic_agent_with_postgresdb:app", reload=True)
-
+    agent_os.serve(app="basic_agent_with_jsondb:app", reload=True)
