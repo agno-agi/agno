@@ -1183,6 +1183,7 @@ class Agent:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             for event in pre_hook_iterator:
@@ -1357,6 +1358,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -2105,6 +2107,7 @@ class Agent:
                 session=agent_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             async for event in pre_hook_iterator:
@@ -2268,6 +2271,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3167,6 +3171,7 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -3869,6 +3874,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3969,6 +3975,7 @@ class Agent:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
@@ -3990,25 +3997,10 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
-                    event=create_pre_hook_completed_event(
+                    event=create_pre_hook_started_event(
                         from_run_response=run_response,
                         run_input=run_input,
                         pre_hook_name=hook.__name__,
@@ -4016,6 +4008,23 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4038,6 +4047,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
@@ -4059,16 +4069,17 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_pre_hook_started_event(
+                        from_run_response=run_response,
+                        run_input=run_input,
+                        pre_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4079,16 +4090,17 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_pre_hook_completed_event(
-                        from_run_response=run_response,
-                        run_input=run_input,
-                        pre_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4110,6 +4122,7 @@ class Agent:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
@@ -4131,30 +4144,32 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_post_hook_completed_event(
+                    event=create_post_hook_started_event(
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -4172,6 +4187,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -4193,15 +4209,16 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_post_hook_started_event(
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4212,15 +4229,16 @@ class Agent:
                 else:
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_output,
-                    event=create_post_hook_completed_event(
-                        from_run_response=run_output,
-                        post_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -7627,6 +7645,180 @@ class Agent:
                     **kwargs,
                 )
 
+    async def _aget_user_message(
+        self,
+        *,
+        run_response: RunOutput,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs: Any,
+    ) -> Optional[Message]:
+        """Return the user message for the Agent (async version).
+
+        1. If the user_message is provided, use that.
+        2. If build_user_context is False or if the message is a list, return the message as is.
+        3. Build the default user message for the Agent
+        """
+        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Get references from the knowledge base to use in the user message
+        references = None
+
+        # 1. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context:
+            return Message(
+                role=self.user_message_role or "user",
+                content=input,  # type: ignore
+                images=None if not self.send_media_to_model else images,
+                audio=None if not self.send_media_to_model else audio,
+                videos=None if not self.send_media_to_model else videos,
+                files=None if not self.send_media_to_model else files,
+                **kwargs,
+            )
+        # 2. Build the user message for the Agent
+        elif input is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role=self.user_message_role or "user",
+                    content="",
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+            else:
+                # If the input is None, return None
+                return None
+
+        else:
+            # Handle list messages by converting to string
+            if isinstance(input, list):
+                # Convert list to string (join with newlines if all elements are strings)
+                if all(isinstance(item, str) for item in input):
+                    message_content = "\n".join(input)  # type: ignore
+                else:
+                    message_content = str(input)
+
+                return Message(
+                    role=self.user_message_role,
+                    content=message_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+            # If message is provided as a Message, use it directly
+            elif isinstance(input, Message):
+                return input
+            # If message is provided as a dict, try to validate it as a Message
+            elif isinstance(input, dict):
+                try:
+                    return Message.model_validate(input)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {e}")
+                    raise Exception(f"Failed to validate message: {e}")
+
+            # If message is provided as a BaseModel, convert it to a Message
+            elif isinstance(input, BaseModel):
+                try:
+                    # Create a user message with the BaseModel content
+                    content = input.model_dump_json(indent=2, exclude_none=True)
+                    return Message(role=self.user_message_role, content=content)
+                except Exception as e:
+                    log_warning(f"Failed to convert BaseModel to message: {e}")
+                    raise Exception(f"Failed to convert BaseModel to message: {e}")
+            else:
+                user_msg_content = input
+                if self.add_knowledge_to_context:
+                    if isinstance(input, str):
+                        user_msg_content = input
+                    elif callable(input):
+                        user_msg_content = input(agent=self)
+                    else:
+                        raise Exception("message must be a string or a callable when add_references is True")
+
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                        )
+                        if docs_from_knowledge is not None:
+                            references = MessageReferences(
+                                query=user_msg_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references: {e}")
+
+                if self.resolve_in_context:
+                    user_msg_content = self._format_message_with_state_variables(
+                        user_msg_content,
+                        user_id=user_id,
+                        session_state=session_state,
+                        dependencies=dependencies,
+                        metadata=metadata,
+                    )
+
+                # Convert to string for concatenation operations
+                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+                # 4.1 Add knowledge references to user message
+                if (
+                    self.add_knowledge_to_context
+                    and references is not None
+                    and references.references is not None
+                    and len(references.references) > 0
+                ):
+                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                    user_msg_content_str += "<references>\n"
+                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+                    user_msg_content_str += "</references>"
+                # 4.2 Add context to user message
+                if add_dependencies_to_context and dependencies is not None:
+                    user_msg_content_str += "\n\n<additional context>\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
+                    user_msg_content_str += "</additional context>"
+
+                # Use the string version for the final content
+                user_msg_content = user_msg_content_str
+
+                # Return the user message
+                return Message(
+                    role=self.user_message_role,
+                    content=user_msg_content,
+                    audio=None if not self.send_media_to_model else audio,
+                    images=None if not self.send_media_to_model else images,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
     def _get_run_messages(
         self,
         *,
@@ -7976,7 +8168,7 @@ class Agent:
                 )
             )
         ):
-            user_message = self._get_user_message(
+            user_message = await self._aget_user_message(
                 run_response=run_response,
                 run_context=run_context,
                 session_state=session_state,
