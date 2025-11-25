@@ -23,6 +23,7 @@ def mock_engine():
     engine.url = "fake:///url"
     return engine
 
+
 @pytest.fixture
 def mock_session():
     """Create a mock session"""
@@ -33,6 +34,7 @@ def mock_session():
     session.begin().__enter__ = Mock(return_value=session)
     session.begin().__exit__ = Mock(return_value=None)
     return session
+
 
 @pytest.fixture
 def postgres_db(mock_engine):
@@ -47,6 +49,7 @@ def postgres_db(mock_engine):
         knowledge_table="test_knowledge",
     )
 
+
 def test_id_is_deterministic(mock_engine):
     # Initialize two databases with the same engine
     first_db = PostgresDb(db_engine=mock_engine)
@@ -55,6 +58,7 @@ def test_id_is_deterministic(mock_engine):
     # Assert that the ids are the same
     assert first_db.id == second_db.id
 
+
 def test_init_with_engine(mock_engine):
     """Test initialization with engine"""
     db = PostgresDb(db_engine=mock_engine, session_table="sessions")
@@ -62,6 +66,7 @@ def test_init_with_engine(mock_engine):
     assert db.db_engine == mock_engine
     assert db.db_schema == "ai"
     assert db.session_table_name == "sessions"
+
 
 @patch("agno.db.postgres.postgres.create_engine")
 def test_init_with_url(mock_create_engine):
@@ -74,14 +79,17 @@ def test_init_with_url(mock_create_engine):
     mock_create_engine.assert_called_once_with("postgresql://user:pass@localhost/db")
     assert db.db_engine == mock_engine
 
+
 def test_init_no_engine_or_url():
     """Test initialization fails without engine or URL"""
     with pytest.raises(ValueError, match="One of db_url or db_engine must be provided"):
         PostgresDb(session_table="sessions")
 
+
 def test_init_no_tables(mock_engine):
     """Test initialization works when not specifying any tables"""
     PostgresDb(db_engine=mock_engine)
+
 
 def test_create_table(postgres_db, mock_session):
     """Test table creation"""
@@ -125,6 +133,7 @@ def test_create_table(postgres_db, mock_session):
     for col in expected_columns:
         assert col in column_names
 
+
 def test_create_table_with_indexes(postgres_db, mock_session):
     """Test table creation with indexes"""
     postgres_db.Session = Mock(return_value=mock_session)
@@ -139,6 +148,7 @@ def test_create_table_with_indexes(postgres_db, mock_session):
     for index in table.indexes:
         column = index.columns[0]
         assert column.name == "date"
+
 
 def test_create_table_with_unique_constraints(postgres_db, mock_session):
     """Test table creation with unique constraints"""
@@ -159,6 +169,7 @@ def test_create_table_with_unique_constraints(postgres_db, mock_session):
             assert "date" in col_names
             assert "aggregation_period" in col_names
 
+
 def test_create_memory_table(postgres_db, mock_session):
     """Test creation of memory table with correct schema"""
     postgres_db.Session = Mock(return_value=mock_session)
@@ -177,6 +188,7 @@ def test_create_memory_table(postgres_db, mock_session):
         for column in index.columns:
             indexed_columns.append(column.name)
     assert set(indexed_columns) == {"user_id", "created_at", "updated_at"}
+
 
 def test_create_eval_table(postgres_db, mock_session):
     """Test creation of eval table with correct schema"""
@@ -197,6 +209,7 @@ def test_create_eval_table(postgres_db, mock_session):
         # Verify primary key
         pk_columns = [col.name for col in table.columns if col.primary_key]
         assert "run_id" in pk_columns
+
 
 def test_create_knowledge_table(postgres_db, mock_session):
     """Test creation of knowledge table with correct schema"""
@@ -227,6 +240,7 @@ def test_create_knowledge_table(postgres_db, mock_session):
         for col in expected_columns:
             assert col in column_names
 
+
 def test_get_table_sessions(postgres_db):
     """Test getting sessions table"""
     mock_table = Mock(spec=Table)
@@ -236,6 +250,7 @@ def test_get_table_sessions(postgres_db):
 
     assert table == mock_table
     assert hasattr(postgres_db, "session_table")
+
 
 def test_get_table_memories(postgres_db):
     """Test getting memories table"""
@@ -247,6 +262,7 @@ def test_get_table_memories(postgres_db):
     assert table == mock_table
     assert hasattr(postgres_db, "memory_table")
 
+
 def test_get_table_metrics(postgres_db):
     """Test getting metrics table"""
     mock_table = Mock(spec=Table)
@@ -256,6 +272,7 @@ def test_get_table_metrics(postgres_db):
 
     assert table == mock_table
     assert hasattr(postgres_db, "metrics_table")
+
 
 def test_get_table_evals(postgres_db):
     """Test getting evals table"""
@@ -267,6 +284,7 @@ def test_get_table_evals(postgres_db):
     assert table == mock_table
     assert hasattr(postgres_db, "eval_table")
 
+
 def test_get_table_knowledge(postgres_db):
     """Test getting knowledge table"""
     mock_table = Mock(spec=Table)
@@ -277,10 +295,12 @@ def test_get_table_knowledge(postgres_db):
     assert table == mock_table
     assert hasattr(postgres_db, "knowledge_table")
 
+
 def test_get_table_invalid_type(postgres_db):
     """Test getting table with invalid type"""
     with pytest.raises(ValueError, match="Unknown table type"):
         postgres_db._get_table("invalid_type")
+
 
 @patch("agno.db.postgres.postgres.is_table_available")
 @patch("agno.db.postgres.postgres.is_valid_table")
@@ -299,6 +319,7 @@ def test_get_or_create_table_existing_valid(mock_is_valid, mock_is_available, po
     mock_is_available.assert_called_once()
     mock_is_valid.assert_called_once()
 
+
 @patch("agno.db.postgres.postgres.is_table_available")
 def test_get_or_create_table_not_available(mock_is_available, postgres_db, mock_session):
     """Test creating table when not available"""
@@ -316,6 +337,7 @@ def test_get_or_create_table_not_available(mock_is_available, postgres_db, mock_
             table_name="test_table", table_type="sessions", db_schema="test_schema"
         )
 
+
 @patch("agno.db.postgres.postgres.is_table_available")
 @patch("agno.db.postgres.postgres.is_valid_table")
 def test_get_or_create_table_invalid_schema(mock_is_valid, mock_is_available, postgres_db, mock_session):
@@ -327,6 +349,7 @@ def test_get_or_create_table_invalid_schema(mock_is_valid, mock_is_available, po
 
     with pytest.raises(ValueError, match="has an invalid schema"):
         postgres_db._get_or_create_table("test_table", "sessions", "test_schema")
+
 
 @patch("agno.db.postgres.postgres.is_table_available")
 @patch("agno.db.postgres.postgres.is_valid_table")
@@ -350,12 +373,14 @@ def test_get_table_schema_definition_sessions():
     assert schema["session_id"]["nullable"] is False
     assert "_unique_constraints" in schema
 
+
 def test_get_table_schema_definition_memories():
     """Test getting memory table schema"""
     schema = get_table_schema_definition("memories")
     assert schema == MEMORY_TABLE_SCHEMA
     assert "memory_id" in schema
     assert schema["memory_id"]["primary_key"] is True
+
 
 def test_get_table_schema_definition_evals():
     """Test getting eval table schema"""
@@ -364,12 +389,14 @@ def test_get_table_schema_definition_evals():
     assert "run_id" in schema
     assert schema["eval_type"]["nullable"] is False
 
+
 def test_get_table_schema_definition_knowledge():
     """Test getting knowledge table schema"""
     schema = get_table_schema_definition("knowledge")
     assert schema == KNOWLEDGE_TABLE_SCHEMA
     assert "id" in schema
     assert schema["name"]["nullable"] is False
+
 
 def test_get_table_schema_definition_metrics():
     """Test getting metrics table schema"""
@@ -379,8 +406,8 @@ def test_get_table_schema_definition_metrics():
     assert schema["date"]["index"] is True
     assert "_unique_constraints" in schema
 
+
 def test_get_table_schema_definition_invalid():
     """Test getting schema for invalid table type"""
     with pytest.raises(ValueError, match="Unknown table type"):
         get_table_schema_definition("invalid_table")
-
