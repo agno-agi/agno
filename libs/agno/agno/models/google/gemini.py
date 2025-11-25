@@ -153,6 +153,21 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
+    def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
+        """Append Gemini File Search tool to builtin_tools if file search is enabled.
+        
+        Args:
+            builtin_tools: List of built-in tools to append to.
+        """
+        if not self.file_search_store_names:
+            return
+            
+        log_debug("Gemini File Search enabled.")
+        file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
+        if self.file_search_metadata_filter:
+            file_search_config["metadata_filter"] = self.file_search_metadata_filter
+        builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
+
     def get_request_params(
         self,
         system_message: Optional[str] = None,
@@ -246,12 +261,7 @@ class Gemini(Model):
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
 
-        if self.file_search_store_names:
-            log_debug("Gemini File Search enabled.")
-            file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
-            if self.file_search_metadata_filter:
-                file_search_config["metadata_filter"] = self.file_search_metadata_filter
-            builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
+        self._append_file_search_tool(builtin_tools)
 
         # Set tools in config
         if builtin_tools:
@@ -1214,7 +1224,7 @@ class Gemini(Model):
             log_error(f"Error getting File Search store {name}: {e}")
             raise
 
-    def delete_file_search_store(self, name: str, force: bool = True) -> None:
+    def delete_file_search_store(self, name: str, force: bool = False) -> None:
         """
         Delete a File Search store.
 
