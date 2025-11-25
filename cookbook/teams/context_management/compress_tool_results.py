@@ -61,9 +61,6 @@ research_team = Team(
         - Provide comprehensive, well-sourced responses
     """).strip(),
     db=SqliteDb(db_file="tmp/research_team.db"),
-    session_id="research_session",
-    add_history_to_context=True,
-    num_history_runs=6,  # Load last 6 research queries
     max_tool_calls_from_history=3,  # Keep only last 3 research results
     markdown=True,
     show_members_responses=True,

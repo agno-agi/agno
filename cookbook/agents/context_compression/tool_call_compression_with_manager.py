@@ -9,6 +9,7 @@ from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 compression_prompt = """
@@ -42,22 +43,20 @@ compression_prompt = """
 """
 
 compression_manager = CompressionManager(
+    model=OpenAIChat(id="gpt-4o"),
     compress_tool_results_limit=1,
     compress_tool_call_instructions=compression_prompt,
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-2.5-pro"),
+    model=Gemini(id="gemini-2.5-pro", vertexai=True),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     compression_manager=compression_manager,
     markdown=True,
     db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent.db"),
-    session_id="competitive_intelligence_agent",
-    add_history_to_context=True,
-    num_history_runs=6,
     instructions="Use the search tools and always use the latest information and data.",
-    debug_mode=True,  # So we can see the compression manager in action
+    stream=True,
 )
 
 agent.print_response(

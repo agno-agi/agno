@@ -62,11 +62,11 @@ class CompressionManager:
         uncompressed_tools_count = len(
             [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
         )
-        should_compress = uncompressed_tools_count > self.compress_tool_results_limit
+        should_compress = uncompressed_tools_count >= self.compress_tool_results_limit
 
         if should_compress:
             log_info(
-                f"Tool call compression threshold hit ({uncompressed_tools_count} > {self.compress_tool_results_limit}) -> Compressing tool results"
+                f"Tool call compression threshold hit ({uncompressed_tools_count} >= {self.compress_tool_results_limit}) -> Compressing tool results"
             )
 
         return should_compress

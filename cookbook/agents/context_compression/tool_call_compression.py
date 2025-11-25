@@ -16,10 +16,7 @@ agent = Agent(
     description="Specialized in tracking competitor activities",
     compress_tool_results=True,
     markdown=True,
-    session_id="tool_call_compression",
     db=SqliteDb(db_file="tmp/dbs/tool_call_compression.db"),
-    add_history_to_context=True,
-    num_history_runs=6,
     instructions="Use the search tools and always use the latest information and data.",
     debug_mode=True,  # So we can see the compression manager in action
 )
