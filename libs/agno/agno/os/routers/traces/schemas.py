@@ -18,6 +18,7 @@ class TraceNode(BaseModel):
     output: Optional[str] = Field(None, description="Output from the span")
     error: Optional[str] = Field(None, description="Error message if status is ERROR")
     spans: Optional[List["TraceNode"]] = Field(None, description="Child spans in the trace hierarchy")
+    step_type: Optional[str] = Field(None, description="Workflow step type (Step, Condition, function, Agent, Team)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional span attributes and data")
     extra_data: Optional[Dict[str, Any]] = Field(
         None, description="Flexible field for custom attributes and additional data"
@@ -96,6 +97,7 @@ class TraceNode(BaseModel):
             output=output_val,
             error=error_val,
             spans=spans,
+            step_type=None,  # Set by _build_span_tree for workflow steps
             metadata=metadata if metadata else None,
             extra_data=None,
         )
@@ -369,12 +371,10 @@ class TraceDetail(BaseModel):
             else:
                 # Create node from span
                 node = TraceNode.from_span(span, spans=children_nodes)
-                
+
                 # For workflow step spans (direct children of root), assign step_type by index
                 if step_index is not None and step_types_list and step_index < len(step_types_list):
-                    if node.metadata is None:
-                        node.metadata = {}
-                    node.metadata["step_type"] = step_types_list[step_index]
+                    node.step_type = step_types_list[step_index]
                 
                 return node
 
