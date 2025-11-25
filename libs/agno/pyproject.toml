@@ -313,6 +313,7 @@ tests = [
     "agno[performance]",
     "agno[cookbooks]",
     "agno[agui]",
+    "agno[integration-tests]",
     "twine",
     "build",
 ]
