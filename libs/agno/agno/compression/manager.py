@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -49,6 +49,8 @@ class CompressionManager:
     compress_tool_results: bool = True
     compress_tool_results_limit: int = 3
     compress_tool_call_instructions: Optional[str] = None
+
+    stats: Dict[str, Any] = field(default_factory=dict)
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
@@ -107,8 +109,13 @@ class CompressionManager:
 
         # Compress uncompressed tool results
         for tool_msg in uncompressed_tools:
+            original_len = len(str(tool_msg.content)) if tool_msg.content else 0
             compressed = self._compress_tool_result(tool_msg)
             if compressed:
                 tool_msg.compressed_content = compressed
+                # Track stats
+                self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + 1
+                self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
+                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
             else:
                 log_warning(f"Compression failed for {tool_msg.tool_name}")

@@ -40,10 +40,8 @@ business_analyst = Agent(
     """).strip(),
 )
 
-# Create research team with tools and context management
 research_team = Team(
     name="Research Team",
-    # model=OpenAIChat("gpt-4o"),
     model=AwsBedrock(id="us.anthropic.claude-sonnet-4-20250514-v1:0"),
     members=[tech_researcher, business_analyst],
     tools=[DuckDuckGoTools()],  # Team uses DuckDuckGo for research
@@ -70,7 +68,6 @@ research_team = Team(
     markdown=True,
     show_members_responses=True,
     compress_tool_results=True,
-    stream=True,
 )
 
 if __name__ == "__main__":
