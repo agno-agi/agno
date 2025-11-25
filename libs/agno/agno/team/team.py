@@ -7204,9 +7204,7 @@ class Team:
                 return
 
             _, member_agent = result
-            member_agent_task, history = _setup_delegate_task_to_member(
-                member_agent=member_agent, task=task
-            )
+            member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -7332,9 +7330,7 @@ class Team:
                 return
 
             _, member_agent = result
-            member_agent_task, history = _setup_delegate_task_to_member(
-                member_agent=member_agent, task=task
-            )
+            member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -7450,9 +7446,7 @@ class Team:
 
             # Run all the members sequentially
             for _, member_agent in enumerate(self.members):
-                member_agent_task, history = _setup_delegate_task_to_member(
-                    member_agent=member_agent, task=task
-                )
+                member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
                 member_session_state_copy = copy(run_context.session_state)
                 if stream:
@@ -7566,9 +7560,7 @@ class Team:
                 queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
                 async def stream_member(agent: Union[Agent, "Team"]) -> None:
-                    member_agent_task, history = _setup_delegate_task_to_member(
-                        member_agent=agent, task=task
-                    )  # type: ignore
+                    member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                     member_session_state_copy = copy(run_context.session_state)
 
                     member_stream = agent.arun(  # type: ignore
@@ -7644,9 +7636,7 @@ class Team:
                 tasks = []
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
-                    member_agent_task, history = _setup_delegate_task_to_member(
-                        member_agent=current_agent, task=task
-                    )
+                    member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(run_context.session_state)
