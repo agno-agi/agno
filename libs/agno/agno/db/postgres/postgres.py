@@ -306,7 +306,7 @@ class PostgresDb(BaseDb):
         if table_type == "spans":
             # Ensure traces table exists first (spans has FK to traces)
             if create_table_if_not_found:
-                self._get_table(table_type="traces", create_table_if_not_found=True)
+                self._get_table(table_type="traces", create_table_if_not_found=create_table_if_not_found)
 
             self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
