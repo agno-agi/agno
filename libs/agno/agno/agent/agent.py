@@ -1179,6 +1179,7 @@ class Agent:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             for event in pre_hook_iterator:
@@ -1355,6 +1356,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -2116,6 +2118,7 @@ class Agent:
                 session=agent_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             async for event in pre_hook_iterator:
@@ -2281,6 +2284,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3192,6 +3196,7 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -3899,6 +3904,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3999,6 +4005,7 @@ class Agent:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
@@ -4020,25 +4027,10 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
-                    event=create_pre_hook_completed_event(
+                    event=create_pre_hook_started_event(
                         from_run_response=run_response,
                         run_input=run_input,
                         pre_hook_name=hook.__name__,
@@ -4046,6 +4038,23 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4068,6 +4077,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
@@ -4089,16 +4099,17 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_pre_hook_started_event(
+                        from_run_response=run_response,
+                        run_input=run_input,
+                        pre_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4109,16 +4120,17 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_pre_hook_completed_event(
-                        from_run_response=run_response,
-                        run_input=run_input,
-                        pre_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4140,6 +4152,7 @@ class Agent:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
@@ -4161,30 +4174,32 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_post_hook_completed_event(
+                    event=create_post_hook_started_event(
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -4202,6 +4217,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -4223,15 +4239,16 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_post_hook_started_event(
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4242,15 +4259,16 @@ class Agent:
                 else:
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_output,
-                    event=create_post_hook_completed_event(
-                        from_run_response=run_output,
-                        post_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
