@@ -18,7 +18,6 @@ agent = Agent(
     markdown=True,
     db=SqliteDb(db_file="tmp/dbs/tool_call_compression.db"),
     instructions="Use the search tools and always use the latest information and data.",
-    debug_mode=True,  # So we can see the compression manager in action
 )
 
 agent.print_response(
