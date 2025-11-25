@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
@@ -5,10 +6,21 @@ from typing import Any, Dict, List, Optional, Type, Union
 import httpx
 from pydantic import BaseModel
 
+from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
+from agno.models.message import Message
+from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.claude import format_messages, format_tools_for_model
+
+try:
+    from anthropic import APIConnectionError, APIStatusError, RateLimitError
+except ImportError:
+    APIConnectionError = Exception  # type: ignore
+    APIStatusError = Exception  # type: ignore
+    RateLimitError = Exception  # type: ignore
 
 try:
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
@@ -230,6 +242,166 @@ class Claude(AnthropicClaude):
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
 
-        if request_kwargs:
-            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
+
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> Any:
+        """
+        Stream a response from the Anthropic API.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            Any: The streamed response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
+        """
+        chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+
+        try:
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
+
+            with self.get_client().messages.stream(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            ) as stream:
+                for chunk in stream:
+                    yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
+
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
+
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> ModelResponse:
+        """
+        Send an asynchronous request to the Anthropic API to generate a response.
+        """
+        try:
+            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
+
+            response = await self.get_async_client().messages.create(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            )
+
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(response, response_format=response_format)
+
+            return model_response
+
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> AsyncIterator[ModelResponse]:
+        """
+        Stream an asynchronous response from the Anthropic API.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            Any: The streamed response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
+        """
+        try:
+            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
+
+            async with self.get_async_client().messages.stream(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            ) as stream:
+                async for chunk in stream:
+                    yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
+
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
+
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
