@@ -302,6 +302,7 @@ embedders = [
 
 # All libraries for testing
 tests = [
+    "agno[a2a]",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",
