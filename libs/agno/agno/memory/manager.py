@@ -355,7 +355,10 @@ class MemoryManager:
 
         if memory_ids:
             # Delete all memories in a single batch operation
-            await self.db.adelete_user_memories(memory_ids=memory_ids, user_id=user_id)
+            if isinstance(self.db, AsyncBaseDb):
+                await self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
+            else:
+                self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
             log_debug(f"Cleared {len(memory_ids)} memories for user {user_id}")
 
     # -*- Agent Functions
