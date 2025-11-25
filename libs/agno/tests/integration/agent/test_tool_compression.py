@@ -207,7 +207,7 @@ def test_compressed_content_used_in_subsequent_calls(compression_agent_no_db):
 
     for msg in tool_messages:
         if msg.compressed_content is not None:
-            content_for_llm = msg.get_content(use_compression=True)
+            content_for_llm = msg.get_content(use_compressed_content=True)
             assert content_for_llm == msg.compressed_content
             assert content_for_llm != msg.content
             assert len(str(content_for_llm)) < len(str(msg.content))
@@ -220,8 +220,8 @@ def test_get_content_returns_correct_version():
 
     msg = Message(role="tool", content=original, compressed_content=compressed)
 
-    assert msg.get_content(use_compression=False) == original
-    assert msg.get_content(use_compression=True) == compressed
+    assert msg.get_content(use_compressed_content=False) == original
+    assert msg.get_content(use_compressed_content=True) == compressed
 
 
 def test_messages_have_compressed_content_for_llm(compression_agent_no_db):
@@ -235,6 +235,6 @@ def test_messages_have_compressed_content_for_llm(compression_agent_no_db):
         assert len(messages_with_compression) > 0, "Expected compression to be applied to some messages"
 
         for msg in messages_with_compression:
-            llm_content = msg.get_content(use_compression=True)
+            llm_content = msg.get_content(use_compressed_content=True)
             assert llm_content == msg.compressed_content
             assert len(llm_content) < len(str(msg.content))
