@@ -142,6 +142,7 @@ class SqliteDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.context_table_name, "context"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -2376,7 +2377,6 @@ class SqliteDb(BaseDb):
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
-
     def clear_context_items(self) -> None:
         """Delete all context items from the database.
 
@@ -2459,13 +2459,13 @@ class SqliteDb(BaseDb):
     def get_all_context_items(
         self,
         name: Optional[str] = None,
-        label: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[ContextItem]]:
         """Get all context items from the database.
 
         Args:
             name (Optional[str]): The name of the context item to filter by.
-            label (Optional[str]): The label to filter by.
+            metadata (Optional[Dict[str, Any]]): The metadata to filter by.
 
         Returns:
             Optional[List[ContextItem]]: List of context items
@@ -2484,8 +2484,9 @@ class SqliteDb(BaseDb):
                 # Filtering
                 if name is not None:
                     stmt = stmt.where(table.c.name == name)
-                if label is not None:
-                    stmt = stmt.where(table.c.label == label)
+                if metadata is not None:
+                    # Use JSON contain for metadata filtering
+                    stmt = stmt.where(table.c.metadata.contains(metadata))
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
@@ -2519,9 +2520,9 @@ class SqliteDb(BaseDb):
             if context_item.id is None:
                 context_item.id = str(uuid4())
 
-            # Convert datetime to timestamp for storage
-            created_at_ts = int(context_item.created_at.timestamp()) if context_item.created_at else None
-            updated_at_ts = int(time.time())
+            # Timestamps are already epoch seconds (int)
+            created_at_ts = context_item.created_at if context_item.created_at else int(time.time())
+            updated_at_ts = context_item.updated_at if context_item.updated_at else int(time.time())
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
@@ -2529,7 +2530,7 @@ class SqliteDb(BaseDb):
                     name=context_item.name,
                     content=context_item.content,
                     description=context_item.description,
-                    label=context_item.label,
+                    metadata=context_item.metadata,
                     variables=context_item.variables,
                     version=context_item.version,
                     parent_id=context_item.parent_id,
@@ -2543,7 +2544,7 @@ class SqliteDb(BaseDb):
                         name=context_item.name,
                         content=context_item.content,
                         description=context_item.description,
-                        label=context_item.label,
+                        metadata=context_item.metadata,
                         variables=context_item.variables,
                         version=context_item.version,
                         parent_id=context_item.parent_id,

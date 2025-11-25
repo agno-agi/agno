@@ -49,6 +49,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
@@ -71,6 +72,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            context_table (Optional[str]): Name of the table to store context items.
             versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
@@ -89,6 +91,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            context_table=context_table,
             versions_table=versions_table,
         )
 
@@ -138,6 +141,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.context_table_name, "context"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -2382,7 +2386,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
-
     async def clear_context_items(self) -> None:
         """Delete all context items from the database.
 
@@ -2457,13 +2460,13 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def get_all_context_items(
         self,
         name: Optional[str] = None,
-        label: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> List[ContextItem]:
         """Get all context items from the database, with optional filtering.
 
         Args:
             name (Optional[str]): Filter by context name.
-            label (Optional[str]): Filter by label.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata.
 
         Returns:
             List[ContextItem]: List of context items.
@@ -2482,8 +2485,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # Apply filters
                 if name is not None:
                     stmt = stmt.where(table.c.name == name)
-                if label is not None:
-                    stmt = stmt.where(table.c.label == label)
+                if metadata is not None:
+                    # Use JSON contain for metadata filtering
+                    stmt = stmt.where(table.c.metadata.contains(metadata))
 
                 result = (await sess.execute(stmt)).fetchall()
 
@@ -2518,9 +2522,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             if context_item.id is None:
                 context_item.id = str(uuid4())
 
-            # Convert datetime to timestamp for storage
-            created_at_ts = int(context_item.created_at.timestamp()) if context_item.created_at else None
-            updated_at_ts = int(time.time())
+            # Timestamps are already epoch seconds (int)
+            created_at_ts = context_item.created_at if context_item.created_at else int(time.time())
+            updated_at_ts = context_item.updated_at if context_item.updated_at else int(time.time())
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
@@ -2528,7 +2532,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     name=context_item.name,
                     content=context_item.content,
                     description=context_item.description,
-                    label=context_item.label,
+                    metadata=context_item.metadata,
                     variables=context_item.variables,
                     version=context_item.version,
                     parent_id=context_item.parent_id,
@@ -2542,7 +2546,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         name=context_item.name,
                         content=context_item.content,
                         description=context_item.description,
-                        label=context_item.label,
+                        metadata=context_item.metadata,
                         variables=context_item.variables,
                         version=context_item.version,
                         parent_id=context_item.parent_id,

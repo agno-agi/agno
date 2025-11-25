@@ -348,7 +348,7 @@ class BaseDb(ABC):
     def get_all_context_items(
         self,
         name: Optional[str] = None,
-        label: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[List["ContextItem"]]:
         raise NotImplementedError
 
@@ -652,7 +652,6 @@ class AsyncBaseDb(ABC):
     async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
-
     @abstractmethod
     async def clear_context_items(self) -> None:
         raise NotImplementedError
@@ -669,7 +668,7 @@ class AsyncBaseDb(ABC):
     async def get_all_context_items(
         self,
         name: Optional[str] = None,
-        label: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[List["ContextItem"]]:
         raise NotImplementedError
 

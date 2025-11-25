@@ -120,7 +120,7 @@ CONTEXT_ITEM_TABLE_SCHEMA = {
     "name": {"type": String, "nullable": False, "index": True},
     "content": {"type": String, "nullable": False},
     "description": {"type": String, "nullable": True},
-    "label": {"type": String, "nullable": True, "index": True},
+    "metadata": {"type": JSON, "nullable": True},
     "variables": {"type": JSON, "nullable": True},
     "version": {"type": BigInteger, "nullable": False, "default": 1},
     "parent_id": {"type": String, "nullable": True},
