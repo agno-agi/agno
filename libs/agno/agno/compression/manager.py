@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import Any, Dict, List, Optional
@@ -65,9 +66,7 @@ class CompressionManager:
         should_compress = uncompressed_tools_count >= self.compress_tool_results_limit
 
         if should_compress:
-            log_info(
-                f"Tool call compression threshold hit ({uncompressed_tools_count} >= {self.compress_tool_results_limit}) -> Compressing tool results"
-            )
+            log_info(f"Tool call compression threshold hit. Compressing {uncompressed_tools_count} tool results")
 
         return should_compress
 
@@ -119,3 +118,59 @@ class CompressionManager:
                 self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
             else:
                 log_warning(f"Compression failed for {tool_msg.tool_name}")
+
+    #* Async methods *#
+    async def _acompress_tool_result(self, tool_result: Message) -> Optional[str]:
+        """Async compress a single tool result"""
+        if not tool_result:
+            return None
+
+        tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
+
+        self.model = get_model(self.model)
+        if not self.model:
+            log_warning("No compression model available")
+            return None
+
+        compression_prompt = self.compress_tool_call_instructions or DEFAULT_COMPRESSION_PROMPT
+        compression_message = "Tool Results to Compress: " + tool_content + "\n"
+
+        try:
+            response = await self.model.aresponse(
+                messages=[
+                    Message(role="system", content=compression_prompt),
+                    Message(role="user", content=compression_message),
+                ]
+            )
+            return response.content
+        except Exception as e:
+            log_error(f"Error compressing tool result: {e}")
+            return tool_content
+
+    async def acompress(self, messages: List[Message]) -> None:
+        """Async compress uncompressed tool results"""
+        if not self.compress_tool_results:
+            return
+
+        uncompressed_tools = [msg for msg in messages if msg.role == "tool" and msg.compressed_content is None]
+
+        if not uncompressed_tools:
+            return
+
+        # Track original sizes before compression
+        original_sizes = [len(str(msg.content)) if msg.content else 0 for msg in uncompressed_tools]
+
+        # Parallel compression using asyncio.gather
+        tasks = [self._acompress_tool_result(msg) for msg in uncompressed_tools]
+        results = await asyncio.gather(*tasks)
+
+        # Apply results and track stats
+        for msg, compressed, original_len in zip(uncompressed_tools, results, original_sizes):
+            if compressed:
+                msg.compressed_content = compressed
+                # Track stats
+                self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + 1
+                self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
+                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
+            else:
+                log_warning(f"Compression failed for {msg.tool_name}")

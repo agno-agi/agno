@@ -1,12 +1,3 @@
-"""
-Research Team with Context Management.
-
-This example demonstrates a research team that uses DuckDuckGo to search the web and accumulate tool calls. The older research results
-are automatically filtered out to keep the context focused on recent research results.
-
-When max_tool_calls_from_history is set to 3, the team will keep only the last 3 tool call results.
-"""
-
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -15,7 +6,7 @@ from agno.models.aws import AwsBedrock
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# Create specialized research agents
+# Create specialized agents
 tech_researcher = Agent(
     name="Alex",
     role="Technology Researcher",
@@ -61,13 +52,12 @@ research_team = Team(
         - Provide comprehensive, well-sourced responses
     """).strip(),
     db=SqliteDb(db_file="tmp/research_team.db"),
-    max_tool_calls_from_history=3,  # Keep only last 3 research results
-    markdown=True,
+    compress_tool_results=True, # Enable tool call compression
     show_members_responses=True,
-    compress_tool_results=True,
 )
 
 if __name__ == "__main__":
     research_team.print_response(
         "What are the latest developments in AI agents? Which companies dominate the market? Find the latest news and reports on the companies.",
+        stream=True,
     )

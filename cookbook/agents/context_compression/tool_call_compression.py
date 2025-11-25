@@ -1,10 +1,3 @@
-"""
-This example shows how to customize the compression prompt for domain-specific
-use cases. Here we optimize compression for competitive intelligence gathering.
-
-Run: `python cookbook/agents/context_management/tool_call_compression.py`
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
@@ -14,10 +7,9 @@ agent = Agent(
     model=Gemini(id="gemini-2.5-pro"),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
-    compress_tool_results=True,
-    markdown=True,
-    db=SqliteDb(db_file="tmp/dbs/tool_call_compression.db"),
     instructions="Use the search tools and always use the latest information and data.",
+    db=SqliteDb(db_file="tmp/dbs/tool_call_compression.db"),
+    compress_tool_results=True, # Enable tool call compression
 )
 
 agent.print_response(
@@ -31,4 +23,5 @@ agent.print_response(
     4. Meta AI - open source releases, research papers
    
     For each, find specific actions with dates and numbers.""",
+    stream=True,
 )

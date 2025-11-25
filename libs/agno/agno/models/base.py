@@ -628,7 +628,7 @@ class Model(ABC):
                     all_messages = messages + function_call_results
                     # Compress tool results
                     if compression_manager and compression_manager.should_compress(all_messages):
-                        compression_manager.compress(all_messages)
+                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -1237,7 +1237,7 @@ class Model(ABC):
                     all_messages = messages + function_call_results
                     # Compress tool results
                     if compression_manager and compression_manager.should_compress(all_messages):
-                        compression_manager.compress(all_messages)
+                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:

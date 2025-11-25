@@ -52,11 +52,9 @@ agent = Agent(
     model=Gemini(id="gemini-2.5-pro", vertexai=True),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
-    compression_manager=compression_manager,
-    markdown=True,
-    db=SqliteDb(db_file="tmp/dbs/competitive_intelligence_agent.db"),
     instructions="Use the search tools and always use the latest information and data.",
-    stream=True,
+    db=SqliteDb(db_file="tmp/dbs/tool_call_compression_with_manager.db"),
+    compression_manager=compression_manager,
 )
 
 agent.print_response(
@@ -70,4 +68,5 @@ agent.print_response(
     4. Meta AI - open source releases, research papers
    
     For each, find specific actions with dates and numbers.""",
-)
+    stream=True,
+    )

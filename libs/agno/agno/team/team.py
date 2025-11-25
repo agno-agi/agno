@@ -895,6 +895,8 @@ class Team:
         if self.compression_manager is not None:
             if self.compression_manager.model is None:
                 self.compression_manager.model = self.model
+            if self.compression_manager.compress_tool_results:
+                self.compress_tool_results = True
 
     def _initialize_session(
         self,
