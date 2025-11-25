@@ -109,12 +109,14 @@ async def query_with_citations(model: Gemini, query: str, store_name: str):
                 if isinstance(retrieved_context, dict):
                     title = retrieved_context.get("title", "Unknown")
                     sources_set.add(title)
-                    chunks.append({
-                        "title": title,
-                        "uri": retrieved_context.get("uri", ""),
-                        "text": retrieved_context.get("text", ""),
-                        "type": "file_search"
-                    })
+                    chunks.append(
+                        {
+                            "title": title,
+                            "uri": retrieved_context.get("uri", ""),
+                            "text": retrieved_context.get("text", ""),
+                            "type": "file_search",
+                        }
+                    )
 
         sources = sorted(list(sources_set))
 
