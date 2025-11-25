@@ -289,8 +289,20 @@ class TraceDetail(BaseModel):
                 spans_map[parent_id] = []
             spans_map[parent_id].append(span)
 
+        # Extract step_types list from workflow root span for index-based matching
+        step_types_list: List[str] = []
+        root_spans = spans_map.get(None, [])
+        for root_span in root_spans:
+            span_kind = root_span.attributes.get("openinference.span.kind", "")
+            if span_kind == "CHAIN":
+                step_types = root_span.attributes.get("agno.workflow.step_types", [])
+                if step_types:
+                    step_types_list = list(step_types)
+                    break  # Use first workflow root span's step_types
+
         # Recursive function to build tree for a span
-        def build_node(span: Any, is_root: bool = False) -> TraceNode:
+        # step_index is used to track position within direct children of root (workflow steps)
+        def build_node(span: Any, is_root: bool = False, step_index: Optional[int] = None) -> TraceNode:
             span_id = span.span_id
             children_spans = spans_map.get(span_id, [])
 
@@ -299,7 +311,13 @@ class TraceDetail(BaseModel):
                 children_spans.sort(key=lambda s: s.start_time)
 
             # Recursively build spans
-            children_nodes = [build_node(child) for child in children_spans] if children_spans else None
+            # For root span's direct children (workflow steps), pass the index
+            if is_root and step_types_list:
+                children_nodes = []
+                for idx, child in enumerate(children_spans):
+                    children_nodes.append(build_node(child, step_index=idx))
+            else:
+                children_nodes = [build_node(child) for child in children_spans] if children_spans else None
 
             # For root span, create custom metadata with token totals
             if is_root:
@@ -343,15 +361,21 @@ class TraceDetail(BaseModel):
                     input=None,  # Skip for root span (already at TraceDetail level)
                     output=None,  # Skip for root span (already at TraceDetail level)
                     error=None,  # Skip for root span (already at TraceDetail level)
-                    spans=children_nodes,
+                    spans=children_nodes if children_nodes else None,
                     metadata=root_metadata if root_metadata else None,
                     extra_data=None,
                 )
             else:
-                return TraceNode.from_span(span, spans=children_nodes)
-
-        # Find root spans (spans with no parent)
-        root_spans = spans_map.get(None, [])
+                # Create node from span
+                node = TraceNode.from_span(span, spans=children_nodes)
+                
+                # For workflow step spans (direct children of root), assign step_type by index
+                if step_index is not None and step_types_list and step_index < len(step_types_list):
+                    if node.metadata is None:
+                        node.metadata = {}
+                    node.metadata["step_type"] = step_types_list[step_index]
+                
+                return node
 
         # Sort root spans by start time
         root_spans.sort(key=lambda s: s.start_time)
