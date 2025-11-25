@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics, ToolCallMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -54,7 +54,7 @@ class MessageData:
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
 
-    response_metrics: Optional[Metrics] = None
+    response_metrics: Optional[MessageMetrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -895,9 +895,47 @@ class Model(ABC):
         if provider_response.citations is not None:
             assistant_message.citations = provider_response.citations
 
-        # Add usage metrics if provided
+        # Add usage metrics if provided - convert Metrics to MessageMetrics
         if provider_response.response_usage is not None:
-            assistant_message.metrics += provider_response.response_usage
+            if assistant_message.metrics is None:
+                # Convert Metrics to MessageMetrics
+                usage = provider_response.response_usage
+                assistant_message.metrics = MessageMetrics(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    audio_input_tokens=usage.audio_input_tokens,
+                    audio_output_tokens=usage.audio_output_tokens,
+                    audio_total_tokens=usage.audio_total_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_write_tokens=usage.cache_write_tokens,
+                    reasoning_tokens=usage.reasoning_tokens,
+                    duration=usage.duration,
+                    time_to_first_token=usage.time_to_first_token,
+                    timer=usage.timer,
+                    provider_metrics=usage.provider_metrics,
+                    additional_metrics=usage.additional_metrics,
+                )
+            else:
+                # Add to existing MessageMetrics
+                usage = provider_response.response_usage
+                assistant_message.metrics.input_tokens += usage.input_tokens
+                assistant_message.metrics.output_tokens += usage.output_tokens
+                assistant_message.metrics.total_tokens += usage.total_tokens
+                assistant_message.metrics.audio_input_tokens += usage.audio_input_tokens
+                assistant_message.metrics.audio_output_tokens += usage.audio_output_tokens
+                assistant_message.metrics.audio_total_tokens += usage.audio_total_tokens
+                assistant_message.metrics.cache_read_tokens += usage.cache_read_tokens
+                assistant_message.metrics.cache_write_tokens += usage.cache_write_tokens
+                assistant_message.metrics.reasoning_tokens += usage.reasoning_tokens
+                if usage.provider_metrics:
+                    if assistant_message.metrics.provider_metrics is None:
+                        assistant_message.metrics.provider_metrics = {}
+                    assistant_message.metrics.provider_metrics.update(usage.provider_metrics)
+                if usage.additional_metrics:
+                    if assistant_message.metrics.additional_metrics is None:
+                        assistant_message.metrics.additional_metrics = {}
+                    assistant_message.metrics.additional_metrics.update(usage.additional_metrics)
 
         return assistant_message
 
@@ -1381,8 +1419,44 @@ class Model(ABC):
 
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
-                stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+                # Convert Metrics to MessageMetrics
+                usage = model_response_delta.response_usage
+                stream_data.response_metrics = MessageMetrics(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    audio_input_tokens=usage.audio_input_tokens,
+                    audio_output_tokens=usage.audio_output_tokens,
+                    audio_total_tokens=usage.audio_total_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_write_tokens=usage.cache_write_tokens,
+                    reasoning_tokens=usage.reasoning_tokens,
+                    duration=usage.duration,
+                    time_to_first_token=usage.time_to_first_token,
+                    timer=usage.timer,
+                    provider_metrics=usage.provider_metrics,
+                    additional_metrics=usage.additional_metrics,
+                )
+            else:
+                # Add to existing MessageMetrics
+                usage = model_response_delta.response_usage
+                stream_data.response_metrics.input_tokens += usage.input_tokens
+                stream_data.response_metrics.output_tokens += usage.output_tokens
+                stream_data.response_metrics.total_tokens += usage.total_tokens
+                stream_data.response_metrics.audio_input_tokens += usage.audio_input_tokens
+                stream_data.response_metrics.audio_output_tokens += usage.audio_output_tokens
+                stream_data.response_metrics.audio_total_tokens += usage.audio_total_tokens
+                stream_data.response_metrics.cache_read_tokens += usage.cache_read_tokens
+                stream_data.response_metrics.cache_write_tokens += usage.cache_write_tokens
+                stream_data.response_metrics.reasoning_tokens += usage.reasoning_tokens
+                if usage.provider_metrics:
+                    if stream_data.response_metrics.provider_metrics is None:
+                        stream_data.response_metrics.provider_metrics = {}
+                    stream_data.response_metrics.provider_metrics.update(usage.provider_metrics)
+                if usage.additional_metrics:
+                    if stream_data.response_metrics.additional_metrics is None:
+                        stream_data.response_metrics.additional_metrics = {}
+                    stream_data.response_metrics.additional_metrics.update(usage.additional_metrics)
 
         # Update stream_data content
         if model_response_delta.content is not None:
@@ -1520,9 +1594,8 @@ class Model(ABC):
         function_execution_result: Optional[FunctionExecutionResult] = None,
     ) -> Message:
         """Create a function call result message."""
-        kwargs = {}
-        if timer is not None:
-            kwargs["metrics"] = Metrics(duration=timer.elapsed)
+        kwargs: Dict[str, Any] = {}
+        # Tool messages don't get metrics - only assistant messages do
 
         # Include media artifacts from function execution result in the tool message
         images = None
@@ -1686,6 +1759,20 @@ class Model(ABC):
         # Override stop_after_tool_call if set by exception
         if stop_after_tool_call_from_exception:
             function_call_result.stop_after_tool_call = True
+
+        # Create ToolCallMetrics for the tool execution
+        tool_metrics = None
+        if function_call_timer is not None and function_call_timer.elapsed > 0:
+            from time import time
+
+            tool_metrics = ToolCallMetrics()
+            tool_metrics.timer = function_call_timer
+            tool_metrics.duration = function_call_timer.elapsed
+            # Calculate Unix timestamps (Timer uses perf_counter which is relative)
+            current_time = time()
+            tool_metrics.end_time = current_time
+            tool_metrics.start_time = current_time - function_call_timer.elapsed
+
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
@@ -1696,7 +1783,7 @@ class Model(ABC):
                     tool_call_error=function_call_result.tool_call_error,
                     result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
-                    metrics=function_call_result.metrics,
+                    metrics=tool_metrics,
                 )
             ],
             event=ModelResponseEvent.tool_call_completed.value,
@@ -2210,6 +2297,19 @@ class Model(ABC):
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:
                 function_call_result.stop_after_tool_call = True
+            
+            # Create ToolCallMetrics for the tool execution
+            tool_metrics = None
+            if function_call_timer is not None and function_call_timer.elapsed > 0:
+                from time import time
+                tool_metrics = ToolCallMetrics()
+                tool_metrics.timer = function_call_timer
+                tool_metrics.duration = function_call_timer.elapsed
+                # Calculate Unix timestamps (Timer uses perf_counter which is relative)
+                current_time = time()
+                tool_metrics.end_time = current_time
+                tool_metrics.start_time = current_time - function_call_timer.elapsed
+            
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[
@@ -2220,7 +2320,7 @@ class Model(ABC):
                         tool_call_error=function_call_result.tool_call_error,
                         result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
-                        metrics=function_call_result.metrics,
+                        metrics=tool_metrics,
                     )
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations
-from agno.models.metrics import Metrics
+from agno.models.metrics import Metrics, ToolCallMetrics
 from agno.tools.function import UserInputField
 
 
@@ -27,7 +27,7 @@ class ToolExecution:
     tool_args: Optional[Dict[str, Any]] = None
     tool_call_error: Optional[bool] = None
     result: Optional[str] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[ToolCallMetrics] = None
 
     # In the case where a tool call creates a run of an agent/team/workflow
     child_run_id: Optional[str] = None
@@ -80,7 +80,7 @@ class ToolExecution:
             if "user_input_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
-            metrics=Metrics(**(data.get("metrics", {}) or {})),
+            metrics=ToolCallMetrics(**(data.get("metrics", {}) or {})) if data.get("metrics") else None,
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
 

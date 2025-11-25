@@ -48,7 +48,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics
+from agno.models.metrics import Metrics, SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -4749,6 +4749,7 @@ class Agent:
             for user_input_field in tool.user_input_schema or []
         ]
         # Add the tool call result to the run_messages
+        # Tool messages don't get metrics - only assistant messages do
         run_messages.messages.append(
             Message(
                 role=self.model.tool_message_role,
@@ -4756,7 +4757,6 @@ class Agent:
                 tool_call_id=tool.tool_call_id,
                 tool_name=tool.tool_name,
                 tool_args=tool.tool_args,
-                metrics=Metrics(duration=0),
             )
         )
 
@@ -5109,14 +5109,49 @@ class Agent:
         )
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput):
-        """Calculate session metrics"""
+        """Calculate session metrics - convert run Metrics to SessionMetrics"""
         session_metrics = self._get_session_metrics(session=session)
+
         # Add the metrics for the current run to the session metrics
         if run_response.metrics is not None:
-            session_metrics += run_response.metrics
-        session_metrics.time_to_first_token = None
+            run_metrics = run_response.metrics
+            # Convert Metrics to SessionMetrics and add token metrics
+            session_metrics.input_tokens += run_metrics.input_tokens
+            session_metrics.output_tokens += run_metrics.output_tokens
+            session_metrics.total_tokens += run_metrics.total_tokens
+            session_metrics.audio_input_tokens += run_metrics.audio_input_tokens
+            session_metrics.audio_output_tokens += run_metrics.audio_output_tokens
+            session_metrics.audio_total_tokens += run_metrics.audio_total_tokens
+            session_metrics.cache_read_tokens += run_metrics.cache_read_tokens
+            session_metrics.cache_write_tokens += run_metrics.cache_write_tokens
+            session_metrics.reasoning_tokens += run_metrics.reasoning_tokens
+
+            # Handle provider_metrics
+            if run_metrics.provider_metrics:
+                if session_metrics.provider_metrics is None:
+                    session_metrics.provider_metrics = {}
+                session_metrics.provider_metrics.update(run_metrics.provider_metrics)
+
+            # Handle additional_metrics
+            if run_metrics.additional_metrics:
+                if session_metrics.additional_metrics is None:
+                    session_metrics.additional_metrics = {}
+                session_metrics.additional_metrics.update(run_metrics.additional_metrics)
+
+            # Calculate average duration
+            session_metrics.total_runs += 1
+            if run_metrics.duration is not None:
+                if session_metrics.average_duration is None:
+                    session_metrics.average_duration = run_metrics.duration
+                else:
+                    # Weighted average: (old_avg * old_count + new_duration) / new_count
+                    total_duration = (
+                        session_metrics.average_duration * (session_metrics.total_runs - 1) + run_metrics.duration
+                    )
+                    session_metrics.average_duration = total_duration / session_metrics.total_runs
+
         if session.session_data is not None:
-            session.session_data["session_metrics"] = session_metrics
+            session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _handle_model_response_stream(
         self,
@@ -6302,17 +6337,37 @@ class Agent:
             # Update the current metadata with the metadata from the database which is updated in place
             self.metadata = session.metadata
 
-    def _get_session_metrics(self, session: AgentSession):
+    def _get_session_metrics(self, session: AgentSession) -> SessionMetrics:
         # Get the session_metrics from the database
         if session.session_data is not None and "session_metrics" in session.session_data:
             session_metrics_from_db = session.session_data.get("session_metrics")
             if session_metrics_from_db is not None:
                 if isinstance(session_metrics_from_db, dict):
-                    return Metrics(**session_metrics_from_db)
-                elif isinstance(session_metrics_from_db, Metrics):
+                    # Handle legacy Metrics dict - convert to SessionMetrics
+                    metrics_dict = session_metrics_from_db.copy()
+                    # Remove run-level timing fields
+                    metrics_dict.pop("duration", None)
+                    metrics_dict.pop("time_to_first_token", None)
+                    metrics_dict.pop("timer", None)
+                    return SessionMetrics(**metrics_dict)
+                elif isinstance(session_metrics_from_db, SessionMetrics):
                     return session_metrics_from_db
-        else:
-            return Metrics()
+                elif isinstance(session_metrics_from_db, Metrics):
+                    # Convert legacy Metrics to SessionMetrics
+                    return SessionMetrics(
+                        input_tokens=session_metrics_from_db.input_tokens,
+                        output_tokens=session_metrics_from_db.output_tokens,
+                        total_tokens=session_metrics_from_db.total_tokens,
+                        audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                        audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                        audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                        cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                        cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                        reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                        provider_metrics=session_metrics_from_db.provider_metrics,
+                        additional_metrics=session_metrics_from_db.additional_metrics,
+                    )
+        return SessionMetrics()
 
     def _read_or_create_session(
         self,
@@ -6853,13 +6908,13 @@ class Agent:
             self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID.
 
         Args:
             session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
         Returns:
-            Optional[Metrics]: The session metrics.
+            Optional[SessionMetrics]: The session metrics.
         """
         session_id = session_id or self.session_id
         if session_id is None:
@@ -6867,13 +6922,13 @@ class Agent:
 
         return get_session_metrics_util(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID.
 
         Args:
             session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
         Returns:
-            Optional[Metrics]: The session metrics.
+            Optional[SessionMetrics]: The session metrics.
         """
         session_id = session_id or self.session_id
         if session_id is None:
@@ -9055,13 +9110,33 @@ class Agent:
                 log_warning(f"Failed to save output to file: {e}")
 
     def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        """Sum the metrics of the given messages into a Metrics object"""
+        """Sum the MessageMetrics from assistant messages into a Metrics object (run-level)"""
         metrics = current_run_metrics or Metrics()
 
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-                metrics += m.metrics
+                # Convert MessageMetrics to Metrics and add
+                msg_metrics = m.metrics
+                metrics.input_tokens += msg_metrics.input_tokens
+                metrics.output_tokens += msg_metrics.output_tokens
+                metrics.total_tokens += msg_metrics.total_tokens
+                metrics.audio_input_tokens += msg_metrics.audio_input_tokens
+                metrics.audio_output_tokens += msg_metrics.audio_output_tokens
+                metrics.audio_total_tokens += msg_metrics.audio_total_tokens
+                metrics.cache_read_tokens += msg_metrics.cache_read_tokens
+                metrics.cache_write_tokens += msg_metrics.cache_write_tokens
+                metrics.reasoning_tokens += msg_metrics.reasoning_tokens
+                # Handle provider_metrics
+                if msg_metrics.provider_metrics:
+                    if metrics.provider_metrics is None:
+                        metrics.provider_metrics = {}
+                    metrics.provider_metrics.update(msg_metrics.provider_metrics)
+                # Handle additional_metrics
+                if msg_metrics.additional_metrics:
+                    if metrics.additional_metrics is None:
+                        metrics.additional_metrics = {}
+                    metrics.additional_metrics.update(msg_metrics.additional_metrics)
 
         # If the run metrics were already initialized, keep the time related metrics
         if current_run_metrics is not None:
