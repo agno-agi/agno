@@ -243,10 +243,10 @@ class SingleStoreDb(BaseDb):
 
             # SingleStore has a limitation on the number of unique multi-field constraints per table.
             # We need to work around that limitation for the sessions table.
+            table_created = False
             if not self.table_exists(table_name):
                 if table_type == "sessions":
                     with self.Session() as sess, sess.begin():
-                            
                         # Build column definitions
                         columns_sql = []
                         for col in table.columns:
@@ -268,6 +268,7 @@ class SingleStoreDb(BaseDb):
                 else:
                     table.create(self.db_engine, checkfirst=True)
                 log_debug(f"Successfully created table '{table_ref}'")
+                table_created = True
             else:
                 log_debug(f"Table '{table_ref}' already exists, skipping creation")
 
@@ -294,13 +295,13 @@ class SingleStoreDb(BaseDb):
                             continue
 
                     idx.create(self.db_engine)
-                    
+
                     log_debug(f"Created index: {idx.name} for table {table_ref}")
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
-                    
+
             # Store the schema version for the created table
-            if table_name != self.versions_table_name:
+            if table_name != self.versions_table_name and table_created:
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 

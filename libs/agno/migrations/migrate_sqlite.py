@@ -21,7 +21,7 @@ async_db = AsyncSqliteDb(
 async def run_migration():
     await MigrationManager(async_db).up()
     # Optionally force the migration if necessary
-    # await MigrationManager(async_db).up(force=True) 
+    # await MigrationManager(async_db).up(force=True)
 
     # Downgrade your DB to a specific version
     # await MigrationManager(async_db).down(target_version="2.0.0")

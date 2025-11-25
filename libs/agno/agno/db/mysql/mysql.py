@@ -177,16 +177,17 @@ class MySQLDb(BaseDb):
                 create_schema(session=sess, db_schema=db_schema)
 
             # Create table
+            table_created = False
             if not self.table_exists(table_name):
                 table.create(self.db_engine, checkfirst=True)
                 log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
             else:
                 log_debug(f"Table {db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
                 try:
-
                     # Check if index already exists
                     with self.Session() as sess:
                         exists_query = text(
@@ -204,16 +205,18 @@ class MySQLDb(BaseDb):
                             continue
 
                     idx.create(self.db_engine)
-                    
+
                     log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
-                    
+
             # Store the schema version for the created table
-            if table_name != self.versions_table_name:
+            if table_name != self.versions_table_name and table_created:
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-                log_info(f"Successfully stored version {latest_schema_version.public} in database for table {table_name}")
+                log_info(
+                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                )
 
             return table
 

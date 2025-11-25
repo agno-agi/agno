@@ -194,10 +194,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create table
+            table_created = False
             if not await self.table_exists(table_name):
                 async with self.db_engine.begin() as conn:
                     await conn.run_sync(table.create, checkfirst=True)
                 log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
             else:
                 log_debug(f"Table {table_name} already exists, skipping creation")
 
@@ -219,9 +221,9 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
-                    
+
             # Store the schema version for the created table
-            if table_name != self.versions_table_name:
+            if table_name != self.versions_table_name and table_created:
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
