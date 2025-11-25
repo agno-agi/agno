@@ -1,2 +1,0 @@
-# Compression unit tests
-
