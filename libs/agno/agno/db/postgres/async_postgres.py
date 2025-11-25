@@ -30,10 +30,10 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 try:
-    from sqlalchemy import Index, String, UniqueConstraint, func, update
+    from sqlalchemy import Index, String, Table, UniqueConstraint, func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-    from sqlalchemy.schema import Column, MetaData, Table
+    from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -52,6 +52,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
@@ -74,6 +76,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            traces_table (Optional[str]): Name of the table to store run traces.
+            spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
             db_id: Deprecated, use id instead.
 
@@ -96,6 +100,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
             versions_table=versions_table,
         )
 
@@ -108,7 +114,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine)
@@ -142,16 +148,15 @@ class AsyncPostgresDb(AsyncBaseDb):
             latest_schema_version = MigrationManager(self).latest_schema_version
             await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
-    async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -180,8 +185,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table_metadata = MetaData(schema=self.db_schema)
+            table = Table(table_name, table_metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -195,7 +200,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=db_schema)
+                await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             async with self.db_engine.begin() as conn:
@@ -209,122 +214,140 @@ class AsyncPostgresDb(AsyncBaseDb):
                         exists_query = text(
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
-                        result = await sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name})
+                        result = await sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation")
                             continue
 
                     async with self.db_engine.begin() as conn:
                         await conn.run_sync(idx.create)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+            log_debug(f"Successfully created table {table_name} in schema {self.db_schema}")
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                    table_name=self.session_table_name, table_type="sessions"
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                    table_name=self.memory_table_name, table_type="memories"
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                    table_name=self.metrics_table_name, table_type="metrics"
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
                 self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+                    table_name=self.eval_table_name, table_type="evals"
                 )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                    table_name=self.knowledge_table_name, table_type="knowledge"
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture", db_schema=self.db_schema
+                    table_name=self.culture_table_name, table_type="culture"
                 )
             return self.culture_table
 
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, table_type="versions", db_schema=self.db_schema
+                    table_name=self.versions_table_name, table_type="versions"
                 )
             return self.versions_table
 
+        if table_type == "traces":
+            if not hasattr(self, "traces_table"):
+                self.traces_table = await self._get_or_create_table(
+                    table_name=self.trace_table_name, table_type="traces"
+                )
+            return self.traces_table
+
+        if table_type == "spans":
+            if not hasattr(self, "spans_table"):
+                # Ensure traces table exists first (spans has FK to traces)
+                await self._get_table(table_type="traces")
+                self.spans_table = await self._get_or_create_table(
+                    table_name=self.span_table_name, table_type="spans"
+                )
+            return self.spans_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _get_or_create_table(self, table_name: str, table_type: str, create_table_if_not_found: bool = False) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
         if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+
             if table_name != self.versions_table_name:
                 # Also store the schema version for the created table
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
             async with self.db_engine.connect() as conn:
 
                 def create_table(connection):
-                    return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
+                    return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
 
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def get_latest_schema_version(self, table_name: str) -> str:
@@ -2004,13 +2027,125 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
 
     # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
     async def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
             trace: The Trace object to store (one per trace_id).
         """
-        raise NotImplementedError
+        try:
+            table = await self._get_table(table_type="traces")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Check if trace exists
+                result = await sess.execute(select(table).where(table.c.trace_id == trace.trace_id))
+                existing = result.fetchone()
+
+                if existing:
+                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+
+                    def get_component_level(workflow_id, team_id, agent_id, name):
+                        # Check if name indicates a root span
+                        is_root_name = ".run" in name or ".arun" in name
+
+                        if not is_root_name:
+                            return 0  # Child span (not a root)
+                        elif workflow_id:
+                            return 3  # Workflow root
+                        elif team_id:
+                            return 2  # Team root
+                        elif agent_id:
+                            return 1  # Agent root
+                        else:
+                            return 0  # Unknown
+
+                    existing_level = get_component_level(
+                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
+                    )
+                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                    # Only update name if new trace is from a higher or equal level
+                    should_update_name = new_level > existing_level
+
+                    # Parse existing start_time to calculate correct duration
+                    existing_start_time_str = existing.start_time
+                    if isinstance(existing_start_time_str, str):
+                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                    else:
+                        existing_start_time = trace.start_time
+
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                    update_values = {
+                        "end_time": trace.end_time.isoformat(),
+                        "duration_ms": recalculated_duration_ms,
+                        "status": trace.status,
+                        "name": trace.name if should_update_name else existing.name,
+                    }
+
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values["run_id"] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values["session_id"] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values["user_id"] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values["agent_id"] = trace.agent_id
+                    if trace.team_id is not None:
+                        update_values["team_id"] = trace.team_id
+                    if trace.workflow_id is not None:
+                        update_values["workflow_id"] = trace.workflow_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
+                        f"team_id={update_values.get('team_id', 'unchanged')}, "
+                    )
+
+                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    await sess.execute(stmt)
+                else:
+                    trace_dict = trace.to_dict()
+                    trace_dict.pop("total_spans", None)
+                    trace_dict.pop("error_count", None)
+                    stmt = postgresql.insert(table).values(trace_dict)
+                    await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
         self,
@@ -2030,7 +2165,38 @@ class AsyncPostgresDb(AsyncBaseDb):
             If multiple filters are provided, trace_id takes precedence.
             For other filters, the most recent trace is returned.
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = await self._get_table(table_type="traces")
+
+            # Get spans table for JOIN
+            spans_table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row:
+                    return Trace.from_dict(dict(row._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
 
     async def get_traces(
         self,
@@ -2064,7 +2230,64 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Trace
+
+            log_debug(
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            table = await self._get_table(table_type="traces")
+
+            # Get spans table for JOIN
+            spans_table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    log_debug(f"Filtering by session_id={session_id}")
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+                log_debug(f"Total matching traces: {total_count}")
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
 
     async def get_trace_stats(
         self,
@@ -2094,7 +2317,92 @@ class AsyncPostgresDb(AsyncBaseDb):
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 workflow_id, first_trace_at, last_trace_at.
         """
-        raise NotImplementedError
+        try:
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
+            )
+
+            table = await self._get_table(table_type="traces")
+
+            async with self.async_session_factory() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        table.c.team_id,
+                        table.c.workflow_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+                log_debug(f"Total matching sessions: {total_count}")
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+                log_debug(f"Returning page {page} with {len(results)} session stats")
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects
+                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
 
     # --- Spans ---
     async def create_span(self, span: "Span") -> None:
@@ -2103,7 +2411,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         Args:
             span: The Span object to store.
         """
-        raise NotImplementedError
+        try:
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(span.to_dict())
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2111,7 +2427,19 @@ class AsyncPostgresDb(AsyncBaseDb):
         Args:
             spans: List of Span objects to store.
         """
-        raise NotImplementedError
+        if not spans:
+            return
+
+        try:
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                for span in spans:
+                    stmt = postgresql.insert(table).values(span.to_dict())
+                    await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2122,7 +2450,22 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Optional[Span]: The span if found, None otherwise.
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row:
+                    return Span.from_dict(dict(row._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
 
     async def get_spans(
         self,
@@ -2140,4 +2483,27 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             List[Span]: List of matching spans.
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                result = await sess.execute(stmt)
+                results = result.fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []
