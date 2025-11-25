@@ -244,7 +244,7 @@ class MySQLDb(BaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            self._create_table(table_name=table_name, table_type=table_type)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
