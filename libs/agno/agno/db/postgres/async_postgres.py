@@ -108,7 +108,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.metadata: MetaData = MetaData()
 
         # Initialize database session factory
-        self.async_session_factory = async_sessionmaker(bind=self.db_engine)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.db_engine,
+            expire_on_commit=False,
+        )
 
     # -- DB methods --
     async def table_exists(self, table_name: str) -> bool:

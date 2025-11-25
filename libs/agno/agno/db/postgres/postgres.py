@@ -107,7 +107,9 @@ class PostgresDb(BaseDb):
         self.metadata: MetaData = MetaData()
 
         # Initialize database session
-        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        self.Session: scoped_session = scoped_session(
+            sessionmaker(bind=self.db_engine, expire_on_commit=False)
+        )
 
     # -- DB methods --
     def table_exists(self, table_name: str) -> bool:
