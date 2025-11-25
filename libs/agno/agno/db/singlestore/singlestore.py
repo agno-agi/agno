@@ -183,11 +183,6 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
             self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
@@ -205,8 +200,6 @@ class SingleStoreDb(BaseDb):
         table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
         try:
             table_schema = get_table_schema_definition(table_type)
-
-            log_debug(f"Creating table {table_ref}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -250,34 +243,38 @@ class SingleStoreDb(BaseDb):
 
             # SingleStore has a limitation on the number of unique multi-field constraints per table.
             # We need to work around that limitation for the sessions table.
-            if table_type == "sessions":
-                with self.Session() as sess, sess.begin():
-                    # Build column definitions
-                    columns_sql = []
-                    for col in table.columns:
-                        col_sql = f"{col.name} {col.type.compile(self.db_engine.dialect)}"
-                        if not col.nullable:
-                            col_sql += " NOT NULL"
-                        columns_sql.append(col_sql)
+            table_created = False
+            if not self.table_exists(table_name):
+                if table_type == "sessions":
+                    with self.Session() as sess, sess.begin():
+                        # Build column definitions
+                        columns_sql = []
+                        for col in table.columns:
+                            col_sql = f"{col.name} {col.type.compile(self.db_engine.dialect)}"
+                            if not col.nullable:
+                                col_sql += " NOT NULL"
+                            columns_sql.append(col_sql)
 
-                    columns_def = ", ".join(columns_sql)
+                        columns_def = ", ".join(columns_sql)
 
-                    # Add shard key and single unique constraint
-                    table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
-                        {columns_def},
-                        SHARD KEY (session_id),
-                        UNIQUE KEY uq_session_type (session_id, session_type)
-                    )"""
+                        # Add shard key and single unique constraint
+                        table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
+                            {columns_def},
+                            SHARD KEY (session_id),
+                            UNIQUE KEY uq_session_type (session_id, session_type)
+                        )"""
 
-                    sess.execute(text(table_sql))
+                        sess.execute(text(table_sql))
+                else:
+                    table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_ref}'")
+                table_created = True
             else:
-                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Table '{table_ref}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
                 try:
-                    log_debug(f"Creating index: {idx.name}")
-
                     # Check if index already exists
                     with self.Session() as sess:
                         if db_schema is not None:
@@ -299,10 +296,15 @@ class SingleStoreDb(BaseDb):
 
                     idx.create(self.db_engine)
 
+                    log_debug(f"Created index: {idx.name} for table {table_ref}")
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_ref}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return table
 
         except Exception as e:
