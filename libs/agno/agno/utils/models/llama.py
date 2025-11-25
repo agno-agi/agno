@@ -20,7 +20,7 @@ TOOL_CALL_ROLE_MAP = {
 
 
 def format_message(
-    message: Message, openai_like: bool = False, tool_calls: bool = False, compression_manager: Optional[Any] = None
+    message: Message, openai_like: bool = False, tool_calls: bool = False, compress_tool_results: bool = False
 ) -> Dict[str, Any]:
     """
     Format a message into the format expected by Llama API.
@@ -29,7 +29,7 @@ def format_message(
         message (Message): The message to format.
         openai_like (bool): Whether to format the message as an OpenAI-like message.
         tool_calls (bool): Whether tool calls are present.
-        compression_manager: Optional compression manager for tool result compression.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
         Dict[str, Any]: The formatted message.
@@ -57,8 +57,7 @@ def format_message(
 
     if message.role == "tool":
         # Use compressed content if compression is active
-        use_compression = compression_manager is not None and compression_manager.compress_tool_results
-        content = message.get_content(use_compression=use_compression)
+        content = message.get_content(use_compression=compress_tool_results)
 
         message_dict = {
             "role": "tool",

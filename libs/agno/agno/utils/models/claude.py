@@ -222,14 +222,14 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
 
 def format_messages(
-    messages: List[Message], compression_manager: Optional[Any] = None
+    messages: List[Message], compress_tool_results: bool = False
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
-        compression_manager: Optional compression manager for tool result compression.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
@@ -306,8 +306,7 @@ def format_messages(
             content = []
 
             # Use compressed content for tool messages if compression is active
-            use_compression = compression_manager is not None and compression_manager.compress_tool_results
-            tool_result = message.get_content(use_compression=use_compression)
+            tool_result = message.get_content(use_compression=compress_tool_results)
 
             content.append(
                 {

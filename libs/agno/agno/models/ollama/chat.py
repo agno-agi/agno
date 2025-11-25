@@ -147,21 +147,20 @@ class Ollama(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message, compression_manager: Optional[Any] = None) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by Ollama.
 
         Args:
             message (Message): The message to format.
-            compression_manager: Optional compression manager for tool result compression.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
         # Use compressed content for tool messages if compression is active
         if message.role == "tool":
-            use_compression = compression_manager is not None and compression_manager.compress_tool_results
-            content = message.get_content(use_compression=use_compression)
+            content = message.get_content(use_compression=compress_tool_results)
         else:
             content = message.content
 
@@ -236,7 +235,7 @@ class Ollama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat request to the Ollama API.
@@ -250,7 +249,7 @@ class Ollama(Model):
 
         provider_response = self.get_client().chat(
             model=self.id.strip(),
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **request_kwargs,
         )  # type: ignore
 
@@ -267,7 +266,7 @@ class Ollama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat request to the Ollama API.
@@ -281,7 +280,7 @@ class Ollama(Model):
 
         provider_response = await self.get_async_client().chat(
             model=self.id.strip(),
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **request_kwargs,
         )  # type: ignore
 
@@ -298,7 +297,7 @@ class Ollama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Sends a streaming chat request to the Ollama API.
@@ -310,7 +309,7 @@ class Ollama(Model):
 
         for chunk in self.get_client().chat(
             model=self.id,
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(tools=tools),
         ):
@@ -326,7 +325,7 @@ class Ollama(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
@@ -338,7 +337,7 @@ class Ollama(Model):
 
         async for chunk in await self.get_async_client().chat(
             model=self.id.strip(),
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(tools=tools),
         ):

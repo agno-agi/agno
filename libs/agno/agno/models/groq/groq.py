@@ -221,7 +221,7 @@ class Groq(Model):
         self,
         message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Dict[str, Any]:
         """
         Format a message into the format expected by Groq.
@@ -229,15 +229,14 @@ class Groq(Model):
         Args:
             message (Message): The message to format.
             response_format: Optional response format specification.
-            compression_manager: Optional compression manager for tool result compression.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
         # Use compressed content for tool messages if compression is active
         if message.role == "tool":
-            use_compression = compression_manager is not None and compression_manager.compress_tool_results
-            content = message.get_content(use_compression=use_compression)
+            content = message.get_content(use_compression=compress_tool_results)
         else:
             content = message.content
 
@@ -286,7 +285,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Groq API.
@@ -298,7 +297,7 @@ class Groq(Model):
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compression_manager) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -327,7 +326,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Groq API.
@@ -339,7 +338,7 @@ class Groq(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compression_manager) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -368,7 +367,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Groq API.
@@ -381,7 +380,7 @@ class Groq(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compression_manager) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
@@ -409,7 +408,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
@@ -423,7 +422,7 @@ class Groq(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m, response_format, compression_manager) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )

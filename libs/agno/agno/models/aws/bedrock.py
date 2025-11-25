@@ -220,14 +220,14 @@ class AwsBedrock(Model):
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
     def _format_messages(
-        self, messages: List[Message], compression_manager: Optional[Any] = None
+        self, messages: List[Message], compress_tool_results: bool = False
     ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Format the messages for the request.
 
         Args:
             messages: List of messages to format
-            compression_manager: Optional compression manager for tool result compression
+            compress_tool_results: Whether to compress tool results
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
@@ -239,8 +239,7 @@ class AwsBedrock(Model):
             if message.role == "system":
                 system_message = [{"text": message.content}]
             elif message.role == "tool":
-                use_compression = compression_manager is not None and compression_manager.compress_tool_results
-                content = message.get_content(use_compression=use_compression)
+                content = message.get_content(use_compression=compress_tool_results)
                 tool_result = {
                     "toolUseId": message.tool_call_id,
                     "content": [{"json": {"result": content}}],
@@ -367,13 +366,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compression_manager)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -416,13 +415,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compression_manager)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -469,13 +468,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Async invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compression_manager)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -521,13 +520,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Async invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages, compression_manager)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -568,16 +567,16 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], compression_manager=None, **kwargs
+        self, messages: List[Message], function_call_results: List[Message], compress_tool_results: bool = False, **kwargs
     ) -> None:
         """
         Handle the results of function calls for Bedrock.
-        Uses compressed_content if compression_manager is active.
+        Uses compressed_content if compress_tool_results is True.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            compression_manager: Optional compression manager for compression.
+            compress_tool_results: Whether to compress tool results.
             **kwargs: Additional arguments including tool_ids.
         """
 

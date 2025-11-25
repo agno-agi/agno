@@ -212,7 +212,7 @@ class Cerebras(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Cerebras API.
@@ -229,7 +229,7 @@ class Cerebras(Model):
         assistant_message.metrics.start_timer()
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **self.get_request_params(response_format=response_format, tools=tools),
         )
         assistant_message.metrics.stop_timer()
@@ -246,7 +246,7 @@ class Cerebras(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Cerebras API.
@@ -263,7 +263,7 @@ class Cerebras(Model):
         assistant_message.metrics.start_timer()
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **self.get_request_params(response_format=response_format, tools=tools),
         )
         assistant_message.metrics.stop_timer()
@@ -280,7 +280,7 @@ class Cerebras(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Cerebras API.
@@ -298,7 +298,7 @@ class Cerebras(Model):
 
         for chunk in self.get_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(response_format=response_format, tools=tools),
         ):
@@ -314,7 +314,7 @@ class Cerebras(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Cerebras API.
@@ -332,7 +332,7 @@ class Cerebras(Model):
 
         async_stream = await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m, compression_manager) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(response_format=response_format, tools=tools),
         )
@@ -342,21 +342,20 @@ class Cerebras(Model):
 
         assistant_message.metrics.stop_timer()
 
-    def _format_message(self, message: Message, compression_manager: Optional[Any] = None) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by the Cerebras API.
 
         Args:
             message (Message): The message to format.
-            compression_manager: Optional compression manager for tool result compression.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
         # Use compressed content for tool messages if compression is active
         if message.role == "tool":
-            use_compression = compression_manager is not None and compression_manager.compress_tool_results
-            content = message.get_content(use_compression=use_compression)
+            content = message.get_content(use_compression=compress_tool_results)
         else:
             content = message.content if message.content is not None else ""
 

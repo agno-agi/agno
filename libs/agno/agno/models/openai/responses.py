@@ -396,14 +396,14 @@ class OpenAIResponses(Model):
         return formatted_tools
 
     def _format_messages(
-        self, messages: List[Message], compression_manager: Optional[Any] = None
+        self, messages: List[Message], compress_tool_results: bool = False
     ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             messages (List[Message]): The message to format.
-            compression_manager: Optional compression manager for tool result compression.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -446,10 +446,9 @@ class OpenAIResponses(Model):
 
         for message in messages_to_format:
             if message.role in ["user", "system"]:
-                use_compression = compression_manager is not None and compression_manager.compress_tool_results
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.get_content(use_compression=use_compression),
+                    "content": message.get_content(use_compression=compress_tool_results),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -473,8 +472,7 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                use_compression = compression_manager is not None and compression_manager.compress_tool_results
-                tool_result = message.get_content(use_compression=use_compression)
+                tool_result = message.get_content(use_compression=compress_tool_results)
 
                 if message.tool_call_id and tool_result is not None:
                     function_call_id = message.tool_call_id
@@ -526,7 +524,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
@@ -543,7 +541,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compression_manager),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **request_params,
             )
 
@@ -596,7 +594,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
@@ -613,7 +611,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compression_manager),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **request_params,
             )
 
@@ -666,7 +664,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
@@ -684,7 +682,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compression_manager),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 **request_params,
             ):
@@ -740,7 +738,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
@@ -758,7 +756,7 @@ class OpenAIResponses(Model):
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages, compression_manager),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 **request_params,
             )
@@ -808,7 +806,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         function_call_results: List[Message],
         tool_call_ids: List[str],
-        compression_manager=None,
+        compress_tool_results: bool = False,
     ) -> None:
         """
         Handle the results of function calls.
@@ -817,7 +815,7 @@ class OpenAIResponses(Model):
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
-            compression_manager (Optional): Compression manager for compression.
+            compress_tool_results (bool): Whether to compress tool results.
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):

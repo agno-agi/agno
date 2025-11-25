@@ -5,13 +5,13 @@ from agno.utils.log import log_warning
 from agno.utils.openai import images_to_message
 
 
-def format_message(message: Message, compression_manager: Optional[Any] = None) -> Dict[str, Any]:
+def format_message(message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
     """
     Format a message into the format expected by OpenAI.
 
     Args:
         message (Message): The message to format.
-        compression_manager: Optional compression manager for tool result compression.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
         Dict[str, Any]: The formatted message.
@@ -20,8 +20,7 @@ def format_message(message: Message, compression_manager: Optional[Any] = None) 
     content = message.content
 
     if message.role == "tool":
-        use_compression = compression_manager is not None and compression_manager.compress_tool_results
-        content = message.get_content(use_compression=use_compression)
+        content = message.get_content(use_compression=compress_tool_results)
 
     message_dict: Dict[str, Any] = {
         "role": message.role,

@@ -75,15 +75,14 @@ class LiteLLM(Model):
         return self.client
 
     def _format_messages(
-        self, messages: List[Message], compression_manager: Optional[Any] = None
+        self, messages: List[Message], compress_tool_results: bool = False
     ) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
         formatted_messages = []
         for m in messages:
             # Use compressed content for tool messages if compression is active
             if m.role == "tool":
-                use_compression = compression_manager is not None and compression_manager.compress_tool_results
-                content = m.get_content(use_compression=use_compression)
+                content = m.get_content(use_compression=compress_tool_results)
             else:
                 content = m.content if m.content is not None else ""
 
@@ -195,11 +194,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compression_manager)
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -221,11 +220,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compression_manager)
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
@@ -247,11 +246,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compression_manager)
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -273,11 +272,11 @@ class LiteLLM(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
-        compression_manager: Optional[Any] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compression_manager)
+        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 

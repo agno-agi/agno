@@ -126,9 +126,9 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def get_content(self, use_compression: bool = False) -> Optional[Union[List[Any], str]]:
+    def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
         """Return tool result content to send to API"""
-        if use_compression and self.compressed_content is not None:
+        if use_compressed_content and self.compressed_content is not None:
             return self.compressed_content
         return self.content
 
@@ -325,13 +325,14 @@ class Message(BaseModel):
             "created_at": self.created_at,
         }
 
-    def log(self, metrics: bool = True, level: Optional[str] = None, compressed_content: bool = False):
+    def log(self, metrics: bool = True, level: Optional[str] = None, use_compressed_content: bool = False):
         """Log the message to the console
 
         Args:
             metrics (bool): Whether to log the metrics.
             level (str): The level to log the message at. One of debug, info, warning, or error.
                 Defaults to debug.
+            use_compressed_content (bool): Whether to use compressed content.
         """
         _logger = log_debug
         if level == "info":
@@ -358,8 +359,8 @@ class Message(BaseModel):
         if self.reasoning_content:
             _logger(f"<reasoning>\n{self.reasoning_content}\n</reasoning>")
         if self.content:
-            if compressed_content and self.compressed_content:
-                _logger("Compressed content: " + self.compressed_content)
+            if use_compressed_content and self.compressed_content:
+                _logger("Compressed content:\n" + self.compressed_content)
             else:
                 if isinstance(self.content, str) or isinstance(self.content, list):
                     _logger(self.content)

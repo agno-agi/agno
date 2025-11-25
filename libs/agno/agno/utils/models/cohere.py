@@ -46,13 +46,13 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
     return message_content_with_image
 
 
-def format_messages(messages: List[Message], compression_manager: Optional[Any] = None) -> List[Dict[str, Any]]:
+def format_messages(messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
     """
     Format messages for the Cohere API.
 
     Args:
         messages (List[Message]): The list of messages.
-        compression_manager: Optional compression manager for tool result compression.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
         List[Dict[str, Any]]: The formatted messages.
@@ -63,8 +63,7 @@ def format_messages(messages: List[Message], compression_manager: Optional[Any] 
         content = message.content
 
         if message.role == "tool":
-            use_compression = compression_manager is not None and compression_manager.compress_tool_results
-            content = message.get_content(use_compression=use_compression)
+            content = message.get_content(use_compression=compress_tool_results)
 
         message_dict = {
             "role": message.role,
