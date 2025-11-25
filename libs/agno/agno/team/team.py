@@ -1000,6 +1000,7 @@ class Team:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
@@ -1021,28 +1022,30 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_team_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_team_pre_hook_started_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
 
                 hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_team_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                    ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_team_pre_hook_completed_event(
+                            from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1065,6 +1068,7 @@ class Team:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
@@ -1086,14 +1090,15 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_team_pre_hook_started_event(
-                    from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_team_pre_hook_started_event(
+                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -1106,14 +1111,15 @@ class Team:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_team_pre_hook_completed_event(
-                        from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
-                    ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_team_pre_hook_completed_event(
+                            from_run_response=run_response, run_input=run_input, pre_hook_name=hook.__name__
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1135,6 +1141,7 @@ class Team:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
@@ -1156,30 +1163,32 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_team_post_hook_started_event(  # type: ignore
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_team_post_hook_completed_event(  # type: ignore
+                    event=create_team_post_hook_started_event(  # type: ignore
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
                     events_to_skip=self.events_to_skip,
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_team_post_hook_completed_event(  # type: ignore
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -1195,6 +1204,7 @@ class Team:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -1216,15 +1226,16 @@ class Team:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_team_post_hook_started_event(  # type: ignore
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_team_post_hook_started_event(  # type: ignore
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -1236,15 +1247,16 @@ class Team:
                 else:
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_output,
-                    event=create_team_post_hook_completed_event(  # type: ignore
-                        from_run_response=run_output,
-                        post_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_team_post_hook_completed_event(  # type: ignore
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -1497,6 +1509,7 @@ class Team:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             for pre_hook_event in pre_hook_iterator:
@@ -1646,6 +1659,7 @@ class Team:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2351,6 +2365,7 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             async for pre_hook_event in pre_hook_iterator:
@@ -2502,6 +2517,7 @@ class Team:
                     session=team_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3158,6 +3174,7 @@ class Team:
                         model_response_event.session_id = session.session_id  # type: ignore
                     if not model_response_event.run_id:  # type: ignore
                         model_response_event.run_id = run_response.run_id  # type: ignore
+
                 # We just bubble the event up
                 yield handle_event(  # type: ignore
                     model_response_event,  # type: ignore
@@ -3311,15 +3328,16 @@ class Team:
                         run_response.tools.extend(tool_executions_list)
 
                     for tool in tool_executions_list:
-                        yield handle_event(  # type: ignore
-                            create_team_tool_call_started_event(
-                                from_run_response=run_response,
-                                tool=tool,
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events,
-                        )
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_started_event(
+                                    from_run_response=run_response,
+                                    tool=tool,
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
+                            )
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
@@ -3393,16 +3411,17 @@ class Team:
                                     "reasoning_time_taken"
                                 ] + float(metrics.duration)
 
-                        yield handle_event(  # type: ignore
-                            create_team_tool_call_completed_event(
-                                from_run_response=run_response,
-                                tool=tool_call,
-                                content=model_response_event.content,
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events,
-                        )
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_completed_event(
+                                    from_run_response=run_response,
+                                    tool=tool_call,
+                                    content=model_response_event.content,
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,
+                                store_events=self.store_events,
+                            )
 
                 if stream_events:
                     if reasoning_step is not None:
@@ -7206,7 +7225,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
-                    stream_events=stream_events,
+                    stream_events=stream_events or self.stream_member_events,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
@@ -7334,7 +7353,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
-                    stream_events=stream_events,
+                    stream_events=stream_events or self.stream_member_events,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
@@ -7448,7 +7467,7 @@ class Team:
                         audio=audio,
                         files=files,
                         stream=True,
-                        stream_events=stream_events,
+                        stream_events=stream_events or self.stream_member_events,
                         knowledge_filters=run_context.knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
                         else None,
@@ -7562,7 +7581,7 @@ class Team:
                         audio=audio,
                         files=files,
                         stream=True,
-                        stream_events=stream_events,
+                        stream_events=stream_events or self.stream_member_events,
                         debug_mode=debug_mode,
                         knowledge_filters=run_context.knowledge_filters
                         if not member_agent.knowledge_filters and member_agent.knowledge
