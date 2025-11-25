@@ -47,7 +47,9 @@ try:
         File as GeminiFile,
     )
 except ImportError:
-    raise ImportError("`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`")
+    raise ImportError(
+        "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
+    )
 
 
 @dataclass
@@ -156,13 +158,13 @@ class Gemini(Model):
 
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
-        
+
         Args:
             builtin_tools: List of built-in tools to append to.
         """
         if not self.file_search_store_names:
             return
-            
+
         log_debug("Gemini File Search enabled.")
         file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
         if self.file_search_metadata_filter:
@@ -1313,7 +1315,9 @@ class Gemini(Model):
         log_info("Operation completed successfully")
         return operation
 
-    async def async_wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
+    async def async_wait_for_operation(
+        self, operation: Operation, poll_interval: int = 5, max_wait: int = 600
+    ) -> Operation:
         """
         Async version of wait_for_operation.
 
@@ -1628,4 +1632,3 @@ class Gemini(Model):
         except Exception as e:
             log_error(f"Error deleting document {document_name}: {e}")
             raise
-
