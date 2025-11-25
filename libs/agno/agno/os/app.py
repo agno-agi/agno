@@ -498,6 +498,9 @@ class AgentOS:
         # Update CORS middleware
         update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
 
+        # Set agent_os_id on app state for RBAC
+        fastapi_app.state.agent_os_id = self.id
+
         # Add JWT middleware if authorization is enabled
         if self.authorization:
             from agno.os.middleware.jwt import JWTMiddleware

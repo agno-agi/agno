@@ -1,355 +1,272 @@
-# AgentOS JWT Authentication and RBAC Examples
+# AgentOS RBAC - Role-Based Access Control
 
-This directory contains examples demonstrating JWT authentication and optional RBAC (Role-Based Access Control) in AgentOS.
+This directory contains examples demonstrating AgentOS's RBAC (Role-Based Access Control) system with JWT authentication.
 
 ## Overview
 
-The `JWTMiddleware` in AgentOS provides:
-1. **JWT Authentication**: Extracts and validates JWT tokens from requests
-2. **Optional RBAC**: Opt-in scope-based authorization (disabled by default)
+AgentOS RBAC provides fine-grained access control using JWT tokens with scopes. **ALL scopes use the agent-os namespace format** for consistency and multi-tenancy support.
 
-RBAC is **opt-in** - when `authorization=False` (default), the middleware only validates JWT tokens and stores claims in `request.state`. When `authorization=True` is provided, RBAC is enabled and endpoints are protected with scope checks.
+The system supports:
 
-## Features
+1. **Global Resource Scopes** - OS-wide permissions for all resources
+2. **Per-Resource Scopes** - Granular agent/team/workflow permissions
+3. **Wildcard Support** - Flexible permission patterns at OS and resource level
 
-- **JWT Authentication**: Secure token-based authentication
-- **Optional Scope-Based Authorization**: Fine-grained permissions (opt-in via `scope_mappings`)
-- **Middleware Protection**: Automatic enforcement across all endpoints
-- **Custom Scope Mappings**: Define your own permission structure
-- **Wildcard Scopes**: Use wildcards like `agents:*` for broader permissions
-- **Admin Override**: Special `admin` scope grants full access
+## Scope Format
+
+**ALL scopes use the agent-os namespace:**
+
+### 1. Admin Scope (Highest Privilege)
+```
+admin
+```
+Grants full access to all endpoints and resources.
+
+### 2. Global Resource Scopes
+Format: `agent-os:<agent-os-id>:resource:action`
+
+Examples:
+```
+agent-os:my-os:system:read       # Read system configuration
+agent-os:my-os:agents:read       # List all agents in this OS
+agent-os:my-os:teams:read        # List all teams in this OS
+agent-os:my-os:workflows:read    # List all workflows in this OS
+agent-os:*:agents:read           # List agents from ANY OS (wildcard OS ID)
+```
+
+### 3. Per-Resource Scopes  
+Format: `agent-os:<agent-os-id>:resource:<resource-id>:action`
+
+Examples:
+```
+agent-os:my-os:agents:my-agent:read              # Read specific agent
+agent-os:my-os:agents:my-agent:run               # Run specific agent
+agent-os:my-os:agents:*:run                      # Run any agent in this OS (wildcard resource)
+agent-os:my-os:teams:my-team:read                # Read specific team
+agent-os:my-os:teams:*:run                       # Run any team in this OS
+agent-os:*:agents:*:run                          # Run ANY agent in ANY OS (double wildcard)
+```
+
+## Scope Hierarchy
+
+The system checks scopes in this order:
+
+1. **Admin scope** - Grants all permissions
+2. **Wildcard scopes** - Matches patterns like `agent:*:run` or `agent-os:*:agents:read`
+3. **Specific scopes** - Exact matches for resources and actions
+
+## Endpoint Filtering
+
+### GET Endpoints (Automatic Filtering)
+
+List endpoints automatically filter results based on user scopes:
+
+- **GET /agents** - Only returns agents the user has access to
+- **GET /teams** - Only returns teams the user has access to
+- **GET /workflows** - Only returns workflows the user has access to
+
+**Examples:**
+```python
+# User with specific agent scopes:
+# ["agent-os:my-os:agents:agent-1:read", "agent-os:my-os:agents:agent-2:read"]
+GET /agents → Returns only agent-1 and agent-2
+
+# User with wildcard resource scope:
+# ["agent-os:my-os:agents:*:read"]
+GET /agents → Returns all agents in my-os
+
+# User with global resource scope:
+# ["agent-os:my-os:agents:read"]
+GET /agents → Returns all agents in my-os
+
+# User with wildcard OS scope:
+# ["agent-os:*:agents:read"]
+GET /agents → Returns all agents in any OS
+
+# User with admin:
+# ["admin"]
+GET /agents → Returns all agents
+```
+
+### POST Endpoints (Access Checks)
+
+Run endpoints check for matching scopes with resource context:
+
+- **POST /agents/{agent_id}/runs** - Requires agent-os scope with agents:run for this agent
+- **POST /teams/{team_id}/runs** - Requires agent-os scope with teams:run for this team
+- **POST /workflows/{workflow_id}/runs** - Requires agent-os scope with workflows:run for this workflow
+
+**Valid scope patterns for running agent "web-agent" in OS "my-os":**
+- `agent-os:my-os:agents:web-agent:run` (specific agent)
+- `agent-os:my-os:agents:*:run` (any agent in this OS)
+- `agent-os:*:agents:*:run` (any agent in any OS)
+- `admin` (full access)
 
 ## Examples
 
-### 1. Basic RBAC (`basic.py`)
+### Basic RBAC
+See `basic.py` for a simple example with default scope mappings.
 
-Demonstrates enabling RBAC with default scope mappings.
+### Per-Agent Permissions
+See `agent_permissions.py` for custom scope mappings per agent.
 
-**Features:**
-- Enable RBAC by providing `authorization=True`
-- Default scope mappings for all AgentOS endpoints
-- Test tokens for different users
+### Advanced Scopes
+See `advanced_scopes.py` for comprehensive examples of:
+- Agent-OS namespaced scopes
+- Per-resource scopes
+- Wildcard patterns
+- Multiple permission levels
 
-**Run:**
-```bash
-python cookbook/agent_os/rbac/basic.py
-```
+## Quick Start
 
-### 2. Custom Scope Mappings (`custom_scope_mappings.py`)
-
-Shows how to define custom scopes for your application's specific needs.
-
-**Features:**
-- Custom permission structure
-- Multiple scopes per endpoint
-- Different permission levels (basic user, power user, admin)
-
-**Run:**
-```bash
-python cookbook/agent_os/rbac/custom_scope_mappings.py
-```
-
-### 3. RBAC with Cookie (`with_cookie.py`)
-
-Shows how to enable RBAC with cookie-based authentication.
-
-**Features:**
-- Cookie-based authentication
-- Test tokens for different users
-
-**Run:**
-```bash
-python cookbook/agent_os/rbac/with_cookie.py
-```
-
-## Default Scope Mappings
-
-When you enable RBAC with `scope_mappings={}` (empty dict), these default scopes are applied:
-
-### System Endpoints
-- `GET /config` → `system:read`
-- `GET /models` → `system:read`
-
-### Agent Endpoints
-- `GET /agents` → `agents:read`
-- `GET /agents/*` → `agents:read`
-- `POST /agents/*/runs` → `agents:run`
-- `POST /agents/*/runs/*/continue` → `agents:run`
-- `POST /agents/*/runs/*/cancel` → `agents:run`
-
-### Team Endpoints
-- `GET /teams` → `teams:read`
-- `GET /teams/*` → `teams:read`
-- `POST /teams/*/runs` → `teams:run`
-- `POST /teams/*/runs/*/cancel` → `teams:run`
-
-### Workflow Endpoints
-- `GET /workflows` → `workflows:read`
-- `GET /workflows/*` → `workflows:read`
-- `POST /workflows/*/runs` → `workflows:run`
-- `POST /workflows/*/runs/*/cancel` → `workflows:run`
-
-### Session Endpoints
-- `GET /sessions` → `sessions:read`
-- `GET /sessions/*` → `sessions:read`
-- `POST /sessions` → `sessions:write`
-- `PATCH /sessions/*` → `sessions:write`
-- `DELETE /sessions/*` → `sessions:delete`
-
-### Memory Endpoints
-- `GET /memories` → `memories:read`
-- `POST /memories` → `memories:write`
-- `PATCH /memories/*` → `memories:write`
-- `DELETE /memories/*` → `memories:delete`
-
-### Knowledge Endpoints
-- `GET /knowledge/*` → `knowledge:read`
-- `POST /knowledge/content` → `knowledge:write`
-- `POST /knowledge/search` → `knowledge:read`
-- `DELETE /knowledge/content` → `knowledge:delete`
-
-### Metrics & Evaluation Endpoints
-- `GET /metrics` → `metrics:read`
-- `POST /metrics/refresh` → `metrics:write`
-- `GET /eval-runs` → `evals:read`
-- `POST /eval-runs` → `evals:write`
-
-## Configuration Options
-
-### Basic Configuration
+### 1. Enable RBAC
 
 ```python
 from agno.os import AgentOS
-from agno.os.middleware import JWTMiddleware
 
-# Option 1: Automatic JWT + RBAC (recommended)
 agent_os = AgentOS(
-    agents=[your_agent],
-    authorization=True,
-    authorization_secret="your-secret-key",
-)
-app = agent_os.get_app()
-# JWT middleware with default scope mappings is automatically added!
-
-# Option 2: Add custom scope mappings (additive to defaults)
-agent_os = AgentOS(
-    agents=[your_agent],
-    authorization=True,
-    authorization_secret="your-secret-key",
-)
-app = agent_os.get_app()
-
-# Add custom JWT middleware with additional/override scope mappings
-app.add_middleware(
-    JWTMiddleware,
-    secret_key="your-secret-key",
-    authorization=True,
-    scope_mappings={
-        # Override default scope for existing endpoint
-        "GET /agents": ["app:read"],
-        # Add new custom endpoint
-        "POST /custom/endpoint": ["app:execute"],
-        # Allow access without scopes
-        "GET /public": [],
-    },
-)
-```
-
-### Advanced Configuration (Manual Setup)
-
-For advanced use cases, don't set authorization=True and configure manually:
-
-```python
-from agno.os import AgentOS
-from agno.os.middleware import JWTMiddleware, TokenSource
-
-agent_os = AgentOS(agents=[your_agent])
-app = agent_os.get_app()
-
-# Add JWT middleware with custom configuration
-app.add_middleware(
-    JWTMiddleware,
-    # JWT configuration
-    secret_key="your-secret-key",  # Or set JWT_SECRET_KEY env var
-    algorithm="HS256",
-    token_source=TokenSource.HEADER,  # HEADER, COOKIE, or BOTH
-    token_header_key="X-API-Key",
-    cookie_name="access_token",
-    
-    # JWT claim mapping
-    user_id_claim="sub",
-    session_id_claim="session_id",
-    scopes_claim="scopes",
-    
-    # RBAC configuration
+    id="my-os",  # Important: Set ID for namespaced scopes
+    agents=[agent1, agent2],
     authorization=True,  # Enable RBAC
-    admin_scope="admin",  # Admin scope grants full access
-    
-    # Excluded routes (no JWT required)
-    excluded_route_paths=[
-        "/",
-        "/health",
-        "/docs",
-    ],
+    authorization_secret="your-256-bit-secret",  # Or set JWT_SECRET_KEY env var
 )
+
+app = agent_os.get_app()
 ```
 
-## JWT Token Structure
-
-Your JWT tokens should include these claims:
-
-```json
-{
-  "sub": "user_123",           // User ID (extracted as request.state.user_id)
-  "session_id": "session_456", // Session ID (extracted as request.state.session_id)
-  "scopes": [                  // List of permission scopes (extracted as request.state.scopes)
-    "agents:read",
-    "agents:run",
-    "sessions:write"
-  ],
-  "exp": 1234567890,           // Token expiration (Unix timestamp)
-  "iat": 1234567800            // Issued at (Unix timestamp)
-}
-```
-
-### Generating Test Tokens
+### 2. Create JWT Tokens with Scopes
 
 ```python
 import jwt
 from datetime import datetime, timedelta, UTC
 
-def create_token(user_id: str, scopes: list[str]) -> str:
-    payload = {
-        "sub": user_id,
-        "session_id": f"session_{user_id}",
-        "scopes": scopes,
-        "exp": datetime.now(UTC) + timedelta(hours=24),
-        "iat": datetime.now(UTC),
-    }
-    return jwt.encode(payload, "your-secret-key", algorithm="HS256")
+# Admin user
+admin_token = jwt.encode({
+    "sub": "admin_user",
+    "scopes": ["admin"],
+    "exp": datetime.now(UTC) + timedelta(hours=24),
+}, "your-secret", algorithm="HS256")
 
-# Create tokens for different users
-admin_token = create_token("admin", ["admin"])
-read_only_token = create_token("viewer", ["agents:read", "sessions:read"])
-full_access_token = create_token("power_user", ["agents:*", "sessions:*"])
+# Power user (OS-wide access to all agents)
+power_user_token = jwt.encode({
+    "sub": "power_user",
+    "scopes": [
+        "agent-os:my-os:agents:read",     # List all agents
+        "agent-os:my-os:agents:*:run",    # Run any agent
+    ],
+    "exp": datetime.now(UTC) + timedelta(hours=24),
+}, "your-secret", algorithm="HS256")
+
+# Limited user (specific agents only)
+limited_token = jwt.encode({
+    "sub": "limited_user",
+    "scopes": [
+        "agent-os:my-os:agents:agent-1:read",
+        "agent-os:my-os:agents:agent-1:run",
+    ],
+    "exp": datetime.now(UTC) + timedelta(hours=24),
+}, "your-secret", algorithm="HS256")
 ```
 
-## Scope Mappings Behavior
-
-### Additive Mappings
-
-When you provide custom `scope_mappings`, they are **additive** to the default scope mappings:
-
-- Default scope mappings are loaded first
-- Your custom mappings are merged on top
-- Conflicts are resolved by using your custom mapping
-- Routes not in either mapping allow access (no scopes required)
-
-**Example:**
-```python
-# This keeps all default mappings and adds/overrides specific ones
-app.add_middleware(
-    JWTMiddleware,
-    secret_key="secret",
-    authorization=True,
-    scope_mappings={
-        # Override: Change required scope for viewing agents
-        "GET /agents": ["custom:view"],
-        # Add new: Custom endpoint not in defaults
-        "POST /custom/action": ["custom:execute"],
-        # Allow: Explicitly allow without scopes
-        "GET /public/stats": [],
-    }
-)
-# All other default mappings (sessions, teams, etc.) still apply!
-```
-
-### Empty List Behavior
-
-Use an empty list `[]` to explicitly allow access without requiring any scopes:
-
-```python
-scope_mappings={
-    "GET /public/info": [],  # Any authenticated user can access
-}
-```
-
-This is different from excluding a route via `excluded_route_paths`, which doesn't require JWT authentication at all.
-
-## Wildcard Scopes
-
-You can use wildcards:
-
-- `agents:*` → Grants all agent permissions (`agents:read`, `agents:run`, etc.)
-- `sessions:*` → Grants all session permissions
-- `read:*` → Grants all read permissions across all resources
-- `execute:*` → Grants all run/execute permissions
-
-## Admin Scope
-
-The `admin` scope (configurable via `admin_scope` parameter) bypasses all scope checks:
-
-```python
-app.add_middleware(
-    JWTMiddleware,
-    secret_key="your-secret-key",
-    admin_scope="admin",
-)
-```
-
-Users with the `admin` scope can access any endpoint, regardless of required scopes.
-
-## Testing with cURL
+### 3. Make Authenticated Requests
 
 ```bash
-# Generate token with specific scopes
-TOKEN=$(python -c "import jwt; from datetime import datetime, timedelta, UTC; print(jwt.encode({'sub': 'user1', 'session_id': 'sess1', 'scopes': ['agents:read', 'agents:run'], 'exp': datetime.now(UTC) + timedelta(hours=1)}, 'your-secret-key', algorithm='HS256'))")
+# List agents (filtered by scopes)
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  http://localhost:7777/agents
 
-# List agents (requires agents:read)
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/agents
-
-# Run an agent (requires agents:run)
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  -d '{"message": "Hello"}' \
-  http://localhost:8000/agents/my-agent/runs
+# Run specific agent
+curl -X POST \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "message=Hello" \
+  http://localhost:7777/agents/agent-1/runs
 ```
 
-## Error Responses
+## Default Scope Mappings
 
-### 401 Unauthorized - Missing/Invalid Token
-```json
+All AgentOS endpoints have default scope requirements:
+
+```python
 {
-  "detail": "Authentication required - no JWT token provided",
-  "error_code": "MISSING_TOKEN"
+    # System
+    "GET /config": ["system:read"],
+    "GET /models": ["system:read"],
+    
+    # Agents
+    "GET /agents": ["agents:read"],
+    "GET /agents/*": ["agents:read"],
+    "POST /agents/*/runs": ["agents:run"],
+    
+    # Teams
+    "GET /teams": ["teams:read"],
+    "POST /teams/*/runs": ["teams:run"],
+    
+    # Workflows
+    "GET /workflows": ["workflows:read"],
+    "POST /workflows/*/runs": ["workflows:run"],
+    
+    # Sessions
+    "GET /sessions": ["sessions:read"],
+    "POST /sessions": ["sessions:write"],
+    "DELETE /sessions/*": ["sessions:delete"],
+    
+    # And more...
 }
 ```
 
-```json
-{
-  "detail": "Invalid or expired JWT token",
-  "error_code": "INVALID_TOKEN"
-}
+## Custom Scope Mappings
+
+You can override or extend default mappings:
+
+```python
+from agno.os.middleware import JWTMiddleware
+
+app.add_middleware(
+    JWTMiddleware,
+    secret_key="your-secret",
+    authorization=True,
+    scope_mappings={
+        # Override default
+        "GET /agents": ["custom:scope"],
+        
+        # Add new endpoint
+        "POST /custom/endpoint": ["custom:action"],
+        
+        # Allow without scopes
+        "GET /public": [],
+    }
+)
 ```
 
-### 403 Forbidden - Insufficient Scopes
-```json
-{
-  "detail": "Insufficient permissions",
-  "error_code": "FORBIDDEN",
-  "required_scopes": ["agents:run"]
-}
-```
+## Security Best Practices
 
-## Best Practices
+1. **Use environment variables** for JWT secrets
+2. **Use PostgreSQL in production** (not SQLite)
+3. **Set appropriate token expiration** (exp claim)
+4. **Use HTTPS** in production
+5. **Rotate secrets regularly**
+6. **Follow principle of least privilege** - Grant minimum required scopes
+7. **Monitor access logs** for suspicious activity
+8. **Use agent-os namespacing** for multi-tenant deployments
 
-1. **Use Environment Variables**: Store your JWT secret key in environment variables:
-   ```bash
-   export JWT_SECRET_KEY="your-production-secret-key-at-least-256-bits"
-   ```
+## Troubleshooting
 
-2. **Start Simple**: Begin with JWT-only mode (`scope_mappings=None`), then add RBAC when needed
+### 401 Unauthorized
+- Token missing or expired
+- Invalid JWT secret
+- Token format incorrect
 
-3. **Use Wildcard Scopes**: For development/internal tools, wildcards make permission management easier
+### 403 Forbidden
+- User lacks required scopes
+- Agent-OS ID mismatch
+- Resource not accessible with user's scopes
 
-4. **Short Expiration**: Set short token expiration times (1-24 hours) for security
+### Agents not appearing in GET /agents
+- User lacks read scopes for those agents
+- Check both `agent-os:*:agents:read` and `agent:<id>:read` scopes
 
+## Additional Resources
+
+- [AgentOS Documentation](https://docs.agno.com)
+- [JWT.io](https://jwt.io) - JWT debugging tool
+- [RFC 7519](https://tools.ietf.org/html/rfc7519) - JWT specification

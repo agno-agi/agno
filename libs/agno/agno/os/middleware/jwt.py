@@ -1,16 +1,22 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
+import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.scopes import AgentOSScope
+from agno.os.scopes import (
+    AgentOSScope,
+    get_default_scope_mappings,
+    has_required_scopes,
+    parse_scope,
+)
 from agno.utils.log import log_debug, log_warning
 
 
@@ -139,7 +145,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # Build final scope mappings (additive approach)
         if self.authorization:
             # Start with default scope mappings
-            self.scope_mappings = self._get_default_scope_mappings()
+            self.scope_mappings = get_default_scope_mappings()
 
             # Merge user-provided scope mappings (overrides defaults)
             if scope_mappings is not None:
@@ -161,69 +167,27 @@ class JWTMiddleware(BaseHTTPMiddleware):
             "/docs/oauth2-redirect",
         ]
 
-    def _get_default_scope_mappings(self) -> Dict[str, List[str]]:
+    def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
-        Get default scope mappings for AgentOS endpoints.
+        Extract resource ID from a path.
 
-        Returns a dictionary mapping route patterns (with HTTP methods) to required scopes.
-        Format: "METHOD /path/pattern": ["scope1", "scope2"]
+        Args:
+            path: The request path
+            resource_type: Type of resource ("agents", "teams", "workflows")
+
+        Returns:
+            The resource ID if found, None otherwise
+
+        Examples:
+            >>> _extract_resource_id_from_path("/agents/my-agent/runs", "agents")
+            "my-agent"
         """
-        return {
-            # System endpoints
-            "GET /config": [AgentOSScope.SYSTEM_READ.value],
-            "GET /models": [AgentOSScope.SYSTEM_READ.value],
-            # Agent endpoints
-            "GET /agents": [AgentOSScope.AGENTS_READ.value],
-            "GET /agents/*": [AgentOSScope.AGENTS_READ.value],
-            "POST /agents/*/runs": [AgentOSScope.AGENTS_RUN.value],
-            "POST /agents/*/runs/*/continue": [AgentOSScope.AGENTS_RUN.value],
-            "POST /agents/*/runs/*/cancel": [AgentOSScope.AGENTS_RUN.value],
-            # Team endpoints
-            "GET /teams": [AgentOSScope.TEAMS_READ.value],
-            "GET /teams/*": [AgentOSScope.TEAMS_READ.value],
-            "POST /teams/*/runs": [AgentOSScope.TEAMS_RUN.value],
-            "POST /teams/*/runs/*/cancel": [AgentOSScope.TEAMS_RUN.value],
-            # Workflow endpoints
-            "GET /workflows": [AgentOSScope.WORKFLOWS_READ.value],
-            "GET /workflows/*": [AgentOSScope.WORKFLOWS_READ.value],
-            "POST /workflows/*/runs": [AgentOSScope.WORKFLOWS_RUN.value],
-            "POST /workflows/*/runs/*/cancel": [AgentOSScope.WORKFLOWS_RUN.value],
-            # Session endpoints
-            "GET /sessions": [AgentOSScope.SESSIONS_READ.value],
-            "GET /sessions/*": [AgentOSScope.SESSIONS_READ.value],
-            "POST /sessions": [AgentOSScope.SESSIONS_WRITE.value],
-            "POST /sessions/*/rename": [AgentOSScope.SESSIONS_WRITE.value],
-            "PATCH /sessions/*": [AgentOSScope.SESSIONS_WRITE.value],
-            "DELETE /sessions": [AgentOSScope.SESSIONS_DELETE.value],
-            "DELETE /sessions/*": [AgentOSScope.SESSIONS_DELETE.value],
-            # Memory endpoints
-            "GET /memories": [AgentOSScope.MEMORIES_READ.value],
-            "GET /memories/*": [AgentOSScope.MEMORIES_READ.value],
-            "GET /memory_topics": [AgentOSScope.MEMORIES_READ.value],
-            "GET /user_memory_stats": [AgentOSScope.MEMORIES_READ.value],
-            "POST /memories": [AgentOSScope.MEMORIES_WRITE.value],
-            "PATCH /memories/*": [AgentOSScope.MEMORIES_WRITE.value],
-            "DELETE /memories": [AgentOSScope.MEMORIES_DELETE.value],
-            "DELETE /memories/*": [AgentOSScope.MEMORIES_DELETE.value],
-            # Knowledge endpoints
-            "GET /knowledge/content": [AgentOSScope.KNOWLEDGE_READ.value],
-            "GET /knowledge/content/*": [AgentOSScope.KNOWLEDGE_READ.value],
-            "GET /knowledge/config": [AgentOSScope.KNOWLEDGE_READ.value],
-            "POST /knowledge/content": [AgentOSScope.KNOWLEDGE_WRITE.value],
-            "PATCH /knowledge/content/*": [AgentOSScope.KNOWLEDGE_WRITE.value],
-            "POST /knowledge/search": [AgentOSScope.KNOWLEDGE_READ.value],
-            "DELETE /knowledge/content": [AgentOSScope.KNOWLEDGE_DELETE.value],
-            "DELETE /knowledge/content/*": [AgentOSScope.KNOWLEDGE_DELETE.value],
-            # Metrics endpoints
-            "GET /metrics": [AgentOSScope.METRICS_READ.value],
-            "POST /metrics/refresh": [AgentOSScope.METRICS_WRITE.value],
-            # Evaluation endpoints
-            "GET /eval-runs": [AgentOSScope.EVALS_READ.value],
-            "GET /eval-runs/*": [AgentOSScope.EVALS_READ.value],
-            "POST /eval-runs": [AgentOSScope.EVALS_WRITE.value],
-            "PATCH /eval-runs/*": [AgentOSScope.EVALS_WRITE.value],
-            "DELETE /eval-runs": [AgentOSScope.EVALS_DELETE.value],
-        }
+        # Pattern: /{resource_type}/{resource_id}/...
+        pattern = f"^/{resource_type}/([^/]+)"
+        match = re.search(pattern, path)
+        if match:
+            return match.group(1)
+        return None
 
     def _is_route_excluded(self, path: str) -> bool:
         """Check if a route path matches any of the excluded patterns."""
@@ -280,101 +244,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         return []
 
-    def _expand_wildcard_scope(self, scope: str) -> Set[str]:
-        """
-        Expand a wildcard scope to all matching specific scopes.
-
-        Args:
-            scope: Scope to expand (e.g., "agents:*")
-
-        Returns:
-            Set of all matching specific scopes
-        """
-        if not scope.endswith(":*"):
-            return {scope}
-
-        # Extract the prefix (e.g., "agents" from "agents:*")
-        prefix = scope[:-2]  # Remove ":*"
-
-        # Special case: "read:*" expands to all ":read" scopes
-        if prefix == "read":
-            return {
-                AgentOSScope.SYSTEM_READ.value,
-                AgentOSScope.AGENTS_READ.value,
-                AgentOSScope.TEAMS_READ.value,
-                AgentOSScope.WORKFLOWS_READ.value,
-                AgentOSScope.SESSIONS_READ.value,
-                AgentOSScope.MEMORIES_READ.value,
-                AgentOSScope.KNOWLEDGE_READ.value,
-                AgentOSScope.METRICS_READ.value,
-                AgentOSScope.EVALS_READ.value,
-            }
-
-        # Special case: "execute:*" expands to all run scopes
-        if prefix == "execute":
-            return {
-                AgentOSScope.AGENTS_RUN.value,
-                AgentOSScope.TEAMS_RUN.value,
-                AgentOSScope.WORKFLOWS_RUN.value,
-            }
-
-        # Special case: "user:*" expands to user-focused scopes
-        if prefix == "user":
-            return {
-                AgentOSScope.AGENTS_RUN.value,
-                AgentOSScope.TEAMS_RUN.value,
-                AgentOSScope.WORKFLOWS_RUN.value,
-                AgentOSScope.SESSIONS_READ.value,
-                AgentOSScope.SESSIONS_WRITE.value,
-                AgentOSScope.SESSIONS_DELETE.value,
-                AgentOSScope.MEMORIES_READ.value,
-                AgentOSScope.MEMORIES_WRITE.value,
-                AgentOSScope.MEMORIES_DELETE.value,
-            }
-
-        # Default: expand prefix:* to all scopes starting with prefix:
-        expanded = set()
-        all_possible_scopes = [
-            f"{prefix}:read",
-            f"{prefix}:write",
-            f"{prefix}:delete",
-            f"{prefix}:run",
-            f"{prefix}:run:continue",
-            f"{prefix}:run:cancel",
-            f"{prefix}:search",
-        ]
-
-        for possible_scope in all_possible_scopes:
-            expanded.add(possible_scope)
-
-        return expanded
-
-    def _has_required_scopes(self, user_scopes: List[str], required_scopes: List[str]) -> bool:
-        """
-        Check if user has all required scopes.
-
-        Args:
-            user_scopes: List of scopes the user has
-            required_scopes: List of scopes required for the endpoint
-
-        Returns:
-            True if user has all required scopes, False otherwise
-        """
-        # Admin scope grants access to everything
-        if self.admin_scope in user_scopes:
-            return True
-
-        # Expand user's wildcard scopes
-        expanded_user_scopes = set()
-        for scope in user_scopes:
-            expanded_user_scopes.update(self._expand_wildcard_scope(scope))
-
-        # Check if all required scopes are present
-        for required_scope in required_scopes:
-            if required_scope not in expanded_user_scopes:
-                return False
-
-        return True
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
@@ -485,11 +354,35 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
             # RBAC scope checking (only if enabled)
             if self.authorization:
+                # Get agent_os_id from app state
+                agent_os_id = getattr(request.app.state, "agent_os_id", None)
+                
+                # Extract resource type and ID from path
+                resource_type = None
+                resource_id = None
+                
+                if "/agents/" in path:
+                    resource_type = "agent"
+                    resource_id = self._extract_resource_id_from_path(path, "agents")
+                elif "/teams/" in path:
+                    resource_type = "team"
+                    resource_id = self._extract_resource_id_from_path(path, "teams")
+                elif "/workflows/" in path:
+                    resource_type = "workflow"
+                    resource_id = self._extract_resource_id_from_path(path, "workflows")
+
                 required_scopes = self._get_required_scopes(method, path)
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
-                    if not self._has_required_scopes(scopes, required_scopes):
+                    # Use the new scope validation system
+                    if not has_required_scopes(
+                        scopes,
+                        required_scopes,
+                        agent_os_id=agent_os_id,
+                        resource_type=resource_type,
+                        resource_id=resource_id,
+                    ):
                         log_warning(
                             f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
                         )
