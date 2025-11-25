@@ -17,11 +17,11 @@ def format_message(message: Message, compression_manager: Optional[Any] = None) 
         Dict[str, Any]: The formatted message.
     """
     # Use compressed content for tool messages if compression is active
+    content = message.content
+
     if message.role == "tool":
         use_compression = compression_manager is not None and compression_manager.compress_tool_results
         content = message.get_content(use_compression=use_compression)
-    else:
-        content = message.content
 
     message_dict: Dict[str, Any] = {
         "role": message.role,

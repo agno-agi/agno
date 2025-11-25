@@ -154,7 +154,7 @@ class WatsonX(Model):
 
         message_dict = message.to_dict()
 
-        # Override content with compressed version if compression is active
+        # Use compressed content for tool messages if compression is active
         if message.role == "tool" and compression_manager is not None and compression_manager.compress_tool_results:
             message_dict["content"] = message.get_content(use_compression=True)
         return message_dict

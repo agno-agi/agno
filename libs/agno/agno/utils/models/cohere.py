@@ -60,11 +60,11 @@ def format_messages(messages: List[Message], compression_manager: Optional[Any] 
     formatted_messages = []
     for message in messages:
         # Use compressed content for tool messages if compression is active
+        content = message.content
+
         if message.role == "tool":
             use_compression = compression_manager is not None and compression_manager.compress_tool_results
             content = message.get_content(use_compression=use_compression)
-        else:
-            content = message.content
 
         message_dict = {
             "role": message.role,

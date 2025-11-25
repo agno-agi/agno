@@ -305,30 +305,7 @@ def format_messages(
         elif message.role == "tool":
             content = []
 
-            # Check if this is a combined message (multiple tool results in one message)
-            if (
-                compression_manager
-                and compression_manager.compress_tool_results
-                and message.tool_calls
-                and isinstance(message.content, list)
-            ):
-                # Combined message - iterate through tool_calls to create multiple tool_result blocks
-                for idx, tool_call in enumerate(message.tool_calls):
-                    original = message.content[idx] if idx < len(message.content) else ""
-                    compressed = tool_call.get("content", original)
-
-                    content.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_call.get("tool_call_id", ""),
-                            "content": str(compressed),
-                        }
-                    )
-                if content:
-                    chat_messages.append({"role": ROLE_MAP[message.role], "content": content})
-                    continue
-
-            # Standard individual message - use the helper method
+            # Use compressed content for tool messages if compression is active
             use_compression = compression_manager is not None and compression_manager.compress_tool_results
             tool_result = message.get_content(use_compression=use_compression)
 

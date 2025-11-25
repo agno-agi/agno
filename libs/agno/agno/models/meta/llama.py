@@ -227,8 +227,9 @@ class Llama(Model):
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
             messages=[
-                format_message(m, tool_calls=bool(tools), compression_manager=compression_manager) for m in messages
-            ],  # type: ignore
+                format_message(m, tool_calls=bool(tools), compression_manager=compression_manager)  # type: ignore
+                for m in messages
+            ],
             **self.get_request_params(tools=tools, response_format=response_format),
         )
 
@@ -258,8 +259,9 @@ class Llama(Model):
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[
-                format_message(m, tool_calls=bool(tools), compression_manager=compression_manager) for m in messages
-            ],  # type: ignore
+                format_message(m, tool_calls=bool(tools), compression_manager=compression_manager)  # type: ignore
+                for m in messages
+            ],
             **self.get_request_params(tools=tools, response_format=response_format),
         )
 
@@ -290,8 +292,9 @@ class Llama(Model):
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[
-                    format_message(m, tool_calls=bool(tools), compression_manager=compression_manager) for m in messages
-                ],  # type: ignore
+                    format_message(m, tool_calls=bool(tools), compression_manager=compression_manager)  # type: ignore
+                    for m in messages
+                ],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
             ):
@@ -325,8 +328,9 @@ class Llama(Model):
             async for chunk in await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[
-                    format_message(m, tool_calls=bool(tools), compression_manager=compression_manager) for m in messages
-                ],  # type: ignore
+                    format_message(m, tool_calls=bool(tools), compression_manager=compression_manager)  # type: ignore
+                    for m in messages
+                ],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
             ):

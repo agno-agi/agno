@@ -26,7 +26,7 @@ agent = Agent(
 
 agent.print_response(
     """
-    Use the search tools and alwayd for the latest information and data.
+    Use the search tools and always for the latest information and data.
     Research recent activities (last 3 months) for these AI companies:
     
     1. OpenAI - product launches, partnerships, pricing
