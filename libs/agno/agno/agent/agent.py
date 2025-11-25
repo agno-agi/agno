@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
@@ -72,7 +73,6 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    aget_chat_history_util,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -86,7 +86,6 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    get_chat_history_util,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -376,8 +375,6 @@ class Agent:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
 
     # Persist the events on the run response
     store_events: bool = False
@@ -416,6 +413,9 @@ class Agent:
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
+
+    # Deprecated. Use stream_events instead
+    stream_intermediate_steps: Optional[bool] = None
 
     def __init__(
         self,
@@ -627,6 +627,13 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.stream_events = stream_events or stream_intermediate_steps
 
         self.store_events = store_events
@@ -1494,7 +1501,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: bool = False,  # To be deprecated: use yield_run_output instead
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1536,6 +1543,13 @@ class Agent:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+            )
+
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
         # Create a run_id for this specific run
@@ -1616,6 +1630,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2003,6 +2023,7 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2458,6 +2479,13 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2508,6 +2536,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2790,6 +2824,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -3313,6 +3353,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -6168,36 +6214,6 @@ class Agent:
                 self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return get_chat_history_util(self, session_id=session_id)
-
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return await aget_chat_history_util(self, session_id=session_id)
-
     # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """
@@ -6311,7 +6327,7 @@ class Agent:
 
         gen_session_name_prompt = "Conversation\n"
 
-        messages_for_generating_session_name = session.get_messages_for_session()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -6467,11 +6483,25 @@ class Agent:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
 
-    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    def get_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
-            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            session_id: The session ID to get the messages for. If not provided, the latest used session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6481,20 +6511,49 @@ class Agent:
             return []
 
         session = self.get_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(  # type: ignore
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
+        return session.get_messages(
+            # Only filter by agent_id if this is part of a team
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
         )
 
-    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    async def aget_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6504,13 +6563,50 @@ class Agent:
             return []
 
         session = await self.aget_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
         # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(  # type: ignore
+        return session.get_messages(
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+        )
+
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return self.get_session_messages(session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"])
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"]
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
@@ -6518,6 +6614,7 @@ class Agent:
 
         Args:
             session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+
         Returns:
             SessionSummary: The session summary.
         """
@@ -7136,7 +7233,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.aget_valid_filters()
+            valid_filters = await self.knowledge.async_get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -7530,6 +7627,180 @@ class Agent:
                     **kwargs,
                 )
 
+    async def _aget_user_message(
+        self,
+        *,
+        run_response: RunOutput,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs: Any,
+    ) -> Optional[Message]:
+        """Return the user message for the Agent (async version).
+
+        1. If the user_message is provided, use that.
+        2. If build_user_context is False or if the message is a list, return the message as is.
+        3. Build the default user message for the Agent
+        """
+        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Get references from the knowledge base to use in the user message
+        references = None
+
+        # 1. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context:
+            return Message(
+                role=self.user_message_role or "user",
+                content=input,  # type: ignore
+                images=None if not self.send_media_to_model else images,
+                audio=None if not self.send_media_to_model else audio,
+                videos=None if not self.send_media_to_model else videos,
+                files=None if not self.send_media_to_model else files,
+                **kwargs,
+            )
+        # 2. Build the user message for the Agent
+        elif input is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role=self.user_message_role or "user",
+                    content="",
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+            else:
+                # If the input is None, return None
+                return None
+
+        else:
+            # Handle list messages by converting to string
+            if isinstance(input, list):
+                # Convert list to string (join with newlines if all elements are strings)
+                if all(isinstance(item, str) for item in input):
+                    message_content = "\n".join(input)  # type: ignore
+                else:
+                    message_content = str(input)
+
+                return Message(
+                    role=self.user_message_role,
+                    content=message_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+            # If message is provided as a Message, use it directly
+            elif isinstance(input, Message):
+                return input
+            # If message is provided as a dict, try to validate it as a Message
+            elif isinstance(input, dict):
+                try:
+                    return Message.model_validate(input)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {e}")
+                    raise Exception(f"Failed to validate message: {e}")
+
+            # If message is provided as a BaseModel, convert it to a Message
+            elif isinstance(input, BaseModel):
+                try:
+                    # Create a user message with the BaseModel content
+                    content = input.model_dump_json(indent=2, exclude_none=True)
+                    return Message(role=self.user_message_role, content=content)
+                except Exception as e:
+                    log_warning(f"Failed to convert BaseModel to message: {e}")
+                    raise Exception(f"Failed to convert BaseModel to message: {e}")
+            else:
+                user_msg_content = input
+                if self.add_knowledge_to_context:
+                    if isinstance(input, str):
+                        user_msg_content = input
+                    elif callable(input):
+                        user_msg_content = input(agent=self)
+                    else:
+                        raise Exception("message must be a string or a callable when add_references is True")
+
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                        )
+                        if docs_from_knowledge is not None:
+                            references = MessageReferences(
+                                query=user_msg_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references: {e}")
+
+                if self.resolve_in_context:
+                    user_msg_content = self._format_message_with_state_variables(
+                        user_msg_content,
+                        user_id=user_id,
+                        session_state=session_state,
+                        dependencies=dependencies,
+                        metadata=metadata,
+                    )
+
+                # Convert to string for concatenation operations
+                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+                # 4.1 Add knowledge references to user message
+                if (
+                    self.add_knowledge_to_context
+                    and references is not None
+                    and references.references is not None
+                    and len(references.references) > 0
+                ):
+                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                    user_msg_content_str += "<references>\n"
+                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+                    user_msg_content_str += "</references>"
+                # 4.2 Add context to user message
+                if add_dependencies_to_context and dependencies is not None:
+                    user_msg_content_str += "\n\n<additional context>\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
+                    user_msg_content_str += "</additional context>"
+
+                # Use the string version for the final content
+                user_msg_content = user_msg_content_str
+
+                # Return the user message
+                return Message(
+                    role=self.user_message_role,
+                    content=user_msg_content,
+                    audio=None if not self.send_media_to_model else audio,
+                    images=None if not self.send_media_to_model else images,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
     def _get_run_messages(
         self,
         *,
@@ -7628,10 +7899,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7841,10 +8112,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7879,7 +8150,7 @@ class Agent:
                 )
             )
         ):
-            user_message = self._get_user_message(
+            user_message = await self._aget_user_message(
                 run_response=run_response,
                 run_context=run_context,
                 session_state=session_state,
@@ -8042,6 +8313,7 @@ class Agent:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
@@ -8050,6 +8322,7 @@ class Agent:
             query (str): The query to search for.
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            validate_filters (bool): Whether to validate the filters against known valid filter keys.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -8060,23 +8333,23 @@ class Agent:
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            if validate_filters:
+                valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -8125,6 +8398,7 @@ class Agent:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
@@ -8134,22 +8408,22 @@ class Agent:
             num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            if validate_filters:
+                valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:  # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+                # Warn about invalid filter keys
+                if invalid_keys:  # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -9416,7 +9690,7 @@ class Agent:
             import json
 
             history: List[Dict[str, Any]] = []
-            all_chats = session.get_messages_for_session()
+            all_chats = session.get_messages()
 
             if len(all_chats) == 0:
                 return ""
@@ -9569,7 +9843,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9604,7 +9880,9 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9628,7 +9906,7 @@ class Agent:
 
         return Function.from_callable(
             search_knowledge_base_function,
-            name="search_knowledge_base_with_agentic_filters",
+            name="search_knowledge_base",
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
@@ -9689,6 +9967,8 @@ class Agent:
                 session_type=SessionType.AGENT,
                 limit=num_history_sessions,
                 user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
             )
 
             all_messages = []
@@ -9815,8 +10095,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
@@ -9851,15 +10129,8 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             print_response_stream(
@@ -9872,7 +10143,7 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9900,7 +10171,6 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9929,8 +10199,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
@@ -9959,15 +10227,8 @@ class Agent:
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             await aprint_response_stream(
@@ -9980,7 +10241,7 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
