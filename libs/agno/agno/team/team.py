@@ -721,10 +721,6 @@ class Team:
         return self._background_executor
 
     @property
-    def should_parse_structured_output(self) -> bool:
-        return self.output_schema is not None and self.parse_response and self.parser_model is None
-
-    @property
     def cached_session(self) -> Optional[TeamSession]:
         return self._cached_session
 
