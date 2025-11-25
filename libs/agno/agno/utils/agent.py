@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, 
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics, SessionMetrics, SessionModelMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
@@ -758,7 +758,7 @@ async def aupdate_session_state_util(
     return session.session_data["session_state"]  # type: ignore
 
 
-def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
+def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID and user ID."""
     if entity._has_async_db():
         raise ValueError("Async database not supported for sync functions")
@@ -768,24 +768,84 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) ->
         raise Exception("Session not found")
 
     if session.session_data is not None:
-        if isinstance(session.session_data.get("session_metrics"), dict):
-            return Metrics(**session.session_data.get("session_metrics", {}))
-        elif isinstance(session.session_data.get("session_metrics"), Metrics):
-            return session.session_data.get("session_metrics")
+        session_metrics_data = session.session_data.get("session_metrics")
+        if session_metrics_data is not None:
+            if isinstance(session_metrics_data, dict):
+                # Handle legacy RunMetrics dict - convert to SessionMetrics
+                metrics_dict = session_metrics_data.copy()
+                # Remove run-level timing fields
+                metrics_dict.pop("duration", None)
+                metrics_dict.pop("time_to_first_token", None)
+                metrics_dict.pop("timer", None)
+                return SessionMetrics(**metrics_dict)
+            elif isinstance(session_metrics_data, SessionMetrics):
+                return session_metrics_data
+            elif isinstance(session_metrics_data, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_data.input_tokens,
+                    output_tokens=session_metrics_data.output_tokens,
+                    total_tokens=session_metrics_data.total_tokens,
+                    audio_input_tokens=session_metrics_data.audio_input_tokens,
+                    audio_output_tokens=session_metrics_data.audio_output_tokens,
+                    audio_total_tokens=session_metrics_data.audio_total_tokens,
+                    cache_read_tokens=session_metrics_data.cache_read_tokens,
+                    cache_write_tokens=session_metrics_data.cache_write_tokens,
+                    reasoning_tokens=session_metrics_data.reasoning_tokens,
+                )
     return None
 
 
-async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
+async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID and user ID."""
     session = await entity.aget_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
 
     if session.session_data is not None:
-        if isinstance(session.session_data.get("session_metrics"), dict):
-            return Metrics(**session.session_data.get("session_metrics", {}))
-        elif isinstance(session.session_data.get("session_metrics"), Metrics):
-            return session.session_data.get("session_metrics")
+        session_metrics_data = session.session_data.get("session_metrics")
+        if session_metrics_data is not None:
+            if isinstance(session_metrics_data, dict):
+                # Handle legacy RunMetrics dict - convert to SessionMetrics
+                metrics_dict = session_metrics_data.copy()
+                # Remove run-level timing fields
+                metrics_dict.pop("duration", None)
+                metrics_dict.pop("time_to_first_token", None)
+                metrics_dict.pop("timer", None)
+                # Convert details list from dicts to SessionModelMetrics objects
+                if "details" in metrics_dict and isinstance(metrics_dict["details"], list):
+                    details_list = []
+                    for detail_dict in metrics_dict["details"]:
+                        if isinstance(detail_dict, dict):
+                            details_list.append(SessionModelMetrics(**detail_dict))
+                        elif isinstance(detail_dict, SessionModelMetrics):
+                            details_list.append(detail_dict)
+                    metrics_dict["details"] = details_list if details_list else None
+                return SessionMetrics(**metrics_dict)
+            elif isinstance(session_metrics_data, SessionMetrics):
+                # Ensure details are SessionModelMetrics objects, not dicts
+                if session_metrics_data.details:
+                    details_list = []
+                    for detail in session_metrics_data.details:
+                        if isinstance(detail, dict):
+                            details_list.append(SessionModelMetrics(**detail))
+                        elif isinstance(detail, SessionModelMetrics):
+                            details_list.append(detail)
+                    session_metrics_data.details = details_list if details_list else None
+                return session_metrics_data
+            elif isinstance(session_metrics_data, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_data.input_tokens,
+                    output_tokens=session_metrics_data.output_tokens,
+                    total_tokens=session_metrics_data.total_tokens,
+                    audio_input_tokens=session_metrics_data.audio_input_tokens,
+                    audio_output_tokens=session_metrics_data.audio_output_tokens,
+                    audio_total_tokens=session_metrics_data.audio_total_tokens,
+                    cache_read_tokens=session_metrics_data.cache_read_tokens,
+                    cache_write_tokens=session_metrics_data.cache_write_tokens,
+                    reasoning_tokens=session_metrics_data.reasoning_tokens,
+                )
     return None
 
 

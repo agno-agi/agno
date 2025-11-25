@@ -1,47 +1,65 @@
-"""Test all four metrics types: ToolCallMetrics, MessageMetrics, Metrics, SessionMetrics"""
-
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager, UserMemory
 from agno.models.openai import OpenAIChat
-from agno.models.openai.responses import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
-from pydantic import BaseModel, Field
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url)
 
+memory_db = PostgresDb(db_url=db_url)
 
-class Response(BaseModel):
-    story_name: str = Field(description="The name of the story")
-    story_description: str = Field(description="The description of the story")
-    story_content: str = Field(description="The content of the story")
+memory = MemoryManager(model=OpenAIChat(id="gpt-5-mini"), db=memory_db)
 
+john_doe_id = "john_doe@example.com"
+memory.add_user_memory(
+    memory=UserMemory(memory="The user enjoys hiking in the mountains on weekends"),
+    user_id=john_doe_id,
+)
+memory.add_user_memory(
+    memory=UserMemory(
+        memory="The user enjoys reading science fiction novels before bed"
+    ),
+    user_id=john_doe_id,
+)
+print("John Doe's memories:")
+pprint(memory.get_user_memories(user_id=john_doe_id))
 
+memories = memory.search_user_memories(
+    user_id=john_doe_id, limit=1, retrieval_method="last_n"
+)
+print("\nJohn Doe's last_n memories:")
+pprint(memories)
+
+memories = memory.search_user_memories(
+    user_id=john_doe_id, limit=1, retrieval_method="first_n"
+)
+print("\nJohn Doe's first_n memories:")
+pprint(memories)
+
+memories = memory.search_user_memories(
+    user_id=john_doe_id,
+    query="What does the user like to do on weekends?",
+    retrieval_method="agentic",
+)
+print("\nJohn Doe's memories similar to the query (agentic):")
+pprint(memories)
+
+# Create an agent with memory manager to generate metrics
 agent = Agent(
-    id="basic-stream-metrics-agent",
     model=OpenAIChat(id="gpt-4o"),
-    reasoning_model=OpenAIResponses(id="gpt-4.1"),
-    output_model=OpenAIChat(id="o3-mini"),
-    parser_model=OpenAIChat(id="gpt-5-mini"),
-    enable_user_memories=True,
-    enable_session_summaries=True,
-    db=db,
+    memory_manager=memory,
+    db=memory_db,
     markdown=True,
-    tools=[DuckDuckGoTools()],
-    session_id="metrics-test-session",
-    output_schema=Response,
+    session_id="memory-metrics-test-session",
+    user_id=john_doe_id,
 )
 
 # Run the agent to generate metrics
 agent.print_response(
-    "Write a 2 sentence horror story about the latest news on AI", stream=True
+    "Based on my memories, what activities do I enjoy? Can you suggest a weekend activity for me?",
+    stream=True,
 )
 
-
-agent.print_response(
-    "My name is John Doe and I like to hike in the mountains on weekends.", stream=True
-)
 run_output = agent.get_last_run_output()
 
 print("\n" + "=" * 80)
@@ -114,3 +132,18 @@ if session_metrics:
     print(f"  Total tokens: {session_metrics.total_tokens}")
 else:
     print("No session metrics available")
+
+print("\n" + "=" * 80)
+print("SUMMARY")
+print("=" * 80)
+print("✓ Run metrics (Metrics): Aggregated tokens + run-level timing")
+print(
+    "✓ Message metrics (MessageMetrics): Only on assistant messages, token consumption"
+)
+print(
+    "✓ Tool metrics (ToolCallMetrics): Only time fields (duration, start_time, end_time)"
+)
+print(
+    "✓ Session metrics (SessionMetrics): Aggregated tokens + average_duration, no run-level timing"
+)
+print("✓ User/system/tool messages: No metrics (None)")

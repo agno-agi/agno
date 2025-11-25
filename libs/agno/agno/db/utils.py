@@ -5,8 +5,8 @@ from datetime import date, datetime
 from typing import Any, Dict
 from uuid import UUID
 
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
@@ -40,7 +40,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.isoformat()
         elif isinstance(obj, Message):
             return obj.to_dict()
-        elif isinstance(obj, Metrics):
+        elif isinstance(obj, RunMetrics):
             return obj.to_dict()
         elif isinstance(obj, type):
             return str(obj)

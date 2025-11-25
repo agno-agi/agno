@@ -32,8 +32,8 @@ from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
@@ -4152,9 +4152,9 @@ class Workflow:
             "session_id": self.session_id,
         }
 
-    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
+    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> RunMetrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
-        session_metrics = Metrics()
+        session_metrics = RunMetrics()
 
         # Aggregate metrics from all steps
         for step_name, step_metrics in workflow_metrics.steps.items():
@@ -4165,16 +4165,16 @@ class Workflow:
 
         return session_metrics
 
-    def _get_session_metrics(self, session: WorkflowSession) -> Metrics:
+    def _get_session_metrics(self, session: WorkflowSession) -> RunMetrics:
         """Get existing session metrics from the database"""
         if session.session_data and "session_metrics" in session.session_data:
             session_metrics_from_db = session.session_data.get("session_metrics")
             if session_metrics_from_db is not None:
                 if isinstance(session_metrics_from_db, dict):
-                    return Metrics(**session_metrics_from_db)
-                elif isinstance(session_metrics_from_db, Metrics):
+                    return RunMetrics(**session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, RunMetrics):
                     return session_metrics_from_db
-        return Metrics()
+        return RunMetrics()
 
     def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
         """Calculate and update session metrics"""
@@ -4194,7 +4194,7 @@ class Workflow:
             session.session_data = {}
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[RunMetrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:
@@ -4206,7 +4206,7 @@ class Workflow:
 
         return self._get_session_metrics(session=session)
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[RunMetrics]:
         """Get the session metrics for the given session ID and user ID."""
         session_id = session_id or self.session_id
         if session_id is None:

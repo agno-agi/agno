@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 from agno.filters import FilterExpr
 from agno.media import Audio, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
 
@@ -202,7 +202,7 @@ class BaseRunOutputEvent:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            data["metrics"] = Metrics(**metrics)
+            data["metrics"] = RunMetrics(**metrics)
 
         session_summary = data.pop("session_summary", None)
         if session_summary:

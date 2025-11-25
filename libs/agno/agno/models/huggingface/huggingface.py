@@ -9,9 +9,9 @@ from huggingface_hub import ChatCompletionInputStreamOptions
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -249,16 +249,15 @@ class HuggingFace(Model):
         Send a chat completion request to the HuggingFace Hub.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m, compress_tool_results) for m in messages],
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             return self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -283,16 +282,15 @@ class HuggingFace(Model):
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m, compress_tool_results) for m in messages],
                 **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             return self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -317,10 +315,8 @@ class HuggingFace(Model):
         Send a streaming chat completion request to the HuggingFace API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             stream = self.get_client().chat.completions.create(
                 model=self.id,
@@ -333,7 +329,8 @@ class HuggingFace(Model):
             for chunk in stream:
                 yield self._parse_provider_response_delta(chunk)
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
@@ -356,10 +353,8 @@ class HuggingFace(Model):
         Sends an asynchronous streaming chat completion request to the HuggingFace API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m, compress_tool_results) for m in messages],
@@ -371,7 +366,8 @@ class HuggingFace(Model):
             async for chunk in provider_response:
                 yield self._parse_provider_response_delta(chunk)
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
@@ -480,7 +476,7 @@ class HuggingFace(Model):
 
         return model_response
 
-    def _get_metrics(self, response: Union[ChatCompletionOutput, ChatCompletionStreamOutput]) -> Metrics:
+    def _get_metrics(self, response: Union[ChatCompletionOutput, ChatCompletionStreamOutput]) -> RunMetrics:
         """
         Parse the given HuggingFace-specific usage into an Agno Metrics object.
 
@@ -490,7 +486,7 @@ class HuggingFace(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         if not response.usage:
             return metrics

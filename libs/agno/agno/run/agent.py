@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
@@ -268,7 +268,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
 
 
@@ -545,7 +545,7 @@ class RunOutput:
     model: Optional[str] = None
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     additional_input: Optional[List[Message]] = None
 
     tools: Optional[List[ToolExecution]] = None
@@ -630,7 +630,7 @@ class RunOutput:
         }
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
@@ -785,7 +785,17 @@ class RunOutput:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            metrics = Metrics(**metrics)
+            # Handle details field which contains ModelMetrics lists
+            if "details" in metrics and metrics["details"]:
+                from agno.metrics import ModelMetrics
+
+                details_dict = {}
+                for model_type, model_metrics_list in metrics["details"].items():
+                    details_dict[model_type] = [
+                        ModelMetrics(**m) if isinstance(m, dict) else m for m in model_metrics_list
+                    ]
+                metrics["details"] = details_dict
+            metrics = RunMetrics(**metrics)
 
         additional_input = data.pop("additional_input", None)
 

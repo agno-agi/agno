@@ -8,9 +8,9 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -569,28 +569,28 @@ class Claude(Model):
         Send a request to the Anthropic API to generate a response.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
             else:
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = self.get_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
             model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
@@ -640,12 +640,10 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 with self.get_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -654,7 +652,8 @@ class Claude(Model):
                     for chunk in stream:
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
             else:
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 with self.get_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -663,7 +662,8 @@ class Claude(Model):
                     for chunk in stream:  # type: ignore
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
@@ -694,29 +694,29 @@ class Claude(Model):
         Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
             else:
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = await self.get_async_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
             model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
@@ -760,14 +760,12 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -776,7 +774,8 @@ class Claude(Model):
                     async for chunk in stream:
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
             else:
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 async with self.get_async_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -785,7 +784,8 @@ class Claude(Model):
                     async for chunk in stream:  # type: ignore
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
@@ -1079,7 +1079,7 @@ class Claude(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> RunMetrics:
         """
         Parse the given Anthropic-specific usage into an Agno Metrics object.
 
@@ -1089,7 +1089,7 @@ class Claude(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0
@@ -1104,5 +1104,4 @@ class Claude(Model):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}
                 metrics.provider_metrics["service_tier"] = response_usage.service_tier
-
         return metrics

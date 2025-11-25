@@ -6,9 +6,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -193,16 +193,15 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().chat(
                 model=self.id,
                 messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             )  # type: ignore
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -228,12 +227,10 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for response in self.get_client().chat_stream(
                 model=self.id,
@@ -243,7 +240,8 @@ class Cohere(Model):
                 model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
                 yield model_response
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
@@ -265,16 +263,15 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_async_client().chat(
                 model=self.id,
                 messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             )
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -300,12 +297,10 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async for response in self.get_async_client().chat_stream(
                 model=self.id,
@@ -315,7 +310,8 @@ class Cohere(Model):
                 model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
                 yield model_response
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
@@ -404,7 +400,7 @@ class Cohere(Model):
 
         return model_response, tool_use
 
-    def _get_metrics(self, response_usage) -> Metrics:
+    def _get_metrics(self, response_usage) -> RunMetrics:
         """
         Parse the given Cohere usage into an Agno Metrics object.
 
@@ -414,7 +410,7 @@ class Cohere(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         metrics.input_tokens = response_usage.tokens.input_tokens or 0
         metrics.output_tokens = response_usage.tokens.output_tokens or 0

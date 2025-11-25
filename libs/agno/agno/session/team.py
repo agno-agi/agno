@@ -93,11 +93,6 @@ class TeamSession:
         """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run_response.messages
 
-        # Make message duration None
-        for m in messages or []:
-            if m.metrics is not None:
-                m.metrics.duration = None
-
         if not self.runs:
             self.runs = []
 
