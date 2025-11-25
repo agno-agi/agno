@@ -139,7 +139,12 @@ TRACE_TABLE_SCHEMA = {
 
 SPAN_TABLE_SCHEMA = {
     "span_id": {"type": String, "primary_key": True, "nullable": False},
-    "trace_id": {"type": String, "nullable": False, "index": True},
+    "trace_id": {
+        "type": String,
+        "nullable": False,
+        "index": True,
+        "foreign_key": "agno_traces.trace_id",  # Foreign key to traces table
+    },
     "parent_span_id": {"type": String, "nullable": True, "index": True},
     "name": {"type": String, "nullable": False},
     "span_kind": {"type": String, "nullable": False},
