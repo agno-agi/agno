@@ -312,12 +312,13 @@ class TraceDetail(BaseModel):
 
             # Recursively build spans
             # For root span's direct children (workflow steps), pass the index
+            children_nodes: Optional[List[TraceNode]] = None
             if is_root and step_types_list:
                 children_nodes = []
                 for idx, child in enumerate(children_spans):
                     children_nodes.append(build_node(child, step_index=idx))
-            else:
-                children_nodes = [build_node(child) for child in children_spans] if children_spans else None
+            elif children_spans:
+                children_nodes = [build_node(child) for child in children_spans]
 
             # For root span, create custom metadata with token totals
             if is_root:
