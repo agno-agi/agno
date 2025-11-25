@@ -5591,12 +5591,16 @@ class Team:
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
-        # Add the JSON output prompt if output_schema is provided and structured_outputs is False
+        # Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs
+        # or JSON schema outputs, or if use_json_mode is True
         if (
             self.output_schema is not None
-            and self.use_json_mode
+            and self.parser_model is None
             and self.model
-            and self.model.supports_native_structured_outputs
+            and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and not self.use_json_mode
+            )
         ):
             system_message_content += f"{self._get_json_output_prompt()}"
 
@@ -5897,12 +5901,16 @@ class Team:
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
-        # Add the JSON output prompt if output_schema is provided and structured_outputs is False
+        # Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs
+        # or JSON schema outputs, or if use_json_mode is True
         if (
             self.output_schema is not None
-            and self.use_json_mode
+            and self.parser_model is None
             and self.model
-            and self.model.supports_native_structured_outputs
+            and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and not self.use_json_mode
+            )
         ):
             system_message_content += f"{self._get_json_output_prompt()}"
 
