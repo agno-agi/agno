@@ -37,7 +37,7 @@ class WebSearchReader(Reader):
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
     # Search engine configuration
-    search_engine: Literal["duckduckgo", "google"] = "duckduckgo"
+    search_engine: Literal["duckduckgo"] = "duckduckgo"
     search_delay: float = 3.0  # Delay between search requests
     max_search_retries: int = 2  # Retries for search operations
 
@@ -121,57 +121,10 @@ class WebSearchReader(Reader):
                     return []
         return []
 
-    def _perform_google_search(self, query: str) -> List[Dict[str, str]]:
-        """Perform web search using Google (requires googlesearch-python)"""
-        log_debug(f"Performing Google search for: {query}")
-
-        try:
-            from googlesearch import search
-        except ImportError:
-            logger.error("Google search requires 'googlesearch-python'. Install with: pip install googlesearch-python")
-            return []
-
-        for attempt in range(self.max_search_retries):
-            try:
-                self._respect_rate_limits()
-
-                results = []
-                # Use the basic search function without unsupported parameters
-                # The googlesearch-python library's search function only accepts basic parameters
-                search_results = search(query)
-
-                # Convert iterator to list and limit results
-                result_list = list(search_results)[: self.max_results]
-
-                for result in result_list:
-                    # The search function returns URLs as strings
-                    results.append(
-                        {
-                            "title": "",  # Google search doesn't provide titles directly
-                            "url": result,
-                            "description": "",  # Google search doesn't provide descriptions directly
-                        }
-                    )
-
-                log_debug(f"Found {len(results)} Google search results")
-                return results
-
-            except Exception as e:
-                logger.warning(f"Google search attempt {attempt + 1} failed: {e}")
-                if attempt < self.max_search_retries - 1:
-                    time.sleep(self.search_delay)
-                else:
-                    logger.error(f"All Google search attempts failed: {e}")
-                    return []
-
-        return []
-
     def _perform_web_search(self, query: str) -> List[Dict[str, str]]:
         """Perform web search using the configured search engine"""
         if self.search_engine == "duckduckgo":
             return self._perform_duckduckgo_search(query)
-        elif self.search_engine == "google":
-            return self._perform_google_search(query)
         else:
             logger.error(f"Unsupported search engine: {self.search_engine}")
             return []

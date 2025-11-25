@@ -1,6 +1,6 @@
 """Run `pip install openai agno` to install dependencies.
 
-This example demonstrates how to use NebiusTools for text-to-image generation with Nebius AI Studio.
+This example demonstrates how to use NebiusTools for text-to-image generation with Nebius Token Factory.
 """
 
 import base64

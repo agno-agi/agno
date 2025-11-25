@@ -68,6 +68,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        img_type = None
+
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
             content_bytes = image.content
@@ -80,7 +82,6 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             import os
             from urllib.parse import urlparse
 
-            img_type = None
             if image.url:
                 parsed_url = urlparse(image.url)
                 _, ext = os.path.splitext(parsed_url.path)
@@ -319,6 +320,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
     """
     if not tools:
         return None
@@ -351,7 +353,14 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
                 "type": parameters.get("type", "object"),
                 "properties": input_properties,
                 "required": required_params,
+                "additionalProperties": False,
             },
         }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
         parsed_tools.append(tool)
     return parsed_tools

@@ -842,6 +842,63 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.run_content_completed]) >= 1
 
 
+def test_intermediate_steps_with_member_agents_only_member_events():
+    agent_math = Agent(
+        name="Math Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You can do Math!",
+        tools=[CalculatorTools()],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_math],
+        telemetry=False,
+        stream_member_events=True,
+    )
+
+    response_generator = team.run(
+        "Analyse and then solve the problem: 'solve 10 factorial'",
+        stream=True,
+        stream_events=False,  # stream_events=False to only stream member events
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_content,
+        RunEvent.run_content_completed,
+        RunEvent.run_completed,
+        TeamRunEvent.run_content,
+    }
+
+    # Agent content restreamed as team content
+    assert len(events[TeamRunEvent.run_content]) > 1
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.tool_call_started]) == 1
+    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_content_completed]) == 1
+    assert len(events[RunEvent.run_completed]) == 1
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 1
+    assert events[RunEvent.run_started][0].parent_run_id == events[TeamRunEvent.run_content][0].run_id
+    assert len(events[RunEvent.run_completed]) == 1
+    assert events[RunEvent.run_completed][0].parent_run_id == events[TeamRunEvent.run_content][0].run_id
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) == 1
+    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.run_content_completed]) == 1
+
+
 def test_intermediate_steps_with_member_agents_nested_team():
     agent_1 = Agent(
         name="Finance Analyst",
@@ -970,7 +1027,7 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
         model=OpenAIChat(id="o3-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         instructions="You are a discussion master. Forward the task to the member agents.",
     )
 

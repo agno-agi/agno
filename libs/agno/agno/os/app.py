@@ -102,6 +102,8 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        authorization: bool = False,
+        authorization_secret: Optional[str] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -109,12 +111,6 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         auto_provision_dbs: bool = True,
-        authorization: bool = False,
-        authorization_secret: Optional[str] = None,
-        os_id: Optional[str] = None,  # Deprecated
-        enable_mcp: bool = False,  # Deprecated
-        fastapi_app: Optional[FastAPI] = None,  # Deprecated
-        replace_routes: Optional[bool] = None,  # Deprecated
         telemetry: bool = True,
     ):
         """Initialize AgentOS.
@@ -161,13 +157,6 @@ class AgentOS:
             self.base_app: Optional[FastAPI] = base_app
             self._app_set = True
             self.on_route_conflict = on_route_conflict
-        elif fastapi_app:
-            self.base_app = fastapi_app
-            self._app_set = True
-            if replace_routes is not None:
-                self.on_route_conflict = "preserve_agentos" if replace_routes else "preserve_base_app"
-            else:
-                self.on_route_conflict = on_route_conflict
         else:
             self.base_app = None
             self._app_set = False
@@ -177,7 +166,7 @@ class AgentOS:
 
         self.name = name
 
-        self.id = id or os_id
+        self.id = id
         if not self.id:
             self.id = generate_id(self.name) if self.name else str(uuid4())
 
@@ -186,7 +175,7 @@ class AgentOS:
 
         self.telemetry = telemetry
 
-        self.enable_mcp_server = enable_mcp or enable_mcp_server
+        self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
 
         # RBAC
@@ -250,6 +239,12 @@ class AgentOS:
         self._initialize_workflows()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+
+        if self.enable_mcp_server:
+            from agno.os.mcp import get_mcp_server
+
+            self._mcp_app = get_mcp_server(self)
+
         self._reprovision_routers(app=app)
 
     def _reprovision_routers(self, app: FastAPI) -> None:
@@ -266,7 +261,9 @@ class AgentOS:
         app.router.routes = [
             route
             for route in app.router.routes
-            if hasattr(route, "path") and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]  # type: ignore
+            if hasattr(route, "path")
+            and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
+            or route.path.startswith("/mcp")  # type: ignore
         ]
 
         # Add the built-in routes
@@ -276,13 +273,17 @@ class AgentOS:
         for router in updated_routers:
             self._add_router(app, router)
 
+        # Mount MCP if needed
+        if self.enable_mcp_server and self._mcp_app:
+            app.mount("/", self._mcp_app)
+
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
         # Add the home router if MCP server is not enabled
         if not self.enable_mcp_server:
             self._add_router(app, get_home_router(self))
 
-        self._add_router(app, get_health_router())
+        self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
@@ -333,16 +334,16 @@ class AgentOS:
         """Initialize and configure all agents for AgentOS usage."""
         if not self.agents:
             return
-
         for agent in self.agents:
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
-                    # Checking if the tool is a MCPTools or MultiMCPTools instance
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
-                        if tool not in self.mcp_tools:
-                            self.mcp_tools.append(tool)
+                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    if hasattr(type(tool), "__mro__"):
+                        mro_names = {cls.__name__ for cls in type(tool).__mro__}
+                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                            if tool not in self.mcp_tools:
+                                self.mcp_tools.append(tool)
 
             agent.initialize_agent()
 
@@ -399,19 +400,23 @@ class AgentOS:
             # Collect all lifespans that need to be combined
             lifespans = []
 
-            if fastapi_app.router.lifespan_context:
-                lifespans.append(fastapi_app.router.lifespan_context)
-
-            if self.mcp_tools:
-                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
-
-            if self.enable_mcp_server and self._mcp_app:
-                lifespans.append(self._mcp_app.lifespan)
-
+            # The user provided lifespan
             if self.lifespan:
                 # Wrap the user lifespan with agent_os parameter
                 wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
                 lifespans.append(wrapped_lifespan)
+
+            # The provided app's existing lifespan
+            if fastapi_app.router.lifespan_context:
+                lifespans.append(fastapi_app.router.lifespan_context)
+
+            # The MCP tools lifespan
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            # The /mcp server lifespan
+            if self.enable_mcp_server and self._mcp_app:
+                lifespans.append(self._mcp_app.lifespan)
 
             # Combine lifespans and set them in the app
             if lifespans:

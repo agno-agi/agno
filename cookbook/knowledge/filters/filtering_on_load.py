@@ -5,7 +5,7 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.pgvector import PgVector
 
 # Download all sample sales files and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
@@ -14,9 +14,9 @@ downloaded_csv_paths = download_knowledge_filters_sample_data(
 
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
-vector_db = LanceDb(
+vector_db = PgVector(
     table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
 
 # Step 1: Initialize knowledge base with documents and metadata
@@ -26,11 +26,11 @@ vector_db = LanceDb(
 # Initialize Knowledge
 knowledge = Knowledge(
     vector_db=vector_db,
-    max_results=5,
     contents_db=PostgresDb(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         knowledge_table="knowledge_contents",
     ),
+    max_results=5,
 )
 
 knowledge.add_content(
