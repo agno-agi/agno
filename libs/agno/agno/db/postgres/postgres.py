@@ -134,11 +134,6 @@ class PostgresDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
             self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -195,7 +190,11 @@ class PostgresDb(BaseDb):
                 create_schema(session=sess, db_schema=db_schema)
 
             # Create table
-            table.create(self.db_engine, checkfirst=True)
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+            else:
+                log_debug(f"Table {db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -218,8 +217,11 @@ class PostgresDb(BaseDb):
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
-
-            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+                    
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
             return table
 
         except Exception as e:
@@ -313,12 +315,6 @@ class PostgresDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
             return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not is_valid_table(

@@ -23,7 +23,7 @@ class MigrationManager:
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
 
-    async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None):
+    async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
         """Handle executing an up migration.
 
         Args:
@@ -70,7 +70,7 @@ class MigrationManager:
                 continue
 
             # If the target version is less or equal to the current version, no migrations needed
-            if _target_version <= current_version:
+            if _target_version <= current_version and not force:
                 log_warning(
                     f"Skipping up migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
                 )
