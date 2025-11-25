@@ -2081,7 +2081,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             trace: The Trace object to store (one per trace_id).
         """
         try:
-            table = await self._get_table(table_type="traces")
+            table = await self._get_table(table_type="traces", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Check if trace exists
@@ -2430,7 +2430,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             span: The Span object to store.
         """
         try:
-            table = await self._get_table(table_type="spans")
+            table = await self._get_table(table_type="spans", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(span.to_dict())
@@ -2449,7 +2449,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return
 
         try:
-            table = await self._get_table(table_type="spans")
+            table = await self._get_table(table_type="spans", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 for span in spans:
