@@ -28,7 +28,7 @@ from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 
@@ -116,83 +116,42 @@ class EventBuffer:
 
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
     """Convert AG-UI messages to Agno messages."""
+    # First pass: collect all tool_call_ids that have results
+    tool_call_ids_with_results: Set[str] = set()
+    for msg in messages:
+        if msg.role == "tool" and msg.tool_call_id:
+            tool_call_ids_with_results.add(msg.tool_call_id)
 
-    # Build position map: tool_call_id → indices where results appear
-    result_positions: Dict[str, List[int]] = {}
-    for idx, msg in enumerate(messages):
-        if msg.role == "tool":
-            if msg.tool_call_id not in result_positions:
-                result_positions[msg.tool_call_id] = []
-            result_positions[msg.tool_call_id].append(idx)
-
-    # SECOND PASS: Convert messages, deduplicating and filtering
-    result = []
+    # Second pass: convert messages
+    result: List[Message] = []
     seen_tool_call_ids: Set[str] = set()
-    skipped_duplicate_results = 0
-    filtered_tool_calls_count = 0
 
-    for idx, msg in enumerate(messages):
+    for msg in messages:
         if msg.role == "tool":
-            tool_call_id = msg.tool_call_id
-
             # Deduplicate tool results - keep only first occurrence
-            if tool_call_id in seen_tool_call_ids:
-                skipped_duplicate_results += 1
-                log_warning(f"Skipping duplicate AGUI tool result: {tool_call_id}")
-                continue  # Skip duplicate
-
-            seen_tool_call_ids.add(tool_call_id)
-            result.append(Message(role="tool", tool_call_id=tool_call_id, content=msg.content))
+            if msg.tool_call_id in seen_tool_call_ids:
+                log_warning(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
+                continue
+            seen_tool_call_ids.add(msg.tool_call_id)
+            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
 
         elif msg.role == "assistant":
             tool_calls = None
-            original_count = 0
-
             if msg.tool_calls:
-                original_count = len(msg.tool_calls)
-                # Filter tool_calls: only keep if result appears after this message
-                filtered_calls = []
-                for call in msg.tool_calls:
-                    if call.id in result_positions:
-                        first_result_idx = result_positions[call.id][0]
-                        if first_result_idx > idx:
-                            filtered_calls.append(call)
-                        else:
-                            filtered_tool_calls_count += 1
-                    else:
-                        filtered_tool_calls_count += 1
-
-                if len(filtered_calls) < original_count:
-                    log_warning(
-                        f"Filtered {original_count - len(filtered_calls)} tool_calls from assistant (already executed or incomplete)"
-                    )
-
+                # Filter tool_calls to only those with results in this message sequence
+                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
                 if filtered_calls:
                     tool_calls = [call.model_dump() for call in filtered_calls]
-
-            # Always add assistant message to preserve conversation structure
-            result.append(
-                Message(
-                    role="assistant",
-                    content=msg.content,
-                    tool_calls=tool_calls,
-                )
-            )
+            result.append(Message(role="assistant", content=msg.content, tool_calls=tool_calls))
 
         elif msg.role == "user":
             result.append(Message(role="user", content=msg.content))
+
         elif msg.role == "system":
-            # Skip system messages from client - agent builds its own from configuration
-            log_debug("Skipping system message from client (agent builds its own from config)")
-            continue
+            pass  # Skip - agent builds its own system message from configuration
+
         else:
             log_warning(f"Unknown AGUI message role: {msg.role}")
-
-    # Log summary for debugging
-    if skipped_duplicate_results > 0 or filtered_tool_calls_count > 0:
-        log_debug(
-            f"AGUI message conversion: {len(messages)}→{len(result)} messages, {skipped_duplicate_results} duplicate results skipped, {filtered_tool_calls_count} tool_calls filtered"
-        )
 
     return result
 
@@ -313,7 +272,6 @@ def _create_events_from_chunk(
             if not parent_message_id:
                 # Create parent message for tool calls without preceding assistant message
                 parent_message_id = str(uuid.uuid4())
-                log_warning(f"Creating parent message for orphaned tool call: {tool_call.tool_name}")
 
                 # Emit a text message to serve as the parent
                 text_start = TextMessageStartEvent(
