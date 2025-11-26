@@ -1490,11 +1490,15 @@ class Model(ABC):
 
         # Run function calls sequentially
         function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
+        stop_after_tool_call_from_exception = False
         try:
             function_execution_result = function_call.execute()
         except AgentRunException as a_exc:
             # Update additional messages from function call
             _handle_agent_exception(a_exc, additional_input)
+            # If stop_execution is True, mark that we should stop after this tool call
+            if a_exc.stop_execution:
+                stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {e}")
@@ -1583,6 +1587,9 @@ class Model(ABC):
             timer=function_call_timer,
             function_execution_result=function_execution_result,
         )
+        # Override stop_after_tool_call if set by exception
+        if stop_after_tool_call_from_exception:
+            function_call_result.stop_after_tool_call = True
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
@@ -2022,10 +2029,14 @@ class Model(ABC):
             updated_session_state = function_execution_result.updated_session_state
 
             # Handle AgentRunException
+            stop_after_tool_call_from_exception = False
             if isinstance(function_call_success, AgentRunException):
                 a_exc = function_call_success
                 # Update additional messages from function call
                 _handle_agent_exception(a_exc, additional_input)
+                # If stop_execution is True, mark that we should stop after this tool call
+                if a_exc.stop_execution:
+                    stop_after_tool_call_from_exception = True
                 # Set function call success to False if an exception occurred
                 function_call_success = False
 
@@ -2097,6 +2108,9 @@ class Model(ABC):
                 timer=function_call_timer,
                 function_execution_result=function_execution_result,
             )
+            # Override stop_after_tool_call if set by exception
+            if stop_after_tool_call_from_exception:
+                function_call_result.stop_after_tool_call = True
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[

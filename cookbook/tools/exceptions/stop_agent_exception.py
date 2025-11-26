@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.exceptions import RetryAgentRun
+from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.utils.log import logger
@@ -11,16 +11,15 @@ def add_item(run_context: RunContext, item: str) -> str:
     if run_context.session_state is None:
         run_context.session_state = {}
 
-    if run_context.session_state:
-        run_context.session_state["shopping_list"].append(item)
-        len_shopping_list = len(run_context.session_state["shopping_list"])
+    if "shopping_list" not in run_context.session_state:
+        run_context.session_state["shopping_list"] = []
+
+    run_context.session_state["shopping_list"].append(item)
+    len_shopping_list = len(run_context.session_state["shopping_list"])
+
     if len_shopping_list < 3:
-        logger.info(
-            f"Asking the model to add {3 - len_shopping_list} more items to the shopping list."
-        )
-        raise RetryAgentRun(
-            f"Shopping list is: {run_context.session_state['shopping_list']}. Minimum 3 items in the shopping list. "
-            + f"Add {3 - len_shopping_list} more items.",
+        raise StopAgentRun(
+            f"Shopping list is: {run_context.session_state['shopping_list']}. We must stop the agent."  # type: ignore
         )
 
     logger.info(
@@ -31,10 +30,10 @@ def add_item(run_context: RunContext, item: str) -> str:
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    session_id="retry_tool_call_session",
+    session_id="stop_agent_exception_session",
     db=SqliteDb(
-        session_table="retry_tool_call_session",
-        db_file="tmp/retry_tool_call.db",
+        session_table="stop_agent_exception_session",
+        db_file="tmp/stop_agent_exception.db",
     ),
     # Initialize the session state with empty shopping list
     session_state={"shopping_list": []},
@@ -43,5 +42,5 @@ agent = Agent(
 )
 agent.print_response("Add milk", stream=True)
 print(
-    f"Final session state: {agent.get_session_state(session_id='retry_tool_call_session')}"
+    f"Final session state: {agent.get_session_state(session_id='stop_agent_exception_session')}"
 )
