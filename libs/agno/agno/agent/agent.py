@@ -712,7 +712,7 @@ class Agent:
         )
         # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            set_log_level_to_debug(level=debug_level)  # type: ignore[assignment]
+            set_log_level_to_debug(level=debug_level)
         else:
             set_log_level_to_info()
 
