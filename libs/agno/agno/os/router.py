@@ -51,6 +51,7 @@ from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.runner.base import BaseRunner
+from agno.runner.os import AgentOSRunner
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.workflow import Workflow
@@ -671,32 +672,85 @@ def get_base_router(
         },
     )
     async def config() -> ConfigResponse:
-        from agno.runner.base import BaseRunner
-
         agent_summaries = []
         if os.agents:
             for agent in os.agents:
-                # TODO: Get config from remote AgentOS
-                if isinstance(agent, BaseRunner):
-                    continue
+                if isinstance(agent, AgentOSRunner):
+                    # Fetch config from remote AgentOS
+                    try:
+                        async with agent.get_client() as client:
+                            remote_agent = await client.get_agent(agent.id)
+                            agent_summaries.append(
+                                AgentSummaryResponse(
+                                    id=remote_agent.id,
+                                    name=remote_agent.name,
+                                    description=None,  # Summary doesn't include description
+                                )
+                            )
+                    except Exception as e:
+                        log_warning(f"Failed to fetch remote agent {agent.id}: {e}")
+                        # Add placeholder with just the ID
+                        agent_summaries.append(
+                            AgentSummaryResponse(
+                                id=agent.id,
+                                name=f"Remote Agent: {agent.id}",
+                                description="(unavailable)",
+                            )
+                        )
                 else:
                     agent_summaries.append(AgentSummaryResponse.from_agent(agent))
 
         team_summaries = []
         if os.teams:
             for team in os.teams:
-                # TODO: Get config from remote AgentOS
-                if isinstance(team, BaseRunner):
-                    continue
+                if isinstance(team, AgentOSRunner):
+                    # Fetch config from remote AgentOS
+                    try:
+                        async with team.get_client() as client:
+                            remote_team = await client.get_team(team.id)
+                            team_summaries.append(
+                                TeamSummaryResponse(
+                                    id=remote_team.id,
+                                    name=remote_team.name,
+                                    description=None,
+                                )
+                            )
+                    except Exception as e:
+                        log_warning(f"Failed to fetch remote team {team.id}: {e}")
+                        team_summaries.append(
+                            TeamSummaryResponse(
+                                id=team.id,
+                                name=f"Remote Team: {team.id}",
+                                description="(unavailable)",
+                            )
+                        )
                 else:
                     team_summaries.append(TeamSummaryResponse.from_team(team))
 
         workflow_summaries = []
         if os.workflows:
             for workflow in os.workflows:
-                # TODO: Get config from remote AgentOS
-                if isinstance(workflow, BaseRunner):
-                    continue
+                if isinstance(workflow, AgentOSRunner):
+                    # Fetch config from remote AgentOS
+                    try:
+                        async with workflow.get_client() as client:
+                            remote_workflow = await client.get_workflow(workflow.id)
+                            workflow_summaries.append(
+                                WorkflowSummaryResponse(
+                                    id=remote_workflow.id,
+                                    name=remote_workflow.name,
+                                    description=remote_workflow.description,
+                                )
+                            )
+                    except Exception as e:
+                        log_warning(f"Failed to fetch remote workflow {workflow.id}: {e}")
+                        workflow_summaries.append(
+                            WorkflowSummaryResponse(
+                                id=workflow.id,
+                                name=f"Remote Workflow: {workflow.id}",
+                                description="(unavailable)",
+                            )
+                        )
                 else:
                     workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
 
@@ -747,29 +801,53 @@ def get_base_router(
     )
     async def get_models() -> List[Model]:
         """Return the list of all models used by agents and teams in the contextual OS"""
-        all_components: List[Union[Agent, Team]] = []
+        unique_models = {}
+
+        # Collect models from local agents
         if os.agents:
             for agent in os.agents:
-                # TODO: Get models from remote AgentOS
-                if isinstance(agent, BaseRunner):
-                    continue
+                if isinstance(agent, AgentOSRunner):
+                    # Fetch models from remote AgentOS
+                    try:
+                        async with agent.get_client() as client:
+                            remote_models = await client.get_models()
+                            for model in remote_models:
+                                if model.id is not None and model.provider is not None:
+                                    key = (model.id, model.provider)
+                                    if key not in unique_models:
+                                        unique_models[key] = model
+                    except Exception as e:
+                        log_warning(f"Failed to fetch models from remote agent {agent.id}: {e}")
                 else:
-                    all_components.append(agent)
+                    # Local agent
+                    model = cast(Model, agent.model)
+                    if model.id is not None and model.provider is not None:
+                        key = (model.id, model.provider)
+                        if key not in unique_models:
+                            unique_models[key] = Model(id=model.id, provider=model.provider)
+
+        # Collect models from local teams
         if os.teams:
             for team in os.teams:
-                # TODO: Get models from remote AgentOS
-                if isinstance(team, BaseRunner):
-                    continue
+                if isinstance(team, AgentOSRunner):
+                    # Fetch models from remote AgentOS
+                    try:
+                        async with team.get_client() as client:
+                            remote_models = await client.get_models()
+                            for model in remote_models:
+                                if model.id is not None and model.provider is not None:
+                                    key = (model.id, model.provider)
+                                    if key not in unique_models:
+                                        unique_models[key] = model
+                    except Exception as e:
+                        log_warning(f"Failed to fetch models from remote team {team.id}: {e}")
                 else:
-                    all_components.append(team)
-
-        unique_models = {}
-        for item in all_components:
-            model = cast(Model, item.model)
-            if model.id is not None and model.provider is not None:
-                key = (model.id, model.provider)
-                if key not in unique_models:
-                    unique_models[key] = Model(id=model.id, provider=model.provider)
+                    # Local team
+                    model = cast(Model, team.model)
+                    if model.id is not None and model.provider is not None:
+                        key = (model.id, model.provider)
+                        if key not in unique_models:
+                            unique_models[key] = Model(id=model.id, provider=model.provider)
 
         return list(unique_models.values())
 
@@ -1144,12 +1222,24 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
-            # TODO: Get config from remote AgentOS
-            if isinstance(agent, BaseRunner):
-                continue
-
-            agent_response = await AgentResponse.from_agent(agent=agent)
-            agents.append(agent_response)
+            if isinstance(agent, AgentOSRunner):
+                # Fetch from remote AgentOS
+                try:
+                    async with agent.get_client() as client:
+                        remote_agent = await client.get_agent(agent.id)
+                        agents.append(remote_agent)
+                except Exception as e:
+                    log_warning(f"Failed to fetch remote agent {agent.id}: {e}")
+                    # Add placeholder response
+                    agents.append(
+                        AgentResponse(
+                            id=agent.id,
+                            name=f"Remote Agent: {agent.id} (unavailable)",
+                        )
+                    )
+            else:
+                agent_response = await AgentResponse.from_agent(agent=agent)
+                agents.append(agent_response)
 
         return agents
 
@@ -1481,12 +1571,24 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
-            # TODO: Get config from remote AgentOS
-            if isinstance(team, BaseRunner):
-                continue
-
-            team_response = await TeamResponse.from_team(team=team)
-            teams.append(team_response)
+            if isinstance(team, AgentOSRunner):
+                # Fetch from remote AgentOS
+                try:
+                    async with team.get_client() as client:
+                        remote_team = await client.get_team(team.id)
+                        teams.append(remote_team)
+                except Exception as e:
+                    log_warning(f"Failed to fetch remote team {team.id}: {e}")
+                    # Add placeholder response
+                    teams.append(
+                        TeamResponse(
+                            id=team.id,
+                            name=f"Remote Team: {team.id} (unavailable)",
+                        )
+                    )
+            else:
+                team_response = await TeamResponse.from_team(team=team)
+                teams.append(team_response)
 
         return teams
 
@@ -1623,11 +1725,29 @@ def get_base_router(
         workflow_summaries = []
         if os.workflows:
             for workflow in os.workflows:
-                # TODO: Get config from remote AgentOS
                 if isinstance(workflow, BaseRunner):
-                    continue
-
-                workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+                    # Fetch workflow config from remote AgentOS
+                    try:
+                        async with workflow.get_client() as client:
+                            remote_workflow = await client.get_workflow(workflow.id)
+                            workflow_summaries.append(
+                                WorkflowSummaryResponse(
+                                    id=remote_workflow.id,
+                                    name=remote_workflow.name,
+                                    description=remote_workflow.description,
+                                )
+                            )
+                    except Exception as e:
+                        log_warning(f"Failed to fetch remote workflow {workflow.id}: {e}")
+                        workflow_summaries.append(
+                            WorkflowSummaryResponse(
+                                id=workflow.id,
+                                name=f"Remote Workflow: {workflow.id} (unavailable)",
+                                description=None,
+                            )
+                        )
+                else:
+                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
 
         return workflow_summaries
 

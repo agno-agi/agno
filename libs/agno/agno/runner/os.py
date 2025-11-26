@@ -45,7 +45,24 @@ class AgentOSRunner(BaseRunner):
 
         self.api_key: Optional[str] = api_key or getenv("AGNO_API_KEY")
         self.timeout: float = timeout
-        
+
+    def get_client(self) -> "AgentOSClient":
+        """Get an AgentOSClient for fetching remote configuration.
+
+        This is used internally by AgentOS to fetch configuration from remote
+        AgentOS instances when this runner represents a remote resource.
+
+        Returns:
+            AgentOSClient: Client configured for this remote resource's base URL
+        """
+        from agno.os.client import AgentOSClient
+
+        return AgentOSClient(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=30.0,
+        )
+
 
     def _get_headers(self) -> Dict[str, str]:
         """Get HTTP headers for remote requests."""
