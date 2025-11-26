@@ -1,4 +1,5 @@
 import asyncio
+import json
 from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
@@ -320,17 +321,24 @@ class PgVector(VectorDb):
                     try:
                         # Prepare documents for insertion
                         batch_records = []
+                        seen_record_ids = set()
                         for doc in batch_docs:
                             try:
-                                batch_records.append(self._get_document_record(doc, filters, content_hash))
+                                record = self._get_document_record(doc, filters, content_hash)
+                                record_id = record["id"]
+                                if record_id in seen_record_ids:
+                                    pass  # Duplicate detected, will be skipped
+                                seen_record_ids.add(record_id)
+                                batch_records.append(record)
                             except Exception as e:
                                 logger.error(f"Error processing document '{doc.name}': {e}")
 
                         # Insert the batch of records
-                        insert_stmt = postgresql.insert(self.table)
-                        sess.execute(insert_stmt, batch_records)
-                        sess.commit()  # Commit batch independently
-                        log_info(f"Inserted batch of {len(batch_records)} documents.")
+                        if batch_records:
+                            insert_stmt = postgresql.insert(self.table)
+                            sess.execute(insert_stmt, batch_records)
+                            sess.commit()  # Commit batch independently
+                            log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         logger.error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
@@ -358,26 +366,14 @@ class PgVector(VectorDb):
 
                         # Prepare documents for insertion
                         batch_records = []
+                        seen_record_ids = set()
                         for doc in batch_docs:
                             try:
-                                cleaned_content = self._clean_content(doc.content)
-                                record_id = doc.id or content_hash
-
-                                meta_data = doc.meta_data or {}
-                                if filters:
-                                    meta_data.update(filters)
-
-                                record = {
-                                    "id": record_id,
-                                    "name": doc.name,
-                                    "meta_data": doc.meta_data,
-                                    "filters": filters,
-                                    "content": cleaned_content,
-                                    "embedding": doc.embedding,
-                                    "usage": doc.usage,
-                                    "content_hash": content_hash,
-                                    "content_id": doc.content_id,
-                                }
+                                record = self._get_document_record(doc, filters, content_hash)
+                                record_id = record["id"]
+                                if record_id in seen_record_ids:
+                                    pass  # Duplicate detected, will be skipped
+                                seen_record_ids.add(record_id)
                                 batch_records.append(record)
                             except Exception as e:
                                 logger.error(f"Error processing document '{doc.name}': {e}")
@@ -448,9 +444,14 @@ class PgVector(VectorDb):
                     try:
                         # Prepare documents for upserting
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
+                        duplicate_count = 0
                         for doc in batch_docs:
                             try:
-                                batch_records_dict[doc.id] = self._get_document_record(doc, filters, content_hash)  # type: ignore
+                                record = self._get_document_record(doc, filters, content_hash)
+                                record_id = record["id"]
+                                if record_id in batch_records_dict:
+                                    duplicate_count += 1
+                                batch_records_dict[record_id] = record  # Use generated record_id as key
                             except Exception as e:
                                 logger.error(f"Error processing document '{doc.name}': {e}")
 
@@ -489,9 +490,22 @@ class PgVector(VectorDb):
     def _get_document_record(
         self, doc: Document, filters: Optional[Dict[str, Any]] = None, content_hash: str = ""
     ) -> Dict[str, Any]:
-        doc.embed(embedder=self.embedder)
+        # Only embed if not already embedded
+        if doc.embedding is None:
+            doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
-        record_id = doc.id or content_hash
+        
+        # Generate unique record_id from doc.id, content_id and content
+        # Create hash input from doc.id, content_id and content to ensure uniqueness
+        hash_input = json.dumps(
+            {
+                "id": doc.id or "",
+                "content_id": doc.content_id or "",
+                "content": cleaned_content,
+            },
+            sort_keys=True,
+        )
+        record_id = md5(hash_input.encode()).hexdigest()
 
         meta_data = doc.meta_data or {}
         if filters:
@@ -597,10 +611,25 @@ class PgVector(VectorDb):
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
+                        duplicate_count = 0
                         for doc in batch_docs:
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = md5(cleaned_content.encode()).hexdigest()
+                                
+                                # Generate unique record_id from doc.id, content_id and content
+                                # Create hash input from doc.id, content_id and content to ensure uniqueness
+                                hash_input = json.dumps(
+                                    {
+                                        "id": doc.id or "",
+                                        "content_id": doc.content_id or "",
+                                        "content": cleaned_content,
+                                    },
+                                    sort_keys=True,
+                                )
+                                record_id = md5(hash_input.encode()).hexdigest()
+                                
+                                if record_id in batch_records_dict:
+                                    duplicate_count += 1
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
