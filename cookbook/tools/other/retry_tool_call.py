@@ -11,9 +11,12 @@ def add_item(run_context: RunContext, item: str) -> str:
     if run_context.session_state is None:
         run_context.session_state = {}
 
-    if run_context.session_state:
-        run_context.session_state["shopping_list"].append(item)
-        len_shopping_list = len(run_context.session_state["shopping_list"])
+    if "shopping_list" not in run_context.session_state:
+        run_context.session_state["shopping_list"] = []
+
+    run_context.session_state["shopping_list"].append(item)
+    len_shopping_list = len(run_context.session_state["shopping_list"])
+    
     if len_shopping_list < 3:
         logger.info(
             f"Asking the model to add {3 - len_shopping_list} more items to the shopping list."
