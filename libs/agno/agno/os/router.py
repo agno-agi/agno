@@ -139,6 +139,22 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
             kwargs.pop("knowledge_filters")
             log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
 
+    # Handle output_schema - convert JSON schema to dynamic Pydantic model
+    if output_schema := kwargs.get("output_schema"):
+        try:
+            if isinstance(output_schema, str):
+                from agno.os.utils import json_schema_to_pydantic_model
+
+                schema_dict = json.loads(output_schema)
+                dynamic_model = json_schema_to_pydantic_model(schema_dict)
+                kwargs["output_schema"] = dynamic_model
+        except json.JSONDecodeError:
+            kwargs.pop("output_schema")
+            log_warning(f"Invalid output_schema JSON: {output_schema}")
+        except Exception as e:
+            kwargs.pop("output_schema")
+            log_warning(f"Failed to create output_schema model: {e}")
+
     # Parse boolean and null values
     for key, value in kwargs.items():
         if isinstance(value, str) and value.lower() in ["true", "false"]:
