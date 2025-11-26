@@ -8,7 +8,7 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    reasoning_model=OpenAIChat(id="gpt-5"),
+    # reasoning_model=OpenAIChat(id="gpt-5"),
     db=InMemoryDb(),
     markdown=True,
     tools=[DuckDuckGoTools()],
@@ -104,69 +104,92 @@ print("✓ User/system/tool messages: No metrics (None)")
 
 # How to handle retries?
 # if we track, should we have a way to display it? RunOutput contains only the last successful run metrics.
+
+# RUN METRICS
 {
-'model_metrics': {
-    "model":[{
-        "id": "gpt-5",
-        "provider": "openai",
-        "input_tokens": 589,
-        "output_tokens": 159,
-        "total_tokens": 748,
-        "duration": 8.73270150006283,
-        "time_to_first_token": 5.490511832991615,
-    }],
-    "reasoning_model":[{
-        "id": "gpt-5",
-        "provider": "openai",
-        "input_tokens": 589,
-        "output_tokens": 159,
-        "total_tokens": 748,
-        "duration": 8.73270150006283,
-        "time_to_first_token": 5.490511832991615,
-    }],
-    "session_summary_model":[{
-        "id": "gpt-5",
-        "provider": "openai",
-        "input_tokens": 589,
-        "output_tokens": 159,
-        "total_tokens": 748,
-        "duration": 8.73270150006283,
-        "time_to_first_token": 5.490511832991615,
-    }],
-    "context_compression_model":[{
-        "id": "gpt-5",
-        "provider": "openai",
-        "input_tokens": 589,
-        "output_tokens": 159,
-        "total_tokens": 748,
-        "duration": 8.73270150006283,
-        "time_to_first_token": 5.490511832991615,
-    }],
-    "culture_model":[{
-        "id": "gpt-5",
-        "provider": "openai",
-        "input_tokens": 589,
-        "output_tokens": 159,
-        "total_tokens": 748,
-        "duration": 8.73270150006283,
-        "time_to_first_token": 5.490511832991615,
-    }],
-    "memory_model":[{
-        "id": "gpt-5",
-        "provider": "openai",
-        "input_tokens": 589,
-        "output_tokens": 159,
-        "total_tokens": 748,
-        "duration": 8.73270150006283,
-        "time_to_first_token": 5.490511832991615,
-    }],
-}, 'duration': 8.73270150006283,
-'input_tokens': 589, 'output_tokens': 159, 'total_tokens': 748 # IF model is always the same, we can add this and display
-# If there is any difference in model id or provider we cant show input/output/total tokens
+    'input_tokens': 589, # total input tokens summed from all models in the details section
+    'output_tokens': 159, # total output tokens summed from all models in the details section
+    'total_tokens': 748, # total tokens summed from all models in the details section
+    'time_to_first_token': 5.490511832991615, # time to first token from the first model called in the run
+    'duration': 8.73270150006283, # total duration of the run
+    'details': {
+        "model":[{
+            "id": "gpt-5",
+            "provider": "openai",
+            "input_tokens": 589,
+            "output_tokens": 159,
+            "total_tokens": 748,
+            "time_to_first_token": 5.490511832991615,
+        }],
+        "reasoning_model":[{
+            "id": "claude-3-7-sonnet-latest",
+            "provider": "anthropic",
+            "input_tokens": 589,
+            "output_tokens": 159,
+            "total_tokens": 748,
+            "time_to_first_token": 5.490511832991615,
+        }],
+        "session_summary_model":[{
+            "id": "gpt-5",
+            "provider": "openai",
+            "input_tokens": 589,
+            "output_tokens": 159,
+            "total_tokens": 748,
+            "time_to_first_token": 5.490511832991615,
+        }],
+        "context_compression_model":[{
+            "id": "gpt-5",
+            "provider": "openai",
+            "input_tokens": 589,
+            "output_tokens": 159,
+            "total_tokens": 748,
+            "time_to_first_token": 5.490511832991615,
+        }],
+        "culture_model":[{
+            "id": "gpt-5",
+            "provider": "openai",
+            "input_tokens": 589,
+            "output_tokens": 159,
+            "total_tokens": 748,
+            "time_to_first_token": 5.490511832991615,
+        }],
+        "memory_model":[{
+            "id": "gpt-5",
+            "provider": "openai",
+            "input_tokens": 589,
+            "output_tokens": 159,
+            "total_tokens": 748,
+            "time_to_first_token": 5.490511832991615,
+        }],
+    }
 }
 
+# SESSION METRICS
 
-
-
-
-# If run metri
+{
+    'input_tokens': 1287,
+    'output_tokens': 87,
+    'total_tokens': 1374,
+    'average_duration': 6.450697125052102,
+    'total_runs': 1,
+    'details': 
+    [
+        {
+            "provider": "openai",
+            "id": "gpt-5",
+            "input_tokens": 1287,
+            "output_tokens": 87,
+            "total_tokens": 1374,
+            "total_runs": 1,
+        },
+        {
+            "provider": "anthropic",
+            "id": "claude-3-7-sonnet-latest",
+            "input_tokens": 1287,
+            "output_tokens": 87,
+            "total_tokens": 1374,
+            "average_duration": 6.450697125052102,
+            "total_runs": 1,
+        }
+    ]
+}
