@@ -34,7 +34,7 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
 print_heading "Installing agno in editable mode with tests dependencies"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[tests]
 VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
-
+VIRTUAL_ENV=${VENV_DIR} uv pip install sqlalchemy
 VIRTUAL_ENV=${VENV_DIR} uv pip install google-genai==1.17.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
 VIRTUAL_ENV=${VENV_DIR} uv pip install fastmcp
