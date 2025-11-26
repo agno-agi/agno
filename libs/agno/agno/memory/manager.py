@@ -832,6 +832,10 @@ class MemoryManager:
         if apply:
             log_debug(f"Applying optimized memories to database for user {user_id}")
 
+            if not self.db:
+                log_warning("Memory DB not provided. Cannot apply optimized memories.")
+                return optimized_memories
+
             # Clear all existing memories for the user
             self.clear_user_memories(user_id=user_id)
 
@@ -898,6 +902,10 @@ class MemoryManager:
         if apply:
             log_debug(f"Optimizing memories for user {user_id}")
 
+            if not self.db:
+                log_warning("Memory DB not provided. Cannot apply optimized memories.")
+                return optimized_memories
+
             # Clear all existing memories for the user
             await self.aclear_user_memories(user_id=user_id)
 
@@ -911,7 +919,7 @@ class MemoryManager:
 
                 if isinstance(self.db, AsyncBaseDb):
                     await self.db.upsert_user_memory(memory=opt_mem)
-                else:
+                elif isinstance(self.db, BaseDb):
                     self.db.upsert_user_memory(memory=opt_mem)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
