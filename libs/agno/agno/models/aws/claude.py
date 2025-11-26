@@ -33,13 +33,14 @@ class Claude(AnthropicClaude):
     For more information, see: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic.html
     """
 
-    id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    id: str = "anthropic.claude-sonnet-4-20250514-v1:0"
     name: str = "AwsBedrockAnthropicClaude"
     provider: str = "AwsBedrock"
 
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
     aws_region: Optional[str] = None
+    api_key: Optional[str] = None
     session: Optional[Session] = None
 
     # -*- Request parameters
@@ -81,6 +82,43 @@ class Claude(AnthropicClaude):
     client: Optional[AnthropicBedrock] = None  # type: ignore
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
+    def _build_client_params(self) -> Dict[str, Any]:
+        if self.session:
+            credentials = self.session.get_credentials()
+            client_params: Dict[str, Any] = {
+                "aws_access_key": credentials.access_key,
+                "aws_secret_key": credentials.secret_key,
+                "aws_session_token": credentials.token,
+                "aws_region": self.session.region_name,
+            }
+        else:
+            self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
+            if self.api_key:
+                self.aws_region = self.aws_region or getenv("AWS_REGION")
+                client_params = {
+                    "api_key": self.api_key,
+                }
+                if self.aws_region:
+                    client_params["aws_region"] = self.aws_region
+            else:
+                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
+                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
+                self.aws_region = self.aws_region or getenv("AWS_REGION")
+
+                client_params = {
+                    "aws_secret_key": self.aws_secret_key,
+                    "aws_access_key": self.aws_access_key,
+                    "aws_region": self.aws_region,
+                }
+
+        if self.timeout is not None:
+            client_params["timeout"] = self.timeout
+
+        if self.client_params:
+            client_params.update(self.client_params)
+
+        return client_params
+
     def get_client(self):
         """
         Get the Bedrock client.
@@ -91,30 +129,7 @@ class Claude(AnthropicClaude):
         if self.client is not None and not self.client.is_closed():
             return self.client
 
-        if self.session:
-            credentials = self.session.get_credentials()
-            client_params = {
-                "aws_access_key": credentials.access_key,
-                "aws_secret_key": credentials.secret_key,
-                "aws_session_token": credentials.token,
-                "aws_region": self.session.region_name,
-            }
-        else:
-            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
-            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
-            self.aws_region = self.aws_region or getenv("AWS_REGION")
-
-            client_params = {
-                "aws_secret_key": self.aws_secret_key,
-                "aws_access_key": self.aws_access_key,
-                "aws_region": self.aws_region,
-            }
-
-        if self.timeout is not None:
-            client_params["timeout"] = self.timeout
-
-        if self.client_params:
-            client_params.update(self.client_params)
+        client_params = self._build_client_params()
 
         if self.http_client:
             if isinstance(self.http_client, httpx.Client):
@@ -142,26 +157,7 @@ class Claude(AnthropicClaude):
         if self.async_client is not None:
             return self.async_client
 
-        if self.session:
-            credentials = self.session.get_credentials()
-            client_params = {
-                "aws_access_key": credentials.access_key,
-                "aws_secret_key": credentials.secret_key,
-                "aws_session_token": credentials.token,
-                "aws_region": self.session.region_name,
-            }
-        else:
-            client_params = {
-                "aws_secret_key": self.aws_secret_key,
-                "aws_access_key": self.aws_access_key,
-                "aws_region": self.aws_region,
-            }
-
-        if self.timeout is not None:
-            client_params["timeout"] = self.timeout
-
-        if self.client_params:
-            client_params.update(self.client_params)
+        client_params = self._build_client_params()
 
         if self.http_client:
             if isinstance(self.http_client, httpx.AsyncClient):
@@ -268,6 +264,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
@@ -315,6 +312,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Stream a response from the Anthropic API.
@@ -331,7 +329,7 @@ class Claude(AnthropicClaude):
             APIStatusError: For other API-related errors
         """
 
-        chat_messages, system_message = format_messages(messages)
+        chat_messages, system_message = format_messages(messages, compress_tool_results)
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
@@ -373,13 +371,14 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:
@@ -422,6 +421,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
@@ -439,7 +439,7 @@ class Claude(AnthropicClaude):
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:
