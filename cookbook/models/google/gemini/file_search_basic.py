@@ -67,7 +67,7 @@ if run.citations and run.citations.raw:
                     print(f"\n  [{i}] {retrieved_context.get('title', 'Unknown')}")
                     if retrieved_context.get("uri"):
                         print(f"      URI: {retrieved_context['uri']}")
-                    print(f"      Type: file_search")
+                    print("      Type: file_search")
                     if retrieved_context.get("text"):
                         text = retrieved_context["text"]
                         if len(text) > 200:

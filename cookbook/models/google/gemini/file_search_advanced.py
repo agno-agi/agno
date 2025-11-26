@@ -147,7 +147,7 @@ if run2.citations and run2.citations.raw:
                 print(f"\n  [{i}] {rc.get('title', 'Unknown')}")
                 if rc.get("uri"):
                     print(f"      URI: {rc['uri']}")
-                print(f"      Type: file_search")
+                print("      Type: file_search")
                 if rc.get("text"):
                     text = rc["text"]
                     if len(text) > 200:
