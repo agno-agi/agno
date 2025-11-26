@@ -1,4 +1,3 @@
-
 """
 Traces with AgentOS
 Requirements:
@@ -6,15 +5,13 @@ Requirements:
 """
 
 from agno.agent import Agent
-from agno.db.mongo import MongoDb
+from agno.db.redis import RedisDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
 
-db_url = "mongodb://localhost:27017"
-
-db = MongoDb(db_url=db_url)
+db = RedisDb(db_url="redis://localhost:6379")
 
 # Set up tracing - this instruments ALL agents automatically
 setup_tracing(db=db)
@@ -36,4 +33,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="basic_agent_with_mongodb:app", reload=True)
+    agent_os.serve(app="basic_agent_with_redis:app", reload=True)
