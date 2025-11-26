@@ -216,18 +216,18 @@ class TraceDetail(BaseModel):
             else:
                 trace_output = output_val
 
-        span_kind = root_span.attributes.get("openinference.span.kind", "")
-        output_is_empty = not trace_output or trace_output == "None" or str(trace_output).strip() == "None"
-        if span_kind == "CHAIN" and output_is_empty and trace.status != "ERROR":
-            # Find direct children of root span (workflow steps)
-            root_span_id = root_span.span_id
-            direct_children = [s for s in spans if s.parent_span_id == root_span_id]
-            if direct_children:
-                # Sort by end_time to get the last executed step
-                direct_children.sort(key=lambda s: s.end_time, reverse=True)
-                last_step = direct_children[0]
-                # Get output from the last step
-                trace_output = last_step.attributes.get("output.value")
+            span_kind = root_span.attributes.get("openinference.span.kind", "")
+            output_is_empty = not trace_output or trace_output == "None" or str(trace_output).strip() == "None"
+            if span_kind == "CHAIN" and output_is_empty and trace.status != "ERROR":
+                # Find direct children of root span (workflow steps)
+                root_span_id = root_span.span_id
+                direct_children = [s for s in spans if s.parent_span_id == root_span_id]
+                if direct_children:
+                    # Sort by end_time to get the last executed step
+                    direct_children.sort(key=lambda s: s.end_time, reverse=True)
+                    last_step = direct_children[0]
+                    # Get output from the last step
+                    trace_output = last_step.attributes.get("output.value")
 
         # Calculate total tokens from all LLM spans
         total_input_tokens = 0
