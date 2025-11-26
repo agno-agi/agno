@@ -44,11 +44,11 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install pylance
 VIRTUAL_ENV=${VENV_DIR} uv pip install psycopg-binary psycopg psycopg2 sqlalchemy
 
 
-print_heading "Installing agno-os"
+print_heading "Installing agno-infra"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt
 
-print_heading "Installing agno-os in editable mode with dev dependencies"
+print_heading "Installing agno-infra in editable mode with dev dependencies"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_INFRA_DIR}[dev]
 
 print_heading "uv pip list"
