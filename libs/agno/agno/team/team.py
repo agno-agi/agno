@@ -51,7 +51,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RunError, RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -61,7 +61,13 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
-from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
+    TeamRunEvent,
+    TeamRunInput,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+)
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -2407,19 +2413,42 @@ class Team:
         run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
-            pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                run_input=run_input,
-                session=team_session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                stream_events=stream_events,
-                **kwargs,
-            )
-            async for pre_hook_event in pre_hook_iterator:
-                yield pre_hook_event
+            try:
+                pre_hook_iterator = self._aexecute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    run_input=run_input,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    stream_events=stream_events,
+                    **kwargs,
+                )
+                async for pre_hook_event in pre_hook_iterator:
+                    yield pre_hook_event
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                run_response.status = RunStatus.error
+                run_response.content = str(e)
+                run_response.error = RunError(
+                    message=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                await self._acleanup_and_store(
+                    run_response=run_response,
+                    session=team_session,
+                )
+                error_event = TeamRunErrorEvent(
+                    content=str(e) + " by Anurag",
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                yield error_event
+                return
 
         # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
