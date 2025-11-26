@@ -4,6 +4,8 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.team.team import Team
@@ -102,6 +104,13 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     assert len(session_from_db.runs) == 2, "We should have the team run and the member run"
     assert len(session_from_db.runs[-1].messages) == 5, "First run, no history messages"
 
+    assert isinstance(session_from_db.runs[0], RunOutput)
+    assert session_from_db.runs[0].agent_id == "weather-agent-id"
+    assert session_from_db.runs[0].parent_run_id == session_from_db.runs[1].run_id
+    assert isinstance(session_from_db.runs[1], TeamRunOutput)
+    assert session_from_db.runs[1].team_id == team_1.id
+    assert session_from_db.runs[1].parent_run_id is None
+
     agent_1.run(
         "What is the weather in Paris?", session_id=session_id, user_id="user_1", session_state={"city": "Paris"}
     )
@@ -117,6 +126,15 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     assert len(session_from_db.runs[-1].messages) == 8, (
         "Original 4 history messages (not system message), plus the new agent run's messages"
     )
+    assert isinstance(session_from_db.runs[0], RunOutput)
+    assert session_from_db.runs[0].agent_id == "weather-agent-id"
+    assert session_from_db.runs[0].parent_run_id == session_from_db.runs[1].run_id
+    assert isinstance(session_from_db.runs[1], TeamRunOutput)
+    assert session_from_db.runs[1].team_id == team_1.id
+    assert session_from_db.runs[1].parent_run_id is None
+    assert isinstance(session_from_db.runs[2], RunOutput)
+    assert session_from_db.runs[2].agent_id == agent_1.id
+    assert session_from_db.runs[2].parent_run_id is None
 
 
 def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
@@ -139,6 +157,9 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 1, "We should have the agent run"
     assert len(session_from_db.runs[-1].messages) == 4, "First run, no history messages"
+    assert isinstance(session_from_db.runs[0], RunOutput)
+    assert session_from_db.runs[0].agent_id == agent_1.id
+    assert session_from_db.runs[0].parent_run_id is None
 
     team_1.run(
         "What is the weather in Paris?", session_id=session_id, user_id="user_1", session_state={"city": "Paris"}
@@ -153,6 +174,16 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     assert len(session_from_db.runs) == 3, "We should have the first agent run, plus the new team run and member run"
 
     assert len(session_from_db.runs[-1].messages) == 9, "Original 4 history messages, plus the new team run's messages"
+
+    assert isinstance(session_from_db.runs[0], RunOutput)
+    assert session_from_db.runs[0].agent_id == agent_1.id
+    assert session_from_db.runs[0].parent_run_id is None
+    assert isinstance(session_from_db.runs[1], RunOutput)
+    assert session_from_db.runs[1].agent_id == "weather-agent-id"
+    assert session_from_db.runs[1].parent_run_id == session_from_db.runs[2].run_id
+    assert isinstance(session_from_db.runs[2], TeamRunOutput)
+    assert session_from_db.runs[2].team_id == team_1.id
+    assert session_from_db.runs[2].parent_run_id is None
 
 
 def test_session_sharing_agent_to_agent_with_history(agent_1, agent_2):

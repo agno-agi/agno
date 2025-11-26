@@ -12,6 +12,7 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import images_to_message
 
@@ -93,7 +94,7 @@ class Groq(Model):
 
     def get_client(self) -> GroqClient:
         """
-        Returns a Groq client.
+        Returns a Groq client. Caches the client to avoid recreating it on every request.
 
         Returns:
             GroqClient: An instance of the Groq client.
@@ -103,14 +104,22 @@ class Groq(Model):
 
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
 
         self.client = GroqClient(**client_params)
         return self.client
 
     def get_async_client(self) -> AsyncGroqClient:
         """
-        Returns an asynchronous Groq client.
+        Returns an asynchronous Groq client. Caches the client to avoid recreating it on every request.
 
         Returns:
             AsyncGroqClient: An instance of the asynchronous Groq client.
@@ -119,15 +128,20 @@ class Groq(Model):
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
         else:
-            if self.http_client:
-                log_debug("The current http_client is not async. A default httpx.AsyncClient will be used instead.")
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
+
+        # Create and cache the client
         self.async_client = AsyncGroqClient(**client_params)
         return self.async_client
 
@@ -207,19 +221,28 @@ class Groq(Model):
         self,
         message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> Dict[str, Any]:
         """
         Format a message into the format expected by Groq.
 
         Args:
             message (Message): The message to format.
+            response_format: Optional response format specification.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        # Use compressed content for tool messages if compression is active
+        if message.role == "tool":
+            content = message.get_content(use_compressed_content=compress_tool_results)
+        else:
+            content = message.content
+
         message_dict: Dict[str, Any] = {
             "role": message.role,
-            "content": message.content,
+            "content": content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
@@ -262,6 +285,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Groq API.
@@ -273,7 +297,7 @@ class Groq(Model):
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -302,6 +326,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Groq API.
@@ -313,7 +338,7 @@ class Groq(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -342,6 +367,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Groq API.
@@ -354,7 +380,7 @@ class Groq(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
@@ -382,6 +408,7 @@ class Groq(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
@@ -395,7 +422,7 @@ class Groq(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self.format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )

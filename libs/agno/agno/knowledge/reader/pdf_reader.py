@@ -9,7 +9,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_error, log_info, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -236,13 +236,13 @@ class BasePDFReader(Reader):
         # Use provided password or fall back to instance password
         pdf_password = password or self.password
         if not pdf_password:
-            logger.error(f'PDF file "{doc_name}" is password protected but no password provided')
+            log_error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
         try:
             decrypted_pdf = doc_reader.decrypt(pdf_password)
             if decrypted_pdf:
-                log_info(f'Successfully decrypted PDF file "{doc_name}" with user password')
+                log_debug(f'Successfully decrypted PDF file "{doc_name}" with user password')
                 return True
             else:
                 log_error(f'Failed to decrypt PDF file "{doc_name}": incorrect password')
@@ -344,12 +344,12 @@ class PDFReader(BasePDFReader):
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
     ) -> List[Document]:
         doc_name = self._get_doc_name(pdf, name)
-        log_info(f"Reading: {doc_name}")
+        log_debug(f"Reading: {doc_name}")
 
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {e}")
             return []
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
@@ -368,12 +368,12 @@ class PDFReader(BasePDFReader):
             log_error("No pdf provided")
             return []
         doc_name = self._get_doc_name(pdf, name)
-        log_info(f"Reading: {doc_name}")
+        log_debug(f"Reading: {doc_name}")
 
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {e}")
             return []
 
         # Handle PDF decryption
@@ -394,11 +394,11 @@ class PDFImageReader(BasePDFReader):
             raise ValueError("No pdf provided")
 
         doc_name = self._get_doc_name(pdf, name)
-        log_info(f"Reading: {doc_name}")
+        log_debug(f"Reading: {doc_name}")
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {e}")
             return []
 
         # Handle PDF decryption
@@ -406,7 +406,7 @@ class PDFImageReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
 
     async def async_read(
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
@@ -415,12 +415,12 @@ class PDFImageReader(BasePDFReader):
             raise ValueError("No pdf provided")
 
         doc_name = self._get_doc_name(pdf, name)
-        log_info(f"Reading: {doc_name}")
+        log_debug(f"Reading: {doc_name}")
 
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {e}")
             return []
 
         # Handle PDF decryption
@@ -428,4 +428,4 @@ class PDFImageReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)

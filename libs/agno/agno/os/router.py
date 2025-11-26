@@ -13,9 +13,12 @@ from fastapi import (
     WebSocket,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from packaging import version
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
+from agno.db.base import AsyncBaseDb
+from agno.db.migrations.manager import MigrationManager
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -39,6 +42,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
+    get_db,
     get_team_by_id,
     get_workflow_by_id,
     process_audio,
@@ -106,10 +110,50 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
         try:
             if isinstance(knowledge_filters, str):
                 knowledge_filters_dict = json.loads(knowledge_filters)  # type: ignore
-                kwargs["knowledge_filters"] = knowledge_filters_dict
+
+                # Try to deserialize FilterExpr objects
+                from agno.filters import from_dict
+
+                # Check if it's a single FilterExpr dict or a list of FilterExpr dicts
+                if isinstance(knowledge_filters_dict, dict) and "op" in knowledge_filters_dict:
+                    # Single FilterExpr - convert to list format
+                    kwargs["knowledge_filters"] = [from_dict(knowledge_filters_dict)]
+                elif isinstance(knowledge_filters_dict, list):
+                    # List of FilterExprs or mixed content
+                    deserialized = []
+                    for item in knowledge_filters_dict:
+                        if isinstance(item, dict) and "op" in item:
+                            deserialized.append(from_dict(item))
+                        else:
+                            # Keep non-FilterExpr items as-is
+                            deserialized.append(item)
+                    kwargs["knowledge_filters"] = deserialized
+                else:
+                    # Regular dict filter
+                    kwargs["knowledge_filters"] = knowledge_filters_dict
         except json.JSONDecodeError:
             kwargs.pop("knowledge_filters")
             log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+        except ValueError as e:
+            # Filter deserialization failed
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
+
+    # Handle output_schema - convert JSON schema to dynamic Pydantic model
+    if output_schema := kwargs.get("output_schema"):
+        try:
+            if isinstance(output_schema, str):
+                from agno.os.utils import json_schema_to_pydantic_model
+
+                schema_dict = json.loads(output_schema)
+                dynamic_model = json_schema_to_pydantic_model(schema_dict)
+                kwargs["output_schema"] = dynamic_model
+        except json.JSONDecodeError:
+            kwargs.pop("output_schema")
+            log_warning(f"Invalid output_schema JSON: {output_schema}")
+        except Exception as e:
+            kwargs.pop("output_schema")
+            log_warning(f"Failed to create output_schema model: {e}")
 
     # Parse boolean and null values
     for key, value in kwargs.items():
@@ -1735,5 +1779,54 @@ def get_base_router(
             raise HTTPException(status_code=500, detail="Failed to cancel run")
 
         return JSONResponse(content={}, status_code=200)
+
+    # -- Database Migration routes ---
+
+    @router.post(
+        "/databases/{db_id}/migrate",
+        tags=["Database"],
+        operation_id="migrate_database",
+        summary="Migrate Database",
+        description=(
+            "Migrate the given database schema to the given target version. "
+            "If a target version is not provided, the database will be migrated to the latest version. "
+        ),
+        responses={
+            200: {
+                "description": "Database migrated successfully",
+                "content": {
+                    "application/json": {
+                        "example": {"message": "Database migrated successfully to version 3.0.0"},
+                    }
+                },
+            },
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            500: {"description": "Failed to migrate database", "model": InternalServerErrorResponse},
+        },
+    )
+    async def migrate_database(db_id: str, target_version: Optional[str] = None):
+        db = await get_db(os.dbs, db_id)
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        if target_version:
+            # Use the session table as proxy for the database schema version
+            if isinstance(db, AsyncBaseDb):
+                current_version = await db.get_latest_schema_version(db.session_table_name)
+            else:
+                current_version = db.get_latest_schema_version(db.session_table_name)
+
+            if version.parse(target_version) > version.parse(current_version):  # type: ignore
+                MigrationManager(db).up(target_version)  # type: ignore
+            else:
+                MigrationManager(db).down(target_version)  # type: ignore
+
+        # If the target version is not provided, migrate to the latest version
+        else:
+            MigrationManager(db).up()  # type: ignore
+
+        return JSONResponse(
+            content={"message": f"Database migrated successfully to version {target_version}"}, status_code=200
+        )
 
     return router

@@ -14,7 +14,6 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.arxiv import ArxivTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 
 arxiv_download_dir = Path(__file__).parent.joinpath("tmp", "arxiv_pdfs__{session_id}")
@@ -50,7 +49,7 @@ academic_paper_researcher = Agent(
     name="Academic Paper Researcher",
     model=OpenAIChat("gpt-4o"),
     role="Research academic papers and scholarly content",
-    tools=[GoogleSearchTools(), ArxivTools(download_dir=arxiv_download_dir)],
+    tools=[DuckDuckGoTools(), ArxivTools(download_dir=arxiv_download_dir)],
     add_name_to_context=True,
     instructions=dedent("""
     You are a academic paper researcher.
@@ -86,7 +85,7 @@ agent_team = Team(
         academic_paper_researcher,
         twitter_researcher,
     ],
-    delegate_task_to_all_members=True,
+    delegate_to_all_members=True,
     instructions=[
         "You are a discussion master.",
         "You have to stop the discussion when you think the team has reached a consensus.",
@@ -100,6 +99,5 @@ if __name__ == "__main__":
         agent_team.aprint_response(
             input="Start the discussion on the topic: 'What is the best way to learn to code?'",
             stream=True,
-            stream_events=True,
         )
     )

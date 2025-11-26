@@ -1,9 +1,10 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.filters import FilterExpr
 from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
@@ -18,9 +19,10 @@ class RunContext:
     user_id: Optional[str] = None
 
     dependencies: Optional[Dict[str, Any]] = None
-    knowledge_filters: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Type[BaseModel]] = None
 
 
 @dataclass

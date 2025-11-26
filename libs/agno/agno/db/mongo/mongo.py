@@ -236,6 +236,14 @@ class MongoDb(BaseDb):
             log_error(f"Error getting collection {collection_name}: {e}")
             raise
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:
@@ -976,12 +984,14 @@ class MongoDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The limit of the memories to get.
             page (Optional[int]): The page number to get.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories stats and the total count.
@@ -994,9 +1004,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return [], 0
 
-            match_stage = {"user_id": {"$ne": None}}
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None}}
+            if user_id is not None:
+                match_stage["user_id"] = user_id
 
-            pipeline = [
+            pipeline: List[Dict[str, Any]] = [
                 {"$match": match_stage},
                 {
                     "$group": {
@@ -1140,7 +1152,10 @@ class MongoDb(BaseDb):
                     "team_id": memory.team_id,
                     "memory_id": memory.memory_id,
                     "memory": memory.memory,
+                    "input": memory.input,
+                    "feedback": memory.feedback,
                     "topics": memory.topics,
+                    "created_at": memory.created_at,
                     "updated_at": updated_at,
                 }
 

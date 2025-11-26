@@ -281,5 +281,4 @@ if __name__ == "__main__":
     enhanced_workflow.print_response(
         input="Latest developments in artificial intelligence and machine learning",
         stream=True,
-        stream_events=True,
     )

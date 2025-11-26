@@ -1,4 +1,5 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import RetryAgentRun
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
@@ -31,18 +32,26 @@ def add_item(run_context: RunContext, item: str) -> str:
     if run_context.session_state is None:
         run_context.session_state = {}
 
-    if run_context.session_state:
-        run_context.session_state["shopping_list"].append(item)
-        return f"The shopping list is now {run_context.session_state['shopping_list']}"
-    return ""
+    if "shopping_list" not in run_context.session_state:
+        run_context.session_state["shopping_list"] = []
+
+    run_context.session_state["shopping_list"].append(item)
+    return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
+    session_id="retry_tool_call_from_post_hook_session",
+    db=SqliteDb(
+        session_table="retry_tool_call_from_post_hook_session",
+        db_file="tmp/retry_tool_call_from_post_hook.db",
+    ),
     # Initialize the session state with empty shopping list
     session_state={"shopping_list": []},
     tools=[add_item],
     markdown=True,
 )
 agent.print_response("Add milk", stream=True)
-print(f"Final session state: {agent.get_session_state()}")
+print(
+    f"Final session state: {agent.get_session_state(session_id='retry_tool_call_from_post_hook_session')}"
+)

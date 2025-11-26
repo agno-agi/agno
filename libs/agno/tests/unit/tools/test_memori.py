@@ -80,8 +80,8 @@ def dummy_agent():
         MagicMock(role="assistant", content="That's great! Python is a wonderful language."),
     ]
 
-    # Mock get_messages_for_session method
-    agent.get_messages_for_session.return_value = messages
+    # Mock get_session_messages method
+    agent.get_session_messages.return_value = messages
 
     # Mock memory with messages
     agent.memory = MagicMock()
@@ -235,8 +235,8 @@ def test_record_conversation_success_with_session_messages(memori_toolkit_defaul
 
 def test_record_conversation_success_with_memory_messages(memori_toolkit_default, mock_memori_instance, dummy_agent):
     """Test conversation recording using memory messages when session messages fail."""
-    # Remove get_messages_for_session to test fallback
-    del dummy_agent.get_messages_for_session
+    # Remove get_session_messages to test fallback
+    del dummy_agent.get_session_messages
 
     result_str = memori_toolkit_default.record_conversation("User prefers JavaScript")
 
@@ -254,7 +254,7 @@ def test_record_conversation_success_with_run_response_fallback(
 ):
     """Test conversation recording using run_response as fallback."""
     # Remove other methods to test run_response fallback
-    del dummy_agent.get_messages_for_session
+    del dummy_agent.get_session_messages
     dummy_agent.memory.messages = []
 
     memori_toolkit_default.record_conversation("Test content")
@@ -268,7 +268,7 @@ def test_record_conversation_success_with_run_response_fallback(
 def test_record_conversation_with_default_fallback(memori_toolkit_default, mock_memori_instance, dummy_agent):
     """Test conversation recording with default AI response fallback."""
     # Remove all methods to test default fallback
-    del dummy_agent.get_messages_for_session
+    del dummy_agent.get_session_messages
     dummy_agent.memory.messages = []
     dummy_agent.run_response = None
 
