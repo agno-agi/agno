@@ -822,8 +822,8 @@ async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str
 
 
 def execute_instructions(
-    instructions: Union[str, List[str], Callable],
-    agent: Optional["Agent"] = None,
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
@@ -858,12 +858,12 @@ def execute_instructions(
 
 
 def execute_system_message(
-    system_message: Union[str, Message, Callable],
-    agent: Optional["Agent"] = None,
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
-) -> Optional[Message]:
+) -> str:
     """Execute the system message function."""
     import inspect
 
@@ -882,8 +882,8 @@ def execute_system_message(
 
 
 async def aexecute_instructions(
-    instructions: Union[str, List[str], Callable],
-    agent: Optional["Agent"] = None,
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
@@ -915,12 +915,12 @@ async def aexecute_instructions(
 
 
 async def aexecute_system_message(
-    system_message: Union[str, Message, Callable],
-    agent: Optional["Agent"] = None,
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
-) -> Optional[Message]:
+) -> str:
     import inspect
 
     signature = inspect.signature(system_message)
