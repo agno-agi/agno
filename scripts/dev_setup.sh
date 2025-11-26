@@ -36,7 +36,7 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install -e "${AGNO_DIR}[dev,a2a,models,storage,ve
 #TODO: Improve the dev setup to handle conflicts which results in missing dependencies
 
 # Install missing dependencies: 
-VIRTUAL_ENV=${VENV_DIR} uv pip install anthropic ddgs lancedb exa_py
+VIRTUAL_ENV=${VENV_DIR} uv pip install anthropic ddgs lancedb exa_py groq
 VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
 VIRTUAL_ENV=${VENV_DIR} uv pip install google-genai==1.17.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
