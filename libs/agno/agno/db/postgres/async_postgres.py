@@ -199,7 +199,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 log_debug(f"Successfully created table '{table_name}'")
                 table_created = True
             else:
-                log_debug(f"Table '{db_schema}.{table_name}' already exists, skipping creation")
+                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:

@@ -181,7 +181,7 @@ class MySQLDb(BaseDb):
                 log_debug(f"Successfully created table '{table_name}'")
                 table_created = True
             else:
-                log_debug(f"Table {db_schema}.{table_name} already exists, skipping creation")
+                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -207,7 +207,7 @@ class MySQLDb(BaseDb):
 
                     idx.create(self.db_engine)
 
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
@@ -237,7 +237,7 @@ class MySQLDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            self._create_table(table_name=table_name, table_type=table_type)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":

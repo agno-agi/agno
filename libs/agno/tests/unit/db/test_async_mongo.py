@@ -242,6 +242,7 @@ class TestAsyncMongoDbClientTypeDetection:
         # Check if PyMongo async is available
         try:
             import pymongo  # noqa: F401
+
             # Verify AsyncMongoClient exists
             if not hasattr(pymongo, "AsyncMongoClient"):
                 pytest.skip("PyMongo async not available")
