@@ -1206,19 +1206,44 @@ class Agent:
         self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
             # Can modify the run input
-            pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_input=run_input,
-                run_context=run_context,
-                session=session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                stream_events=stream_events,
-                **kwargs,
-            )
-            for event in pre_hook_iterator:
-                yield event
+            try:
+                pre_hook_iterator = self._execute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_input=run_input,
+                    run_context=run_context,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    stream_events=stream_events,
+                    **kwargs,
+                )
+                for event in pre_hook_iterator:
+                    yield event
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                run_response.status = RunStatus.error
+                run_response.content = str(e)
+                run_response.error = RunError(
+                    message=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                self._cleanup_and_store(
+                    run_response=run_response,
+                    session=session,
+                    run_context=run_context,
+                    user_id=user_id,
+                )
+                error_event = RunErrorEvent(
+                    content=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                yield error_event
+                return
 
         # 2. Determine tools for model
         processed_tools = self.get_tools(
@@ -1584,263 +1609,223 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
-        try:
-            if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
-                log_warning(
-                    "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-                )
-
-            if yield_run_response is not None:
-                warnings.warn(
-                    "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-
-            # Validate input against input_schema if provided
-            validated_input = self._validate_input(input)
-
-            # Normalise hook & guardails
-            if not self._hooks_normalised:
-                if self.pre_hooks:
-                    self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
-                if self.post_hooks:
-                    self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
-                self._hooks_normalised = True
-
-            # Initialize the Agent
-            self.initialize_agent(debug_mode=debug_mode)
-
-            image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-                images=images, videos=videos, audios=audio, files=files
+        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
-            # Create RunInput to capture the original user input
-            run_input = RunInput(
-                input_content=validated_input,
-                images=image_artifacts,
-                videos=video_artifacts,
-                audios=audio_artifacts,
-                files=file_artifacts,
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
-            # Read existing session from database
-            agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-            self._update_metadata(session=agent_session)
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
 
-            # Initialize session state
-            session_state = self._initialize_session_state(
-                session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+        # Normalise hook & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
+            self._hooks_normalised = True
+
+        # Initialize the Agent
+        self.initialize_agent(debug_mode=debug_mode)
+
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
+        )
+
+        # Create RunInput to capture the original user input
+        run_input = RunInput(
+            input_content=validated_input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=file_artifacts,
+        )
+
+        # Read existing session from database
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        self._update_metadata(session=agent_session)
+
+        # Initialize session state
+        session_state = self._initialize_session_state(
+            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
+        # Update session state from DB
+        session_state = self._load_session_state(session=agent_session, session_state=session_state)
+
+        # Determine runtime dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            output_schema=output_schema,
+        )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
+
+        # Resolve dependencies
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
+
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
+
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
-            # Update session state from DB
-            session_state = self._load_session_state(session=agent_session, session_state=session_state)
+        stream_events = stream_events or stream_intermediate_steps
 
-            # Determine runtime dependencies
-            dependencies = dependencies if dependencies is not None else self.dependencies
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
 
-            # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
-            if output_schema is None:
-                output_schema = self.output_schema
+        if stream_events is None:
+            stream_events = False if self.stream_events is None else self.stream_events
 
-            # Initialize run context
-            run_context = run_context or RunContext(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                output_schema=output_schema,
-            )
-            # output_schema parameter takes priority, even if run_context was provided
-            run_context.output_schema = output_schema
+        self.stream = self.stream or stream
+        self.stream_events = self.stream_events or stream_events
 
-            # Resolve dependencies
-            if run_context.dependencies is not None:
-                self._resolve_run_dependencies(run_context=run_context)
+        # Prepare arguments for the model
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
+        self.model = cast(Model, self.model)
 
-            add_dependencies = (
-                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-            )
-            add_session_state = (
-                add_session_state_to_context
-                if add_session_state_to_context is not None
-                else self.add_session_state_to_context
-            )
-            add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        # Merge agent metadata with run metadata
+        if self.metadata is not None and metadata is not None:
+            merge_dictionaries(metadata, self.metadata)
 
-            # When filters are passed manually
-            if self.knowledge_filters or knowledge_filters:
-                run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+        # Create a new run_response for this attempt
+        run_response = RunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=self.id,
+            user_id=user_id,
+            agent_name=self.name,
+            metadata=run_context.metadata,
+            session_state=run_context.session_state,
+            input=run_input,
+        )
 
-            # Use stream override value when necessary
-            if stream is None:
-                stream = False if self.stream is None else self.stream
+        run_response.model = self.model.id if self.model is not None else None
+        run_response.model_provider = self.model.provider if self.model is not None else None
 
-            # Considering both stream_events and stream_intermediate_steps (deprecated)
-            if stream_intermediate_steps is not None:
-                warnings.warn(
-                    "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            stream_events = stream_events or stream_intermediate_steps
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
 
-            # Can't stream events if streaming is disabled
-            if stream is False:
-                stream_events = False
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
 
-            if stream_events is None:
-                stream_events = False if self.stream_events is None else self.stream_events
+        last_exception = None
+        num_attempts = retries + 1
 
-            self.stream = self.stream or stream
-            self.stream_events = self.stream_events or stream_events
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
-            # Prepare arguments for the model
-            response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
-            self.model = cast(Model, self.model)
-
-            # Merge agent metadata with run metadata
-            if self.metadata is not None and metadata is not None:
-                merge_dictionaries(metadata, self.metadata)
-
-            # Create a new run_response for this attempt
-            run_response = RunOutput(
-                run_id=run_id,
-                session_id=session_id,
-                agent_id=self.id,
-                user_id=user_id,
-                agent_name=self.name,
-                metadata=run_context.metadata,
-                session_state=run_context.session_state,
-                input=run_input,
-            )
-
-            run_response.model = self.model.id if self.model is not None else None
-            run_response.model_provider = self.model.provider if self.model is not None else None
-
-            # Start the run metrics timer, to calculate the run duration
-            run_response.metrics = Metrics()
-            run_response.metrics.start_timer()
-
-            # If no retries are set, use the agent's default retries
-            retries = retries if retries is not None else self.retries
-
-            last_exception = None
-            num_attempts = retries + 1
-
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
-
-            for attempt in range(num_attempts):
-                try:
-                    if stream:
-                        response_iterator = self._run_stream(
-                            run_response=run_response,
-                            run_context=run_context,
-                            session=agent_session,
-                            user_id=user_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            yield_run_output=yield_run_output,
-                            debug_mode=debug_mode,
-                            **kwargs,
-                        )
-                        return response_iterator
-                    else:
-                        response = self._run(
-                            run_response=run_response,
-                            run_context=run_context,
-                            session=agent_session,
-                            user_id=user_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            response_format=response_format,
-                            debug_mode=debug_mode,
-                            **kwargs,
-                        )
-                        return response
-                except ModelProviderError as e:
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                    if isinstance(e, StopAgentRun):
-                        raise e
-                    last_exception = e
-                    if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                        if self.exponential_backoff:
-                            delay = 2**attempt * self.delay_between_retries
-                        else:
-                            delay = self.delay_between_retries
-                        import time
-
-                        time.sleep(delay)
-                except KeyboardInterrupt:
-                    run_response.content = "Operation cancelled by user"
-                    run_response.status = RunStatus.cancelled
-
-                    if stream:
-                        return generator_wrapper(  # type: ignore
-                            create_run_cancelled_event(
-                                from_run_response=run_response,
-                                reason="Operation cancelled by user",
-                            )
-                        )
-                    else:
-                        return run_response
-
-            # If we get here, all retries failed
-            if last_exception is not None:
-                log_error(
-                    f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-                )
+        for attempt in range(num_attempts):
+            try:
                 if stream:
-                    return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+                    response_iterator = self._run_stream(
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        yield_run_output=yield_run_output,
+                        debug_mode=debug_mode,
+                        **kwargs,
+                    )
+                    return response_iterator
+                else:
+                    response = self._run(
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        response_format=response_format,
+                        debug_mode=debug_mode,
+                        **kwargs,
+                    )
+                    return response
+            except ModelProviderError as e:
+                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                if isinstance(e, StopAgentRun):
+                    raise e
+                last_exception = e
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    import time
 
-                raise last_exception
-            else:
+                    time.sleep(delay)
+            except KeyboardInterrupt:
+                run_response.content = "Operation cancelled by user"
+                run_response.status = RunStatus.cancelled
+
                 if stream:
-                    return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-                raise Exception(f"Failed after {num_attempts} attempts.")
-        except (InputCheckError, OutputCheckError) as e:
-            log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                    return generator_wrapper(  # type: ignore
+                        create_run_cancelled_event(
+                            from_run_response=run_response,
+                            reason="Operation cancelled by user",
+                        )
+                    )
+                else:
+                    return run_response
 
-            # Create error run_response for storage
-            error_run_response = RunOutput(
-                run_id=run_id,
-                session_id=session_id,
-                agent_id=self.id,
-                user_id=user_id,
-                agent_name=self.name,
-                status=RunStatus.error,
-                content=str(e),
-                error=RunError(
-                    message=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                ),
+        # If we get here, all retries failed
+        if last_exception is not None:
+            log_error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            error_run_response.model = self.model.id if self.model is not None else None
-            error_run_response.model_provider = self.model.provider if self.model is not None else None
-
-            # Get or create session and store the error
-            error_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-            self._cleanup_and_store(
-                run_response=error_run_response,
-                session=error_session,
-                user_id=user_id,
-            )
-
             if stream:
-                error_event = RunErrorEvent(
-                    content=str(e) + " by Anurag",
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
-                return generator_wrapper(error_event)  # type: ignore
-            raise e
+                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+
+            raise last_exception
+        else:
+            if stream:
+                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -2598,254 +2583,214 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
-        try:
-            if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
-                log_warning(
-                    "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-                )
-
-            if yield_run_response is not None:
-                warnings.warn(
-                    "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-
-            # 2. Validate input against input_schema if provided
-            validated_input = self._validate_input(input)
-
-            # Normalise hooks & guardails
-            if not self._hooks_normalised:
-                if self.pre_hooks:
-                    self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
-                if self.post_hooks:
-                    self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
-                self._hooks_normalised = True
-
-            # Initialize the Agent
-            self.initialize_agent(debug_mode=debug_mode)
-
-            image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-                images=images, videos=videos, audios=audio, files=files
+        if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
+            log_warning(
+                "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
-            # Resolve variables
-            dependencies = dependencies if dependencies is not None else self.dependencies
-            add_dependencies = (
-                add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-            )
-            add_session_state = (
-                add_session_state_to_context
-                if add_session_state_to_context is not None
-                else self.add_session_state_to_context
-            )
-            add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-            # Create RunInput to capture the original user input
-            run_input = RunInput(
-                input_content=validated_input,
-                images=image_artifacts,
-                videos=video_artifacts,
-                audios=audio_artifacts,
-                files=files,
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
-            # Use stream override value when necessary
-            if stream is None:
-                stream = False if self.stream is None else self.stream
+        # 2. Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
 
-            # Considering both stream_events and stream_intermediate_steps (deprecated)
-            if stream_intermediate_steps is not None:
-                warnings.warn(
-                    "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            stream_events = stream_events or stream_intermediate_steps
+        # Normalise hooks & guardails
+        if not self._hooks_normalised:
+            if self.pre_hooks:
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
+            if self.post_hooks:
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
+            self._hooks_normalised = True
 
-            # Can't stream events if streaming is disabled
-            if stream is False:
-                stream_events = False
+        # Initialize the Agent
+        self.initialize_agent(debug_mode=debug_mode)
 
-            if stream_events is None:
-                stream_events = False if self.stream_events is None else self.stream_events
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+            images=images, videos=videos, audios=audio, files=files
+        )
 
-            self.stream = self.stream or stream
-            self.stream_events = self.stream_events or stream_events
+        # Resolve variables
+        dependencies = dependencies if dependencies is not None else self.dependencies
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-            self.model = cast(Model, self.model)
+        # Create RunInput to capture the original user input
+        run_input = RunInput(
+            input_content=validated_input,
+            images=image_artifacts,
+            videos=video_artifacts,
+            audios=audio_artifacts,
+            files=files,
+        )
 
-            # Get knowledge filters
-            knowledge_filters = knowledge_filters
-            if self.knowledge_filters or knowledge_filters:
-                knowledge_filters = self._get_effective_filters(knowledge_filters)
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
-            # Merge agent metadata with run metadata
-            if self.metadata is not None:
-                if metadata is None:
-                    metadata = self.metadata
-                else:
-                    merge_dictionaries(metadata, self.metadata)
-
-            # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
-            if output_schema is None:
-                output_schema = self.output_schema
-
-            # Initialize run context
-            run_context = run_context or RunContext(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                knowledge_filters=knowledge_filters,
-                metadata=metadata,
-                output_schema=output_schema,
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
-            # output_schema parameter takes priority, even if run_context was provided
-            run_context.output_schema = output_schema
+        stream_events = stream_events or stream_intermediate_steps
 
-            # Prepare arguments for the model (must be after run_context is fully initialized)
-            response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
 
-            # If no retries are set, use the agent's default retries
-            retries = retries if retries is not None else self.retries
+        if stream_events is None:
+            stream_events = False if self.stream_events is None else self.stream_events
 
-            # Create a new run_response for this attempt
-            run_response = RunOutput(
-                run_id=run_id,
-                session_id=session_id,
-                agent_id=self.id,
-                user_id=user_id,
-                agent_name=self.name,
-                metadata=run_context.metadata,
-                session_state=run_context.session_state,
-                input=run_input,
-            )
+        self.stream = self.stream or stream
+        self.stream_events = self.stream_events or stream_events
 
-            run_response.model = self.model.id if self.model is not None else None
-            run_response.model_provider = self.model.provider if self.model is not None else None
+        self.model = cast(Model, self.model)
 
-            # Start the run metrics timer, to calculate the run duration
-            run_response.metrics = Metrics()
-            run_response.metrics.start_timer()
+        # Get knowledge filters
+        knowledge_filters = knowledge_filters
+        if self.knowledge_filters or knowledge_filters:
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-            last_exception = None
-            num_attempts = retries + 1
-
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
-
-            for attempt in range(num_attempts):
-                try:
-                    # Pass the new run_response to _arun
-                    if stream:
-                        return self._arun_stream(  # type: ignore
-                            run_response=run_response,
-                            run_context=run_context,
-                            user_id=user_id,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            yield_run_output=yield_run_output,
-                            session_id=session_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            debug_mode=debug_mode,
-                            **kwargs,
-                        )  # type: ignore[assignment]
-                    else:
-                        return self._arun(  # type: ignore
-                            run_response=run_response,
-                            run_context=run_context,
-                            user_id=user_id,
-                            response_format=response_format,
-                            session_id=session_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            debug_mode=debug_mode,
-                            **kwargs,
-                        )
-
-                except ModelProviderError as e:
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                    if isinstance(e, StopAgentRun):
-                        raise e
-                    last_exception = e
-                    if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                        if self.exponential_backoff:
-                            delay = 2**attempt * self.delay_between_retries
-                        else:
-                            delay = self.delay_between_retries
-                        import time
-
-                        time.sleep(delay)
-                except KeyboardInterrupt:
-                    run_response.content = "Operation cancelled by user"
-                    run_response.status = RunStatus.cancelled
-
-                    if stream:
-                        return async_generator_wrapper(  # type: ignore
-                            create_run_cancelled_event(
-                                from_run_response=run_response,
-                                reason="Operation cancelled by user",
-                            )
-                        )
-                    else:
-                        return run_response
-
-            # If we get here, all retries failed
-            if last_exception is not None:
-                log_error(
-                    f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-                )
-
-                if stream:
-                    return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-                raise last_exception
+        # Merge agent metadata with run metadata
+        if self.metadata is not None:
+            if metadata is None:
+                metadata = self.metadata
             else:
+                merge_dictionaries(metadata, self.metadata)
+
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+            output_schema=output_schema,
+        )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
+
+        # Prepare arguments for the model (must be after run_context is fully initialized)
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
+
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
+
+        # Create a new run_response for this attempt
+        run_response = RunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=self.id,
+            user_id=user_id,
+            agent_name=self.name,
+            metadata=run_context.metadata,
+            session_state=run_context.session_state,
+            input=run_input,
+        )
+
+        run_response.model = self.model.id if self.model is not None else None
+        run_response.model_provider = self.model.provider if self.model is not None else None
+
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
+
+        last_exception = None
+        num_attempts = retries + 1
+
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
+        for attempt in range(num_attempts):
+            try:
+                # Pass the new run_response to _arun
                 if stream:
-                    return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-                raise Exception(f"Failed after {num_attempts} attempts.")
-        except (InputCheckError, OutputCheckError) as e:
-            log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                    return self._arun_stream(  # type: ignore
+                        run_response=run_response,
+                        run_context=run_context,
+                        user_id=user_id,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        yield_run_output=yield_run_output,
+                        session_id=session_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        debug_mode=debug_mode,
+                        **kwargs,
+                    )  # type: ignore[assignment]
+                else:
+                    return self._arun(  # type: ignore
+                        run_response=run_response,
+                        run_context=run_context,
+                        user_id=user_id,
+                        response_format=response_format,
+                        session_id=session_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        debug_mode=debug_mode,
+                        **kwargs,
+                    )
 
-            # Create error run_response for storage
-            error_run_response = RunOutput(
-                run_id=run_id,
-                session_id=session_id,
-                agent_id=self.id,
-                user_id=user_id,
-                agent_name=self.name,
-                status=RunStatus.error,
-                content=str(e),
-                error=RunError(
-                    message=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                ),
-            )
-            error_run_response.model = self.model.id if self.model is not None else None
-            error_run_response.model_provider = self.model.provider if self.model is not None else None
+            except ModelProviderError as e:
+                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                if isinstance(e, StopAgentRun):
+                    raise e
+                last_exception = e
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    import time
 
-            # Get or create session and store the error (using sync version since arun is not truly async)
-            error_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-            self._cleanup_and_store(
-                run_response=error_run_response,
-                session=error_session,
-                user_id=user_id,
+                    time.sleep(delay)
+            except KeyboardInterrupt:
+                run_response.content = "Operation cancelled by user"
+                run_response.status = RunStatus.cancelled
+
+                if stream:
+                    return async_generator_wrapper(  # type: ignore
+                        create_run_cancelled_event(
+                            from_run_response=run_response,
+                            reason="Operation cancelled by user",
+                        )
+                    )
+                else:
+                    return run_response
+
+        # If we get here, all retries failed
+        if last_exception is not None:
+            log_error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
 
             if stream:
-                error_event = RunErrorEvent(
-                    content=str(e) + " by Anurag",
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
-                return async_generator_wrapper(error_event)  # type: ignore
-            raise e
+                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+            raise last_exception
+        else:
+            if stream:
+                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     @overload
     def continue_run(

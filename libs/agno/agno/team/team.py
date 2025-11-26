@@ -1538,19 +1538,39 @@ class Team:
         self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
             # Can modify the run input
-            pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                run_input=run_input,
-                session=session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                stream_events=stream_events,
-                **kwargs,
-            )
-            for pre_hook_event in pre_hook_iterator:
-                yield pre_hook_event
+            try:
+                pre_hook_iterator = self._execute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    run_input=run_input,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    stream_events=stream_events,
+                    **kwargs,
+                )
+                for pre_hook_event in pre_hook_iterator:
+                    yield pre_hook_event
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                run_response.status = RunStatus.error
+                run_response.content = str(e)
+                run_response.error = RunError(
+                    message=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                self._cleanup_and_store(run_response=run_response, session=session)
+                error_event = TeamRunErrorEvent(
+                    content=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                yield error_event
+                return
 
         # 2. Determine tools for model
         # Initialize team run context
