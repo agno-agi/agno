@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -519,6 +519,9 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
@@ -526,6 +529,9 @@ class Claude(Model):
                     **request_kwargs,
                 )
             else:
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 provider_response = self.get_client().messages.create(
                     model=self.id,
@@ -587,6 +593,9 @@ class Claude(Model):
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 with self.get_client().beta.messages.stream(
                     model=self.id,
@@ -596,6 +605,9 @@ class Claude(Model):
                     for chunk in stream:
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
             else:
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 with self.get_client().messages.stream(
                     model=self.id,
@@ -643,6 +655,9 @@ class Claude(Model):
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
@@ -650,6 +665,9 @@ class Claude(Model):
                     **request_kwargs,
                 )
             else:
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().messages.create(
                     model=self.id,
@@ -707,6 +725,9 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
@@ -716,6 +737,9 @@ class Claude(Model):
                     async for chunk in stream:
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
             else:
+                # Initialize MessageMetrics if None
+                if assistant_message.metrics is None:
+                    assistant_message.metrics = MessageMetrics()
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().messages.stream(
                     model=self.id,

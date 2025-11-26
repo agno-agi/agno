@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -221,6 +221,11 @@ class Llama(Model):
         """
         Send a chat completion request to the Llama API.
         """
+        # Initialize MessageMetrics if None
+
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
+
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().chat.completions.create(
@@ -248,6 +253,11 @@ class Llama(Model):
         """
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
+
+        # Initialize MessageMetrics if None
+
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
 
         assistant_message.metrics.start_timer()
 
@@ -278,6 +288,11 @@ class Llama(Model):
             run_response.metrics.set_time_to_first_token()
 
         try:
+            # Initialize MessageMetrics if None
+
+            if assistant_message.metrics is None:
+                assistant_message.metrics = MessageMetrics()
+
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().chat.completions.create(
@@ -308,6 +323,11 @@ class Llama(Model):
         """
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
+
+        # Initialize MessageMetrics if None
+
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
 
         assistant_message.metrics.start_timer()
 

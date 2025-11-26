@@ -45,7 +45,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics
+from agno.models.metrics import Metrics, SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -4320,44 +4320,152 @@ class Team:
             async for item in reason_generator:
                 yield item
 
-    def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
-        """Sum the metrics of the given messages into a Metrics object"""
-        session_metrics = Metrics()
+    def _calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
+        """Sum MessageMetrics from messages into SessionMetrics (session-level)"""
+        session_metrics = SessionMetrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         # Get metrics of the team leader's messages
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
-                session_metrics += m.metrics
+                msg_metrics = m.metrics
+                session_metrics.input_tokens += msg_metrics.input_tokens
+                session_metrics.output_tokens += msg_metrics.output_tokens
+                session_metrics.total_tokens += msg_metrics.total_tokens
+                session_metrics.audio_input_tokens += msg_metrics.audio_input_tokens
+                session_metrics.audio_output_tokens += msg_metrics.audio_output_tokens
+                session_metrics.audio_total_tokens += msg_metrics.audio_total_tokens
+                session_metrics.cache_read_tokens += msg_metrics.cache_read_tokens
+                session_metrics.cache_write_tokens += msg_metrics.cache_write_tokens
+                session_metrics.reasoning_tokens += msg_metrics.reasoning_tokens
+                # Handle provider_metrics
+                if msg_metrics.provider_metrics:
+                    if session_metrics.provider_metrics is None:
+                        session_metrics.provider_metrics = {}
+                    session_metrics.provider_metrics.update(msg_metrics.provider_metrics)
+                # Handle additional_metrics
+                if msg_metrics.additional_metrics:
+                    if session_metrics.additional_metrics is None:
+                        session_metrics.additional_metrics = {}
+                    session_metrics.additional_metrics.update(msg_metrics.additional_metrics)
 
         return session_metrics
 
     def _calculate_metrics(self, messages: List[Message]) -> Metrics:
+        """Sum MessageMetrics from assistant messages into Metrics (run-level)"""
         metrics = Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-                metrics += m.metrics
+                # Convert MessageMetrics to Metrics and add
+                msg_metrics = m.metrics
+                metrics.input_tokens += msg_metrics.input_tokens
+                metrics.output_tokens += msg_metrics.output_tokens
+                metrics.total_tokens += msg_metrics.total_tokens
+                metrics.audio_input_tokens += msg_metrics.audio_input_tokens
+                metrics.audio_output_tokens += msg_metrics.audio_output_tokens
+                metrics.audio_total_tokens += msg_metrics.audio_total_tokens
+                metrics.cache_read_tokens += msg_metrics.cache_read_tokens
+                metrics.cache_write_tokens += msg_metrics.cache_write_tokens
+                metrics.reasoning_tokens += msg_metrics.reasoning_tokens
+                # Handle provider_metrics
+                if msg_metrics.provider_metrics:
+                    if metrics.provider_metrics is None:
+                        metrics.provider_metrics = {}
+                    metrics.provider_metrics.update(msg_metrics.provider_metrics)
+                # Handle additional_metrics
+                if msg_metrics.additional_metrics:
+                    if metrics.additional_metrics is None:
+                        metrics.additional_metrics = {}
+                    metrics.additional_metrics.update(msg_metrics.additional_metrics)
 
         return metrics
 
-    def _update_session_metrics(self, session: TeamSession):
-        """Calculate session metrics"""
+    def _get_session_metrics(self, session: TeamSession) -> SessionMetrics:
+        """Get existing session metrics from the database"""
+        if session.session_data is not None and "session_metrics" in session.session_data:
+            session_metrics_from_db = session.session_data.get("session_metrics")
+            if session_metrics_from_db is not None:
+                if isinstance(session_metrics_from_db, dict):
+                    # Handle legacy Metrics dict - convert to SessionMetrics
+                    metrics_dict = session_metrics_from_db.copy()
+                    # Remove run-level timing fields
+                    metrics_dict.pop("duration", None)
+                    metrics_dict.pop("time_to_first_token", None)
+                    metrics_dict.pop("timer", None)
+                    return SessionMetrics(**metrics_dict)
+                elif isinstance(session_metrics_from_db, SessionMetrics):
+                    return session_metrics_from_db
+                elif isinstance(session_metrics_from_db, Metrics):
+                    # Convert legacy Metrics to SessionMetrics
+                    return SessionMetrics(
+                        input_tokens=session_metrics_from_db.input_tokens,
+                        output_tokens=session_metrics_from_db.output_tokens,
+                        total_tokens=session_metrics_from_db.total_tokens,
+                        audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                        audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                        audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                        cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                        cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                        reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                        provider_metrics=session_metrics_from_db.provider_metrics,
+                        additional_metrics=session_metrics_from_db.additional_metrics,
+                    )
+        return SessionMetrics()
 
+    def _update_session_metrics(self, session: TeamSession):
+        """Calculate session metrics - convert run Metrics to SessionMetrics"""
+        # Get existing session metrics
+        session_metrics = self._get_session_metrics(session=session)
+
+        # Calculate metrics from all runs
         session_messages: List[Message] = []
+        run_durations = []
         for run in session.runs or []:
             if run.messages is not None:
                 for m in run.messages:
                     # Skipping messages from history to avoid duplicates
                     if not m.from_history:
                         session_messages.append(m)
+            # Collect run durations for average calculation
+            if run.metrics and run.metrics.duration is not None:
+                run_durations.append(run.metrics.duration)
 
-        # Calculate initial metrics
-        session_metrics = self._calculate_session_metrics(session_messages)
+        # Calculate metrics from messages
+        message_metrics = self._calculate_session_metrics(session_messages)
+
+        # Merge with existing session metrics
+        session_metrics.input_tokens += message_metrics.input_tokens
+        session_metrics.output_tokens += message_metrics.output_tokens
+        session_metrics.total_tokens += message_metrics.total_tokens
+        session_metrics.audio_input_tokens += message_metrics.audio_input_tokens
+        session_metrics.audio_output_tokens += message_metrics.audio_output_tokens
+        session_metrics.audio_total_tokens += message_metrics.audio_total_tokens
+        session_metrics.cache_read_tokens += message_metrics.cache_read_tokens
+        session_metrics.cache_write_tokens += message_metrics.cache_write_tokens
+        session_metrics.reasoning_tokens += message_metrics.reasoning_tokens
+
+        # Handle provider_metrics
+        if message_metrics.provider_metrics:
+            if session_metrics.provider_metrics is None:
+                session_metrics.provider_metrics = {}
+            session_metrics.provider_metrics.update(message_metrics.provider_metrics)
+
+        # Handle additional_metrics
+        if message_metrics.additional_metrics:
+            if session_metrics.additional_metrics is None:
+                session_metrics.additional_metrics = {}
+            session_metrics.additional_metrics.update(message_metrics.additional_metrics)
+
+        # Calculate average duration
+        if run_durations:
+            total_runs = len(run_durations)
+            session_metrics.total_runs = total_runs
+            session_metrics.average_duration = sum(run_durations) / total_runs
 
         if session.session_data is not None:
-            session.session_data["session_metrics"] = session_metrics
+            session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
@@ -8317,13 +8425,13 @@ class Team:
             entity=self, session_state_updates=session_state_updates, session_id=session_id
         )
 
-    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID.
 
         Args:
             session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
         Returns:
-            Optional[Metrics]: The session metrics.
+            Optional[SessionMetrics]: The session metrics.
         """
         session_id = session_id or self.session_id
         if session_id is None:
@@ -8331,13 +8439,13 @@ class Team:
 
         return get_session_metrics_util(self, session_id=session_id)
 
-    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+    async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         """Get the session metrics for the given session ID.
 
         Args:
             session_id: The session ID to get the metrics for. If not provided, the current cached session ID is used.
         Returns:
-            Optional[Metrics]: The session metrics.
+            Optional[SessionMetrics]: The session metrics.
         """
         session_id = session_id or self.session_id
         if session_id is None:
