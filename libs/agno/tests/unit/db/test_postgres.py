@@ -99,7 +99,7 @@ def test_create_table(postgres_db, mock_session):
     with patch.object(Table, "create") as mock_table_create:
         with patch("agno.db.postgres.postgres.create_schema") as mock_create_schema:
             with patch("agno.db.postgres.postgres.is_table_available", return_value=False):
-                table = postgres_db._create_table("test_sessions", "sessions", "test_schema")
+                table = postgres_db._create_table("test_sessions", "sessions")
 
     # Verify schema was created
     mock_create_schema.assert_called()
@@ -142,7 +142,7 @@ def test_create_table_with_indexes(postgres_db, mock_session):
     with patch.object(Table, "create"):
         with patch.object(Index, "create"):
             with patch("agno.db.postgres.postgres.create_schema"):
-                table = postgres_db._create_table("test_metrics", "metrics", "test_schema")
+                table = postgres_db._create_table("test_metrics", "metrics")
 
     # Verify table has indexes on date and created_at columns
     for index in table.indexes:
@@ -156,7 +156,7 @@ def test_create_table_with_unique_constraints(postgres_db, mock_session):
 
     with patch.object(Table, "create"):
         with patch("agno.db.postgres.postgres.create_schema"):
-            table = postgres_db._create_table("test_metrics", "metrics", "test_schema")
+            table = postgres_db._create_table("test_metrics", "metrics")
 
     # Verify unique constraint was added
     constraint_names = [c.name for c in table.constraints if isinstance(c, UniqueConstraint)]
@@ -176,7 +176,7 @@ def test_create_memory_table(postgres_db, mock_session):
 
     with patch.object(Table, "create"):
         with patch("agno.db.postgres.postgres.create_schema"):
-            table = postgres_db._create_table("test_memories", "memories", "test_schema")
+            table = postgres_db._create_table("test_memories", "memories")
 
     # Verify primary key
     pk_columns = [col.name for col in table.columns if col.primary_key]
@@ -198,7 +198,7 @@ def test_create_eval_table(postgres_db, mock_session):
         mock_get_schema.return_value = EVAL_TABLE_SCHEMA.copy()
 
         with patch.object(Table, "create"):
-            table = postgres_db._create_table("test_evals", "evals", "test_schema")
+            table = postgres_db._create_table("test_evals", "evals")
 
         # Verify columns
         column_names = [col.name for col in table.columns]
@@ -219,7 +219,7 @@ def test_create_knowledge_table(postgres_db, mock_session):
         mock_get_schema.return_value = KNOWLEDGE_TABLE_SCHEMA.copy()
 
         with patch.object(Table, "create"):
-            table = postgres_db._create_table("test_knowledge", "knowledge", "test_schema")
+            table = postgres_db._create_table("test_knowledge", "knowledge")
 
         # Verify columns
         column_names = [col.name for col in table.columns]
@@ -330,12 +330,10 @@ def test_get_or_create_table_not_available(mock_is_available, postgres_db, mock_
     mock_table = Mock(spec=Table)
     with patch.object(postgres_db, "_create_table", return_value=mock_table):
         table = postgres_db._get_or_create_table(
-            table_name="test_table", table_type="sessions", db_schema="test_schema", create_table_if_not_found=True
+            table_name="test_table", table_type="sessions", create_table_if_not_found=True
         )
         assert table == mock_table
-        postgres_db._create_table.assert_called_once_with(
-            table_name="test_table", table_type="sessions", db_schema="test_schema"
-        )
+        postgres_db._create_table.assert_called_once_with(table_name="test_table", table_type="sessions")
 
 
 @patch("agno.db.postgres.postgres.is_table_available")

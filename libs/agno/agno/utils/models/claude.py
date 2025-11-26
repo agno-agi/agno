@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
@@ -221,17 +221,20 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     return None
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def format_messages(
+    messages: List[Message], compress_tool_results: bool = False
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    chat_messages: List[Dict[str, str]] = []
+    chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
     for message in messages:
@@ -301,11 +304,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     )
         elif message.role == "tool":
             content = []
+
+            # Use compressed content for tool messages if compression is active
+            tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(message.content),
+                    "content": str(tool_result),
                 }
             )
 

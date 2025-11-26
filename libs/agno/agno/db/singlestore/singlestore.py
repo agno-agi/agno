@@ -109,7 +109,7 @@ class SingleStoreDb(BaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.db_schema: Optional[str] = db_schema
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -127,7 +127,7 @@ class SingleStoreDb(BaseDb):
         with self.Session() as sess:
             return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
-    def _create_table_structure_only(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
+    def _create_table_structure_only(self, table_name: str, table_type: str) -> Table:
         """
         Create a table structure definition without actually creating the table in the database.
         Used to avoid autoload issues with SingleStore JSON types.
@@ -135,7 +135,6 @@ class SingleStoreDb(BaseDb):
         Args:
             table_name (str): Name of the table
             table_type (str): Type of table (used to get schema definition)
-            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object with column definitions
@@ -161,13 +160,12 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object without constraints to avoid autoload issues
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             return table
 
         except Exception as e:
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             log_error(f"Could not create table structure for {table_ref}: {e}")
             raise
 
@@ -183,21 +181,20 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            self._create_table(table_name=table_name, table_type=table_type)
 
-    def _create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
+    def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
         """
-        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+        table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
         try:
             table_schema = get_table_schema_definition(table_type)
 
@@ -222,8 +219,7 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -237,9 +233,9 @@ class SingleStoreDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create schema if one is specified
-            if db_schema is not None:
+            if self.db_schema is not None:
                 with self.Session() as sess, sess.begin():
-                    create_schema(session=sess, db_schema=db_schema)
+                    create_schema(session=sess, db_schema=self.db_schema)
 
             # SingleStore has a limitation on the number of unique multi-field constraints per table.
             # We need to work around that limitation for the sessions table.
@@ -277,12 +273,12 @@ class SingleStoreDb(BaseDb):
                 try:
                     # Check if index already exists
                     with self.Session() as sess:
-                        if db_schema is not None:
+                        if self.db_schema is not None:
                             exists_query = text(
                                 "SELECT 1 FROM information_schema.statistics WHERE table_schema = :schema AND index_name = :index_name"
                             )
                             exists = (
-                                sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
+                                sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name}).scalar()
                                 is not None
                             )
                         else:
@@ -316,7 +312,6 @@ class SingleStoreDb(BaseDb):
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type="sessions",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
@@ -325,7 +320,6 @@ class SingleStoreDb(BaseDb):
             self.memory_table = self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.memory_table
@@ -334,7 +328,6 @@ class SingleStoreDb(BaseDb):
             self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
@@ -343,7 +336,6 @@ class SingleStoreDb(BaseDb):
             self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.eval_table
@@ -352,7 +344,6 @@ class SingleStoreDb(BaseDb):
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
@@ -361,7 +352,6 @@ class SingleStoreDb(BaseDb):
             self.culture_table = self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.culture_table
@@ -370,7 +360,6 @@ class SingleStoreDb(BaseDb):
             self.versions_table = self._get_or_create_table(
                 table_name=self.versions_table_name,
                 table_type="versions",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.versions_table
@@ -417,7 +406,6 @@ class SingleStoreDb(BaseDb):
         self,
         table_name: str,
         table_type: str,
-        db_schema: Optional[str],
         create_table_if_not_found: Optional[bool] = False,
     ) -> Optional[Table]:
         """
@@ -426,14 +414,13 @@ class SingleStoreDb(BaseDb):
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
         with self.Session() as sess, sess.begin():
-            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
         if not table_is_available:
             if not create_table_if_not_found:
@@ -444,22 +431,22 @@ class SingleStoreDb(BaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return self._create_table(table_name=table_name, table_type=table_type)
 
         if not is_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             raise ValueError(f"Table {table_ref} has an invalid schema")
 
         try:
-            return self._create_table_structure_only(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return self._create_table_structure_only(table_name=table_name, table_type=table_type)
 
         except Exception as e:
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             log_error(f"Error loading existing table {table_ref}: {e}")
             raise
 
@@ -1309,13 +1296,14 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1338,16 +1326,17 @@ class SingleStoreDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
