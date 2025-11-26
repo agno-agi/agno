@@ -108,7 +108,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.metadata: MetaData = MetaData()
 
         # Initialize database session factory
-        self.async_session_factory = async_sessionmaker(bind=self.db_engine)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.db_engine,
+            expire_on_commit=False,
+        )
 
     # -- DB methods --
     async def table_exists(self, table_name: str) -> bool:
@@ -135,10 +138,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            # Also store the schema version for the created table
-            latest_schema_version = MigrationManager(self).latest_schema_version
-            await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
             await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -195,8 +194,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await acreate_schema(session=sess, db_schema=db_schema)
 
             # Create table
-            async with self.db_engine.begin() as conn:
-                await conn.run_sync(table.create, checkfirst=True)
+            table_created = False
+            if not await self.table_exists(table_name):
+                async with self.db_engine.begin() as conn:
+                    await conn.run_sync(table.create, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table '{db_schema}.{table_name}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -219,7 +224,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+                log_info(
+                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                )
+
             return table
 
         except Exception as e:
@@ -295,11 +308,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
             return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not await ais_valid_table(
