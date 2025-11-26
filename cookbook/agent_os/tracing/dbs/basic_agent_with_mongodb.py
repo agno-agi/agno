@@ -12,6 +12,7 @@ from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
 
+# docker run -d -p 27017:27017 --name mongodb mongo:latest
 db_url = "mongodb://localhost:27017"
 
 db = MongoDb(db_url=db_url)
