@@ -1236,13 +1236,13 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                 )
-                error_event = RunErrorEvent(
-                    content=str(e),
+                yield create_run_error_event(
+                    from_run_response=run_response,
+                    error=str(e),
                     error_type=e.type,
                     error_id=e.error_id,
                     additional_data=e.additional_data,
                 )
-                yield error_event
                 return
 
         # 2. Determine tools for model
@@ -2198,13 +2198,13 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                 )
-                error_event = RunErrorEvent(
-                    content=str(e) + " by Anurag",
+                yield create_run_error_event(
+                    from_run_response=run_response,
+                    error=str(e),
                     error_type=e.type,
                     error_id=e.error_id,
                     additional_data=e.additional_data,
                 )
-                yield error_event
                 return
 
         # 5. Determine tools for model

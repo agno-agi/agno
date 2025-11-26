@@ -1563,13 +1563,13 @@ class Team:
                     additional_data=e.additional_data,
                 )
                 self._cleanup_and_store(run_response=run_response, session=session)
-                error_event = TeamRunErrorEvent(
-                    content=str(e),
+                yield create_team_run_error_event(
+                    from_run_response=run_response,
+                    error=str(e),
                     error_type=e.type,
                     error_id=e.error_id,
                     additional_data=e.additional_data,
                 )
-                yield error_event
                 return
 
         # 2. Determine tools for model
@@ -2461,13 +2461,13 @@ class Team:
                     run_response=run_response,
                     session=team_session,
                 )
-                error_event = TeamRunErrorEvent(
-                    content=str(e) + " by Anurag",
+                yield create_team_run_error_event(
+                    from_run_response=run_response,
+                    error=str(e),
                     error_type=e.type,
                     error_id=e.error_id,
                     additional_data=e.additional_data,
                 )
-                yield error_event
                 return
 
         # 5. Determine tools for model
