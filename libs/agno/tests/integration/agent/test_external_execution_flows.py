@@ -1,6 +1,7 @@
 import pytest
 
 from agno.agent import Agent, RunOutput  # noqa
+from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.tools.decorator import tool
 
@@ -195,3 +196,59 @@ def test_tool_call_multiple_requires_external_execution(shared_db):
     response = agent.continue_run(response)
     assert response.is_paused is False
     assert response.content
+
+
+def test_agui_duplicate_tool_handling(shared_db):
+    """Test that duplicate tool_call_ids are properly handled when processing external execution."""
+    from agno.agent.agent import RunMessages
+    from agno.models.response import ToolExecution
+
+    @tool(external_execution=True)
+    def test_tool():
+        pass
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[test_tool],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    run_messages = RunMessages(
+        messages=[
+            Message(role="user", content="Test"),
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {"id": "call_test123", "function": {"name": "test_tool", "arguments": "{}"}, "type": "function"}
+                ],
+            ),
+        ]
+    )
+
+    tool_exec = ToolExecution(
+        tool_call_id="call_test123",
+        tool_name="test_tool",
+        tool_args={},
+        external_execution_required=True,
+        result="Test result",
+    )
+
+    agent._handle_external_execution_update(run_messages, tool_exec)
+    assert len(run_messages.messages) == 3
+
+    # Call again with same tool_call_id - should not add duplicate
+    tool_exec2 = ToolExecution(
+        tool_call_id="call_test123",
+        tool_name="test_tool",
+        tool_args={},
+        external_execution_required=True,
+        result="Test result 2",
+    )
+
+    agent._handle_external_execution_update(run_messages, tool_exec2)
+
+    tool_msgs = [msg for msg in run_messages.messages if msg.tool_call_id == "call_test123"]
+    assert len(tool_msgs) == 1, f"Expected 1 tool message, found {len(tool_msgs)}"
+    assert len(run_messages.messages) == 3, f"Expected 3 total messages, found {len(run_messages.messages)}"

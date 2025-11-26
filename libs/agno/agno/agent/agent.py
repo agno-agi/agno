@@ -4437,22 +4437,24 @@ class Agent:
         self.model = cast(Model, self.model)
 
         if tool.result is not None:
-            for msg in run_messages.messages:
-                # Skip if the message is already in the run_messages
-                if msg.tool_call_id == tool.tool_call_id:
-                    break
-
-            run_messages.messages.append(
-                Message(
-                    role=self.model.tool_message_role,
-                    content=tool.result,
-                    tool_call_id=tool.tool_call_id,
-                    tool_name=tool.tool_name,
-                    tool_args=tool.tool_args,
-                    tool_call_error=tool.tool_call_error,
-                    stop_after_tool_call=tool.stop_after_tool_call,
-                )
+            # Prevent duplicate tool result messages
+            existing_count = sum(
+                1 for msg in run_messages.messages if msg.role == "tool" and msg.tool_call_id == tool.tool_call_id
             )
+
+            if existing_count == 0:
+                run_messages.messages.append(
+                    Message(
+                        role=self.model.tool_message_role,
+                        content=tool.result,
+                        tool_call_id=tool.tool_call_id,
+                        tool_name=tool.tool_name,
+                        tool_args=tool.tool_args,
+                        tool_call_error=tool.tool_call_error,
+                        stop_after_tool_call=tool.stop_after_tool_call,
+                    )
+                )
+
             tool.external_execution_required = False
         else:
             raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
