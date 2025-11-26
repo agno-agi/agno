@@ -9,7 +9,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -273,8 +273,10 @@ class BasePDFReader(Reader):
                 content=pdf_content_str,
             )
             documents = [document]
-
+        
+        self.chunk=False
         if self.chunk:
+            log_info(f"Chunking documents: {documents}")
             return self._build_chunked_documents(documents)
         return documents
 
@@ -406,7 +408,7 @@ class PDFImageReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
     async def async_read(
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
@@ -428,4 +430,4 @@ class PDFImageReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
