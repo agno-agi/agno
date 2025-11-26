@@ -71,10 +71,13 @@ async def async_mongo_db_real():
 
     This fixture connects to a real MongoDB instance running on localhost:27017.
     Make sure MongoDB is running before running these integration tests.
+    These tests assume:
+    - Username=mongoadmin
+    - Password=secret
     Uses auto-selected client type (prefers PyMongo async if available).
     """
     # Use local MongoDB
-    db_url = "mongodb://localhost:27017"
+    db_url = "mongodb://mongoadmin:secret@localhost:27017"
 
     db = AsyncMongoDb(
         db_url=db_url,

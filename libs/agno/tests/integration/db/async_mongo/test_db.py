@@ -1,4 +1,11 @@
-"""Integration tests for the setup and main methods of the AsyncMongoDb class"""
+"""Integration tests for the setup and main methods of the AsyncMongoDb class
+
+Required to have a running MongoDB instance to run these tests.
+
+These tests assume:
+- Username=mongoadmin
+- Password=secret
+"""
 
 from datetime import datetime, timezone
 
@@ -15,7 +22,7 @@ except ImportError:
 @pytest.mark.asyncio
 async def test_init_with_db_url():
     """Test initialization with actual database URL format"""
-    db_url = "mongodb://localhost:27017"
+    db_url = "mongodb://mongoadmin:secret@localhost:27017"
 
     db = AsyncMongoDb(db_url=db_url, db_name="test_init_db", session_collection="test_async_mongo_sessions")
     assert db.db_url == db_url
