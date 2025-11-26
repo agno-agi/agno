@@ -9,7 +9,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -273,7 +273,7 @@ class BasePDFReader(Reader):
                 content=pdf_content_str,
             )
             documents = [document]
-        
+
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
