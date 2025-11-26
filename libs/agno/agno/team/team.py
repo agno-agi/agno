@@ -30,6 +30,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.exceptions import (
     InputCheckError,
@@ -379,6 +380,12 @@ class Team:
     # If True, the team adds session summaries to the context
     add_session_summary_to_context: Optional[bool] = None
 
+    # --- Context Compression ---
+    # If True, compress tool call results to save context
+    compress_tool_results: bool = False
+    # Compression manager for compressing tool call results
+    compression_manager: Optional["CompressionManager"] = None
+
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
@@ -520,6 +527,8 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
+        compress_tool_results: bool = False,
+        compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -649,6 +658,11 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
+
+        # Context compression settings
+        self.compress_tool_results = compress_tool_results
+        self.compression_manager = compression_manager
+
         self.metadata = metadata
 
         self.reasoning = reasoning
@@ -869,6 +883,21 @@ class Team:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
+    def _set_compression_manager(self) -> None:
+        if self.compress_tool_results and self.compression_manager is None:
+            self.compression_manager = CompressionManager(
+                model=self.model,
+            )
+        elif self.compression_manager is not None and self.compression_manager.model is None:
+            # If compression manager exists but has no model, use the team's model
+            self.compression_manager.model = self.model
+
+        if self.compression_manager is not None:
+            if self.compression_manager.model is None:
+                self.compression_manager.model = self.model
+            if self.compression_manager.compress_tool_results:
+                self.compress_tool_results = True
+
     def _initialize_session(
         self,
         session_id: Optional[str] = None,
@@ -946,6 +975,8 @@ class Team:
             self._set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
+        if self.compress_tool_results or self.compression_manager is not None:
+            self._set_compression_manager()
 
         log_debug(f"Team ID: {self.id}", center=True)
 
@@ -1386,6 +1417,7 @@ class Team:
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -2224,6 +2256,7 @@ class Team:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )  # type: ignore
 
             # Check for cancellation after model call
@@ -3054,6 +3087,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3145,6 +3179,7 @@ class Team:
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
             run_response=run_response,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(
@@ -7198,7 +7233,7 @@ class Team:
         if not files:
             files = []
 
-        def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task_description: str):
+        def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
             # 1. Initialize the member agent
             self._initialize_member(member_agent)
 
@@ -7237,7 +7272,7 @@ class Team:
             if self.determine_input_for_members is False:
                 member_agent_task = input  # type: ignore
             else:
-                member_agent_task = task_description
+                member_agent_task = task
 
             if team_history_str or team_member_interactions_str:
                 member_agent_task = format_member_agent_task(  # type: ignore
@@ -7330,9 +7365,7 @@ class Team:
                 return
 
             _, member_agent = result
-            member_agent_task, history = _setup_delegate_task_to_member(
-                member_agent=member_agent, task_description=task
-            )
+            member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -7458,9 +7491,7 @@ class Team:
                 return
 
             _, member_agent = result
-            member_agent_task, history = _setup_delegate_task_to_member(
-                member_agent=member_agent, task_description=task
-            )
+            member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -7576,9 +7607,7 @@ class Team:
 
             # Run all the members sequentially
             for _, member_agent in enumerate(self.members):
-                member_agent_task, history = _setup_delegate_task_to_member(
-                    member_agent=member_agent, task_description=task
-                )
+                member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
                 member_session_state_copy = copy(run_context.session_state)
                 if stream:
@@ -7692,9 +7721,7 @@ class Team:
                 queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
                 async def stream_member(agent: Union[Agent, "Team"]) -> None:
-                    member_agent_task, history = _setup_delegate_task_to_member(
-                        member_agent=agent, task_description=task
-                    )  # type: ignore
+                    member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                     member_session_state_copy = copy(run_context.session_state)
 
                     member_stream = agent.arun(  # type: ignore
@@ -7770,9 +7797,7 @@ class Team:
                 tasks = []
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
-                    member_agent_task, history = _setup_delegate_task_to_member(
-                        member_agent=current_agent, task_description=task
-                    )
+                    member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(run_context.session_state)

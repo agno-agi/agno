@@ -105,7 +105,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
@@ -138,16 +138,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            await self._create_table(table_name=table_name, table_type=table_type)
 
-    async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -176,8 +175,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -191,7 +189,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=db_schema)
+                await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
@@ -201,7 +199,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 log_debug(f"Successfully created table '{table_name}'")
                 table_created = True
             else:
-                log_debug(f"Table '{db_schema}.{table_name}' already exists, skipping creation")
+                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -211,15 +209,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                         exists_query = text(
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
-                        result = await sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name})
+                        result = await sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     async with self.db_engine.begin() as conn:
                         await conn.run_sync(idx.create)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
@@ -236,100 +236,99 @@ class AsyncPostgresDb(AsyncBaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                    table_name=self.session_table_name, table_type="sessions"
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                    table_name=self.memory_table_name, table_type="memories"
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                    table_name=self.metrics_table_name, table_type="metrics"
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
-                )
+                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                    table_name=self.knowledge_table_name, table_type="knowledge"
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture", db_schema=self.db_schema
+                    table_name=self.culture_table_name, table_type="culture"
                 )
             return self.culture_table
 
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, table_type="versions", db_schema=self.db_schema
+                    table_name=self.versions_table_name, table_type="versions"
                 )
             return self.versions_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = await ais_table_available(
+                session=sess, table_name=table_name, db_schema=self.db_schema
+            )
 
         if not table_is_available:
-            return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
             async with self.db_engine.connect() as conn:
 
                 def create_table(connection):
-                    return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
+                    return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
 
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def get_latest_schema_version(self, table_name: str) -> str:
@@ -1220,13 +1219,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise e
 
     async def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1247,16 +1247,18 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
