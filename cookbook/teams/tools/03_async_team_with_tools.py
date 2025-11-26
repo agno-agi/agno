@@ -75,6 +75,5 @@ if __name__ == "__main__":
         company_info_team.aprint_response(
             "Write me a full report on everything you can find about Agno, the company building AI agent infrastructure.",
             stream=True,
-            stream_events=True,
         )
     )

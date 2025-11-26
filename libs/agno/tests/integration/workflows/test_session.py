@@ -456,3 +456,38 @@ async def test_async_router_with_session_state(shared_db):
     session_state = workflow.get_session_state(session_id=session_id)
     assert session_state["async_route_count"] == 1
     assert session_state["async_router_executed"] is True
+
+
+async def test_workflow_with_base_model_content(shared_db):
+    """Test that a workflow with a BaseModel content can be run."""
+
+    from datetime import datetime
+
+    from pydantic import BaseModel
+
+    from agno.db.base import SessionType
+
+    session_id = "session_base_model_content"
+
+    class Content(BaseModel):
+        content: str
+        date: datetime
+
+    def content_function(step_input: StepInput) -> StepOutput:
+        return StepOutput(content=Content(content="Hello World", date=datetime.now()))
+
+    workflow = Workflow(
+        name="Base Model Content Test",
+        db=shared_db,
+        steps=[
+            Step(name="content", executor=content_function),
+        ],
+    )
+
+    response = workflow.run("Test", session_id=session_id)
+    assert response.run_id is not None
+    assert response.content.content == "Hello World"
+    assert response.content.date is not None
+    assert (
+        shared_db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW) is not None
+    )  # This tells us that the session was stored in the database with the BaseModel content with values like datetime

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
@@ -9,6 +10,7 @@ from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import format_messages
 
@@ -31,7 +33,7 @@ class Claude(AnthropicClaude):
     For more information, see: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic.html
     """
 
-    id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    id: str = "anthropic.claude-sonnet-4-20250514-v1:0"
     name: str = "AwsBedrockAnthropicClaude"
     provider: str = "AwsBedrock"
 
@@ -99,8 +101,22 @@ class Claude(AnthropicClaude):
                 "aws_region": self.aws_region,
             }
 
+        if self.timeout is not None:
+            client_params["timeout"] = self.timeout
+
         if self.client_params:
             client_params.update(self.client_params)
+
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
 
         self.client = AnthropicBedrock(
             **client_params,  # type: ignore
@@ -132,8 +148,24 @@ class Claude(AnthropicClaude):
                 "aws_region": self.aws_region,
             }
 
+        if self.timeout is not None:
+            client_params["timeout"] = self.timeout
+
         if self.client_params:
             client_params.update(self.client_params)
+
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                client_params["http_client"] = get_default_async_client()
+        else:
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
 
         self.async_client = AsyncAnthropicBedrock(
             **client_params,  # type: ignore
@@ -173,13 +205,14 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:
@@ -220,6 +253,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Stream a response from the Anthropic API.
@@ -236,7 +270,7 @@ class Claude(AnthropicClaude):
             APIStatusError: For other API-related errors
         """
 
-        chat_messages, system_message = format_messages(messages)
+        chat_messages, system_message = format_messages(messages, compress_tool_results)
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
@@ -278,13 +312,14 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:
@@ -327,6 +362,7 @@ class Claude(AnthropicClaude):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
@@ -344,7 +380,7 @@ class Claude(AnthropicClaude):
         """
 
         try:
-            chat_messages, system_message = format_messages(messages)
+            chat_messages, system_message = format_messages(messages, compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if run_response and run_response.metrics:

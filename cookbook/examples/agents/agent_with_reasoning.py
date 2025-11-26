@@ -20,5 +20,4 @@ agent.print_response(
     "Write a report on NVDA",
     stream=True,
     show_full_reasoning=True,
-    stream_events=True,
 )

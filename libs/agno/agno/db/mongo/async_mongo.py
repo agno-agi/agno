@@ -1,6 +1,7 @@
+import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
@@ -9,7 +10,7 @@ from agno.db.mongo.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
-    create_collection_indexes,
+    create_collection_indexes_async,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
@@ -25,11 +26,26 @@ from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 try:
-    import asyncio
-
     from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase  # type: ignore
+
+    MOTOR_AVAILABLE = True
 except ImportError:
-    raise ImportError("`motor` not installed. Please install it using `pip install -U motor`")
+    MOTOR_AVAILABLE = False
+    AsyncIOMotorClient = None  # type: ignore
+    AsyncIOMotorCollection = None  # type: ignore
+    AsyncIOMotorDatabase = None  # type: ignore
+
+try:
+    from pymongo import AsyncMongoClient  # type: ignore
+    from pymongo.collection import AsyncCollection  # type: ignore
+    from pymongo.database import AsyncDatabase  # type: ignore
+
+    PYMONGO_ASYNC_AVAILABLE = True
+except ImportError:
+    PYMONGO_ASYNC_AVAILABLE = False
+    AsyncMongoClient = None  # type: ignore
+    AsyncDatabase = None  # type: ignore
+    AsyncCollection = None  # type: ignore
 
 try:
     from pymongo import ReturnDocument
@@ -37,11 +53,89 @@ try:
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install -U pymongo`")
 
+# Ensure at least one async library is available
+if not MOTOR_AVAILABLE and not PYMONGO_ASYNC_AVAILABLE:
+    raise ImportError(
+        "Neither `motor` nor PyMongo async is installed. "
+        "Please install one of them using:\n"
+        "  - `pip install -U 'pymongo>=4.9'` (recommended)"
+        "  - `pip install -U motor` (legacy, deprecated)\n"
+    )
+
+# Create union types for client, database, and collection
+if TYPE_CHECKING:
+    if MOTOR_AVAILABLE and PYMONGO_ASYNC_AVAILABLE:
+        AsyncMongoClientType = Union[AsyncIOMotorClient, AsyncMongoClient]  # type: ignore
+        AsyncMongoDatabaseType = Union[AsyncIOMotorDatabase, AsyncDatabase]  # type: ignore
+        AsyncMongoCollectionType = Union[AsyncIOMotorCollection, AsyncCollection]  # type: ignore
+    elif MOTOR_AVAILABLE:
+        AsyncMongoClientType = AsyncIOMotorClient  # type: ignore
+        AsyncMongoDatabaseType = AsyncIOMotorDatabase  # type: ignore
+        AsyncMongoCollectionType = AsyncIOMotorCollection  # type: ignore
+    else:
+        AsyncMongoClientType = AsyncMongoClient  # type: ignore
+        AsyncMongoDatabaseType = AsyncDatabase  # type: ignore
+        AsyncMongoCollectionType = AsyncCollection  # type: ignore
+else:
+    # Runtime type - use Any to avoid import issues
+    AsyncMongoClientType = Any
+    AsyncMongoDatabaseType = Any
+    AsyncMongoCollectionType = Any
+
+
+# Client type constants (defined before class to allow use in _detect_client_type)
+_CLIENT_TYPE_MOTOR = "motor"
+_CLIENT_TYPE_PYMONGO_ASYNC = "pymongo_async"
+_CLIENT_TYPE_UNKNOWN = "unknown"
+
+
+def _detect_client_type(client: Any) -> str:
+    """Detect whether a client is Motor or PyMongo async."""
+    if client is None:
+        return _CLIENT_TYPE_UNKNOWN
+
+    # Check PyMongo async
+    if PYMONGO_ASYNC_AVAILABLE and AsyncMongoClient is not None:
+        try:
+            if isinstance(client, AsyncMongoClient):
+                return _CLIENT_TYPE_PYMONGO_ASYNC
+        except (TypeError, AttributeError):
+            pass  # Fall through to next check
+
+    if MOTOR_AVAILABLE and AsyncIOMotorClient is not None:
+        try:
+            if isinstance(client, AsyncIOMotorClient):
+                return _CLIENT_TYPE_MOTOR
+        except (TypeError, AttributeError):
+            pass  # Fall through to fallback
+
+    # Fallback to string matching only if isinstance fails
+    # (should rarely happen, but useful for edge cases)
+    client_type_name = type(client).__name__
+    if "Motor" in client_type_name or "AsyncIOMotor" in client_type_name:
+        return _CLIENT_TYPE_MOTOR
+    elif "AsyncMongo" in client_type_name:
+        return _CLIENT_TYPE_PYMONGO_ASYNC
+
+    # Last resort: check module name
+    module_name = type(client).__module__
+    if "motor" in module_name:
+        return _CLIENT_TYPE_MOTOR
+    elif "pymongo" in module_name:
+        return _CLIENT_TYPE_PYMONGO_ASYNC
+
+    return _CLIENT_TYPE_UNKNOWN
+
 
 class AsyncMongoDb(AsyncBaseDb):
+    # Client type constants (class-level access to module constants)
+    CLIENT_TYPE_MOTOR = _CLIENT_TYPE_MOTOR
+    CLIENT_TYPE_PYMONGO_ASYNC = _CLIENT_TYPE_PYMONGO_ASYNC
+    CLIENT_TYPE_UNKNOWN = _CLIENT_TYPE_UNKNOWN
+
     def __init__(
         self,
-        db_client: Optional[AsyncIOMotorClient] = None,
+        db_client: Optional[Union["AsyncIOMotorClient", "AsyncMongoClient"]] = None,
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
@@ -53,10 +147,16 @@ class AsyncMongoDb(AsyncBaseDb):
         id: Optional[str] = None,
     ):
         """
-        Async interface for interacting with a MongoDB database using Motor.
+        Async interface for interacting with a MongoDB database.
+
+        Supports both Motor (legacy) and PyMongo async (recommended) clients.
+        When both libraries are available, PyMongo async is preferred.
 
         Args:
-            db_client (Optional[AsyncIOMotorClient]): The MongoDB async client to use.
+            db_client (Optional[Union[AsyncIOMotorClient, AsyncMongoClient]]):
+                The MongoDB async client to use. Can be either Motor's AsyncIOMotorClient
+                or PyMongo's AsyncMongoClient. If not provided, a client will be created
+                from db_url using the preferred available library.
             db_name (Optional[str]): The name of the database to use.
             db_url (Optional[str]): The database URL to connect to.
             session_collection (Optional[str]): Name of the collection to store sessions.
@@ -68,7 +168,8 @@ class AsyncMongoDb(AsyncBaseDb):
             id (Optional[str]): ID of the database.
 
         Raises:
-            ValueError: If neither db_url nor db_client is provided.
+            ValueError: If neither db_url nor db_client is provided, or if db_client type is unsupported.
+            ImportError: If neither motor nor pymongo async is installed.
         """
         if id is None:
             base_seed = db_url or str(db_client)
@@ -86,8 +187,21 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_table=culture_collection,
         )
 
+        # Detect client type if provided
+        if db_client is not None:
+            self._client_type = _detect_client_type(db_client)
+            if self._client_type == self.CLIENT_TYPE_UNKNOWN:
+                raise ValueError(
+                    f"Unsupported MongoDB client type: {type(db_client).__name__}. "
+                    "Only Motor (AsyncIOMotorClient) or PyMongo async (AsyncMongoClient) are supported."
+                )
+        else:
+            # Auto-select preferred library when creating from URL
+            # Prefer PyMongo async if available, fallback to Motor
+            self._client_type = self.CLIENT_TYPE_PYMONGO_ASYNC if PYMONGO_ASYNC_AVAILABLE else self.CLIENT_TYPE_MOTOR
+
         # Store configuration for lazy initialization
-        self._provided_client: Optional[AsyncIOMotorClient] = db_client
+        self._provided_client: Optional[AsyncMongoClientType] = db_client
         self.db_url: Optional[str] = db_url
         self.db_name: str = db_name if db_name is not None else "agno"
 
@@ -95,8 +209,8 @@ class AsyncMongoDb(AsyncBaseDb):
             raise ValueError("One of db_url or db_client must be provided")
 
         # Client and database will be lazily initialized per event loop
-        self._client: Optional[AsyncIOMotorClient] = None
-        self._database: Optional[AsyncIOMotorDatabase] = None
+        self._client: Optional[AsyncMongoClientType] = None
+        self._database: Optional[AsyncMongoDatabaseType] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def table_exists(self, table_name: str) -> bool:
@@ -126,15 +240,16 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection_name and not await self.table_exists(collection_name):
                 await self._get_collection(collection_type, create_collection_if_not_found=True)
 
-    def _ensure_client(self) -> AsyncIOMotorClient:
+    def _ensure_client(self) -> AsyncMongoClientType:
         """
-        Ensure the Motor client is valid for the current event loop.
+        Ensure the MongoDB async client is valid for the current event loop.
 
-        Motor's AsyncIOMotorClient is tied to the event loop it was created in.
-        If we detect a new event loop, we need to refresh the client.
+        Both Motor's AsyncIOMotorClient and PyMongo's AsyncMongoClient are tied to
+        the event loop they were created in. If we detect a new event loop, we need
+        to refresh the client.
 
         Returns:
-            AsyncIOMotorClient: A valid client for the current event loop.
+            Union[AsyncIOMotorClient, AsyncMongoClient]: A valid client for the current event loop.
         """
         try:
             current_loop = asyncio.get_running_loop()
@@ -144,8 +259,13 @@ class AsyncMongoDb(AsyncBaseDb):
                 if self._provided_client is not None:
                     self._client = self._provided_client
                 elif self.db_url is not None:
-                    self._client = AsyncIOMotorClient(self.db_url)
-                    log_debug("Created AsyncIOMotorClient outside event loop")
+                    # Create client based on detected type
+                    if self._client_type == self.CLIENT_TYPE_PYMONGO_ASYNC and PYMONGO_ASYNC_AVAILABLE:
+                        self._client = AsyncMongoClient(self.db_url)  # type: ignore
+                    elif self._client_type == self.CLIENT_TYPE_MOTOR and MOTOR_AVAILABLE:
+                        self._client = AsyncIOMotorClient(self.db_url)  # type: ignore
+                    else:
+                        raise RuntimeError(f"Client type '{self._client_type}' not available")
             return self._client  # type: ignore
 
         # Check if we're in a different event loop
@@ -153,43 +273,47 @@ class AsyncMongoDb(AsyncBaseDb):
             # New event loop detected, create new client
             if self._provided_client is not None:
                 # User provided a client, use it but warn them
+                client_type_name = (
+                    "AsyncMongoClient" if self._client_type == self.CLIENT_TYPE_PYMONGO_ASYNC else "AsyncIOMotorClient"
+                )
                 log_debug(
-                    "New event loop detected. Using provided AsyncIOMotorClient, "
+                    f"New event loop detected. Using provided {client_type_name}, "
                     "which may cause issues if it was created in a different event loop."
                 )
                 self._client = self._provided_client
             elif self.db_url is not None:
-                # Create a new client for this event loop
-                old_loop_id = id(self._event_loop) if self._event_loop else "None"
-                new_loop_id = id(current_loop)
-                log_debug(f"Event loop changed from {old_loop_id} to {new_loop_id}, creating new AsyncIOMotorClient")
-                self._client = AsyncIOMotorClient(self.db_url)
+                if self._client_type == self.CLIENT_TYPE_PYMONGO_ASYNC and PYMONGO_ASYNC_AVAILABLE:
+                    self._client = AsyncMongoClient(self.db_url)  # type: ignore
+                elif self._client_type == self.CLIENT_TYPE_MOTOR and MOTOR_AVAILABLE:
+                    self._client = AsyncIOMotorClient(self.db_url)  # type: ignore
+                else:
+                    raise RuntimeError(f"Client type '{self._client_type}' not available")
 
             self._event_loop = current_loop
             self._database = None  # Reset database reference
-            # Clear collection caches when switching event loops
+            # Clear collection caches and initialization flags when switching event loops
             for attr in list(vars(self).keys()):
-                if attr.endswith("_collection"):
+                if attr.endswith("_collection") or attr.endswith("_initialized"):
                     delattr(self, attr)
 
         return self._client  # type: ignore
 
     @property
-    def db_client(self) -> AsyncIOMotorClient:
+    def db_client(self) -> AsyncMongoClientType:
         """Get the MongoDB client, ensuring it's valid for the current event loop."""
         return self._ensure_client()
 
     @property
-    def database(self) -> AsyncIOMotorDatabase:
+    def database(self) -> AsyncMongoDatabaseType:
         """Get the MongoDB database, ensuring it's valid for the current event loop."""
         try:
             current_loop = asyncio.get_running_loop()
             if self._database is None or self._event_loop != current_loop:
-                self._database = self.db_client[self.db_name]
+                self._database = self.db_client[self.db_name]  # type: ignore
         except RuntimeError:
             # No running loop - fallback to existing database or create new one
             if self._database is None:
-                self._database = self.db_client[self.db_name]
+                self._database = self.db_client[self.db_name]  # type: ignore
         return self._database
 
     # -- DB methods --
@@ -204,7 +328,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
     async def _get_collection(
         self, table_type: str, create_collection_if_not_found: Optional[bool] = True
-    ) -> Optional[AsyncIOMotorCollection]:
+    ) -> Optional[AsyncMongoCollectionType]:
         """Get or create a collection based on table type.
 
         Args:
@@ -212,7 +336,7 @@ class AsyncMongoDb(AsyncBaseDb):
             create_collection_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
-            AsyncIOMotorCollection: The collection object.
+            Union[AsyncIOMotorCollection, AsyncCollection]: The collection object.
         """
         # Ensure client is valid for current event loop before accessing collections
         _ = self.db_client  # This triggers _ensure_client()
@@ -290,7 +414,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
     async def _get_or_create_collection(
         self, collection_name: str, collection_type: str, create_collection_if_not_found: Optional[bool] = True
-    ) -> Optional[AsyncIOMotorCollection]:
+    ) -> Optional[AsyncMongoCollectionType]:
         """Get or create a collection with proper indexes.
 
         Args:
@@ -299,7 +423,7 @@ class AsyncMongoDb(AsyncBaseDb):
             create_collection_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
-            Optional[AsyncIOMotorCollection]: The collection object.
+            Union[AsyncIOMotorCollection, AsyncCollection]: The collection object.
         """
         try:
             collection = self.database[collection_name]
@@ -307,9 +431,8 @@ class AsyncMongoDb(AsyncBaseDb):
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
                     return None
-                # Note: Motor doesn't have sync create_index, so we use it as-is
-                # The indexes are created in the background
-                create_collection_indexes(collection, collection_type)  # type: ignore
+                # Create indexes asynchronously for async MongoDB collections
+                await create_collection_indexes_async(collection, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
                 log_debug(f"Initialized collection '{collection_name}'")
             else:
@@ -320,6 +443,14 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting collection {collection_name}: {e}")
             raise
+
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
 
     # -- Session methods --
 
@@ -1241,6 +1372,9 @@ class AsyncMongoDb(AsyncBaseDb):
                     "memory_id": memory.memory_id,
                     "memory": memory.memory,
                     "topics": memory.topics,
+                    "input": memory.input,
+                    "feedback": memory.feedback,
+                    "created_at": memory.created_at,
                     "updated_at": updated_at,
                 }
 
@@ -1533,7 +1667,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Exception reading from sessions collection: {e}")
             return []
 
-    async def _get_metrics_calculation_starting_date(self, collection: AsyncIOMotorCollection) -> Optional[date]:
+    async def _get_metrics_calculation_starting_date(self, collection: AsyncMongoCollectionType) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
             result = await collection.find_one({}, sort=[("date", -1)], limit=1)
