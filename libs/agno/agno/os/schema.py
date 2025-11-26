@@ -26,7 +26,7 @@ from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
-
+from agno.run.agent import RunError
 
 class BadRequestResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
@@ -891,7 +891,7 @@ class RunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
-
+    error: Optional[RunError] = Field(None, description="Error details if the run failed")
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
         run_input = get_run_input(run_dict)
@@ -919,6 +919,7 @@ class RunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            error=run_dict.get("error", None),
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
@@ -948,6 +949,7 @@ class TeamRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
+    error: Optional[RunError] = Field(None, description="Error details if the run failed")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -978,6 +980,7 @@ class TeamRunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
+            error=run_dict.get("error", None),
         )
 
 
@@ -1003,7 +1006,6 @@ class WorkflowRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the workflow")
     files: Optional[List[dict]] = Field(None, description="Files included in the workflow")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
-
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         run_input = get_run_input(run_response, is_workflow_run=True)

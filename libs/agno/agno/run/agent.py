@@ -285,6 +285,23 @@ class RunContinuedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class RunError:
+    """Error details for a failed run"""
+
+    message: Optional[str] = None
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunError":
+        return cls(**data)
+
+
+@dataclass
 class RunErrorEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_error.value
     content: Optional[str] = None
@@ -539,6 +556,9 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # Error details (populated when status is error)
+    error: Optional[RunError] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
@@ -586,6 +606,7 @@ class RunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "error",
             ]
         }
 
@@ -674,6 +695,9 @@ class RunOutput:
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
+        if self.error is not None:
+            _dict["error"] = self.error.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -749,6 +773,10 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        error = data.pop("error", None)
+        if error is not None:
+            error = RunError.from_dict(error)
+
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
 
@@ -771,6 +799,7 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
+            error=error,
             **filtered_data,
         )
 
