@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
 
 try:

@@ -19,7 +19,7 @@ print(f"- {'\n- '.join(all_betas.__args__[1].__args__)}")
 print("=============================================\n")
 
 print(
-    f"Note: Not all beta features are available across all inference providers. Read more here: https://platform.claude.com/docs/en/api/overview"
+    "Note: Not all beta features are available across all inference providers. Read more here: https://platform.claude.com/docs/en/api/overview"
 )
 
 agent = Agent(model=model, debug_mode=True)
