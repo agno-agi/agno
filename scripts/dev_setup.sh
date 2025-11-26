@@ -32,11 +32,10 @@ print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.t
 VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
 
 print_heading "Installing agno in editable mode with tests dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e "${AGNO_DIR}[dev,a2a,models,storage,vectordbs,knowledge,embedders,performance,cookbooks,agui,integration-tests]"
+VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[tests]
 #TODO: Improve the dev setup to handle conflicts which results in missing dependencies
 
 # Install missing dependencies: 
-VIRTUAL_ENV=${VENV_DIR} uv pip install anthropic ddgs lancedb exa_py groq
 VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
 VIRTUAL_ENV=${VENV_DIR} uv pip install google-genai==1.17.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
