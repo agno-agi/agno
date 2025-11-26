@@ -8,6 +8,7 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    reasoning_model=OpenAIChat(id="gpt-5"),
     db=InMemoryDb(),
     markdown=True,
     tools=[DuckDuckGoTools()],
@@ -94,3 +95,78 @@ print(
     "✓ Session metrics (SessionMetrics): Aggregated tokens + average_duration, no run-level timing"
 )
 print("✓ User/system/tool messages: No metrics (None)")
+
+
+
+{'input_tokens': 589, 'output_tokens': 159, 'total_tokens': 748, 'time_to_first_token': 5.490511832991615, 'duration': 8.73270150006283}
+
+{'input_tokens': None, 'output_tokens': None, 'total_tokens': None, 'time_to_first_token': 5.490511832991615, 'duration': 8.73270150006283}
+
+# How to handle retries?
+# if we track, should we have a way to display it? RunOutput contains only the last successful run metrics.
+{
+'model_metrics': {
+    "model":[{
+        "id": "gpt-5",
+        "provider": "openai",
+        "input_tokens": 589,
+        "output_tokens": 159,
+        "total_tokens": 748,
+        "duration": 8.73270150006283,
+        "time_to_first_token": 5.490511832991615,
+    }],
+    "reasoning_model":[{
+        "id": "gpt-5",
+        "provider": "openai",
+        "input_tokens": 589,
+        "output_tokens": 159,
+        "total_tokens": 748,
+        "duration": 8.73270150006283,
+        "time_to_first_token": 5.490511832991615,
+    }],
+    "session_summary_model":[{
+        "id": "gpt-5",
+        "provider": "openai",
+        "input_tokens": 589,
+        "output_tokens": 159,
+        "total_tokens": 748,
+        "duration": 8.73270150006283,
+        "time_to_first_token": 5.490511832991615,
+    }],
+    "context_compression_model":[{
+        "id": "gpt-5",
+        "provider": "openai",
+        "input_tokens": 589,
+        "output_tokens": 159,
+        "total_tokens": 748,
+        "duration": 8.73270150006283,
+        "time_to_first_token": 5.490511832991615,
+    }],
+    "culture_model":[{
+        "id": "gpt-5",
+        "provider": "openai",
+        "input_tokens": 589,
+        "output_tokens": 159,
+        "total_tokens": 748,
+        "duration": 8.73270150006283,
+        "time_to_first_token": 5.490511832991615,
+    }],
+    "memory_model":[{
+        "id": "gpt-5",
+        "provider": "openai",
+        "input_tokens": 589,
+        "output_tokens": 159,
+        "total_tokens": 748,
+        "duration": 8.73270150006283,
+        "time_to_first_token": 5.490511832991615,
+    }],
+}, 'duration': 8.73270150006283,
+'input_tokens': 589, 'output_tokens': 159, 'total_tokens': 748 # IF model is always the same, we can add this and display
+# If there is any difference in model id or provider we cant show input/output/total tokens
+}
+
+
+
+
+
+# If run metri
