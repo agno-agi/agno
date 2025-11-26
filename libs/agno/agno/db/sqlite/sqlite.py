@@ -2187,7 +2187,7 @@ class SqliteDb(BaseDb):
                         existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
                     else:
                         existing_start_time = trace.start_time
-                    
+
                     recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
 
                     update_values = {

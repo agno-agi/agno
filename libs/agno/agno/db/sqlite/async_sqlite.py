@@ -154,7 +154,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            await self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+            await self._get_or_create_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=True
+            )
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """

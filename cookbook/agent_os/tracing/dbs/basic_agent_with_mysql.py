@@ -11,7 +11,6 @@ from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing import setup_tracing
 
-
 db_url = "mysql+pymysql://ai:ai@localhost:3306/ai"
 
 db = MySQLDb(db_url=db_url)

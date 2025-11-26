@@ -207,12 +207,15 @@ class MySQLDb(BaseDb):
                         )
                         exists = (
                             sess.execute(
-                                exists_query, {"schema": self.db_schema, "table_name": table_name, "index_name": idx.name}
+                                exists_query,
+                                {"schema": self.db_schema, "table_name": table_name, "index_name": idx.name},
                             ).scalar()
                             is not None
                         )
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     idx.create(self.db_engine)

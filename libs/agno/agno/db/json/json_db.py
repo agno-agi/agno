@@ -1379,7 +1379,10 @@ class JsonDb(BaseDb):
                         return 0
 
                 existing_level = get_component_level(
-                    existing.get("workflow_id"), existing.get("team_id"), existing.get("agent_id"), existing.get("name", "")
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
                 )
                 new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
                 should_update_name = new_level > existing_level

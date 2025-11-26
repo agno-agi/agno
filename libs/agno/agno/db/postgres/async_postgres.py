@@ -148,7 +148,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             latest_schema_version = MigrationManager(self).latest_schema_version
             await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
-            await self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+            await self._get_or_create_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=True
+            )
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -217,7 +219,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                         result = await sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     async with self.db_engine.begin() as conn:
@@ -238,7 +242,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, 
+                    table_name=self.session_table_name,
                     table_type="sessions",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -247,7 +251,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, 
+                    table_name=self.memory_table_name,
                     table_type="memories",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -256,7 +260,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, 
+                    table_name=self.metrics_table_name,
                     table_type="metrics",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -265,7 +269,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
                 self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, 
+                    table_name=self.eval_table_name,
                     table_type="evals",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -274,7 +278,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, 
+                    table_name=self.knowledge_table_name,
                     table_type="knowledge",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -283,7 +287,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, 
+                    table_name=self.culture_table_name,
                     table_type="culture",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -292,7 +296,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, 
+                    table_name=self.versions_table_name,
                     table_type="versions",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -301,7 +305,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "traces":
             if not hasattr(self, "traces_table"):
                 self.traces_table = await self._get_or_create_table(
-                    table_name=self.trace_table_name, 
+                    table_name=self.trace_table_name,
                     table_type="traces",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -312,7 +316,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Ensure traces table exists first (spans has FK to traces)
                 await self._get_table(table_type="traces", create_table_if_not_found=create_table_if_not_found)
                 self.spans_table = await self._get_or_create_table(
-                    table_name=self.span_table_name, 
+                    table_name=self.span_table_name,
                     table_type="spans",
                     create_table_if_not_found=create_table_if_not_found,
                 )
@@ -320,7 +324,9 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str, create_table_if_not_found: bool = False) -> Table:
+    async def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: bool = False
+    ) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
@@ -333,7 +339,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+            table_is_available = await ais_table_available(
+                session=sess, table_name=table_name, db_schema=self.db_schema
+            )
 
         if not table_is_available:
             if not create_table_if_not_found:

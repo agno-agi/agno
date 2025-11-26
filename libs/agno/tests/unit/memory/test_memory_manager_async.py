@@ -176,8 +176,9 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         limit: Optional[int] = 1000,
     ) -> List:
         raise NotImplementedError
+
     # -----------
-    
+
     async def get_latest_schema_version(self, *args, **kwargs):
         raise NotImplementedError
 

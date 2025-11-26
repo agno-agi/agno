@@ -222,7 +222,9 @@ class PostgresDb(BaseDb):
                             is not None
                         )
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     idx.create(self.db_engine)
