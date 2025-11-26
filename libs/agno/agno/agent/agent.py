@@ -73,6 +73,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -86,6 +88,8 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -100,10 +104,6 @@ from agno.utils.agent import (
     validate_media_object_id,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
-    execute_system_message,
-    execute_instructions,
-    aexecute_system_message,
-    aexecute_instructions,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -6866,7 +6866,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = execute_system_message(agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context)
+                sys_message_content = execute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -6895,7 +6897,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                _instructions = execute_instructions(agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context)
+                _instructions = execute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -7205,7 +7209,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = await aexecute_system_message(agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context)
+                sys_message_content = await aexecute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -7235,7 +7241,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                _instructions = await aexecute_instructions(agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context)
+                _instructions = await aexecute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)

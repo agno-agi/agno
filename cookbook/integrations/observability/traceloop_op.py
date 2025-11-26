@@ -10,10 +10,10 @@ Steps:
 2. Set the Traceloop API key as an environment variable: `export TRACELOOP_API_KEY=<your-api-key>`
 """
 
-from traceloop.sdk import Traceloop
-from traceloop.sdk.decorators import workflow
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from traceloop.sdk import Traceloop
+from traceloop.sdk.decorators import workflow
 
 Traceloop.init(app_name="agno_workflows")
 
@@ -23,11 +23,13 @@ agent = Agent(
     debug_mode=True,
 )
 
+
 @workflow(name="data_analysis_pipeline")
 def analyze_data(query: str) -> str:
     """Custom workflow that wraps agent execution."""
     response = agent.run(query)
     return response.content
+
 
 # The workflow decorator creates a parent span
 result = analyze_data("Analyze the benefits of observability in AI systems")

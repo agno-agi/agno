@@ -172,7 +172,11 @@ class Claude(AnthropicClaude):
         )
         return self.async_client
 
-    def get_request_params(self) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
 

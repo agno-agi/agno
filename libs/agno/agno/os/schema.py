@@ -337,11 +337,11 @@ class AgentResponse(BaseModel):
             "update_knowledge": agent.update_knowledge,
             "read_tool_call_history": agent.read_tool_call_history,
         }
-        
+
         instructions = agent.instructions if agent.instructions else None
         if instructions and callable(instructions):
             instructions = await aexecute_instructions(instructions=instructions, agent=agent)
-        
+
         system_message = agent.system_message if agent.system_message else None
         if system_message and callable(system_message):
             system_message = await aexecute_system_message(system_message=system_message, agent=agent)
@@ -572,10 +572,12 @@ class TeamResponse(BaseModel):
         team_instructions = team.instructions if team.instructions else None
         if team_instructions and callable(team_instructions):
             team_instructions = await aexecute_instructions(instructions=team_instructions, agent=team, team=team)
-            
+
         team_system_message = team.system_message if team.system_message else None
         if team_system_message and callable(team_system_message):
-            team_system_message = await aexecute_system_message(system_message=team_system_message, agent=team, team=team)
+            team_system_message = await aexecute_system_message(
+                system_message=team_system_message, agent=team, team=team
+            )
 
         system_message_info = {
             "system_message": team_system_message,

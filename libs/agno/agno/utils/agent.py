@@ -1,5 +1,5 @@
 from asyncio import Future, Task
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -821,7 +821,13 @@ async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str
     return session.get_chat_history()  # type: ignore
 
 
-def execute_instructions(instructions: Union[str, List[str], Callable], agent: Optional["Agent"] = None, team: Optional["Team"] = None, session_state: Optional[Dict[str, Any]] = None, run_context: Optional[RunContext] = None) -> Union[str, List[str]]:
+def execute_instructions(
+    instructions: Union[str, List[str], Callable],
+    agent: Optional["Agent"] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
     """Execute the instructions function."""
     import inspect
 
@@ -850,7 +856,14 @@ def execute_instructions(instructions: Union[str, List[str], Callable], agent: O
     # Run the instructions function
     return instructions(**instruction_args)
 
-def execute_system_message(system_message: Union[str, Message, Callable], agent: Optional["Agent"] = None, team: Optional["Team"] = None, session_state: Optional[Dict[str, Any]] = None, run_context: Optional[RunContext] = None) -> Optional[Message]:
+
+def execute_system_message(
+    system_message: Union[str, Message, Callable],
+    agent: Optional["Agent"] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Optional[Message]:
     """Execute the system message function."""
     import inspect
 
@@ -868,7 +881,13 @@ def execute_system_message(system_message: Union[str, Message, Callable], agent:
     return system_message(**system_message_args)
 
 
-async def aexecute_instructions(instructions: Union[str, List[str], Callable], agent: Optional["Agent"] = None, team: Optional["Team"] = None, session_state: Optional[Dict[str, Any]] = None, run_context: Optional[RunContext] = None) -> Union[str, List[str]]:
+async def aexecute_instructions(
+    instructions: Union[str, List[str], Callable],
+    agent: Optional["Agent"] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
     """Execute the instructions function."""
     import inspect
 
@@ -894,7 +913,14 @@ async def aexecute_instructions(instructions: Union[str, List[str], Callable], a
     else:
         return instructions(**instruction_args)
 
-async def aexecute_system_message(system_message: Union[str, Message, Callable], agent: Optional["Agent"] = None, team: Optional["Team"] = None, session_state: Optional[Dict[str, Any]] = None, run_context: Optional[RunContext] = None) -> Optional[Message]:
+
+async def aexecute_system_message(
+    system_message: Union[str, Message, Callable],
+    agent: Optional["Agent"] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Optional[Message]:
     import inspect
 
     signature = inspect.signature(system_message)
