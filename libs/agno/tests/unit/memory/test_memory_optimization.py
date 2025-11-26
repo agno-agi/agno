@@ -46,199 +46,207 @@ def optimized_memories():
         UserMemory(memory="Optimized Memory", user_id="user-1", memory_id="opt-1")
     ]
 
-class TestMemoryOptimizationSync:
-    def test_optimize_memories_success(
-        self, mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
-    ):
-        """Test successful synchronous memory optimization."""
-        # Setup
-        manager = MemoryManager(db=mock_db, model=mock_model)
-        manager.get_user_memories = MagicMock(return_value=sample_memories)
-        manager.clear_user_memories = MagicMock()
-        
-        # Mock factory to return our mock strategy
-        with patch(
-            "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
-            return_value=mock_strategy
-        ) as mock_factory:
-            # Mock strategy optimize method
-            mock_strategy.optimize.return_value = optimized_memories
-
-            # Execute
-            result = manager.optimize_memories(
-                user_id="user-1",
-                strategy=MemoryOptimizationStrategyType.SUMMARIZE,
-                apply=True
-            )
-
-            # Verify Factory usage
-            mock_factory.assert_called_once_with(MemoryOptimizationStrategyType.SUMMARIZE)
-            
-            # Verify Optimization call
-            mock_strategy.optimize.assert_called_once_with(
-                memories=sample_memories,
-                model=mock_model
-            )
-
-            # Verify DB operations (apply=True)
-            manager.clear_user_memories.assert_called_once_with(user_id="user-1")
-            mock_db.upsert_user_memory.assert_called()
-            assert mock_db.upsert_user_memory.call_count == len(optimized_memories)
-            assert result == optimized_memories
-
-    def test_optimize_memories_apply_false(
-        self, mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
-    ):
-        """Test optimization without applying changes to DB."""
-        manager = MemoryManager(db=mock_db, model=mock_model)
-        manager.get_user_memories = MagicMock(return_value=sample_memories)
-        manager.clear_user_memories = MagicMock()
-
-        with patch(
-            "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
-            return_value=mock_strategy
-        ):
-            mock_strategy.optimize.return_value = optimized_memories
-
-            result = manager.optimize_memories(
-                user_id="user-1",
-                apply=False
-            )
-
-            # Verify DB was NOT touched
-            manager.clear_user_memories.assert_not_called()
-            mock_db.upsert_user_memory.assert_not_called()
-            assert result == optimized_memories
-
-    def test_optimize_memories_empty(self, mock_db, mock_model):
-        """Test optimization with no existing memories."""
-        manager = MemoryManager(db=mock_db, model=mock_model)
-        manager.get_user_memories = MagicMock(return_value=[])
-
-        result = manager.optimize_memories(user_id="user-1")
-
-        assert result == []
-        # Should return early before creating strategy
-        mock_model.assert_not_called()
-
-    def test_optimize_memories_custom_strategy_instance(
-        self, mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
-    ):
-        """Test optimization passing a strategy instance directly."""
-        manager = MemoryManager(db=mock_db, model=mock_model)
-        manager.get_user_memories = MagicMock(return_value=sample_memories)
-        manager.clear_user_memories = MagicMock()
-        
+def test_optimize_memories_success(
+    mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
+):
+    """Test successful synchronous memory optimization."""
+    # Setup
+    manager = MemoryManager(db=mock_db, model=mock_model)
+    manager.get_user_memories = MagicMock(return_value=sample_memories)
+    manager.clear_user_memories = MagicMock()
+    
+    # Mock factory to return our mock strategy
+    with patch(
+        "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
+        return_value=mock_strategy
+    ) as mock_factory:
+        # Mock strategy optimize method
         mock_strategy.optimize.return_value = optimized_memories
 
-        # Pass instance directly
-        manager.optimize_memories(
+        # Execute
+        result = manager.optimize_memories(
             user_id="user-1",
-            strategy=mock_strategy,
+            strategy=MemoryOptimizationStrategyType.SUMMARIZE,
             apply=True
         )
 
-        # Verify method called on passed instance
-        mock_strategy.optimize.assert_called_once()
-
-    def test_optimize_memories_async_db_error(self, mock_async_db, mock_model):
-        """Test that calling sync optimize with async DB raises ValueError."""
-        manager = MemoryManager(db=mock_async_db, model=mock_model)
+        # Verify Factory usage
+        mock_factory.assert_called_once_with(MemoryOptimizationStrategyType.SUMMARIZE)
         
-        with pytest.raises(ValueError, match="not supported with an async DB"):
-            manager.optimize_memories(user_id="user-1")
+        # Verify Optimization call
+        mock_strategy.optimize.assert_called_once_with(
+            memories=sample_memories,
+            model=mock_model
+        )
+
+        # Verify DB operations (apply=True)
+        manager.clear_user_memories.assert_called_once_with(user_id="user-1")
+        mock_db.upsert_user_memory.assert_called()
+        assert mock_db.upsert_user_memory.call_count == len(optimized_memories)
+        assert result == optimized_memories
+
+
+def test_optimize_memories_apply_false(
+    mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
+):
+    """Test optimization without applying changes to DB."""
+    manager = MemoryManager(db=mock_db, model=mock_model)
+    manager.get_user_memories = MagicMock(return_value=sample_memories)
+    manager.clear_user_memories = MagicMock()
+
+    with patch(
+        "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
+        return_value=mock_strategy
+    ):
+        mock_strategy.optimize.return_value = optimized_memories
+
+        result = manager.optimize_memories(
+            user_id="user-1",
+            apply=False
+        )
+
+        # Verify DB was NOT touched
+        manager.clear_user_memories.assert_not_called()
+        mock_db.upsert_user_memory.assert_not_called()
+        assert result == optimized_memories
+
+
+def test_optimize_memories_empty(mock_db, mock_model):
+    """Test optimization with no existing memories."""
+    manager = MemoryManager(db=mock_db, model=mock_model)
+    manager.get_user_memories = MagicMock(return_value=[])
+
+    result = manager.optimize_memories(user_id="user-1")
+
+    assert result == []
+    # Should return early before creating strategy
+    mock_model.assert_not_called()
+
+
+def test_optimize_memories_custom_strategy_instance(
+    mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
+):
+    """Test optimization passing a strategy instance directly."""
+    manager = MemoryManager(db=mock_db, model=mock_model)
+    manager.get_user_memories = MagicMock(return_value=sample_memories)
+    manager.clear_user_memories = MagicMock()
+    
+    mock_strategy.optimize.return_value = optimized_memories
+
+    # Pass instance directly
+    manager.optimize_memories(
+        user_id="user-1",
+        strategy=mock_strategy,
+        apply=True
+    )
+
+    # Verify method called on passed instance
+    mock_strategy.optimize.assert_called_once()
+
+
+def test_optimize_memories_async_db_error(mock_async_db, mock_model):
+    """Test that calling sync optimize with async DB raises ValueError."""
+    manager = MemoryManager(db=mock_async_db, model=mock_model)
+    
+    with pytest.raises(ValueError, match="not supported with an async DB"):
+        manager.optimize_memories(user_id="user-1")
 
 
 @pytest.mark.asyncio
-class TestMemoryOptimizationAsync:
-    async def test_aoptimize_memories_success(
-        self, mock_async_db, mock_model, mock_strategy, sample_memories, optimized_memories
+async def test_aoptimize_memories_success(
+    mock_async_db, mock_model, mock_strategy, sample_memories, optimized_memories
+):
+    """Test successful async memory optimization."""
+    manager = MemoryManager(db=mock_async_db, model=mock_model)
+    manager.aget_user_memories = AsyncMock(return_value=sample_memories)
+    manager.aclear_user_memories = AsyncMock()
+    
+    with patch(
+        "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
+        return_value=mock_strategy
     ):
-        """Test successful async memory optimization."""
-        manager = MemoryManager(db=mock_async_db, model=mock_model)
-        manager.aget_user_memories = AsyncMock(return_value=sample_memories)
-        manager.aclear_user_memories = AsyncMock()
-        
-        with patch(
-            "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
-            return_value=mock_strategy
-        ):
-            mock_strategy.aoptimize = AsyncMock(return_value=optimized_memories)
+        mock_strategy.aoptimize = AsyncMock(return_value=optimized_memories)
 
-            result = await manager.aoptimize_memories(
-                user_id="user-1",
-                strategy=MemoryOptimizationStrategyType.SUMMARIZE,
-                apply=True
-            )
+        result = await manager.aoptimize_memories(
+            user_id="user-1",
+            strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+            apply=True
+        )
 
-            # Verify async calls
-            mock_strategy.aoptimize.assert_called_once_with(
-                memories=sample_memories,
-                model=mock_model
-            )
-            manager.aclear_user_memories.assert_called_once_with(user_id="user-1")
-            assert mock_async_db.upsert_user_memory.await_count == len(optimized_memories)
-            assert result == optimized_memories
+        # Verify async calls
+        mock_strategy.aoptimize.assert_called_once_with(
+            memories=sample_memories,
+            model=mock_model
+        )
+        manager.aclear_user_memories.assert_called_once_with(user_id="user-1")
+        assert mock_async_db.upsert_user_memory.await_count == len(optimized_memories)
+        assert result == optimized_memories
 
-    async def test_aoptimize_memories_apply_false(
-        self, mock_async_db, mock_model, mock_strategy, sample_memories, optimized_memories
+
+@pytest.mark.asyncio
+async def test_aoptimize_memories_apply_false(
+    mock_async_db, mock_model, mock_strategy, sample_memories, optimized_memories
+):
+    """Test async optimization without applying to DB."""
+    manager = MemoryManager(db=mock_async_db, model=mock_model)
+    manager.aget_user_memories = AsyncMock(return_value=sample_memories)
+    manager.aclear_user_memories = AsyncMock()
+
+    with patch(
+        "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
+        return_value=mock_strategy
     ):
-        """Test async optimization without applying to DB."""
-        manager = MemoryManager(db=mock_async_db, model=mock_model)
-        manager.aget_user_memories = AsyncMock(return_value=sample_memories)
-        manager.aclear_user_memories = AsyncMock()
+        mock_strategy.aoptimize = AsyncMock(return_value=optimized_memories)
 
-        with patch(
-            "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
-            return_value=mock_strategy
-        ):
-            mock_strategy.aoptimize = AsyncMock(return_value=optimized_memories)
+        result = await manager.aoptimize_memories(
+            user_id="user-1",
+            apply=False
+        )
 
-            result = await manager.aoptimize_memories(
-                user_id="user-1",
-                apply=False
-            )
+        manager.aclear_user_memories.assert_not_called()
+        mock_async_db.upsert_user_memory.assert_not_called()
+        assert result == optimized_memories
 
-            manager.aclear_user_memories.assert_not_called()
-            mock_async_db.upsert_user_memory.assert_not_called()
-            assert result == optimized_memories
 
-    async def test_aoptimize_memories_empty(self, mock_async_db, mock_model):
-        """Test async optimization with empty memories."""
-        manager = MemoryManager(db=mock_async_db, model=mock_model)
-        manager.aget_user_memories = AsyncMock(return_value=[])
+@pytest.mark.asyncio
+async def test_aoptimize_memories_empty(mock_async_db, mock_model):
+    """Test async optimization with empty memories."""
+    manager = MemoryManager(db=mock_async_db, model=mock_model)
+    manager.aget_user_memories = AsyncMock(return_value=[])
 
-        result = await manager.aoptimize_memories(user_id="user-1")
+    result = await manager.aoptimize_memories(user_id="user-1")
 
-        assert result == []
+    assert result == []
 
-    async def test_aoptimize_memories_sync_db_compatibility(
-        self, mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
+
+@pytest.mark.asyncio
+async def test_aoptimize_memories_sync_db_compatibility(
+    mock_db, mock_model, mock_strategy, sample_memories, optimized_memories
+):
+    """Test that async optimize works even with a sync DB (hybrid usage)."""
+    manager = MemoryManager(db=mock_db, model=mock_model)
+    # Note: With sync DB, it calls get_user_memories (sync) not aget
+    manager.get_user_memories = MagicMock(return_value=sample_memories)
+    manager.clear_user_memories = MagicMock()
+    # But upsert/clear might be handled differently depending on implementation
+    # The code handles `isinstance(self.db, AsyncBaseDb)` checks.
+    
+    # Since we mocked db as BaseDb, manager treats it as sync
+    
+    with patch(
+        "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
+        return_value=mock_strategy
     ):
-        """Test that async optimize works even with a sync DB (hybrid usage)."""
-        manager = MemoryManager(db=mock_db, model=mock_model)
-        # Note: With sync DB, it calls get_user_memories (sync) not aget
-        manager.get_user_memories = MagicMock(return_value=sample_memories)
-        manager.clear_user_memories = MagicMock()
-        # But upsert/clear might be handled differently depending on implementation
-        # The code handles `isinstance(self.db, AsyncBaseDb)` checks.
-        
-        # Since we mocked db as BaseDb, manager treats it as sync
-        
-        with patch(
-            "agno.memory.strategies.MemoryOptimizationStrategyFactory.create_strategy",
-            return_value=mock_strategy
-        ):
-            mock_strategy.aoptimize = AsyncMock(return_value=optimized_memories)
+        mock_strategy.aoptimize = AsyncMock(return_value=optimized_memories)
 
-            # It should use the async strategy method, but sync DB methods
-            result = await manager.aoptimize_memories(
-                user_id="user-1",
-                apply=True
-            )
+        # It should use the async strategy method, but sync DB methods
+        result = await manager.aoptimize_memories(
+            user_id="user-1",
+            apply=True
+        )
 
-            mock_strategy.aoptimize.assert_called_once()
-            # Should use sync upsert since DB is sync
-            mock_db.upsert_user_memory.assert_called()
-            assert result == optimized_memories
+        mock_strategy.aoptimize.assert_called_once()
+        # Should use sync upsert since DB is sync
+        mock_db.upsert_user_memory.assert_called()
+        assert result == optimized_memories
 
