@@ -93,6 +93,10 @@ from agno.utils.agent import (
     validate_media_object_id,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
+    execute_system_message,
+    execute_instructions,
+    aexecute_system_message,
+    aexecute_instructions,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -5416,7 +5420,7 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(system_message=self.system_message, agent=self, team=self, session_state=session_state, run_context=run_context)
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -5440,15 +5444,7 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "team" in signature.parameters:
-                    _instructions = self.instructions(team=self)
-                elif "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                _instructions = execute_instructions(instructions=self.instructions, agent=self, team=self, session_state=session_state, run_context=run_context)
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -5724,7 +5720,7 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(system_message=self.system_message, agent=self, team=self, session_state=session_state, run_context=run_context)
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -5748,15 +5744,7 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "team" in signature.parameters:
-                    _instructions = self.instructions(team=self)
-                elif "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                _instructions = await aexecute_instructions(instructions=self.instructions, agent=self, team=self, session_state=session_state, run_context=run_context)
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)

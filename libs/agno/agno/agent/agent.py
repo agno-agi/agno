@@ -100,6 +100,10 @@ from agno.utils.agent import (
     validate_media_object_id,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
+    execute_system_message,
+    execute_instructions,
+    aexecute_system_message,
+    aexecute_instructions,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -6862,7 +6866,7 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context)
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -6891,25 +6895,7 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                # Check for run_context parameter
-                if "run_context" in signature.parameters:
-                    instruction_args["run_context"] = run_context or None
-
-                # Run the instructions function
-                _instructions = self.instructions(**instruction_args)
+                _instructions = execute_instructions(agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context)
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -7219,7 +7205,7 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context)
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -7249,20 +7235,7 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                _instructions = self.instructions(**instruction_args)
+                _instructions = await aexecute_instructions(agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context)
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
