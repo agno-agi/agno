@@ -3,10 +3,9 @@
 import sys
 from unittest.mock import MagicMock, patch
 
-from agno.utils.tokens import count_tokens
-
 # Import log_warning module before patching __import__ to avoid recursion
 from agno.utils import log
+from agno.utils.tokens import count_tokens
 
 
 def test_count_tokens_basic():
@@ -84,13 +83,13 @@ def test_count_tokens_import_error_fallback():
     # Remove tiktoken from sys.modules to simulate it not being installed
     original_tiktoken = sys.modules.pop("tiktoken", None)
     original_import = __import__
-    
+
     def import_side_effect(name, *args, **kwargs):
         if name == "tiktoken":
             raise ImportError(f"No module named '{name}'")
         # For other imports, use the real import
         return original_import(name, *args, **kwargs)
-    
+
     try:
         with patch("builtins.__import__", side_effect=import_side_effect):
             with patch.object(log, "log_warning") as mock_log:
@@ -112,12 +111,12 @@ def test_count_tokens_import_error_fallback_empty_string():
     # Remove tiktoken from sys.modules to simulate it not being installed
     original_tiktoken = sys.modules.pop("tiktoken", None)
     original_import = __import__
-    
+
     def import_side_effect(name, *args, **kwargs):
         if name == "tiktoken":
             raise ImportError(f"No module named '{name}'")
         return original_import(name, *args, **kwargs)
-    
+
     try:
         with patch("builtins.__import__", side_effect=import_side_effect):
             with patch.object(log, "log_warning"):
@@ -134,12 +133,12 @@ def test_count_tokens_import_error_fallback_long_text():
     # Remove tiktoken from sys.modules to simulate it not being installed
     original_tiktoken = sys.modules.pop("tiktoken", None)
     original_import = __import__
-    
+
     def import_side_effect(name, *args, **kwargs):
         if name == "tiktoken":
             raise ImportError(f"No module named '{name}'")
         return original_import(name, *args, **kwargs)
-    
+
     try:
         text = "a" * 100  # 100 characters
         with patch("builtins.__import__", side_effect=import_side_effect):
@@ -158,7 +157,7 @@ def test_count_tokens_general_exception_fallback():
     # Mock tiktoken to raise an exception when get_encoding is called
     mock_tiktoken = MagicMock()
     mock_tiktoken.get_encoding.side_effect = Exception("Unexpected error")
-    
+
     with patch.dict("sys.modules", {"tiktoken": mock_tiktoken}):
         with patch.object(log, "log_warning") as mock_log:
             result = count_tokens("Hello world")
@@ -177,7 +176,7 @@ def test_count_tokens_general_exception_fallback_empty_string():
     mock_encoding = MagicMock()
     mock_encoding.encode.side_effect = Exception("Unexpected error")
     mock_tiktoken.get_encoding.return_value = mock_encoding
-    
+
     with patch.dict("sys.modules", {"tiktoken": mock_tiktoken}):
         with patch.object(log, "log_warning"):
             result = count_tokens("")
@@ -189,7 +188,7 @@ def test_count_tokens_get_encoding_exception():
     # Mock tiktoken to raise an exception when get_encoding is called
     mock_tiktoken = MagicMock()
     mock_tiktoken.get_encoding.side_effect = Exception("Encoding error")
-    
+
     with patch.dict("sys.modules", {"tiktoken": mock_tiktoken}):
         with patch.object(log, "log_warning") as mock_log:
             result = count_tokens("Hello world")
@@ -214,4 +213,3 @@ def test_count_tokens_different_lengths():
     long_count = count_tokens(long_text)
 
     assert long_count >= short_count
-

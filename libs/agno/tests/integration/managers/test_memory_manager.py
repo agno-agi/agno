@@ -393,10 +393,16 @@ def test_optimize_memories_with_db(memory_with_db):
         memory="The user's name is John Doe", topics=["name", "user"], user_id="test_user", updated_at=datetime.now()
     )
     memory2 = UserMemory(
-        memory="The user likes to play basketball", topics=["sports", "hobbies"], user_id="test_user", updated_at=datetime.now()
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        user_id="test_user",
+        updated_at=datetime.now(),
     )
     memory3 = UserMemory(
-        memory="The user's favorite color is blue", topics=["preferences", "colors"], user_id="test_user", updated_at=datetime.now()
+        memory="The user's favorite color is blue",
+        topics=["preferences", "colors"],
+        user_id="test_user",
+        updated_at=datetime.now(),
     )
 
     # Add the memories
@@ -436,7 +442,10 @@ def test_optimize_memories_with_db_apply_false(memory_with_db):
         memory="The user's name is John Doe", topics=["name", "user"], user_id="test_user", updated_at=datetime.now()
     )
     memory2 = UserMemory(
-        memory="The user likes to play basketball", topics=["sports", "hobbies"], user_id="test_user", updated_at=datetime.now()
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        user_id="test_user",
+        updated_at=datetime.now(),
     )
 
     # Add the memories
@@ -475,9 +484,7 @@ def test_optimize_memories_with_db_empty(memory_with_db):
 def test_optimize_memories_with_db_default_user_id(memory_with_db):
     """Test optimizing memories with default user_id."""
     # Add memories with default user_id
-    memory1 = UserMemory(
-        memory="Default user memory", topics=["test"], user_id="default", updated_at=datetime.now()
-    )
+    memory1 = UserMemory(memory="Default user memory", topics=["test"], user_id="default", updated_at=datetime.now())
     memory_with_db.add_user_memory(memory=memory1, user_id="default")
 
     # Optimize without specifying user_id (should default to "default")
