@@ -29,7 +29,6 @@ from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedE
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_debug, log_warning
-
 from agno.utils.message import get_text_from_message
 
 
@@ -116,13 +115,7 @@ class EventBuffer:
 
 
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
-    """Convert AG-UI messages to Agno messages.
-
-    Handles deduplication and filtering to ensure valid message sequences for LLM providers:
-    - Deduplicates tool results
-    - Filters tool_calls without corresponding results
-    - Skips client system messages (agent builds its own)
-    """
+    """Convert AG-UI messages to Agno messages."""
 
     # Build position map: tool_call_id → indices where results appear
     result_positions: Dict[str, List[int]] = {}
