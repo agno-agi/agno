@@ -16,7 +16,7 @@ def add_item(run_context: RunContext, item: str) -> str:
 
     run_context.session_state["shopping_list"].append(item)
     len_shopping_list = len(run_context.session_state["shopping_list"])
-    
+
     if len_shopping_list < 3:
         logger.info(
             f"Asking the model to add {3 - len_shopping_list} more items to the shopping list."

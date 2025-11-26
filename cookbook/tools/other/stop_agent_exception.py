@@ -16,7 +16,7 @@ def add_item(run_context: RunContext, item: str) -> str:
 
     run_context.session_state["shopping_list"].append(item)
     len_shopping_list = len(run_context.session_state["shopping_list"])
-    
+
     if len_shopping_list < 3:
         raise StopAgentRun(
             f"Shopping list is: {run_context.session_state['shopping_list']}. We must stop the agent."  # type: ignore
