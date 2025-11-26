@@ -262,10 +262,8 @@ class AsyncMongoDb(AsyncBaseDb):
                     # Create client based on detected type
                     if self._client_type == self.CLIENT_TYPE_PYMONGO_ASYNC and PYMONGO_ASYNC_AVAILABLE:
                         self._client = AsyncMongoClient(self.db_url)  # type: ignore
-                        log_debug("Created AsyncMongoClient outside event loop")
                     elif self._client_type == self.CLIENT_TYPE_MOTOR and MOTOR_AVAILABLE:
                         self._client = AsyncIOMotorClient(self.db_url)  # type: ignore
-                        log_debug("Created AsyncIOMotorClient outside event loop")
                     else:
                         raise RuntimeError(f"Client type '{self._client_type}' not available")
             return self._client  # type: ignore
@@ -284,16 +282,9 @@ class AsyncMongoDb(AsyncBaseDb):
                 )
                 self._client = self._provided_client
             elif self.db_url is not None:
-                # Create a new client for this event loop
-                old_loop_id = id(self._event_loop) if self._event_loop else "None"
-                new_loop_id = id(current_loop)
                 if self._client_type == self.CLIENT_TYPE_PYMONGO_ASYNC and PYMONGO_ASYNC_AVAILABLE:
-                    log_debug(f"Event loop changed from {old_loop_id} to {new_loop_id}, creating new AsyncMongoClient")
                     self._client = AsyncMongoClient(self.db_url)  # type: ignore
                 elif self._client_type == self.CLIENT_TYPE_MOTOR and MOTOR_AVAILABLE:
-                    log_debug(
-                        f"Event loop changed from {old_loop_id} to {new_loop_id}, creating new AsyncIOMotorClient"
-                    )
                     self._client = AsyncIOMotorClient(self.db_url)  # type: ignore
                 else:
                     raise RuntimeError(f"Client type '{self._client_type}' not available")
