@@ -7290,7 +7290,7 @@ class Team:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the top-level team run_response tool call to have the run_id of the member run
-            if run_response.tools is not None and member_agent_run_response is not None:
+            if run_response.tools is not None:
                 for tool in run_response.tools:
                     if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
