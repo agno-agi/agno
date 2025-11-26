@@ -2504,7 +2504,7 @@ class DynamoDb(BaseDb):
                 session_stats[session_id]["total_traces"] += 1
 
                 created_at = trace_data.get("created_at")
-                if created_at:
+                if created_at and session_stats[session_id]["first_trace_at"] and session_stats[session_id]["last_trace_at"]:
                     if created_at < session_stats[session_id]["first_trace_at"]:
                         session_stats[session_id]["first_trace_at"] = created_at
                     if created_at > session_stats[session_id]["last_trace_at"]:
@@ -2609,30 +2609,29 @@ class DynamoDb(BaseDb):
                     self.client.batch_write_item(RequestItems={table_name: put_requests})
 
             # Update trace with total_spans and error_count using ADD (atomic increment)
-            if spans:
-                trace_id = spans[0].trace_id
-                spans_count = len(spans)
-                error_count = sum(1 for s in spans if s.status_code == "ERROR")
+            trace_id = spans[0].trace_id
+            spans_count = len(spans)
+            error_count = sum(1 for s in spans if s.status_code == "ERROR")
 
-                traces_table_name = self._get_table("traces")
-                if traces_table_name:
-                    try:
-                        # Use ADD for atomic increment - works even if attributes don't exist yet
-                        update_expr = "ADD total_spans :spans_inc"
-                        expr_values: Dict[str, Any] = {":spans_inc": {"N": str(spans_count)}}
+            traces_table_name = self._get_table("traces")
+            if traces_table_name:
+                try:
+                    # Use ADD for atomic increment - works even if attributes don't exist yet
+                    update_expr = "ADD total_spans :spans_inc"
+                    expr_values: Dict[str, Any] = {":spans_inc": {"N": str(spans_count)}}
 
-                        if error_count > 0:
-                            update_expr += ", error_count :error_inc"
-                            expr_values[":error_inc"] = {"N": str(error_count)}
+                    if error_count > 0:
+                        update_expr += ", error_count :error_inc"
+                        expr_values[":error_inc"] = {"N": str(error_count)}
 
-                        self.client.update_item(
-                            TableName=traces_table_name,
-                            Key={"trace_id": {"S": trace_id}},
-                            UpdateExpression=update_expr,
-                            ExpressionAttributeValues=expr_values,
-                        )
-                    except Exception as update_error:
-                        log_debug(f"Could not update trace span counts: {update_error}")
+                    self.client.update_item(
+                        TableName=traces_table_name,
+                        Key={"trace_id": {"S": trace_id}},
+                        UpdateExpression=update_expr,
+                        ExpressionAttributeValues=expr_values,
+                    )
+                except Exception as update_error:
+                    log_debug(f"Could not update trace span counts: {update_error}")
 
         except Exception as e:
             log_error(f"Error creating spans batch: {e}")
