@@ -28,13 +28,13 @@ class Claude(AnthropicClaude):
     name: str = "Claude"
     provider: str = "VertexAI"
 
-    client: Optional[AnthropicVertex] = None  # type: ignore
-    async_client: Optional[AsyncAnthropicVertex] = None  # type: ignore
-
     # Client parameters
     region: Optional[str] = None
     project_id: Optional[str] = None
     base_url: Optional[str] = None
+
+    client: Optional[AnthropicVertex] = None  # type: ignore
+    async_client: Optional[AsyncAnthropicVertex] = None  # type: ignore
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
@@ -113,6 +113,9 @@ class Claude(AnthropicClaude):
     ) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
+
+        Returns:
+            Dict[str, Any]: The keyword arguments for API requests.
         """
         # Validate thinking support if thinking is enabled
         if self.thinking:
@@ -131,6 +134,8 @@ class Claude(AnthropicClaude):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.timeout:
+            _request_params["timeout"] = self.timeout
 
         # Build betas list - include existing betas and add new one if needed
         betas_list = list(self.betas) if self.betas else []
@@ -139,17 +144,11 @@ class Claude(AnthropicClaude):
         if betas_list:
             _request_params["betas"] = betas_list
 
-        if self.context_management:
-            _request_params["context_management"] = self.context_management
-        if self.mcp_servers:
-            _request_params["mcp_servers"] = [
-                {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
-            ]
-        if self.skills:
-            _request_params["container"] = {"skills": self.skills}
         if self.request_params:
             _request_params.update(self.request_params)
 
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def _prepare_request_kwargs(
@@ -169,9 +168,6 @@ class Claude(AnthropicClaude):
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
-        # Validate structured outputs usage
-        self._validate_structured_outputs_usage(response_format, tools)
-
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         if system_message:
@@ -184,15 +180,6 @@ class Claude(AnthropicClaude):
                 request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
             else:
                 request_kwargs["system"] = [{"text": system_message, "type": "text"}]
-
-        # Add code execution tool if skills are enabled
-        if self.skills:
-            code_execution_tool = {"type": "code_execution_20250825", "name": "code_execution"}
-            if tools:
-                # Add code_execution to existing tools, code execution is needed for generating and processing files
-                tools = tools + [code_execution_tool]
-            else:
-                tools = [code_execution_tool]
 
         # Format tools (this will handle strict mode)
         if tools:
