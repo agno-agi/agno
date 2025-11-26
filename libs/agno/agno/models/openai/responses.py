@@ -395,12 +395,15 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
-    def _format_messages(self, messages: List[Message]) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
+    def _format_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             messages (List[Message]): The message to format.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -445,7 +448,7 @@ class OpenAIResponses(Model):
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.content,
+                    "content": message.get_content(use_compressed_content=compress_tool_results),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -469,7 +472,9 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                if message.tool_call_id and message.content is not None:
+                tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
+                if message.tool_call_id and tool_result is not None:
                     function_call_id = message.tool_call_id
                     # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
                     if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
@@ -477,7 +482,7 @@ class OpenAIResponses(Model):
                     else:
                         call_id_value = function_call_id
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
+                        {"type": "function_call_output", "call_id": call_id_value, "output": tool_result}
                     )
             # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
@@ -519,6 +524,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
@@ -535,7 +541,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **request_params,
             )
 
@@ -588,6 +594,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
@@ -604,7 +611,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **request_params,
             )
 
@@ -657,6 +664,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
@@ -674,7 +682,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 **request_params,
             ):
@@ -730,6 +738,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
@@ -747,7 +756,7 @@ class OpenAIResponses(Model):
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 **request_params,
             )
@@ -793,7 +802,11 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str]
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        tool_call_ids: List[str],
+        compress_tool_results: bool = False,
     ) -> None:
         """
         Handle the results of function calls.
@@ -802,6 +815,7 @@ class OpenAIResponses(Model):
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
+            compress_tool_results (bool): Whether to compress tool results.
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
