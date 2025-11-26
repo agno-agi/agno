@@ -333,9 +333,7 @@ def test_get_or_create_table_not_available(mock_is_available, postgres_db, mock_
             table_name="test_table", table_type="sessions", create_table_if_not_found=True
         )
         assert table == mock_table
-        postgres_db._create_table.assert_called_once_with(
-            table_name="test_table", table_type="sessions"
-        )
+        postgres_db._create_table.assert_called_once_with(table_name="test_table", table_type="sessions")
 
 
 @patch("agno.db.postgres.postgres.is_table_available")

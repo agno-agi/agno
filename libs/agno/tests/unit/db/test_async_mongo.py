@@ -1,11 +1,10 @@
 import asyncio
 from unittest.mock import Mock, patch
 
-from pymongo import AsyncMongoClient
 import pytest
+from pymongo import AsyncMongoClient
 
 from agno.db.mongo import AsyncMongoDb
-
 
 
 def test_id_is_deterministic():
@@ -15,12 +14,14 @@ def test_id_is_deterministic():
 
     assert db1.id == db2.id
 
+
 def test_id_different_for_different_configs():
     """Test that different configs produce different IDs"""
     db1 = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db1")
     db2 = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db2")
 
     assert db1.id != db2.id
+
 
 def test_init_with_url():
     """Test initialization with database URL"""
@@ -36,6 +37,7 @@ def test_init_with_url():
     assert db.session_table_name == "sessions"
     assert db.memory_table_name == "memories"
 
+
 def test_init_with_client():
     """Test initialization with provided client"""
     test_client = AsyncMongoClient()
@@ -45,10 +47,12 @@ def test_init_with_client():
     assert db.db_name == "test_db"
     assert db.session_table_name == "sessions"
 
+
 def test_init_no_url_or_client():
     """Test initialization fails without URL or client"""
     with pytest.raises(ValueError, match="One of db_url or db_client must be provided"):
         AsyncMongoDb(db_name="test_db")
+
 
 def test_init_defaults():
     """Test initialization with defaults"""
@@ -58,6 +62,7 @@ def test_init_defaults():
     assert db._client is None
     assert db._database is None
     assert db._event_loop is None
+
 
 def test_init_with_all_collections():
     """Test initialization with all collection names"""
@@ -120,6 +125,7 @@ async def test_initialization_flags_cleared_on_event_loop_change():
         f"All _initialized flags should be cleared, but found: {initialized_flags_after}"
     )
 
+
 @pytest.mark.asyncio
 async def test_indexes_awaited_properly():
     """Test that index creation is properly awaited.
@@ -140,6 +146,7 @@ async def test_indexes_awaited_properly():
     pending = [task for task in pending if task != current_task]
 
     assert len(pending) == 0, f"Should have no pending tasks, but found: {pending}"
+
 
 @pytest.mark.asyncio
 async def test_collection_cache_reset_on_event_loop_change():
@@ -164,7 +171,6 @@ async def test_collection_cache_reset_on_event_loop_change():
     assert len(collections_after) == 0, f"All collections should be cleared, found: {collections_after}"
 
 
-
 @pytest.mark.asyncio
 async def test_get_collection_invalid_type():
     """Test getting collection with invalid type raises error"""
@@ -172,6 +178,7 @@ async def test_get_collection_invalid_type():
 
     with pytest.raises(ValueError, match="Unknown table type"):
         await db._get_collection("invalid_type")
+
 
 @pytest.mark.asyncio
 async def test_get_collection_without_table_name():
@@ -194,6 +201,7 @@ def test_db_client_property():
         assert client is not None
         mock_ensure.assert_called_once()
 
+
 def test_should_reset_collection_cache():
     """Test _should_reset_collection_cache method"""
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_should_reset")
@@ -213,6 +221,7 @@ def test_client_type_constants():
     assert AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC == "pymongo_async"
     assert AsyncMongoDb.CLIENT_TYPE_UNKNOWN == "unknown"
 
+
 def test_detect_motor_client_type():
     """Test that Motor client is correctly detected"""
     try:
@@ -223,6 +232,7 @@ def test_detect_motor_client_type():
         assert db._client_type == AsyncMongoDb.CLIENT_TYPE_MOTOR
     except ImportError:
         pytest.skip("Motor not available")
+
 
 def test_detect_pymongo_async_client_type():
     """Test that PyMongo async client is correctly detected"""
@@ -245,6 +255,7 @@ def test_detect_pymongo_async_client_type():
     mock_client.__class__.__module__ = "pymongo"
     db = AsyncMongoDb(db_client=mock_client, db_name="test_db")
     assert db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC
+
 
 def test_auto_select_preferred_client_from_url():
     """Test that preferred client is auto-selected when creating from URL"""
