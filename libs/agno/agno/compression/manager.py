@@ -119,7 +119,7 @@ class CompressionManager:
             else:
                 log_warning(f"Compression failed for {tool_msg.tool_name}")
 
-    #* Async methods *#
+    # * Async methods *#
     async def _acompress_tool_result(self, tool_result: Message) -> Optional[str]:
         """Async compress a single tool result"""
         if not tool_result:

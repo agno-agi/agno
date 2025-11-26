@@ -52,7 +52,7 @@ research_team = Team(
         - Provide comprehensive, well-sourced responses
     """).strip(),
     db=SqliteDb(db_file="tmp/research_team.db"),
-    compress_tool_results=True, # Enable tool call compression
+    compress_tool_results=True,  # Enable tool call compression
     show_members_responses=True,
 )
 

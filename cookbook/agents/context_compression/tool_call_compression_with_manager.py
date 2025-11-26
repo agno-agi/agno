@@ -43,7 +43,7 @@ compression_prompt = """
 """
 
 compression_manager = CompressionManager(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     compress_tool_results_limit=1,
     compress_tool_call_instructions=compression_prompt,
 )
@@ -69,4 +69,4 @@ agent.print_response(
    
     For each, find specific actions with dates and numbers.""",
     stream=True,
-    )
+)
