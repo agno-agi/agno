@@ -274,9 +274,7 @@ class BasePDFReader(Reader):
             )
             documents = [document]
         
-        self.chunk=False
         if self.chunk:
-            log_info(f"Chunking documents: {documents}")
             return self._build_chunked_documents(documents)
         return documents
 
@@ -408,7 +406,7 @@ class PDFImageReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
 
     async def async_read(
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
@@ -430,4 +428,4 @@ class PDFImageReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
