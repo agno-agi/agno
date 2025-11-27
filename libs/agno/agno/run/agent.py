@@ -285,23 +285,6 @@ class RunContinuedEvent(BaseAgentRunEvent):
 
 
 @dataclass
-class RunError:
-    """Error details for a failed run"""
-
-    message: Optional[str] = None
-    error_type: Optional[str] = None
-    error_id: Optional[str] = None
-    additional_data: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {k: v for k, v in asdict(self).items() if v is not None}
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunError":
-        return cls(**data)
-
-
-@dataclass
 class RunErrorEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_error.value
     content: Optional[str] = None
@@ -557,7 +540,7 @@ class RunOutput:
     status: RunStatus = RunStatus.running
 
     # Error details (populated when status is error)
-    error: Optional[RunError] = None
+    error: Optional[RunErrorEvent] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
@@ -775,7 +758,7 @@ class RunOutput:
 
         error = data.pop("error", None)
         if error is not None:
-            error = RunError.from_dict(error)
+            error = run_output_event_from_dict(error)  # type: ignore
 
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
@@ -799,7 +782,7 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
-            error=error,
+            error=error,  # type: ignore
             **filtered_data,
         )
 

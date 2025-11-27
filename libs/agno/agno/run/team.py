@@ -10,7 +10,7 @@ from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.agent import RunError, RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -516,7 +516,7 @@ class TeamRunOutput:
     status: RunStatus = RunStatus.running
 
     # Error details (populated when status is error)
-    error: Optional[RunError] = None
+    error: Optional[RunErrorEvent] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
@@ -704,7 +704,7 @@ class TeamRunOutput:
 
         error = data.pop("error", None)
         if error is not None:
-            error = RunError.from_dict(error)
+            error = team_run_output_event_from_dict(error)  # type: ignore
 
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
@@ -729,7 +729,7 @@ class TeamRunOutput:
             citations=citations,
             tools=tools,
             events=events,
-            error=error,
+            error=error,  # type: ignore
             **filtered_data,
         )
 

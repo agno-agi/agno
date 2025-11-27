@@ -51,7 +51,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunError, RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -1498,6 +1498,15 @@ class Team:
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
+        except Exception as e:
+            log_error(f"Team run {run_response.run_id} encountered an error: {str(e)}")
+
+            run_response.error = create_team_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response
+            self._cleanup_and_store(run_response=run_response, session=session)
+
+            return run_response
         finally:
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1556,20 +1565,16 @@ class Team:
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
                 run_response.status = RunStatus.error
                 run_response.content = str(e)
-                run_response.error = RunError(
-                    message=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
-                self._cleanup_and_store(run_response=run_response, session=session)
-                yield create_team_run_error_event(
+                error_event = create_team_run_error_event(
                     from_run_response=run_response,
                     error=str(e),
                     error_type=e.type,
                     error_id=e.error_id,
                     additional_data=e.additional_data,
                 )
+                run_response.error = error_event  # type: ignore
+                self._cleanup_and_store(run_response=run_response, session=session)
+                yield error_event
                 return
 
         # 2. Determine tools for model
@@ -2357,6 +2362,16 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
             return run_response
+        except Exception as e:
+            # Handle general exceptions during async non-streaming run
+            log_error(f"Team run {run_response.run_id} encountered an error: {str(e)}")
+
+            run_response.error = create_team_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response and session
+            await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+            return run_response
         finally:
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
@@ -2451,23 +2466,19 @@ class Team:
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
                 run_response.status = RunStatus.error
                 run_response.content = str(e)
-                run_response.error = RunError(
-                    message=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
-                await self._acleanup_and_store(
-                    run_response=run_response,
-                    session=team_session,
-                )
-                yield create_team_run_error_event(
+                error_event = create_team_run_error_event(
                     from_run_response=run_response,
                     error=str(e),
                     error_type=e.type,
                     error_id=e.error_id,
                     additional_data=e.additional_data,
                 )
+                run_response.error = error_event  # type: ignore
+                await self._acleanup_and_store(
+                    run_response=run_response,
+                    session=team_session,
+                )
+                yield error_event
                 return
 
         # 5. Determine tools for model

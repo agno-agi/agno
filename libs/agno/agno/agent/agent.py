@@ -54,7 +54,6 @@ from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
-    RunError,
     RunErrorEvent,
     RunEvent,
     RunInput,
@@ -137,6 +136,7 @@ from agno.utils.log import (
     log_exception,
     log_info,
     log_warning,
+    logger,
     set_log_level_to_debug,
     set_log_level_to_info,
 )
@@ -1164,6 +1164,17 @@ class Agent:
             )
 
             return run_response
+        except Exception as e:
+            log_error(f"Run {run_response.run_id} encountered an error: {str(e)}")
+
+            run_response.error = create_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response and session
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
+
+            return run_response
         finally:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -1220,29 +1231,17 @@ class Agent:
                 )
                 for event in pre_hook_iterator:
                     yield event
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+            except Exception as e:
                 run_response.status = RunStatus.error
                 run_response.content = str(e)
-                run_response.error = RunError(
-                    message=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
+                run_response.error = create_run_error_event(run_response, error=str(e))
                 self._cleanup_and_store(
                     run_response=run_response,
                     session=session,
                     run_context=run_context,
                     user_id=user_id,
                 )
-                yield create_run_error_event(
-                    from_run_response=run_response,
-                    error=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
+                yield create_run_error_event(run_response, error=str(e))
                 return
 
         # 2. Determine tools for model
@@ -1507,6 +1506,24 @@ class Agent:
             self._cleanup_and_store(
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
+        except Exception as e:
+            # Handle general exceptions during streaming
+            log_error(f"Run {run_response.run_id} encountered an error during streaming: {str(e)}")
+            run_response.status = RunStatus.error
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
+
+            run_response.error = create_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response and session
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
+
+            # Yield the error event
+            yield create_run_error_event(run_response, error=str(e))
         finally:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2076,6 +2093,20 @@ class Agent:
             )
 
             return run_response
+        except Exception as e:
+            run_response.error = create_run_error_event(run_response, error=str(e))
+
+            logger.error(f"Run {run_response.run_id} encountered an error: {str(e)}", exc_info=True)
+
+            # Cleanup and store the run response and session
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
+
+            return run_response
 
         finally:
             # Always disconnect MCP tools
@@ -2183,28 +2214,17 @@ class Agent:
                 )
                 async for event in pre_hook_iterator:
                     yield event
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+            except Exception as e:
                 run_response.status = RunStatus.error
                 run_response.content = str(e)
-                run_response.error = RunError(message=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
+                run_response.error = create_run_error_event(run_response, error=str(e))
                 await self._acleanup_and_store(
                     run_response=run_response,
                     session=agent_session,
                     run_context=run_context,
                     user_id=user_id,
                 )
-                yield create_run_error_event(
-                    from_run_response=run_response,
-                    error=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
+                yield create_run_error_event(run_response, error=str(e))
                 return
 
         # 5. Determine tools for model
@@ -2468,6 +2488,27 @@ class Agent:
                 run_context=run_context,
                 user_id=user_id,
             )
+        except Exception as e:
+            # Handle general exceptions during async streaming
+            log_error(f"Run {run_response.run_id} encountered an error during async streaming: {str(e)}")
+            run_response.status = RunStatus.error
+            # Don't overwrite content - preserve any partial content that was streamed
+            # Only set content if it's empty
+            if not run_response.content:
+                run_response.content = str(e)
+
+            run_response.error = create_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response and session
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
+
+            # Yield the error event
+            yield create_run_error_event(run_response, error=str(e))
         finally:
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
