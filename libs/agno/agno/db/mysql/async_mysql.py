@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
     abulk_upsert_metrics,
@@ -48,6 +49,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
     ):
         """
         Async interface for interacting with a MySQL database.
@@ -68,6 +70,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            versions_table (Optional[str]): Name of the table to store schema versions.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -87,6 +90,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -173,8 +177,14 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await acreate_schema(session=sess, db_schema=db_schema)
 
             # Create table
-            async with self.db_engine.begin() as conn:
-                await conn.run_sync(table.create, checkfirst=True)
+            table_created = False
+            if not await self.table_exists(table_name):
+                async with self.db_engine.begin() as conn:
+                    await conn.run_sync(table.create, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table {db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -201,6 +211,15 @@ class AsyncMySQLDb(AsyncBaseDb):
                     log_error(f"Error creating index {idx.name}: {e}")
 
             log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+                log_info(
+                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                )
+
             return table
 
         except Exception as e:
@@ -215,10 +234,11 @@ class AsyncMySQLDb(AsyncBaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            await self._get(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
 
     async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
@@ -263,6 +283,13 @@ class AsyncMySQLDb(AsyncBaseDb):
                 )
             return self.culture_table
 
+        if table_type == "versions":
+            if not hasattr(self, "versions_table"):
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name, table_type="versions", db_schema=self.db_schema
+                )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -304,6 +331,38 @@ class AsyncMySQLDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
+
+    async def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = await self._get_table(table_type="versions")
+        async with self.async_session_factory() as sess:
+            # Latest version for the given table
+            stmt = select(table).where(table.c.table_name == table_name).order_by(table.c.version.desc()).limit(1)  # type: ignore
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            if row is None:
+                return "2.0.0"
+            version_dict = dict(row._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = await self._get_table(table_type="versions")
+        current_datetime = datetime.now().isoformat()
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = mysql.insert(table).values(  # type: ignore
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_duplicate_key_update(
+                version=version,
+                created_at=current_datetime,
+                updated_at=current_datetime,
+            )
+            await sess.execute(stmt)
 
     # -- Session methods --
     async def delete_session(self, session_id: str) -> bool:
@@ -1058,6 +1117,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = await sess.execute(stmt)
                 row = result.fetchone()
@@ -1421,16 +1482,19 @@ class AsyncMySQLDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
@@ -1483,6 +1547,8 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = mysql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1491,7 +1557,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=memory.memory,
@@ -1499,7 +1567,10 @@ class AsyncMySQLDb(AsyncBaseDb):
                     input=memory.input,
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    updated_at=current_time,
+                    # Preserve created_at on update - don't overwrite existing value
+                    created_at=table.c.created_at,
                 )
                 await sess.execute(stmt)
 
@@ -1564,6 +1635,8 @@ class AsyncMySQLDb(AsyncBaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1579,7 +1652,10 @@ class AsyncMySQLDb(AsyncBaseDb):
                     input=stmt.inserted.input,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
+                    feedback=stmt.inserted.feedback,
                     updated_at=stmt.inserted.updated_at,
+                    # Preserve created_at on update
+                    created_at=table.c.created_at,
                 )
                 await sess.execute(stmt, bulk_data)
 
@@ -2197,3 +2273,63 @@ class AsyncMySQLDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
             return None
+
+    # -- Migrations --
+
+    async def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+        """Migrate all content in the given table to the right v2 table"""
+
+        from typing import Sequence
+
+        from agno.db.migrations.v1_to_v2 import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the old table
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
+        )
+        if not old_content:
+            log_info(f"No content to migrate from table {v1_table_name}")
+            return
+
+        # Parse the content into the new format
+        memories: List[UserMemory] = []
+        sessions: Sequence[Union[AgentSession, TeamSession, WorkflowSession]] = []
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the new content into the new table
+        if v1_table_type == "agent_sessions":
+            for session in sessions:
+                await self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
+
+        elif v1_table_type == "team_sessions":
+            for session in sessions:
+                await self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
+
+        elif v1_table_type == "workflow_sessions":
+            for session in sessions:
+                await self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
+
+        elif v1_table_type == "memories":
+            for memory in memories:
+                await self.upsert_user_memory(memory)
+            log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")

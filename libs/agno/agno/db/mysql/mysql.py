@@ -40,6 +40,7 @@ except ImportError:
 class MySQLDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
@@ -50,7 +51,6 @@ class MySQLDb(BaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -61,6 +61,7 @@ class MySQLDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
+            id (Optional[str]): ID of the database.
             db_url (Optional[str]): The database URL to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
@@ -71,7 +72,6 @@ class MySQLDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             versions_table (Optional[str]): Name of the table to store schema versions.
-            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
