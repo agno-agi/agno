@@ -4,7 +4,7 @@ import fnmatch
 import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 import jwt
 from fastapi import Request, Response
@@ -15,7 +15,6 @@ from agno.os.scopes import (
     AgentOSScope,
     get_default_scope_mappings,
     has_required_scopes,
-    parse_scope,
 )
 from agno.utils.log import log_debug, log_warning
 
