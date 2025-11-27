@@ -271,6 +271,7 @@ vectordbs = [
   "agno[pinecone]",
   "agno[surrealdb]",
   "agno[upstash]",
+  "agno[pylance]",
 ]
 
 # All knowledge
