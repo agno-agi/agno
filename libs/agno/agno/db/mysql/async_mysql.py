@@ -102,10 +102,13 @@ class AsyncMySQLDb(AsyncBaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session factory
-        self.async_session_factory = async_sessionmaker(bind=self.db_engine)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.db_engine,
+            expire_on_commit=False,
+        )
 
     # -- DB methods --
     async def table_exists(self, table_name: str) -> bool:
@@ -120,7 +123,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         async with self.async_session_factory() as sess:
             return await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
-    async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
@@ -135,7 +138,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         try:
             table_schema = get_table_schema_definition(table_type).copy()
 
-            log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
+            log_debug(f"Creating table {self.db_schema}.{table_name} with schema: {table_schema}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -158,8 +161,8 @@ class AsyncMySQLDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table_metadata = MetaData(schema=self.db_schema)
+            table = Table(table_name, table_metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -174,7 +177,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             # Create schema if not exists
             async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=db_schema)
+                await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
@@ -184,7 +187,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 log_debug(f"Successfully created table '{table_name}'")
                 table_created = True
             else:
-                log_debug(f"Table {db_schema}.{table_name} already exists, skipping creation")
+                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -196,21 +199,21 @@ class AsyncMySQLDb(AsyncBaseDb):
                             "AND table_name = :table_name AND index_name = :index_name"
                         )
                         result = await sess.execute(
-                            exists_query, {"schema": db_schema, "table_name": table_name, "index_name": idx.name}
+                            exists_query, {"schema": self.db_schema, "table_name": table_name, "index_name": idx.name}
                         )
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation")
                             continue
 
                     async with self.db_engine.begin() as conn:
                         await conn.run_sync(idx.create)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+            log_debug(f"Successfully created table {table_name} in schema {self.db_schema}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name:
@@ -223,7 +226,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def _create_all_tables(self):
@@ -238,61 +241,61 @@ class AsyncMySQLDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._get(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
     async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                    table_name=self.session_table_name, table_type="sessions"
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                    table_name=self.memory_table_name, table_type="memories"
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                    table_name=self.metrics_table_name, table_type="metrics"
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
                 self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+                    table_name=self.eval_table_name, table_type="evals"
                 )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                    table_name=self.knowledge_table_name, table_type="knowledge"
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture", db_schema=self.db_schema
+                    table_name=self.culture_table_name, table_type="culture"
                 )
             return self.culture_table
 
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, table_type="versions", db_schema=self.db_schema
+                    table_name=self.versions_table_name, table_type="versions"
                 )
             return self.versions_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
@@ -306,30 +309,30 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
         if not table_is_available:
-            return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
             async with self.db_engine.connect() as conn:
 
                 def create_table(connection):
-                    return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
+                    return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def get_latest_schema_version(self, table_name: str) -> str:
