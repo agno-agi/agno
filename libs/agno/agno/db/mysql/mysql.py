@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, select, text
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
@@ -1853,6 +1853,45 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting knowledge row: {e}")
+            return None
+
+    def increment_knowledge_access_count(self, id: str) -> Optional[KnowledgeRow]:
+        """Increment the access count for a knowledge row.
+
+        Args:
+            id (str): The ID of the knowledge row to update.
+
+        Returns:
+            Optional[KnowledgeRow]: The updated knowledge row, or None if it doesn't exist.
+        """
+        try:
+            table = self._get_table(table_type="knowledge", create_table_if_not_found=False)
+            if table is None:
+                log_warning("Knowledge table not found")
+                return None
+
+            with self.Session() as sess, sess.begin():
+                current_time = int(time.time())
+                stmt = text(f"""
+                    UPDATE {self.knowledge_table_name}
+                    SET access_count = COALESCE(access_count, 0) + 1,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                """)
+
+                result = sess.execute(stmt, {"updated_at": current_time, "id": id})
+
+                if result.rowcount > 0:
+                    select_stmt = select(table).where(table.c.id == id)
+                    row = sess.execute(select_stmt).fetchone()
+                    if row:
+                        return KnowledgeRow.model_validate(row)
+
+                log_debug(f"No knowledge row found with id: {id}")
+                return None
+
+        except Exception as e:
+            log_error(f"Error incrementing access count for knowledge row {id}: {e}")
             return None
 
     # -- Eval methods --
