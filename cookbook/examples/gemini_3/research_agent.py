@@ -6,16 +6,15 @@ from db import demo_db
 
 research_agent = Agent(
     name="Research Agent",
-    role="Research with real-time web grounding and citations",
     model=Gemini(
-        id="gemini-2.0-flash",
+        id="gemini-3-pro-preview",
         search=True,
     ),
-    description="Expert research assistant with real-time web search and citations.",
+    description="Research assistant with real-time web search and citations.",
     instructions=dedent("""\
-        Search the web and provide well-researched answers immediately.
+        Search the web and provide well-researched responses.
 
-        For every response:
+        With every response, include:
         - Include source citations with URLs when available
         - Distinguish facts from opinions
         - Note if information may be outdated
@@ -26,10 +25,7 @@ research_agent = Agent(
     db=demo_db,
     add_datetime_to_context=True,
     add_history_to_context=True,
-    num_history_runs=5,
-    enable_agentic_memory=True,
-    enable_user_memories=True,
-    enable_session_summaries=True,
+    num_history_runs=3,
     markdown=True,
 )
 

@@ -10,11 +10,10 @@ from visual_storyteller_agent import visual_storyteller_agent
 config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 
 agent_os = AgentOS(
-    id="google-examples",
+    id="gemini-3",
     description=dedent("""\
-        Google Examples AgentOS — showcasing Google-specific AI capabilities with Agno.
-        Features NanoBanana image generation, Google Search grounding, URL context analysis,
-        and creative multi-modal workflows.
+        Gemini 3 AgentOS — showcasing Gemini 3 specific capabilities with Agno.
+        Features NanoBanana image generation, Gemini Search grounding, URL context analysis and more.
         """),
     agents=[
         creative_studio_agent,

@@ -6,13 +6,12 @@ from db import demo_db
 
 product_comparison_agent = Agent(
     name="Product Comparison Agent",
-    role="Compare products by analyzing URLs and searching for reviews",
     model=Gemini(
-        id="gemini-2.5-flash",
+        id="gemini-3-pro-preview",
         url_context=True,
         search=True,
     ),
-    description="Compare products by analyzing URLs and searching for reviews.",
+    description="Product comparison assistant by analyzing URLs and searching for reviews.",
     instructions=dedent("""\
         Analyze URLs and search for reviews to provide comprehensive comparisons.
 
@@ -28,8 +27,6 @@ product_comparison_agent = Agent(
     add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=3,
-    enable_agentic_memory=True,
-    enable_user_memories=True,
     markdown=True,
 )
 

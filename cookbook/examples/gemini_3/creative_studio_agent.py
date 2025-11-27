@@ -9,19 +9,19 @@ from db import demo_db
 creative_studio_agent = Agent(
     name="Creative Studio",
     role="Generate stunning images from text descriptions",
-    model=Gemini(id="gemini-2.0-flash"),
-    tools=[NanoBananaTools()],
-    description="AI image generation using Google's NanoBanana toolkit.",
+    model=Gemini(id="gemini-3-pro-preview"),
+    tools=[NanoBananaTools(model="gemini-3-pro-image-preview")],
+    description="AI image generation using NanoBanana Tools.",
     instructions=dedent("""\
-        Generate images immediately when asked. Never ask for confirmation.
+        Proceed with generating images immediately when asked. Only ask for confirmation if the user query is not clear or you need more information.
 
         Enhance prompts with: lighting, art style, mood, composition, colors.
-        Keep prompts under 50 words for best results.
+        Keep prompts under 100 words for best results.
 
         Example prompt: "Cyberpunk samurai in neon rain, dramatic rim lighting, 
         detailed armor with glowing accents, rain reflections, cinematic composition"
 
-        After generating, briefly describe what was created.
+        After the image is generated, briefly describe it. 
         """),
     db=demo_db,
     add_datetime_to_context=True,
