@@ -1605,7 +1605,7 @@ class Agent:
                 stacklevel=2,
             )
 
-        background_tasks = kwargs.pop("background_tasks")
+        background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
@@ -2569,7 +2569,7 @@ class Agent:
                 stacklevel=2,
             )
 
-        background_tasks = kwargs.pop("background_tasks")
+        background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
@@ -2867,7 +2867,7 @@ class Agent:
         if self._has_async_db():
             raise Exception("continue_run() is not supported with an async DB. Please use acontinue_arun() instead.")
 
-        background_tasks = kwargs.pop("background_tasks")
+        background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
@@ -3449,7 +3449,7 @@ class Agent:
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
-        background_tasks = kwargs.pop("background_tasks")
+        background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 

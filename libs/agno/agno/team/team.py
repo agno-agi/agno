@@ -2011,7 +2011,7 @@ class Team:
                 stacklevel=2,
             )
 
-        background_tasks = kwargs.pop("background_tasks")
+        background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
@@ -2910,7 +2910,7 @@ class Team:
                 stacklevel=2,
             )
 
-        background_tasks = kwargs.pop("background_tasks")
+        background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 

@@ -10,9 +10,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunInput
+import asyncio
 
 
-# Define a pre-hook that runs before processing (e.g., request validation, logging)
+# Pre-hook for logging request
 def log_request(run_input: RunInput, agent):
     """
     This pre-hook will run in the background before the agent processes the request.
@@ -20,41 +21,45 @@ def log_request(run_input: RunInput, agent):
     """
     print(f"[Background Pre-Hook] Request received for agent: {agent.name}")
     print(f"[Background Pre-Hook] Input: {run_input.input_content}")
-    print("[Background Pre-Hook] Request logged!")
 
 
-# Define a post-hook that might take a while (e.g., logging, analytics, notifications)
-def log_analytics(run_output, agent, session):
+# Post-hook for logging analytics
+async def log_analytics(run_output, agent, session):
     """
     This post-hook will run in the background after the response is sent to the user.
     It won't block the API response.
     """
-    print(f"[Background Task] Logging analytics for run: {run_output.run_id}")
-    print(f"[Background Task] Agent: {agent.name}")
-    print(f"[Background Task] Session: {session.session_id}")
-    print("[Background Task] Analytics logged successfully!")
+    print(f"[Background Post-Hook] Logging analytics for run: {run_output.run_id}")
+    print(f"[Background Post-Hook] Agent: {agent.name}")
+    print(f"[Background Post-Hook] Session: {session.session_id}")
+    
+    # Simulate a delay of 2 seconds
+    await asyncio.sleep(2)
+    print("[Background Post-Hook] Analytics logged successfully!")
 
 
 # Another post-hook for sending notifications
-def send_notification(run_output, agent):
+async def send_notification(run_output, agent):
     """
     Another background task that sends notifications without blocking the response.
     """
-    print(f"[Background Task] Sending notification for agent: {agent.name}")
-    print("[Background Task] Notification sent!")
+    print(f"[Background Post-Hook] Sending notification for agent: {agent.name}")
+    # Simulate a delay of 3 seconds
+    await asyncio.sleep(3)
+    print("[Background Post-Hook] Notification sent!")
 
 
 # Create an agent with background post-hooks enabled
 agent = Agent(
     id="background-task-agent",
     name="BackgroundTaskAgent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-mini"),
     instructions="You are a helpful assistant",
     db=SqliteDb(db_file="tmp/agent.db"),
     # Define hooks
     pre_hooks=[log_request],
     post_hooks=[log_analytics, send_notification],
-    # Enable background mode for hooks
+    # Enable background mode for hooks (if you disable, the hooks will run in the main thread)
     run_hooks_in_background=True,
     markdown=True,
 )
