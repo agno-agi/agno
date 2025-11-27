@@ -93,6 +93,7 @@ class Gemini(Model):
     cached_content: Optional[Any] = None
     thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
+    thinking_level: Optional[str] = None  # "low", "high"
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -203,6 +204,8 @@ class Gemini(Model):
             thinking_config_params["thinking_budget"] = self.thinking_budget
         if self.include_thoughts is not None:
             thinking_config_params["include_thoughts"] = self.include_thoughts
+        if self.thinking_level is not None:
+            thinking_config_params["thinking_level"] = self.thinking_level
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
