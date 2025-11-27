@@ -139,15 +139,12 @@ class MySQLDb(BaseDb):
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
         """
         try:
             table_schema = get_table_schema_definition(table_type).copy()
-
-            log_debug(f"Creating table {table_name}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -192,13 +189,17 @@ class MySQLDb(BaseDb):
                 create_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
-            table.create(self.db_engine, checkfirst=True)
+            table_created = False
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
                 try:
-                    log_debug(f"Creating index: {idx.name}")
-
                     # Check if index already exists
                     with self.Session() as sess:
                         exists_query = text(
@@ -220,10 +221,18 @@ class MySQLDb(BaseDb):
 
                     idx.create(self.db_engine)
 
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {self.db_schema}.{table_name}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+                log_info(
+                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                )
+
             return table
 
         except Exception as e:
@@ -242,12 +251,7 @@ class MySQLDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
-            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+            self._create_table(table_name=table_name, table_type=table_type)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
@@ -349,12 +353,9 @@ class MySQLDb(BaseDb):
             if not create_table_if_not_found:
                 return None
 
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table (BEFORE creating the table)
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+            created_table = self._create_table(table_name=table_name, table_type=table_type)
 
-            return self._create_table(table_name=table_name, table_type=table_type)
+            return created_table
 
         if not is_valid_table(
             db_engine=self.db_engine,
@@ -365,8 +366,7 @@ class MySQLDb(BaseDb):
             raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, autoload_with=self.db_engine)
-            log_debug(f"Loaded existing table {self.db_schema}.{table_name}")
+            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
             return table
 
         except Exception as e:
@@ -539,7 +539,7 @@ class MySQLDb(BaseDb):
         Args:
             session_type (Optional[SessionType]): The type of sessions to get.
             user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
             session_name (Optional[str]): The name of the session to filter by.
@@ -548,7 +548,6 @@ class MySQLDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1280,7 +1279,7 @@ class MySQLDb(BaseDb):
             log_error(f"Exception clearing user memories: {e}")
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -1309,16 +1308,19 @@ class MySQLDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
