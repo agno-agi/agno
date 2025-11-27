@@ -76,8 +76,8 @@ from agno.utils.agent import (
     aget_session_state_util,
     aset_session_name_util,
     aupdate_session_state_util,
-    await_for_background_tasks,
-    await_for_background_tasks_stream,
+    await_for_thread_tasks,
+    await_for_thread_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
@@ -96,8 +96,8 @@ from agno.utils.agent import (
     store_media_util,
     update_session_state_util,
     validate_media_object_id,
-    wait_for_background_tasks,
-    wait_for_background_tasks_stream,
+    wait_for_thread_tasks,
+    wait_for_thread_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -344,6 +344,8 @@ class Team:
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    # If True, run post_hooks as FastAPI background tasks (non-blocking)
+    run_hooks_in_background: bool = False
 
     # --- Structured output ---
     # Input schema for validating input
@@ -511,6 +513,7 @@ class Team:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        run_hooks_in_background: bool = False,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Union[Model, str]] = None,
@@ -639,6 +642,8 @@ class Team:
         # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
+        # Requires AgentOS or any FastAPI app with background tasks
+        self.run_hooks_in_background = run_hooks_in_background
 
         self.input_schema = input_schema
         self.output_schema = output_schema
@@ -1037,12 +1042,39 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
         if hooks is None:
             return
 
+        # Check if background_tasks is available and background mode is enabled
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self.run_hooks_in_background and background_tasks is not None:
+            # Schedule pre_hooks as background tasks
+            for hook in hooks:
+                # Prepare arguments for this hook
+                all_args = {
+                    "run_input": run_input,
+                    "run_context": run_context,
+                    "team": self,
+                    "session": session,
+                    "user_id": user_id,
+                    "metadata": run_context.metadata,
+                    "session_state": run_context.session_state,
+                    "dependencies": run_context.dependencies,
+                    "debug_mode": debug_mode or self.debug_mode,
+                }
+
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
+        # Execute pre_hooks normally (blocking)
         # Prepare all possible arguments once
         all_args = {
             "run_input": run_input,
@@ -1105,12 +1137,39 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
         if hooks is None:
             return
 
+        # Check if background_tasks is available and background mode is enabled
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self.run_hooks_in_background and background_tasks is not None:
+            # Schedule pre_hooks as background tasks
+            for hook in hooks:
+                # Prepare arguments for this hook
+                all_args = {
+                    "run_input": run_input,
+                    "run_context": run_context,
+                    "team": self,
+                    "session": session,
+                    "user_id": user_id,
+                    "session_state": run_context.session_state,
+                    "dependencies": run_context.dependencies,
+                    "metadata": run_context.metadata,
+                    "debug_mode": debug_mode or self.debug_mode,
+                }
+
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
+        # Execute pre_hooks normally (blocking)
         # Prepare all possible arguments once
         all_args = {
             "run_input": run_input,
@@ -1178,12 +1237,38 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
 
+        # Check if background_tasks is available and background mode is enabled
+        if self.run_hooks_in_background and background_tasks is not None:
+            # Schedule post_hooks as background tasks
+            for hook in hooks:
+                # Prepare arguments for this hook
+                all_args = {
+                    "run_output": run_output,
+                    "run_context": run_context,
+                    "team": self,
+                    "session": session,
+                    "user_id": user_id,
+                    "session_state": run_context.session_state,
+                    "dependencies": run_context.dependencies,
+                    "metadata": run_context.metadata,
+                    "debug_mode": debug_mode or self.debug_mode,
+                }
+
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
+        # Execute post_hooks normally (blocking)
         # Prepare all possible arguments once
         all_args = {
             "run_output": run_output,
@@ -1241,12 +1326,38 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
         if hooks is None:
             return
 
+        # Check if background_tasks is available and background mode is enabled
+        if self.run_hooks_in_background and background_tasks is not None:
+            # Schedule post_hooks as background tasks
+            for hook in hooks:
+                # Prepare arguments for this hook
+                all_args = {
+                    "run_output": run_output,
+                    "run_context": run_context,
+                    "team": self,
+                    "session": session,
+                    "user_id": user_id,
+                    "session_state": run_context.session_state,
+                    "dependencies": run_context.dependencies,
+                    "metadata": run_context.metadata,
+                    "debug_mode": debug_mode or self.debug_mode,
+                }
+
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
+        # Execute post_hooks normally (blocking)
         # Prepare all possible arguments once
         all_args = {
             "run_output": run_output,
@@ -1310,6 +1421,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
@@ -1346,6 +1458,7 @@ class Team:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             # Consume the generator without yielding
@@ -1458,13 +1571,14 @@ class Team:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 deque(iterator, maxlen=0)
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation
-            wait_for_background_tasks(memory_future=memory_future)
+            wait_for_thread_tasks(memory_future=memory_future)
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1517,6 +1631,7 @@ class Team:
         stream_events: bool = False,
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response iterator.
@@ -1550,6 +1665,7 @@ class Team:
                 user_id=user_id,
                 debug_mode=debug_mode,
                 stream_events=stream_events,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             for pre_hook_event in pre_hook_iterator:
@@ -1702,12 +1818,13 @@ class Team:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 8. Wait for background memory creation
-            yield from wait_for_background_tasks_stream(
+            yield from wait_for_thread_tasks_stream(
                 run_response=run_response,
                 memory_future=memory_future,
                 stream_events=stream_events,
@@ -1894,6 +2011,12 @@ class Team:
                 stacklevel=2,
             )
 
+        background_tasks = kwargs.pop("background_tasks")
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2051,6 +2174,7 @@ class Team:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -2066,6 +2190,7 @@ class Team:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -2123,6 +2248,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
@@ -2184,6 +2310,7 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -2299,6 +2426,7 @@ class Team:
                     session=team_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     pass
@@ -2306,7 +2434,7 @@ class Team:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 13. Wait for background memory creation
-            await await_for_background_tasks(memory_task=memory_task)
+            await await_for_thread_tasks(memory_task=memory_task)
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 14. Create session summary
@@ -2367,6 +2495,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
@@ -2425,6 +2554,7 @@ class Team:
                 user_id=user_id,
                 debug_mode=debug_mode,
                 stream_events=stream_events,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             async for pre_hook_event in pre_hook_iterator:
@@ -2579,13 +2709,14 @@ class Team:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     yield event
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 11. Wait for background memory creation
-            async for event in await_for_background_tasks_stream(
+            async for event in await_for_thread_tasks_stream(
                 run_response=run_response,
                 memory_task=memory_task,
                 stream_events=stream_events,
@@ -2779,6 +2910,12 @@ class Team:
                 stacklevel=2,
             )
 
+        background_tasks = kwargs.pop("background_tasks")
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -2927,6 +3064,7 @@ class Team:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response_iterator  # type: ignore
@@ -2942,6 +3080,7 @@ class Team:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
