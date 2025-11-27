@@ -6,8 +6,8 @@ import pytest
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.chroma import ChromaDb
+from agno.vectordb.lancedb.lance_db import LanceDb
 
 
 @pytest.fixture

@@ -8556,8 +8556,7 @@ class Team:
 
         session = self.get_session(session_id=session_id)  # type: ignore
         if session is None:
-            log_warning(f"Session {session_id} not found")
-            return []
+            raise Exception("Session not found")
 
         return session.get_messages(
             team_id=self.id,

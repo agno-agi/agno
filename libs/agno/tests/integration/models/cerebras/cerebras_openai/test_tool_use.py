@@ -7,7 +7,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
@@ -23,7 +23,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -50,7 +50,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
@@ -67,7 +67,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
@@ -92,7 +92,7 @@ async def test_async_tool_use_stream():
 
 def test_tool_use_with_content():
     agent = Agent(
-        model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+        model=CerebrasOpenAI(id="gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
