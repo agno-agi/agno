@@ -130,7 +130,7 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
         if msg.role == "tool":
             # Deduplicate tool results - keep only first occurrence
             if msg.tool_call_id in seen_tool_call_ids:
-                log_warning(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
+                log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
                 continue
             seen_tool_call_ids.add(msg.tool_call_id)
             result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
