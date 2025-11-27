@@ -4,13 +4,12 @@ import pytest
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.deepinfra import DeepInfra
-from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 
 def test_tool_use():
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -27,7 +26,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -57,7 +56,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -75,7 +74,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -104,7 +103,7 @@ async def test_async_tool_use_stream():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -131,7 +130,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -159,7 +158,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
+        model=DeepInfra(id="openai/gpt-oss-120b"),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
@@ -169,7 +168,6 @@ def test_tool_call_custom_tool_optional_parameters():
 
     # Verify tool usage
     assert response.messages is not None
-    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "70" in response.content
-
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)

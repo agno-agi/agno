@@ -5,7 +5,6 @@ from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 
 
-
 class PersonSchema(BaseModel):
     name: str = Field(..., description="Person's name")
     age: int = Field(..., description="Person's age")

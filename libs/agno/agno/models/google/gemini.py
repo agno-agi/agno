@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import time
@@ -27,12 +28,14 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
+        FileSearch,
         FunctionCallingConfigMode,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
+        Operation,
         Part,
         Retrieval,
         ThinkingConfig,
@@ -44,7 +47,9 @@ try:
         File as GeminiFile,
     )
 except ImportError:
-    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+    raise ImportError(
+        "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
+    )
 
 
 @dataclass
@@ -79,6 +84,10 @@ class Gemini(Model):
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
 
+    # Gemini File Search capabilities
+    file_search_store_names: Optional[List[str]] = None
+    file_search_metadata_filter: Optional[str] = None
+
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -93,6 +102,7 @@ class Gemini(Model):
     cached_content: Optional[Any] = None
     thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
+    thinking_level: Optional[str] = None  # "low", "high"
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -147,6 +157,21 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
+    def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
+        """Append Gemini File Search tool to builtin_tools if file search is enabled.
+
+        Args:
+            builtin_tools: List of built-in tools to append to.
+        """
+        if not self.file_search_store_names:
+            return
+
+        log_debug("Gemini File Search enabled.")
+        file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
+        if self.file_search_metadata_filter:
+            file_search_config["metadata_filter"] = self.file_search_metadata_filter
+        builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
+
     def get_request_params(
         self,
         system_message: Optional[str] = None,
@@ -198,11 +223,13 @@ class Gemini(Model):
             config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
-        thinking_config_params = {}
+        thinking_config_params: Dict[str, Any] = {}
         if self.thinking_budget is not None:
             thinking_config_params["thinking_budget"] = self.thinking_budget
         if self.include_thoughts is not None:
             thinking_config_params["include_thoughts"] = self.include_thoughts
+        if self.thinking_level is not None:
+            thinking_config_params["thinking_level"] = self.thinking_level
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
@@ -239,6 +266,8 @@ class Gemini(Model):
             builtin_tools.append(
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
+
+        self._append_file_search_tool(builtin_tools)
 
         # Set tools in config
         if builtin_tools:
@@ -1153,3 +1182,494 @@ class Gemini(Model):
             metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
 
         return metrics
+
+    def create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+        """
+        Create a new File Search store.
+
+        Args:
+            display_name: Optional display name for the store
+
+        Returns:
+            FileSearchStore: The created File Search store object
+        """
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+
+        try:
+            store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
+            log_info(f"Created File Search store: {store.name}")
+            return store
+        except Exception as e:
+            log_error(f"Error creating File Search store: {e}")
+            raise
+
+    async def async_create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+        """
+        Args:
+            display_name: Optional display name for the store
+
+        Returns:
+            FileSearchStore: The created File Search store object
+        """
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+
+        try:
+            store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
+            log_info(f"Created File Search store: {store.name}")
+            return store
+        except Exception as e:
+            log_error(f"Error creating File Search store: {e}")
+            raise
+
+    def list_file_search_stores(self, page_size: int = 100) -> List[Any]:
+        """
+        List all File Search stores.
+
+        Args:
+            page_size: Maximum number of stores to return per page
+
+        Returns:
+            List: List of FileSearchStore objects
+        """
+        try:
+            stores = []
+            for store in self.get_client().file_search_stores.list(config={"page_size": page_size}):
+                stores.append(store)
+            log_debug(f"Found {len(stores)} File Search stores")
+            return stores
+        except Exception as e:
+            log_error(f"Error listing File Search stores: {e}")
+            raise
+
+    async def async_list_file_search_stores(self, page_size: int = 100) -> List[Any]:
+        """
+        Async version of list_file_search_stores.
+
+        Args:
+            page_size: Maximum number of stores to return per page
+
+        Returns:
+            List: List of FileSearchStore objects
+        """
+        try:
+            stores = []
+            async for store in await self.get_client().aio.file_search_stores.list(config={"page_size": page_size}):
+                stores.append(store)
+            log_debug(f"Found {len(stores)} File Search stores")
+            return stores
+        except Exception as e:
+            log_error(f"Error listing File Search stores: {e}")
+            raise
+
+    def get_file_search_store(self, name: str) -> Any:
+        """
+        Get a specific File Search store by name.
+
+        Args:
+            name: The name of the store (e.g., 'fileSearchStores/my-store-123')
+
+        Returns:
+            FileSearchStore: The File Search store object
+        """
+        try:
+            store = self.get_client().file_search_stores.get(name=name)
+            log_debug(f"Retrieved File Search store: {name}")
+            return store
+        except Exception as e:
+            log_error(f"Error getting File Search store {name}: {e}")
+            raise
+
+    async def async_get_file_search_store(self, name: str) -> Any:
+        """
+        Args:
+            name: The name of the store
+
+        Returns:
+            FileSearchStore: The File Search store object
+        """
+        try:
+            store = await self.get_client().aio.file_search_stores.get(name=name)
+            log_debug(f"Retrieved File Search store: {name}")
+            return store
+        except Exception as e:
+            log_error(f"Error getting File Search store {name}: {e}")
+            raise
+
+    def delete_file_search_store(self, name: str, force: bool = False) -> None:
+        """
+        Delete a File Search store.
+
+        Args:
+            name: The name of the store to delete
+            force: If True, force delete even if store contains documents
+        """
+        try:
+            self.get_client().file_search_stores.delete(name=name, config={"force": force})
+            log_info(f"Deleted File Search store: {name}")
+        except Exception as e:
+            log_error(f"Error deleting File Search store {name}: {e}")
+            raise
+
+    async def async_delete_file_search_store(self, name: str, force: bool = True) -> None:
+        """
+        Async version of delete_file_search_store.
+
+        Args:
+            name: The name of the store to delete
+            force: If True, force delete even if store contains documents
+        """
+        try:
+            await self.get_client().aio.file_search_stores.delete(name=name, config={"force": force})
+            log_info(f"Deleted File Search store: {name}")
+        except Exception as e:
+            log_error(f"Error deleting File Search store {name}: {e}")
+            raise
+
+    def wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
+        """
+        Wait for a long-running operation to complete.
+
+        Args:
+            operation: The operation object to wait for
+            poll_interval: Seconds to wait between status checks
+            max_wait: Maximum seconds to wait before timing out
+
+        Returns:
+            Operation: The completed operation object
+
+        Raises:
+            TimeoutError: If operation doesn't complete within max_wait seconds
+        """
+        elapsed = 0
+        while not operation.done:
+            if elapsed >= max_wait:
+                raise TimeoutError(f"Operation timed out after {max_wait} seconds")
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            operation = self.get_client().operations.get(operation)
+            log_debug(f"Waiting for operation... ({elapsed}s elapsed)")
+
+        log_info("Operation completed successfully")
+        return operation
+
+    async def async_wait_for_operation(
+        self, operation: Operation, poll_interval: int = 5, max_wait: int = 600
+    ) -> Operation:
+        """
+        Async version of wait_for_operation.
+
+        Args:
+            operation: The operation object to wait for
+            poll_interval: Seconds to wait between status checks
+            max_wait: Maximum seconds to wait before timing out
+
+        Returns:
+            Operation: The completed operation object
+        """
+        elapsed = 0
+        while not operation.done:
+            if elapsed >= max_wait:
+                raise TimeoutError(f"Operation timed out after {max_wait} seconds")
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            operation = await self.get_client().aio.operations.get(operation)
+            log_debug(f"Waiting for operation... ({elapsed}s elapsed)")
+
+        log_info("Operation completed successfully")
+        return operation
+
+    def upload_to_file_search_store(
+        self,
+        file_path: Union[str, Path],
+        store_name: str,
+        display_name: Optional[str] = None,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Upload a file directly to a File Search store.
+
+        Args:
+            file_path: Path to the file to upload
+            store_name: Name of the File Search store
+            display_name: Optional display name for the file (will be visible in citations)
+            chunking_config: Optional chunking configuration
+                Example: {
+                    "white_space_config": {
+                        "max_tokens_per_chunk": 200,
+                        "max_overlap_tokens": 20
+                    }
+                }
+            custom_metadata: Optional custom metadata as list of dicts
+                Example: [
+                    {"key": "author", "string_value": "John Doe"},
+                    {"key": "year", "numeric_value": 2024}
+                ]
+
+        Returns:
+            Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
+        """
+        file_path = file_path if isinstance(file_path, Path) else Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
+            operation = self.get_client().file_search_stores.upload_to_file_search_store(
+                file=file_path,
+                file_search_store_name=store_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Upload initiated for {file_path.name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error uploading file to File Search store: {e}")
+            raise
+
+    async def async_upload_to_file_search_store(
+        self,
+        file_path: Union[str, Path],
+        store_name: str,
+        display_name: Optional[str] = None,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Args:
+            file_path: Path to the file to upload
+            store_name: Name of the File Search store
+            display_name: Optional display name for the file
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object
+        """
+        file_path = file_path if isinstance(file_path, Path) else Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
+            operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
+                file=file_path,
+                file_search_store_name=store_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Upload initiated for {file_path.name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error uploading file to File Search store: {e}")
+            raise
+
+    def import_file_to_store(
+        self,
+        file_name: str,
+        store_name: str,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Import an existing uploaded file (via Files API) into a File Search store.
+
+        Args:
+            file_name: Name of the file already uploaded via Files API
+            store_name: Name of the File Search store
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
+        """
+        config: Dict[str, Any] = {}
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Importing file {file_name} to File Search store {store_name}")
+            operation = self.get_client().file_search_stores.import_file(
+                file_search_store_name=store_name,
+                file_name=file_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Import initiated for {file_name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error importing file to File Search store: {e}")
+            raise
+
+    async def async_import_file_to_store(
+        self,
+        file_name: str,
+        store_name: str,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Args:
+            file_name: Name of the file already uploaded via Files API
+            store_name: Name of the File Search store
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object
+        """
+        config: Dict[str, Any] = {}
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Importing file {file_name} to File Search store {store_name}")
+            operation = await self.get_client().aio.file_search_stores.import_file(
+                file_search_store_name=store_name,
+                file_name=file_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Import initiated for {file_name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error importing file to File Search store: {e}")
+            raise
+
+    def list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
+        """
+        Args:
+            store_name: Name of the File Search store
+            page_size: Maximum number of documents to return per page
+
+        Returns:
+            List: List of document objects
+        """
+        try:
+            documents = []
+            for doc in self.get_client().file_search_stores.documents.list(
+                parent=store_name, config={"page_size": page_size}
+            ):
+                documents.append(doc)
+            log_debug(f"Found {len(documents)} documents in store {store_name}")
+            return documents
+        except Exception as e:
+            log_error(f"Error listing documents in store {store_name}: {e}")
+            raise
+
+    async def async_list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
+        """
+        Async version of list_documents.
+
+        Args:
+            store_name: Name of the File Search store
+            page_size: Maximum number of documents to return per page
+
+        Returns:
+            List: List of document objects
+        """
+        try:
+            documents = []
+            # Await the AsyncPager first, then iterate
+            async for doc in await self.get_client().aio.file_search_stores.documents.list(
+                parent=store_name, config={"page_size": page_size}
+            ):
+                documents.append(doc)
+            log_debug(f"Found {len(documents)} documents in store {store_name}")
+            return documents
+        except Exception as e:
+            log_error(f"Error listing documents in store {store_name}: {e}")
+            raise
+
+    def get_document(self, document_name: str) -> Any:
+        """
+        Get a specific document by name.
+
+        Args:
+            document_name: Full name of the document
+                (e.g., 'fileSearchStores/store-123/documents/doc-456')
+
+        Returns:
+            Document object
+        """
+        try:
+            doc = self.get_client().file_search_stores.documents.get(name=document_name)
+            log_debug(f"Retrieved document: {document_name}")
+            return doc
+        except Exception as e:
+            log_error(f"Error getting document {document_name}: {e}")
+            raise
+
+    async def async_get_document(self, document_name: str) -> Any:
+        """
+        Async version of get_document.
+
+        Args:
+            document_name: Full name of the document
+
+        Returns:
+            Document object
+        """
+        try:
+            doc = await self.get_client().aio.file_search_stores.documents.get(name=document_name)
+            log_debug(f"Retrieved document: {document_name}")
+            return doc
+        except Exception as e:
+            log_error(f"Error getting document {document_name}: {e}")
+            raise
+
+    def delete_document(self, document_name: str) -> None:
+        """
+        Delete a document from a File Search store.
+
+        Args:
+            document_name: Full name of the document to delete
+
+        Example:
+            ```python
+            model = Gemini(id="gemini-2.5-flash")
+            model.delete_document("fileSearchStores/store-123/documents/doc-456")
+            ```
+        """
+        try:
+            self.get_client().file_search_stores.documents.delete(name=document_name)
+            log_info(f"Deleted document: {document_name}")
+        except Exception as e:
+            log_error(f"Error deleting document {document_name}: {e}")
+            raise
+
+    async def async_delete_document(self, document_name: str) -> None:
+        """
+        Async version of delete_document.
+
+        Args:
+            document_name: Full name of the document to delete
+        """
+        try:
+            await self.get_client().aio.file_search_stores.documents.delete(name=document_name)
+            log_info(f"Deleted document: {document_name}")
+        except Exception as e:
+            log_error(f"Error deleting document {document_name}: {e}")
+            raise

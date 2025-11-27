@@ -23,6 +23,7 @@ def reset_async_client():
     # Reset after test
     http_utils._global_async_client = None
 
+
 @pytest.fixture
 def temp_storage_db_file():
     """Create a temporary SQLite database file for agent storage testing."""
