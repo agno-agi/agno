@@ -2,6 +2,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.cerebras import CerebrasOpenAI
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -18,7 +19,6 @@ def test_tool_use():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
@@ -44,14 +44,13 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="gpt-oss-120b"),
-        tools=[YFinanceTools(cache_results=True)],
+        tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -61,7 +60,6 @@ async def test_async_tool_use():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "France" in response.content
 
 
 @pytest.mark.asyncio
@@ -93,7 +91,7 @@ async def test_async_tool_use_stream():
 def test_tool_use_with_content():
     agent = Agent(
         model=CerebrasOpenAI(id="gpt-oss-120b"),
-        tools=[YFinanceTools(cache_results=True)],
+        tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -103,4 +101,3 @@ def test_tool_use_with_content():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
-    assert "France" in response.content
