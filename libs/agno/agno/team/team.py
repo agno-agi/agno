@@ -4671,16 +4671,6 @@ class Team:
                 session_metrics.cache_read_tokens += msg_metrics.cache_read_tokens
                 session_metrics.cache_write_tokens += msg_metrics.cache_write_tokens
                 session_metrics.reasoning_tokens += msg_metrics.reasoning_tokens
-                # Handle provider_metrics
-                if msg_metrics.provider_metrics:
-                    if session_metrics.provider_metrics is None:
-                        session_metrics.provider_metrics = {}
-                    session_metrics.provider_metrics.update(msg_metrics.provider_metrics)
-                # Handle additional_metrics
-                if msg_metrics.additional_metrics:
-                    if session_metrics.additional_metrics is None:
-                        session_metrics.additional_metrics = {}
-                    session_metrics.additional_metrics.update(msg_metrics.additional_metrics)
 
         return session_metrics
 
@@ -4702,16 +4692,6 @@ class Team:
                 metrics.cache_read_tokens += msg_metrics.cache_read_tokens
                 metrics.cache_write_tokens += msg_metrics.cache_write_tokens
                 metrics.reasoning_tokens += msg_metrics.reasoning_tokens
-                # Handle provider_metrics
-                if msg_metrics.provider_metrics:
-                    if metrics.provider_metrics is None:
-                        metrics.provider_metrics = {}
-                    metrics.provider_metrics.update(msg_metrics.provider_metrics)
-                # Handle additional_metrics
-                if msg_metrics.additional_metrics:
-                    if metrics.additional_metrics is None:
-                        metrics.additional_metrics = {}
-                    metrics.additional_metrics.update(msg_metrics.additional_metrics)
 
         # If the run metrics were already initialized, keep the time related metrics
         if current_run_metrics is not None:
@@ -4768,8 +4748,6 @@ class Team:
                         cache_read_tokens=session_metrics_from_db.cache_read_tokens,
                         cache_write_tokens=session_metrics_from_db.cache_write_tokens,
                         reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                        provider_metrics=session_metrics_from_db.provider_metrics,
-                        additional_metrics=session_metrics_from_db.additional_metrics,
                     )
         return SessionMetrics()
 
@@ -4804,18 +4782,6 @@ class Team:
         session_metrics.cache_read_tokens += message_metrics.cache_read_tokens
         session_metrics.cache_write_tokens += message_metrics.cache_write_tokens
         session_metrics.reasoning_tokens += message_metrics.reasoning_tokens
-
-        # Handle provider_metrics
-        if message_metrics.provider_metrics:
-            if session_metrics.provider_metrics is None:
-                session_metrics.provider_metrics = {}
-            session_metrics.provider_metrics.update(message_metrics.provider_metrics)
-
-        # Handle additional_metrics
-        if message_metrics.additional_metrics:
-            if session_metrics.additional_metrics is None:
-                session_metrics.additional_metrics = {}
-            session_metrics.additional_metrics.update(message_metrics.additional_metrics)
 
         # Calculate average duration
         if run_durations:

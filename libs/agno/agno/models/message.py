@@ -441,12 +441,6 @@ class Message(BaseModel):
             if self.metrics.time_to_first_token is not None and self.metrics.time_to_first_token > 0:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
 
-            # Non-generic metrics
-            if self.metrics.provider_metrics:
-                _logger(f"* Provider metrics:            {self.metrics.provider_metrics}")
-            if self.metrics.additional_metrics:
-                _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
-
             _logger(metrics_header, center=True, symbol="*")
 
     def content_is_valid(self) -> bool:

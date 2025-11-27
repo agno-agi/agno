@@ -1,8 +1,32 @@
 from dataclasses import asdict, dataclass
 from time import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.utils.timer import Timer
+
+
+@dataclass
+class ModelMetrics:
+    """Metrics for a specific model instance - used in Metrics.details."""
+
+    id: str
+    provider: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    time_to_first_token: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        metrics_dict = asdict(self)
+        # Only include valid fields (filter out any old fields like provider_metrics, additional_metrics)
+        valid_fields = {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'time_to_first_token'}
+        metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
+        metrics_dict = {
+            k: v
+            for k, v in metrics_dict.items()
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+        }
+        return metrics_dict
 
 
 @dataclass
@@ -76,12 +100,6 @@ class MessageMetrics:
     # Total message processing time, in seconds
     duration: Optional[float] = None
 
-    # Provider-specific metrics
-    provider_metrics: Optional[dict] = None
-
-    # Any additional metrics
-    additional_metrics: Optional[dict] = None
-
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         # Remove the timer util if present
@@ -106,22 +124,6 @@ class MessageMetrics:
             cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
-
-        # Handle provider_metrics
-        if self.provider_metrics or other.provider_metrics:
-            result.provider_metrics = {}
-            if self.provider_metrics:
-                result.provider_metrics.update(self.provider_metrics)
-            if other.provider_metrics:
-                result.provider_metrics.update(other.provider_metrics)
-
-        # Handle additional metrics
-        if self.additional_metrics or other.additional_metrics:
-            result.additional_metrics = {}
-            if self.additional_metrics:
-                result.additional_metrics.update(self.additional_metrics)
-            if other.additional_metrics:
-                result.additional_metrics.update(other.additional_metrics)
 
         # Sum durations if both exist
         if self.duration is not None and other.duration is not None:
@@ -188,12 +190,6 @@ class SessionMetrics:
     # Total number of runs in this session
     total_runs: int = 0
 
-    # Provider-specific metrics (aggregated)
-    provider_metrics: Optional[dict] = None
-
-    # Any additional metrics (aggregated)
-    additional_metrics: Optional[dict] = None
-
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict = {
@@ -232,22 +228,6 @@ class SessionMetrics:
             total_runs=total_runs,
         )
 
-        # Handle provider_metrics
-        if self.provider_metrics or other.provider_metrics:
-            result.provider_metrics = {}
-            if self.provider_metrics:
-                result.provider_metrics.update(self.provider_metrics)
-            if other.provider_metrics:
-                result.provider_metrics.update(other.provider_metrics)
-
-        # Handle additional metrics
-        if self.additional_metrics or other.additional_metrics:
-            result.additional_metrics = {}
-            if self.additional_metrics:
-                result.additional_metrics.update(self.additional_metrics)
-            if other.additional_metrics:
-                result.additional_metrics.update(other.additional_metrics)
-
         return result
 
 
@@ -281,16 +261,33 @@ class Metrics:
     # Total run time, in seconds
     duration: Optional[float] = None
 
-    # Provider-specific metrics
-    provider_metrics: Optional[dict] = None
-
-    # Any additional metrics
-    additional_metrics: Optional[dict] = None
+    # Per-model metrics breakdown
+    # Keys: "model", "output_model", etc. (only includes model types that were used)
+    # Values: List of ModelMetrics (for future fallback models support)
+    details: Optional[Dict[str, List[ModelMetrics]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         # Remove the timer util if present
         metrics_dict.pop("timer", None)
+        # Remove any old fields that no longer exist in the dataclass (e.g., from deserialized old data)
+        valid_fields = {
+            'input_tokens', 'output_tokens', 'total_tokens', 'audio_input_tokens', 'audio_output_tokens',
+            'audio_total_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens',
+            'time_to_first_token', 'duration', 'details'
+        }
+        metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
+        # Convert details ModelMetrics to dicts
+        if metrics_dict.get("details") is not None:
+            details_dict = {}
+            valid_model_metrics_fields = {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'time_to_first_token'}
+            for model_type, model_metrics_list in metrics_dict["details"].items():
+                details_dict[model_type] = [
+                    m.to_dict() if isinstance(m, ModelMetrics) 
+                    else {k: v for k, v in m.items() if k in valid_model_metrics_fields and v is not None}
+                    for m in model_metrics_list
+                ]
+            metrics_dict["details"] = details_dict
         metrics_dict = {
             k: v
             for k, v in metrics_dict.items()
@@ -313,21 +310,18 @@ class Metrics:
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
-        # Handle provider_metrics
-        if self.provider_metrics or other.provider_metrics:
-            result.provider_metrics = {}
-            if self.provider_metrics:
-                result.provider_metrics.update(self.provider_metrics)
-            if other.provider_metrics:
-                result.provider_metrics.update(other.provider_metrics)
-
-        # Handle additional metrics
-        if self.additional_metrics or other.additional_metrics:
-            result.additional_metrics = {}
-            if self.additional_metrics:
-                result.additional_metrics.update(self.additional_metrics)
-            if other.additional_metrics:
-                result.additional_metrics.update(other.additional_metrics)
+        # Merge details dictionaries
+        if self.details or other.details:
+            result.details = {}
+            if self.details:
+                result.details.update(self.details)
+            if other.details:
+                # Merge lists for same model types
+                for model_type, model_metrics_list in other.details.items():
+                    if model_type in result.details:
+                        result.details[model_type].extend(model_metrics_list)
+                    else:
+                        result.details[model_type] = model_metrics_list.copy()
 
         # Sum durations if both exist
         if self.duration is not None and other.duration is not None:

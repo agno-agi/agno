@@ -355,6 +355,9 @@ class Model(ABC):
             while True:
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
+                # Initialize message metrics and start timer before model call
+                assistant_message.metrics = MessageMetrics()
+                assistant_message.metrics.start_timer()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -852,6 +855,9 @@ class Model(ABC):
         # Add content to assistant message
         if provider_response.content is not None:
             assistant_message.content = provider_response.content
+            # Set time_to_first_token when we receive content if not already set
+            if assistant_message.metrics is not None and assistant_message.metrics.time_to_first_token is None:
+                assistant_message.metrics.set_time_to_first_token()
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
@@ -898,44 +904,23 @@ class Model(ABC):
         # Add usage metrics if provided - convert Metrics to MessageMetrics
         if provider_response.response_usage is not None:
             if assistant_message.metrics is None:
-                # Convert Metrics to MessageMetrics
-                usage = provider_response.response_usage
-                assistant_message.metrics = MessageMetrics(
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    total_tokens=usage.total_tokens,
-                    audio_input_tokens=usage.audio_input_tokens,
-                    audio_output_tokens=usage.audio_output_tokens,
-                    audio_total_tokens=usage.audio_total_tokens,
-                    cache_read_tokens=usage.cache_read_tokens,
-                    cache_write_tokens=usage.cache_write_tokens,
-                    reasoning_tokens=usage.reasoning_tokens,
-                    duration=usage.duration,
-                    time_to_first_token=usage.time_to_first_token,
-                    timer=usage.timer,
-                    provider_metrics=usage.provider_metrics,
-                    additional_metrics=usage.additional_metrics,
-                )
-            else:
-                # Add to existing MessageMetrics
-                usage = provider_response.response_usage
-                assistant_message.metrics.input_tokens += usage.input_tokens
-                assistant_message.metrics.output_tokens += usage.output_tokens
-                assistant_message.metrics.total_tokens += usage.total_tokens
-                assistant_message.metrics.audio_input_tokens += usage.audio_input_tokens
-                assistant_message.metrics.audio_output_tokens += usage.audio_output_tokens
-                assistant_message.metrics.audio_total_tokens += usage.audio_total_tokens
-                assistant_message.metrics.cache_read_tokens += usage.cache_read_tokens
-                assistant_message.metrics.cache_write_tokens += usage.cache_write_tokens
-                assistant_message.metrics.reasoning_tokens += usage.reasoning_tokens
-                if usage.provider_metrics:
-                    if assistant_message.metrics.provider_metrics is None:
-                        assistant_message.metrics.provider_metrics = {}
-                    assistant_message.metrics.provider_metrics.update(usage.provider_metrics)
-                if usage.additional_metrics:
-                    if assistant_message.metrics.additional_metrics is None:
-                        assistant_message.metrics.additional_metrics = {}
-                    assistant_message.metrics.additional_metrics.update(usage.additional_metrics)
+                # Initialize if not already initialized (shouldn't happen, but safety check)
+                assistant_message.metrics = MessageMetrics()
+                assistant_message.metrics.start_timer()
+            # Update MessageMetrics with usage data from response
+            usage = provider_response.response_usage
+            assistant_message.metrics.input_tokens += usage.input_tokens
+            assistant_message.metrics.output_tokens += usage.output_tokens
+            assistant_message.metrics.total_tokens += usage.total_tokens
+            assistant_message.metrics.audio_input_tokens += usage.audio_input_tokens
+            assistant_message.metrics.audio_output_tokens += usage.audio_output_tokens
+            assistant_message.metrics.audio_total_tokens += usage.audio_total_tokens
+            assistant_message.metrics.cache_read_tokens += usage.cache_read_tokens
+            assistant_message.metrics.cache_write_tokens += usage.cache_write_tokens
+            assistant_message.metrics.reasoning_tokens += usage.reasoning_tokens
+            # Set time_to_first_token if we have content and it's not already set
+            if provider_response.content is not None and assistant_message.metrics.time_to_first_token is None:
+                assistant_message.metrics.set_time_to_first_token()
 
         return assistant_message
 
@@ -1023,6 +1008,9 @@ class Model(ABC):
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
+                # Initialize message metrics and start timer before model call
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
                 model_response = ModelResponse()
                 if stream_model_response:
                     # Generate response
@@ -1419,48 +1407,27 @@ class Model(ABC):
 
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
-                # Convert Metrics to MessageMetrics
-                usage = model_response_delta.response_usage
-                stream_data.response_metrics = MessageMetrics(
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    total_tokens=usage.total_tokens,
-                    audio_input_tokens=usage.audio_input_tokens,
-                    audio_output_tokens=usage.audio_output_tokens,
-                    audio_total_tokens=usage.audio_total_tokens,
-                    cache_read_tokens=usage.cache_read_tokens,
-                    cache_write_tokens=usage.cache_write_tokens,
-                    reasoning_tokens=usage.reasoning_tokens,
-                    duration=usage.duration,
-                    time_to_first_token=usage.time_to_first_token,
-                    timer=usage.timer,
-                    provider_metrics=usage.provider_metrics,
-                    additional_metrics=usage.additional_metrics,
-                )
-            else:
-                # Add to existing MessageMetrics
-                usage = model_response_delta.response_usage
-                stream_data.response_metrics.input_tokens += usage.input_tokens
-                stream_data.response_metrics.output_tokens += usage.output_tokens
-                stream_data.response_metrics.total_tokens += usage.total_tokens
-                stream_data.response_metrics.audio_input_tokens += usage.audio_input_tokens
-                stream_data.response_metrics.audio_output_tokens += usage.audio_output_tokens
-                stream_data.response_metrics.audio_total_tokens += usage.audio_total_tokens
-                stream_data.response_metrics.cache_read_tokens += usage.cache_read_tokens
-                stream_data.response_metrics.cache_write_tokens += usage.cache_write_tokens
-                stream_data.response_metrics.reasoning_tokens += usage.reasoning_tokens
-                if usage.provider_metrics:
-                    if stream_data.response_metrics.provider_metrics is None:
-                        stream_data.response_metrics.provider_metrics = {}
-                    stream_data.response_metrics.provider_metrics.update(usage.provider_metrics)
-                if usage.additional_metrics:
-                    if stream_data.response_metrics.additional_metrics is None:
-                        stream_data.response_metrics.additional_metrics = {}
-                    stream_data.response_metrics.additional_metrics.update(usage.additional_metrics)
+                # Initialize if not already initialized (shouldn't happen, but safety check)
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
+            # Update MessageMetrics with usage data from response
+            usage = model_response_delta.response_usage
+            stream_data.response_metrics.input_tokens += usage.input_tokens
+            stream_data.response_metrics.output_tokens += usage.output_tokens
+            stream_data.response_metrics.total_tokens += usage.total_tokens
+            stream_data.response_metrics.audio_input_tokens += usage.audio_input_tokens
+            stream_data.response_metrics.audio_output_tokens += usage.audio_output_tokens
+            stream_data.response_metrics.audio_total_tokens += usage.audio_total_tokens
+            stream_data.response_metrics.cache_read_tokens += usage.cache_read_tokens
+            stream_data.response_metrics.cache_write_tokens += usage.cache_write_tokens
+            stream_data.response_metrics.reasoning_tokens += usage.reasoning_tokens
 
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
+            # Set time_to_first_token on first content chunk if not already set
+            if stream_data.response_metrics is not None and stream_data.response_metrics.time_to_first_token is None:
+                stream_data.response_metrics.set_time_to_first_token()
             should_yield = True
 
         if model_response_delta.reasoning_content is not None:
