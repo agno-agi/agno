@@ -1,5 +1,5 @@
 """
-Spotify Toolkit for Agno SDK
+Spotify Toolkit for Agno
 
 A toolkit for searching songs, creating playlists, and updating playlists on Spotify.
 Requires a valid Spotify access token with appropriate scopes.
@@ -46,12 +46,21 @@ class SpotifyTools(Toolkit):
 
         tools: List[Any] = [
             self.search_tracks,
+            self.search_playlists,
+            self.search_artists,
+            self.search_albums,
+            self.get_user_playlists,
+            self.get_track_recommendations,
+            self.get_artist_top_tracks,
+            self.get_album_tracks,
             self.create_playlist,
             self.add_tracks_to_playlist,
             self.get_playlist,
             self.update_playlist_details,
             self.remove_tracks_from_playlist,
             self.get_current_user,
+            self.play_track,
+            self.get_currently_playing,
         ]
 
         super().__init__(name="spotify", tools=tools, **kwargs)
@@ -96,6 +105,456 @@ class SpotifyTools(Toolkit):
         log_debug("Fetching current Spotify user profile")
         result = self._make_request("me")
         return json.dumps(result, indent=2)
+
+    def search_playlists(
+        self,
+        query: str,
+        max_results: int = 10,
+    ) -> str:
+        """Search for playlists on Spotify by name.
+
+        Use this to find playlists by name before updating them.
+        Example: "Good Vibes", "Workout Mix", "Chill Beats"
+
+        Args:
+            query: Search query - playlist name or keywords.
+            max_results: Maximum number of playlists to return (default 10, max 50).
+
+        Returns:
+            JSON string containing list of playlists with id, name, owner, track_count, and url.
+        """
+        log_debug(f"Searching Spotify for playlists: {query}")
+
+        params = {
+            "q": query,
+            "type": "playlist",
+            "limit": min(max_results, 50),
+        }
+
+        result = self._make_request("search", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        playlists = result.get("playlists", {}).get("items", [])
+        simplified_playlists = [
+            {
+                "id": playlist["id"],
+                "name": playlist["name"],
+                "owner": playlist["owner"]["display_name"],
+                "track_count": playlist["tracks"]["total"],
+                "url": playlist["external_urls"]["spotify"],
+                "uri": playlist["uri"],
+                "public": playlist.get("public"),
+            }
+            for playlist in playlists
+            if playlist is not None
+        ]
+
+        return json.dumps(simplified_playlists, indent=2)
+
+    def get_user_playlists(
+        self,
+        max_results: int = 20,
+    ) -> str:
+        """Get the current user's playlists.
+
+        Use this to find playlists owned by or followed by the current user.
+        This is more reliable than search when looking for the user's own playlists.
+
+        Args:
+            max_results: Maximum number of playlists to return (default 20, max 50).
+
+        Returns:
+            JSON string containing list of user's playlists with id, name, owner, track_count, and url.
+        """
+        log_debug("Fetching current user's playlists")
+
+        params = {
+            "limit": min(max_results, 50),
+        }
+
+        result = self._make_request("me/playlists", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        playlists = result.get("items", [])
+        simplified_playlists = [
+            {
+                "id": playlist["id"],
+                "name": playlist["name"],
+                "owner": playlist["owner"]["display_name"],
+                "track_count": playlist["tracks"]["total"],
+                "url": playlist["external_urls"]["spotify"],
+                "uri": playlist["uri"],
+                "public": playlist.get("public"),
+            }
+            for playlist in playlists
+            if playlist is not None
+        ]
+
+        return json.dumps(simplified_playlists, indent=2)
+
+    def search_artists(
+        self,
+        query: str,
+        max_results: int = 5,
+    ) -> str:
+        """Search for artists on Spotify.
+
+        Use this to find an artist's ID before getting their top tracks.
+
+        Args:
+            query: Artist name to search for.
+            max_results: Maximum number of artists to return (default 5, max 50).
+
+        Returns:
+            JSON string containing list of artists with id, name, genres, popularity, and uri.
+        """
+        log_debug(f"Searching Spotify for artists: {query}")
+
+        params = {
+            "q": query,
+            "type": "artist",
+            "limit": min(max_results, 50),
+        }
+
+        result = self._make_request("search", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        artists = result.get("artists", {}).get("items", [])
+        simplified_artists = [
+            {
+                "id": artist["id"],
+                "name": artist["name"],
+                "genres": artist.get("genres", []),
+                "popularity": artist.get("popularity"),
+                "uri": artist["uri"],
+                "followers": artist.get("followers", {}).get("total"),
+            }
+            for artist in artists
+        ]
+
+        return json.dumps(simplified_artists, indent=2)
+
+    def search_albums(
+        self,
+        query: str,
+        max_results: int = 10,
+        market: Optional[str] = None,
+    ) -> str:
+        """Search for albums on Spotify.
+
+        Use this to find an album's ID before getting its tracks.
+
+        Args:
+            query: Album name or artist + album name to search for.
+            max_results: Maximum number of albums to return (default 10, max 50).
+            market: Country code for market (e.g., 'US'). Uses default if not specified.
+
+        Returns:
+            JSON string containing list of albums with id, name, artists, release_date, total_tracks, and uri.
+        """
+        log_debug(f"Searching Spotify for albums: {query}")
+
+        params = {
+            "q": query,
+            "type": "album",
+            "limit": min(max_results, 50),
+            "market": market or self.default_market,
+        }
+
+        result = self._make_request("search", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        albums = result.get("albums", {}).get("items", [])
+        simplified_albums = [
+            {
+                "id": album["id"],
+                "name": album["name"],
+                "artists": [artist["name"] for artist in album["artists"]],
+                "release_date": album.get("release_date"),
+                "total_tracks": album.get("total_tracks"),
+                "uri": album["uri"],
+                "album_type": album.get("album_type"),
+            }
+            for album in albums
+        ]
+
+        return json.dumps(simplified_albums, indent=2)
+
+    def get_album_tracks(
+        self,
+        album_id: str,
+        market: Optional[str] = None,
+    ) -> str:
+        """Get all tracks from an album.
+
+        Use search_albums first to get the album_id if you don't have it.
+        Useful for adding entire albums to a playlist.
+
+        Args:
+            album_id: The Spotify ID of the album.
+            market: Country code for market (e.g., 'US'). Uses default if not specified.
+
+        Returns:
+            JSON string containing album info and list of tracks with id, name, track_number, duration, and uri.
+        """
+        log_debug(f"Fetching tracks for album: {album_id}")
+
+        # First get album details
+        album_result = self._make_request(f"albums/{album_id}", params={"market": market or self.default_market})
+
+        if "error" in album_result:
+            return json.dumps(album_result, indent=2)
+
+        tracks = album_result.get("tracks", {}).get("items", [])
+        simplified_tracks = [
+            {
+                "id": track["id"],
+                "name": track["name"],
+                "track_number": track["track_number"],
+                "duration_ms": track["duration_ms"],
+                "uri": track["uri"],
+                "artists": [artist["name"] for artist in track["artists"]],
+            }
+            for track in tracks
+        ]
+
+        response = {
+            "album": {
+                "id": album_result["id"],
+                "name": album_result["name"],
+                "artists": [artist["name"] for artist in album_result["artists"]],
+                "release_date": album_result.get("release_date"),
+                "total_tracks": album_result.get("total_tracks"),
+                "uri": album_result["uri"],
+            },
+            "tracks": simplified_tracks,
+        }
+
+        return json.dumps(response, indent=2)
+
+    def get_artist_top_tracks(
+        self,
+        artist_id: str,
+        market: Optional[str] = None,
+    ) -> str:
+        """Get an artist's top tracks on Spotify.
+
+        Use search_artists first to get the artist_id if you don't have it.
+
+        Args:
+            artist_id: The Spotify ID of the artist.
+            market: Country code for market (e.g., 'US'). Uses default if not specified.
+
+        Returns:
+            JSON string containing list of top tracks with id, name, album, popularity, and uri.
+        """
+        log_debug(f"Fetching top tracks for artist: {artist_id}")
+
+        params = {
+            "market": market or self.default_market,
+        }
+
+        result = self._make_request(f"artists/{artist_id}/top-tracks", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        tracks = result.get("tracks", [])
+        simplified_tracks = [
+            {
+                "id": track["id"],
+                "name": track["name"],
+                "artists": [artist["name"] for artist in track["artists"]],
+                "album": track["album"]["name"],
+                "uri": track["uri"],
+                "popularity": track.get("popularity"),
+                "preview_url": track.get("preview_url"),
+            }
+            for track in tracks
+        ]
+
+        return json.dumps(simplified_tracks, indent=2)
+
+    def get_track_recommendations(
+        self,
+        seed_tracks: Optional[List[str]] = None,
+        seed_artists: Optional[List[str]] = None,
+        seed_genres: Optional[List[str]] = None,
+        limit: int = 20,
+        target_energy: Optional[float] = None,
+        target_valence: Optional[float] = None,
+        target_danceability: Optional[float] = None,
+        target_tempo: Optional[float] = None,
+    ) -> str:
+        """Get track recommendations based on seed tracks, artists, or genres.
+
+        Must provide at least one seed (track, artist, or genre). Maximum 5 seeds total.
+
+        For mood-based playlists, use these audio features (0.0 to 1.0 scale):
+        - valence: happiness (0=sad, 1=happy)
+        - energy: intensity (0=calm, 1=energetic)
+        - danceability: how danceable (0=least, 1=most)
+        - tempo: BPM (e.g., 120 for upbeat)
+
+        Args:
+            seed_tracks: List of Spotify track IDs (not URIs) to use as seeds.
+            seed_artists: List of Spotify artist IDs to use as seeds.
+            seed_genres: List of genres (e.g., "pop", "hip-hop", "rock", "electronic").
+            limit: Number of recommendations to return (default 20, max 100).
+            target_energy: Target energy level 0.0-1.0 (higher = more energetic).
+            target_valence: Target happiness level 0.0-1.0 (higher = happier).
+            target_danceability: Target danceability 0.0-1.0 (higher = more danceable).
+            target_tempo: Target tempo in BPM (e.g., 120).
+
+        Returns:
+            JSON string containing list of recommended tracks.
+        """
+        log_debug("Fetching track recommendations")
+
+        params: dict[str, Any] = {
+            "limit": min(limit, 100),
+        }
+
+        if seed_tracks:
+            params["seed_tracks"] = ",".join(seed_tracks[:5])
+        if seed_artists:
+            params["seed_artists"] = ",".join(seed_artists[:5])
+        if seed_genres:
+            params["seed_genres"] = ",".join(seed_genres[:5])
+
+        # Audio feature targets
+        if target_energy is not None:
+            params["target_energy"] = target_energy
+        if target_valence is not None:
+            params["target_valence"] = target_valence
+        if target_danceability is not None:
+            params["target_danceability"] = target_danceability
+        if target_tempo is not None:
+            params["target_tempo"] = target_tempo
+
+        # Validate at least one seed
+        if not any([seed_tracks, seed_artists, seed_genres]):
+            return json.dumps({"error": "At least one seed (tracks, artists, or genres) is required"}, indent=2)
+
+        result = self._make_request("recommendations", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        tracks = result.get("tracks", [])
+        simplified_tracks = [
+            {
+                "id": track["id"],
+                "name": track["name"],
+                "artists": [artist["name"] for artist in track["artists"]],
+                "album": track["album"]["name"],
+                "uri": track["uri"],
+                "popularity": track.get("popularity"),
+                "preview_url": track.get("preview_url"),
+            }
+            for track in tracks
+        ]
+
+        return json.dumps(simplified_tracks, indent=2)
+
+    def play_track(
+        self,
+        track_uri: Optional[str] = None,
+        context_uri: Optional[str] = None,
+        device_id: Optional[str] = None,
+        position_ms: int = 0,
+    ) -> str:
+        """Start or resume playback on the user's Spotify.
+
+        Requires an active Spotify session (open Spotify app on any device).
+        Requires the 'user-modify-playback-state' scope.
+
+        Args:
+            track_uri: Spotify URI of track to play (e.g., "spotify:track:xxx").
+                      If not provided, resumes current playback.
+            context_uri: Spotify URI of context to play (album, artist, playlist).
+                        e.g., "spotify:playlist:xxx" or "spotify:album:xxx"
+            device_id: Optional device ID to play on. Uses active device if not specified.
+            position_ms: Position in milliseconds to start from (default 0).
+
+        Returns:
+            JSON string with success status or error.
+        """
+        log_debug(f"Starting playback: track={track_uri}, context={context_uri}")
+
+        params = {}
+        if device_id:
+            params["device_id"] = device_id
+
+        body: dict[str, Any] = {}
+        if track_uri:
+            body["uris"] = [track_uri]
+        if context_uri:
+            body["context_uri"] = context_uri
+        if position_ms:
+            body["position_ms"] = position_ms
+
+        result = self._make_request(
+            "me/player/play", method="PUT", body=body if body else None, params=params if params else None
+        )
+
+        if result.get("success") or not result.get("error"):
+            return json.dumps({"success": True, "message": "Playback started"}, indent=2)
+
+        # Common error: no active device
+        if result.get("error", {}).get("reason") == "NO_ACTIVE_DEVICE":
+            return json.dumps(
+                {
+                    "error": "No active Spotify device found. Please open Spotify on any device first.",
+                    "reason": "NO_ACTIVE_DEVICE",
+                },
+                indent=2,
+            )
+
+        return json.dumps(result, indent=2)
+
+    def get_currently_playing(self) -> str:
+        """Get information about the user's current playback state.
+
+        Returns:
+            JSON string containing current track, device, progress, and playback state.
+        """
+        log_debug("Fetching currently playing track")
+
+        result = self._make_request("me/player/currently-playing")
+
+        if not result or result.get("success"):
+            return json.dumps({"message": "Nothing currently playing"}, indent=2)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        track = result.get("item", {})
+        response = {
+            "is_playing": result.get("is_playing"),
+            "progress_ms": result.get("progress_ms"),
+            "track": {
+                "id": track.get("id"),
+                "name": track.get("name"),
+                "artists": [a["name"] for a in track.get("artists", [])],
+                "album": track.get("album", {}).get("name"),
+                "uri": track.get("uri"),
+                "duration_ms": track.get("duration_ms"),
+            }
+            if track
+            else None,
+            "device": result.get("device", {}).get("name"),
+        }
+
+        return json.dumps(response, indent=2)
 
     def search_tracks(
         self,

@@ -44,7 +44,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Example 1: Create a playlist with happy songs from specific artists
     response = agent.run(
-        "Make me a playlist called 'Good Vibes' with 5 happy Eminem songs and 5 upbeat Coldplay songs"
+        "In the Good Vibes playlist, add 3 more upbeat songs by The Weeknd"
     )
     print(response.content)
     print("\n" + "=" * 50 + "\n")
