@@ -17,6 +17,8 @@ from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware, TokenSource
+from agno.team.team import Team
+from agno.workflow.workflow import Workflow
 
 # Test JWT secret
 JWT_SECRET = "test-secret-key-for-rbac-tests"
@@ -42,6 +44,65 @@ def second_agent():
         id="second-agent",
         db=InMemoryDb(),
         instructions="You are another test agent.",
+    )
+
+
+@pytest.fixture
+def third_agent():
+    """Create a third test agent for filtering tests."""
+    return Agent(
+        name="third-agent",
+        id="third-agent",
+        db=InMemoryDb(),
+        instructions="You are a third test agent.",
+    )
+
+
+@pytest.fixture
+def test_team(test_agent, second_agent):
+    """Create a basic test team."""
+    return Team(
+        name="test-team",
+        id="test-team",
+        members=[test_agent, second_agent],
+    )
+
+
+@pytest.fixture
+def second_team(test_agent):
+    """Create a second test team."""
+    return Team(
+        name="second-team",
+        id="second-team",
+        members=[test_agent],
+    )
+
+
+@pytest.fixture
+def test_workflow():
+    """Create a basic test workflow."""
+    
+    async def simple_workflow(session_state):
+        return "workflow result"
+    
+    return Workflow(
+        name="test-workflow",
+        id="test-workflow",
+        steps=simple_workflow,
+    )
+
+
+@pytest.fixture
+def second_workflow():
+    """Create a second test workflow."""
+    
+    async def another_workflow(session_state):
+        return "another result"
+    
+    return Workflow(
+        name="second-workflow",
+        id="second-workflow",
+        steps=another_workflow,
     )
 
 
@@ -533,3 +594,768 @@ def test_different_os_id_blocks_access(test_agent):
     )
 
     assert response.status_code == 403
+
+
+def test_agent_filtering_with_global_scope(test_agent, second_agent, third_agent):
+    """Test that global agents:read scope returns all agents."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent, third_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global agents scope (no resource ID)
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:read"])
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    agents = response.json()
+    assert len(agents) == 3
+    agent_ids = {agent["id"] for agent in agents}
+    assert agent_ids == {"test-agent", "second-agent", "third-agent"}
+
+
+def test_agent_filtering_with_wildcard_scope(test_agent, second_agent, third_agent):
+    """Test that agents:*:read wildcard scope returns all agents."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent, third_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard resource scope
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:*:read"])
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    agents = response.json()
+    assert len(agents) == 3
+    agent_ids = {agent["id"] for agent in agents}
+    assert agent_ids == {"test-agent", "second-agent", "third-agent"}
+
+
+def test_agent_filtering_with_specific_scope(test_agent, second_agent, third_agent):
+    """Test that specific agent scope returns only that agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent, third_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for only test-agent
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:test-agent:read"])
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    agents = response.json()
+    assert len(agents) == 1
+    assert agents[0]["id"] == "test-agent"
+
+
+def test_agent_filtering_with_multiple_specific_scopes(test_agent, second_agent, third_agent):
+    """Test that multiple specific scopes return only those agents."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent, third_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scopes for test-agent and second-agent only
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+        f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
+    ])
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    agents = response.json()
+    assert len(agents) == 2
+    agent_ids = {agent["id"] for agent in agents}
+    assert agent_ids == {"test-agent", "second-agent"}
+
+
+def test_agent_run_blocked_without_specific_scope(test_agent, second_agent):
+    """Test that running an agent is blocked without specific run scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-agent only
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+        f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
+        f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
+        # Note: No run scope for second-agent
+    ])
+
+    # Should be able to run test-agent
+    response = client.post(
+        "/agents/test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    # Should NOT be able to run second-agent
+    response = client.post(
+        "/agents/second-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code == 403
+
+
+def test_agent_run_with_wildcard_scope(test_agent, second_agent):
+    """Test that wildcard run scope allows running any agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard run scope
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:agents:*:read",
+        f"agent-os:{TEST_OS_ID}:agents:*:run",
+    ])
+
+    # Should be able to run both agents
+    response = client.post(
+        "/agents/test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/agents/second-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+
+def test_agent_run_with_global_scope(test_agent, second_agent):
+    """Test that global run scope allows running any agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global run scope (no resource ID)
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:agents:read",
+        f"agent-os:{TEST_OS_ID}:agents:run",
+    ])
+
+    # Should be able to run both agents
+    response = client.post(
+        "/agents/test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/agents/second-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+
+# ============================================================================
+# Resource Filtering Tests - Teams
+# ============================================================================
+
+
+def test_team_filtering_with_global_scope(test_team, second_team):
+    """Test that global teams:read scope returns all teams."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global teams scope
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:teams:read"])
+
+    response = client.get(
+        "/teams",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    teams = response.json()
+    assert len(teams) == 2
+    team_ids = {team["id"] for team in teams}
+    assert team_ids == {"test-team", "second-team"}
+
+
+def test_team_filtering_with_wildcard_scope(test_team, second_team):
+    """Test that teams:*:read wildcard scope returns all teams."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard resource scope
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:teams:*:read"])
+
+    response = client.get(
+        "/teams",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    teams = response.json()
+    assert len(teams) == 2
+    team_ids = {team["id"] for team in teams}
+    assert team_ids == {"test-team", "second-team"}
+
+
+def test_team_filtering_with_specific_scope(test_team, second_team):
+    """Test that specific team scope returns only that team."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for only test-team
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:teams:test-team:read"])
+
+    response = client.get(
+        "/teams",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    teams = response.json()
+    assert len(teams) == 1
+    assert teams[0]["id"] == "test-team"
+
+
+def test_team_run_blocked_without_specific_scope(test_team, second_team):
+    """Test that running a team is blocked without specific run scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-team only
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:teams:test-team:read",
+        f"agent-os:{TEST_OS_ID}:teams:test-team:run",
+        f"agent-os:{TEST_OS_ID}:teams:second-team:read",
+        # Note: No run scope for second-team
+    ])
+
+    # Should be able to run test-team
+    response = client.post(
+        "/teams/test-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    # Should NOT be able to run second-team
+    response = client.post(
+        "/teams/second-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code == 403
+
+
+def test_team_run_with_wildcard_scope(test_team, second_team):
+    """Test that wildcard run scope allows running any team."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard run scope
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:teams:*:read",
+        f"agent-os:{TEST_OS_ID}:teams:*:run",
+    ])
+
+    # Should be able to run both teams
+    response = client.post(
+        "/teams/test-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/teams/second-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+
+def test_team_run_with_global_scope(test_team, second_team):
+    """Test that global run scope allows running any team."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global run scope
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:teams:read",
+        f"agent-os:{TEST_OS_ID}:teams:run",
+    ])
+
+    # Should be able to run both teams
+    response = client.post(
+        "/teams/test-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/teams/second-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+
+# ============================================================================
+# Resource Filtering Tests - Workflows
+# ============================================================================
+
+
+def test_workflow_filtering_with_global_scope(test_workflow, second_workflow):
+    """Test that global workflows:read scope returns all workflows."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global workflows scope
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:workflows:read"])
+
+    response = client.get(
+        "/workflows",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    workflows = response.json()
+    assert len(workflows) == 2
+    workflow_ids = {workflow["id"] for workflow in workflows}
+    assert workflow_ids == {"test-workflow", "second-workflow"}
+
+
+def test_workflow_filtering_with_wildcard_scope(test_workflow, second_workflow):
+    """Test that workflows:*:read wildcard scope returns all workflows."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard resource scope
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:workflows:*:read"])
+
+    response = client.get(
+        "/workflows",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    workflows = response.json()
+    assert len(workflows) == 2
+    workflow_ids = {workflow["id"] for workflow in workflows}
+    assert workflow_ids == {"test-workflow", "second-workflow"}
+
+
+def test_workflow_filtering_with_specific_scope(test_workflow, second_workflow):
+    """Test that specific workflow scope returns only that workflow."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for only test-workflow
+    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:workflows:test-workflow:read"])
+
+    response = client.get(
+        "/workflows",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    workflows = response.json()
+    assert len(workflows) == 1
+    assert workflows[0]["id"] == "test-workflow"
+
+
+def test_workflow_run_blocked_without_specific_scope(test_workflow, second_workflow):
+    """Test that running a workflow is blocked without specific run scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-workflow only
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:workflows:test-workflow:read",
+        f"agent-os:{TEST_OS_ID}:workflows:test-workflow:run",
+        f"agent-os:{TEST_OS_ID}:workflows:second-workflow:read",
+        # Note: No run scope for second-workflow
+    ])
+
+    # Should be able to run test-workflow
+    response = client.post(
+        "/workflows/test-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    # Should NOT be able to run second-workflow
+    response = client.post(
+        "/workflows/second-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code == 403
+
+
+def test_workflow_run_with_wildcard_scope(test_workflow, second_workflow):
+    """Test that wildcard run scope allows running any workflow."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard run scope
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:workflows:*:read",
+        f"agent-os:{TEST_OS_ID}:workflows:*:run",
+    ])
+
+    # Should be able to run both workflows
+    response = client.post(
+        "/workflows/test-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/workflows/second-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+
+def test_workflow_run_with_global_scope(test_workflow, second_workflow):
+    """Test that global run scope allows running any workflow."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global run scope
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:workflows:read",
+        f"agent-os:{TEST_OS_ID}:workflows:run",
+    ])
+
+    # Should be able to run both workflows
+    response = client.post(
+        "/workflows/test-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/workflows/second-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+
+# ============================================================================
+# Mixed Resource Type Tests
+# ============================================================================
+
+
+def test_mixed_resource_filtering(test_agent, second_agent, test_team, second_team, test_workflow, second_workflow):
+    """Test filtering with mixed resource types and granular scopes."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        teams=[test_team, second_team],
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with mixed scopes:
+    # - Specific access to test-agent only
+    # - Global access to all teams
+    # - Wildcard access to all workflows
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+        f"agent-os:{TEST_OS_ID}:teams:read",
+        f"agent-os:{TEST_OS_ID}:workflows:*:read",
+    ])
+
+    # Should only see test-agent
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    agents = response.json()
+    assert len(agents) == 1
+    assert agents[0]["id"] == "test-agent"
+
+    # Should see all teams (global scope)
+    response = client.get(
+        "/teams",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    teams = response.json()
+    assert len(teams) == 2
+    team_ids = {team["id"] for team in teams}
+    assert team_ids == {"test-team", "second-team"}
+
+    # Should see all workflows (wildcard scope)
+    response = client.get(
+        "/workflows",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    workflows = response.json()
+    assert len(workflows) == 2
+    workflow_ids = {workflow["id"] for workflow in workflows}
+    assert workflow_ids == {"test-workflow", "second-workflow"}
+
+
+def test_no_access_to_resource_type(test_agent, test_team, test_workflow):
+    """Test that users without any scope for a resource type get empty list."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        teams=[test_team],
+        workflows=[test_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with only agents scope, no teams or workflows scope
+    token = create_jwt_token(scopes=[
+        f"agent-os:{TEST_OS_ID}:agents:read",
+    ])
+
+    # Should see agents
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+    # Should NOT see teams (no scope)
+    response = client.get(
+        "/teams",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 0  # Empty list, not 403
+
+    # Should NOT see workflows (no scope)
+    response = client.get(
+        "/workflows",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 0  # Empty list, not 403
+
+
+def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_workflow):
+    """Test that admin scope grants access to all resources of all types."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        teams=[test_team],
+        workflows=[test_workflow],
+        authorization=True,
+        authorization_secret=JWT_SECRET,
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Admin token
+    token = create_jwt_token(scopes=["admin"])
+
+    # Should see all agents
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+
+    # Should see all teams
+    response = client.get(
+        "/teams",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+    # Should see all workflows
+    response = client.get(
+        "/workflows",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+    # Should be able to run anything
+    response = client.post(
+        "/agents/test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/teams/test-team/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.post(
+        "/workflows/test-workflow/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+    assert response.status_code in [200, 201]

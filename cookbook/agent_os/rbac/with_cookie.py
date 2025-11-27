@@ -100,6 +100,7 @@ app.add_middleware(
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
     scopes_claim="scopes",  # Extract scopes from 'scopes' claim
+    cors_allowed_origins=["http://localhost:3000"],
 )
 
 

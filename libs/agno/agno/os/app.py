@@ -181,6 +181,10 @@ class AgentOS:
         # RBAC
         self.authorization = authorization
         self.authorization_secret = authorization_secret
+        
+        if self.authorization and not self.id:
+            raise ValueError("Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS.")
+        
         if self.authorization and not self.authorization_secret:
             log_info("No authorization secret provided, generating a new 256-bit authorization secret")
 
@@ -190,6 +194,7 @@ class AgentOS:
             self.authorization_secret = secrets.token_hex(32)  # 32 bytes = 256 bits
 
             log_info(f"Authorization secret generated (256-bit, hex): {self.authorization_secret}")
+
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -510,6 +515,7 @@ class AgentOS:
                 JWTMiddleware,
                 secret_key=self.authorization_secret,
                 authorization=self.authorization,
+                cors_allowed_origins=self.settings.cors_origin_list,
             )
 
         return fastapi_app

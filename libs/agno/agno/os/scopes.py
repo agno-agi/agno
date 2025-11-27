@@ -459,6 +459,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "PATCH /memories/*": ["memories:write"],
         "DELETE /memories": ["memories:delete"],
         "DELETE /memories/*": ["memories:delete"],
+        "POST /optimize-memories": ["memories:write"],
         # Knowledge endpoints
         "GET /knowledge/content": ["knowledge:read"],
         "GET /knowledge/content/*": ["knowledge:read"],

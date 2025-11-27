@@ -1150,7 +1150,8 @@ def get_base_router(
 
         # Filter agents based on user's scopes
         from agno.os.auth import filter_resources_by_access
-
+        
+        # Limit results based on the user's access/scopes
         accessible_agents = filter_resources_by_access(request, os.agents, "agents")
 
         agents = []

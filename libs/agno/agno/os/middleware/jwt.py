@@ -91,6 +91,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
+        cors_allowed_origins: Optional[List[str]] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -115,6 +116,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                            Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
             excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
             admin_scope: The scope that grants admin access (default: "admin")
+            cors_allowed_origins: List of allowed CORS origins for error responses
         """
         super().__init__(app)
 
@@ -154,6 +156,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         self.excluded_route_paths = excluded_route_paths or self._get_default_excluded_routes()
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        self.cors_allowed_origins = cors_allowed_origins or []
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -294,21 +297,51 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             return "JWT token missing"
 
+    def _create_error_response(self, status_code: int, detail: str, origin: Optional[str] = None) -> JSONResponse:
+        """Create an error response with CORS headers."""
+        response = JSONResponse(status_code=status_code, content={"detail": detail})
+        
+        # Add CORS headers to the error response
+        if origin and self._is_origin_allowed(origin):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Expose-Headers"] = "*"
+        
+        return response
+
+    def _is_origin_allowed(self, origin: str) -> bool:
+        """Check if the origin is in the allowed origins list."""
+        if not self.cors_allowed_origins:
+            # If no allowed origins configured, allow all (fallback to default behavior)
+            return True
+        
+        # Check if origin is in the allowed list
+        return origin in self.cors_allowed_origins
+
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
         path = request.url.path
         method = request.method
 
+        # Skip OPTIONS requests (CORS preflight)
+        if method == "OPTIONS":
+            return await call_next(request)
+
         # Skip excluded routes
         if self._is_route_excluded(path):
             return await call_next(request)
+
+        # Get origin for CORS headers in error responses
+        origin = request.headers.get("origin")
 
         # Extract JWT token
         token = self._extract_token(request)
         if not token:
             if self.authorization:
                 error_msg = self._get_missing_token_error_message()
-                return JSONResponse(status_code=401, content={"detail": error_msg})
+                return self._create_error_response(401, error_msg, origin)
 
         try:
             # Validate token and extract claims
@@ -360,20 +393,24 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 resource_type = None
                 resource_id = None
                 
-                if "/agents/" in path:
-                    resource_type = "agent"
-                    resource_id = self._extract_resource_id_from_path(path, "agents")
-                elif "/teams/" in path:
-                    resource_type = "team"
-                    resource_id = self._extract_resource_id_from_path(path, "teams")
-                elif "/workflows/" in path:
-                    resource_type = "workflow"
-                    resource_id = self._extract_resource_id_from_path(path, "workflows")
+                if "/agents" in path:
+                    resource_type = "agents"
+                elif "/teams" in path:
+                    resource_type = "teams"
+                elif "/workflows" in path:
+                    resource_type = "workflows"
+                    
+                resource_id = self._extract_resource_id_from_path(path, resource_type)
 
                 required_scopes = self._get_required_scopes(method, path)
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
+                    print(scopes)
+                    print(required_scopes)
+                    print(agent_os_id)
+                    print(resource_type)
+                    print(resource_id)
                     # Use the new scope validation system
                     if not has_required_scopes(
                         scopes,
@@ -385,10 +422,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                         log_warning(
                             f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
                         )
-                        return JSONResponse(
-                            status_code=403,
-                            content={"detail": "Insufficient permissions"},
-                        )
+                        return self._create_error_response(403, "Insufficient permissions", origin)
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
                 else:
                     log_debug(f"No scopes required for {method} {path}")
@@ -400,18 +434,18 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         except jwt.ExpiredSignatureError:
             if self.authorization:
-                return JSONResponse(status_code=401, content={"detail": "Token has expired"})
+                return self._create_error_response(401, "Token has expired", origin)
             request.state.authenticated = False
             request.state.token = token
 
         except jwt.InvalidTokenError as e:
             if self.authorization:
-                return JSONResponse(status_code=401, content={"detail": f"Invalid token: {str(e)}"})
+                return self._create_error_response(401, f"Invalid token: {str(e)}", origin)
             request.state.authenticated = False
             request.state.token = token
         except Exception as e:
             if self.authorization:
-                return JSONResponse(status_code=401, content={"detail": f"Error decoding token: {str(e)}"})
+                return self._create_error_response(401, f"Error decoding token: {str(e)}", origin)
             request.state.authenticated = False
             request.state.token = token
 

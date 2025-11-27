@@ -62,6 +62,7 @@ app.add_middleware(
     algorithm="HS256",
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="admin",  # Admin can bypass all checks
+    cors_allowed_origins=["http://localhost:3000"],
 )
 
 if __name__ == "__main__":
