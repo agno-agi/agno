@@ -996,8 +996,8 @@ jobs:
       - name: Verify agno_infra installation
         run: |
           source .venv/bin/activate
-          pip show agno-infra || exit 1
+          uv pip show agno-infra || exit 1
       - name: List installed packages
         run: |
           source .venv/bin/activate
-          pip list
+          uv pip list

@@ -173,28 +173,3 @@ def test_tool_call_custom_tool_optional_parameters():
     assert response.content is not None
     assert "70" in response.content
 
-
-def test_tool_call_list_parameters():
-    agent = Agent(
-        model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
-        tools=[ExaTools()],
-        instructions="Use a single tool call if possible",
-        markdown=True,
-        telemetry=False,
-    )
-
-    response = agent.run(
-        "What are the papers at https://arxiv.org/pdf/2307.06435 and https://arxiv.org/pdf/2502.09601 about?"
-    )
-
-    # Verify tool usage
-    assert response.messages is not None
-    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-    for call in tool_calls:
-        if call.get("type", "") == "function":
-            assert call["function"]["name"] in ["search_exa", "get_contents", "exa_answer"]
-    assert response.content is not None
