@@ -650,6 +650,7 @@ def test_from_dict_basic(shared_db):
         "runs": [
             {
                 "run_id": "run1",
+                "agent_id": "test_agent",
                 "status": RunStatus.completed,
                 "messages": [
                     {"role": "user", "content": "Test message"},
