@@ -788,8 +788,6 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) ->
                     cache_read_tokens=session_metrics_data.cache_read_tokens,
                     cache_write_tokens=session_metrics_data.cache_write_tokens,
                     reasoning_tokens=session_metrics_data.reasoning_tokens,
-                    provider_metrics=session_metrics_data.provider_metrics,
-                    additional_metrics=session_metrics_data.additional_metrics,
                 )
     return None
 
@@ -825,8 +823,6 @@ async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: 
                     cache_read_tokens=session_metrics_data.cache_read_tokens,
                     cache_write_tokens=session_metrics_data.cache_write_tokens,
                     reasoning_tokens=session_metrics_data.reasoning_tokens,
-                    provider_metrics=session_metrics_data.provider_metrics,
-                    additional_metrics=session_metrics_data.additional_metrics,
                 )
     return None
 

@@ -1061,12 +1061,6 @@ class Claude(Model):
         metrics.cache_read_tokens = response_usage.cache_read_input_tokens or 0
         metrics.cache_write_tokens = response_usage.cache_creation_input_tokens or 0
 
-        # Anthropic-specific additional fields
-        if response_usage.server_tool_use:
-            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use.model_dump()}
-        if isinstance(response_usage, Usage):
-            if response_usage.service_tier:
-                metrics.provider_metrics = metrics.provider_metrics or {}
-                metrics.provider_metrics["service_tier"] = response_usage.service_tier
+        # Anthropic-specific fields removed - provider_metrics no longer supported
 
         return metrics

@@ -331,8 +331,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                         "timer": None,
                                         "time_to_first_token": None,
                                         "duration": None,
-                                        "provider_metrics": None,
-                                        "additional_metrics": None,
                                     },
                                     "chat_history": [
                                         {
@@ -802,8 +800,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                         "timer": None,
                                         "time_to_first_token": None,
                                         "duration": None,
-                                        "provider_metrics": None,
-                                        "additional_metrics": None,
                                     },
                                     "chat_history": [
                                         {

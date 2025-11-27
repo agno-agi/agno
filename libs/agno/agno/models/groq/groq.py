@@ -573,18 +573,6 @@ class Groq(Model):
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
-        # Additional time metrics offered by Groq
-        if completion_time := response_usage.completion_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["completion_time"] = completion_time
-        if prompt_time := response_usage.prompt_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["prompt_time"] = prompt_time
-        if queue_time := response_usage.queue_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["queue_time"] = queue_time
-        if total_time := response_usage.total_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["total_time"] = total_time
+        # Additional time metrics offered by Groq (removed - provider_metrics no longer supported)
 
         return metrics

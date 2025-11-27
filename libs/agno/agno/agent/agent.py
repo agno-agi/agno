@@ -47,7 +47,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics, SessionMetrics
+from agno.models.metrics import Metrics, MessageMetrics, ModelMetrics, SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -4757,8 +4757,11 @@ class Agent:
         # Update the RunOutput messages
         run_response.messages = messages_for_run_response
         # Update the RunOutput metrics
+        output_model_messages = getattr(run_messages, 'output_model_messages', None)
         run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+            model_messages=messages_for_run_response,
+            output_model_messages=output_model_messages,
+            current_run_metrics=run_response.metrics
         )
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput):
@@ -4779,17 +4782,6 @@ class Agent:
             session_metrics.cache_write_tokens += run_metrics.cache_write_tokens
             session_metrics.reasoning_tokens += run_metrics.reasoning_tokens
 
-            # Handle provider_metrics
-            if run_metrics.provider_metrics:
-                if session_metrics.provider_metrics is None:
-                    session_metrics.provider_metrics = {}
-                session_metrics.provider_metrics.update(run_metrics.provider_metrics)
-
-            # Handle additional_metrics
-            if run_metrics.additional_metrics:
-                if session_metrics.additional_metrics is None:
-                    session_metrics.additional_metrics = {}
-                session_metrics.additional_metrics.update(run_metrics.additional_metrics)
 
             # Calculate average duration
             session_metrics.total_runs += 1
@@ -4878,8 +4870,11 @@ class Agent:
         # Update the RunOutput messages
         run_response.messages = messages_for_run_response
         # Update the RunOutput metrics
+        output_model_messages = getattr(run_messages, 'output_model_messages', None)
         run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+            model_messages=messages_for_run_response,
+            output_model_messages=output_model_messages,
+            current_run_metrics=run_response.metrics
         )
 
         # Update the run_response audio if streaming
@@ -4960,8 +4955,11 @@ class Agent:
         # Update the RunOutput messages
         run_response.messages = messages_for_run_response
         # Update the RunOutput metrics
+        output_model_messages = getattr(run_messages, 'output_model_messages', None)
         run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+            model_messages=messages_for_run_response,
+            output_model_messages=output_model_messages,
+            current_run_metrics=run_response.metrics
         )
 
         # Update the run_response audio if streaming
@@ -5971,8 +5969,6 @@ class Agent:
                         cache_read_tokens=session_metrics_from_db.cache_read_tokens,
                         cache_write_tokens=session_metrics_from_db.cache_write_tokens,
                         reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                        provider_metrics=session_metrics_from_db.provider_metrics,
-                        additional_metrics=session_metrics_from_db.additional_metrics,
                     )
         return SessionMetrics()
 
@@ -8705,40 +8701,145 @@ class Agent:
             except Exception as e:
                 log_warning(f"Failed to save output to file: {e}")
 
-    def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        """Sum the MessageMetrics from assistant messages into a Metrics object (run-level)"""
+    def _calculate_run_metrics(
+        self,
+        model_messages: Optional[List[Message]] = None,
+        output_model_messages: Optional[List[Message]] = None,
+        messages: Optional[List[Message]] = None,  # For backward compatibility
+        current_run_metrics: Optional[Metrics] = None,
+    ) -> Metrics:
+        """Calculate run-level metrics with per-model breakdown in details field.
+        
+        Args:
+            model_messages: Messages from the main model (assistant messages)
+            output_model_messages: Messages from the output_model (assistant messages)
+            messages: Legacy parameter - if provided, treated as model_messages
+            current_run_metrics: Existing metrics to update (preserves timing)
+        """
+        from agno.models.metrics import ModelMetrics
+        
         metrics = current_run_metrics or Metrics()
-
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-                # Convert MessageMetrics to Metrics and add
-                msg_metrics = m.metrics
-                metrics.input_tokens += msg_metrics.input_tokens
-                metrics.output_tokens += msg_metrics.output_tokens
-                metrics.total_tokens += msg_metrics.total_tokens
-                metrics.audio_input_tokens += msg_metrics.audio_input_tokens
-                metrics.audio_output_tokens += msg_metrics.audio_output_tokens
-                metrics.audio_total_tokens += msg_metrics.audio_total_tokens
-                metrics.cache_read_tokens += msg_metrics.cache_read_tokens
-                metrics.cache_write_tokens += msg_metrics.cache_write_tokens
-                metrics.reasoning_tokens += msg_metrics.reasoning_tokens
-                # Handle provider_metrics
-                if msg_metrics.provider_metrics:
-                    if metrics.provider_metrics is None:
-                        metrics.provider_metrics = {}
-                    metrics.provider_metrics.update(msg_metrics.provider_metrics)
-                # Handle additional_metrics
-                if msg_metrics.additional_metrics:
-                    if metrics.additional_metrics is None:
-                        metrics.additional_metrics = {}
-                    metrics.additional_metrics.update(msg_metrics.additional_metrics)
-
+        details: Dict[str, List[ModelMetrics]] = {}
+        
+        # Backward compatibility: if messages is provided, use it as model_messages
+        if messages is not None and model_messages is None:
+            model_messages = messages
+        
+        # Track main model metrics
+        if model_messages and self.model is not None:
+            assistant_message_role = self.model.assistant_message_role
+            main_model_messages = [
+                m for m in model_messages
+                if m.role == assistant_message_role and m.metrics is not None and m.from_history is False
+            ]
+            
+            if main_model_messages:
+                # Aggregate metrics from all main model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in main_model_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = self.model.id
+                model_provider = self.model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["model"] = [model_metrics]
+        
+        # Track output_model metrics
+        if output_model_messages and self.output_model is not None:
+            output_assistant_role = self.output_model.assistant_message_role
+            output_model_assistant_messages = [
+                m for m in output_model_messages
+                if m.role == output_assistant_role and m.metrics is not None
+            ]
+            
+            if output_model_assistant_messages:
+                # Aggregate metrics from all output_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in output_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = self.output_model.id
+                model_provider = self.output_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["output_model"] = [model_metrics]
+        
+        # Set details if we have any model metrics
+        if details:
+            metrics.details = details
+        
+        # Calculate top-level aggregates by summing all models in details
+        # If details is empty, calculate from messages for backward compatibility
+        if metrics.details:
+            metrics.input_tokens = 0
+            metrics.output_tokens = 0
+            metrics.total_tokens = 0
+            
+            for model_type, model_metrics_list in metrics.details.items():
+                for model_metrics in model_metrics_list:
+                    metrics.input_tokens += model_metrics.input_tokens
+                    metrics.output_tokens += model_metrics.output_tokens
+                    metrics.total_tokens += model_metrics.total_tokens
+            
+            # Set time_to_first_token from the first model that generated tokens
+            first_ttft = None
+            for model_type, model_metrics_list in metrics.details.items():
+                for model_metrics in model_metrics_list:
+                    if model_metrics.time_to_first_token is not None:
+                        if first_ttft is None or model_metrics.time_to_first_token < first_ttft:
+                            first_ttft = model_metrics.time_to_first_token
+            if first_ttft is not None:
+                metrics.time_to_first_token = first_ttft
+        else:
+            # Backward compatibility: calculate from messages if no details
+            # This handles cases where details tracking isn't set up yet
+            if model_messages:
+                assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+                for m in model_messages:
+                    if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
+                        msg_metrics = m.metrics
+                        metrics.input_tokens += msg_metrics.input_tokens
+                        metrics.output_tokens += msg_metrics.output_tokens
+                        metrics.total_tokens += msg_metrics.total_tokens
+                        if msg_metrics.time_to_first_token is not None and metrics.time_to_first_token is None:
+                            metrics.time_to_first_token = msg_metrics.time_to_first_token
+        
         # If the run metrics were already initialized, keep the time related metrics
         if current_run_metrics is not None:
             metrics.timer = current_run_metrics.timer
             metrics.duration = current_run_metrics.duration
-            metrics.time_to_first_token = current_run_metrics.time_to_first_token
+            # Only override time_to_first_token if we calculated it from details
+            if metrics.time_to_first_token is None:
+                metrics.time_to_first_token = current_run_metrics.time_to_first_token
 
         return metrics
 
@@ -9576,8 +9677,17 @@ class Agent:
             return
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+        initial_output_model_messages_count = len(messages_for_output_model)
         output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
         model_response.content = output_model_response.content
+        
+        # Extract output_model assistant messages
+        output_model_assistant_role = self.output_model.assistant_message_role if self.output_model else "assistant"
+        output_model_messages = [
+            m for m in messages_for_output_model[initial_output_model_messages_count:]
+            if m.role == output_model_assistant_role and m.metrics is not None
+        ]
+        run_messages.output_model_messages.extend(output_model_messages)
 
     def _generate_response_with_output_model_stream(
         self,
@@ -9604,6 +9714,8 @@ class Agent:
             )
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+        # Track initial length to identify output_model messages later
+        initial_output_model_messages_count = len(messages_for_output_model)
 
         model_response = ModelResponse(content="")
 
@@ -9624,12 +9736,24 @@ class Agent:
                 store_events=self.store_events,
             )
 
+        # Extract output_model assistant messages (those added after initial count)
+        output_model_assistant_role = self.output_model.assistant_message_role if self.output_model else "assistant"
+        output_model_messages = [
+            m for m in messages_for_output_model[initial_output_model_messages_count:]
+            if m.role == output_model_assistant_role and m.metrics is not None
+        ]
+        run_messages.output_model_messages.extend(output_model_messages)
+
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
-        # Update the RunResponse metrics
-        run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
+        # Update the RunResponse metrics - pass model-specific messages
+        run_response.metrics = self._calculate_run_metrics(
+            model_messages=messages_for_run_response,
+            output_model_messages=run_messages.output_model_messages,
+            current_run_metrics=run_response.metrics
+        )
 
     async def _agenerate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages):
         """Parse the model response using the output model."""
@@ -9665,6 +9789,8 @@ class Agent:
             )
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+        # Track initial length to identify output_model messages later
+        initial_output_model_messages_count = len(messages_for_output_model)
 
         model_response = ModelResponse(content="")
 
@@ -9688,12 +9814,24 @@ class Agent:
                 store_events=self.store_events,
             )
 
+        # Extract output_model assistant messages (those added after initial count)
+        output_model_assistant_role = self.output_model.assistant_message_role if self.output_model else "assistant"
+        output_model_messages = [
+            m for m in messages_for_output_model[initial_output_model_messages_count:]
+            if m.role == output_model_assistant_role and m.metrics is not None
+        ]
+        run_messages.output_model_messages.extend(output_model_messages)
+
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
-        # Update the RunResponse metrics
-        run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
+        # Update the RunResponse metrics - pass model-specific messages
+        run_response.metrics = self._calculate_run_metrics(
+            model_messages=messages_for_run_response,
+            output_model_messages=run_messages.output_model_messages,
+            current_run_metrics=run_response.metrics
+        )
 
     ###########################################################################
     # Default Tools

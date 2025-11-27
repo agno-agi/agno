@@ -8,7 +8,8 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    # reasoning_model=OpenAIChat(id="gpt-5"),
+    reasoning_model=OpenAIChat(id="o1"),
+    output_model=OpenAIChat(id="gpt-4o-mini"),
     db=InMemoryDb(),
     markdown=True,
     tools=[DuckDuckGoTools()],
@@ -27,7 +28,19 @@ print("1. RUN METRICS (Metrics class - run-level aggregation)")
 print("=" * 80)
 if run_output.metrics:
     print(f"Type: {type(run_output.metrics).__name__}")
-    pprint(run_output.metrics.to_dict())
+    metrics_dict = run_output.metrics.to_dict()
+    pprint(metrics_dict)
+    
+    # Show details if available
+    if run_output.metrics.details:
+        print("\n" + "-" * 80)
+        print("PER-MODEL METRICS (details field):")
+        print("-" * 80)
+        for model_type, model_metrics_list in run_output.metrics.details.items():
+            print(f"\n{model_type}:")
+            for i, model_metrics in enumerate(model_metrics_list, 1):
+                print(f"  Instance {i}:")
+                pprint(model_metrics.to_dict())
 else:
     print("No run metrics available")
 
@@ -171,7 +184,7 @@ print("✓ User/system/tool messages: No metrics (None)")
     'output_tokens': 87,
     'total_tokens': 1374,
     'average_duration': 6.450697125052102,
-    'total_runs': 1,
+    'total_runs': 2,
     'details': 
     [
         {
@@ -180,6 +193,7 @@ print("✓ User/system/tool messages: No metrics (None)")
             "input_tokens": 1287,
             "output_tokens": 87,
             "total_tokens": 1374,
+            "average_duration": 6.450697125052102,
             "total_runs": 1,
         },
         {

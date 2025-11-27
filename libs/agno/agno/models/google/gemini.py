@@ -1131,7 +1131,6 @@ class Gemini(Model):
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 
-        if response_usage.traffic_type is not None:
-            metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
+        # traffic_type removed - provider_metrics no longer supported
 
         return metrics
