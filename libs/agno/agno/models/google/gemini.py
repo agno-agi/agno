@@ -199,7 +199,7 @@ class Gemini(Model):
             config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
-        thinking_config_params = {}
+        thinking_config_params: Dict[str, Any] = {}
         if self.thinking_budget is not None:
             thinking_config_params["thinking_budget"] = self.thinking_budget
         if self.include_thoughts is not None:
