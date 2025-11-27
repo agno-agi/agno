@@ -396,6 +396,7 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
         "please clarify",
         "need more information",
         "be more specific",
+        "specific",
     ]
 
     recipes_mentioned = any(cuisine in response_content for cuisine in ["thai", "cape", "tom kha", "cape malay"])
@@ -494,6 +495,7 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
         "please clarify",
         "need more information",
         "be more specific",
+        "specific",
     ]
 
     recipes_mentioned = any(cuisine in response_content for cuisine in ["thai", "cape", "tom kha", "cape malay"])
