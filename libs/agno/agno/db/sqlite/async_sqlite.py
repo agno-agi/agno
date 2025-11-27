@@ -140,7 +140,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._create_table(table_name=table_name, table_type=table_type)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -296,6 +296,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         table_name: str,
         table_type: str,
+        create_table_if_not_found: Optional[bool] = False,
     ) -> Table:
         """
         Check if the table exists and is valid, else create it.
@@ -311,6 +312,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+                
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
