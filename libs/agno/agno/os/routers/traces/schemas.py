@@ -4,12 +4,43 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+def _derive_span_type(span: Any) -> str:
+    """
+    Derive the correct span type from span attributes.
+    
+    OpenInference sets span_kind to:
+    - AGENT for both agents and teams
+    - CHAIN for workflows
+    
+    We use additional context (agno.team.id, agno.workflow.id) to differentiate:
+    - WORKFLOW: CHAIN spans or spans with agno.workflow.id
+    - TEAM: AGENT spans with agno.team.id
+    - AGENT: AGENT spans without agno.team.id
+    - LLM, TOOL, etc.: unchanged
+    """
+    span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
+    
+    # Check for workflow (CHAIN kind or has workflow.id)
+    if span_kind == "CHAIN":
+        return "WORKFLOW"
+    
+    # Check for team vs agent
+    if span_kind == "AGENT":
+        # If it has a team.id attribute, it's a TEAM span
+        if span.attributes.get("agno.team.id") or span.attributes.get("team.id"):
+            return "TEAM"
+        return "AGENT"
+    
+    # Return original span kind for LLM, TOOL, etc.
+    return span_kind
+
+
 class TraceNode(BaseModel):
     """Recursive node structure for rendering trace hierarchy in the frontend"""
 
     id: str = Field(..., description="Span ID")
     name: str = Field(..., description="Span name (e.g., 'agent.run', 'llm.invoke')")
-    type: str = Field(..., description="Span kind (AGENT, LLM, TOOL)")
+    type: str = Field(..., description="Span kind (AGENT, TEAM, WORKFLOW, LLM, TOOL)")
     duration: str = Field(..., description="Human-readable duration (e.g., '123ms', '1.5s')")
     start_time: datetime = Field(..., description="Start time (Pydantic auto-serializes to ISO 8601)")
     end_time: datetime = Field(..., description="End time (Pydantic auto-serializes to ISO 8601)")
@@ -34,7 +65,10 @@ class TraceNode(BaseModel):
         else:
             duration_str = f"{duration_ms / 1000:.2f}s"
 
-        # Extract span kind from attributes
+        # Derive the correct span type (AGENT, TEAM, WORKFLOW, LLM, TOOL, etc.)
+        span_type = _derive_span_type(span)
+        
+        # Also get the raw span_kind for metadata extraction logic
         span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
         # Extract input/output at root level (for all span types)
@@ -88,7 +122,7 @@ class TraceNode(BaseModel):
         return cls(
             id=span.span_id,
             name=span.name,
-            type=span_kind,
+            type=span_type,
             duration=duration_str,
             start_time=span.start_time,
             end_time=span.end_time,
@@ -350,9 +384,12 @@ class TraceDetail(BaseModel):
                 duration_ms = trace_duration_ms if trace_duration_ms is not None else span.duration_ms
                 
                 duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
+                
+                # Derive the correct span type (AGENT, TEAM, WORKFLOW, etc.)
+                span_type = _derive_span_type(span)
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
-                # Add workflow-specific metadata for CHAIN spans (workflow root)
+                # Add workflow-specific metadata for CHAIN/WORKFLOW spans
                 if span_kind == "CHAIN":
                     if workflow_description := span.attributes.get("agno.workflow.description"):
                         root_metadata["description"] = workflow_description
@@ -369,7 +406,7 @@ class TraceDetail(BaseModel):
                 return TraceNode(
                     id=span.span_id,
                     name=span.name,
-                    type=span_kind,
+                    type=span_type,
                     duration=duration_str,
                     start_time=start_time,
                     end_time=end_time,
