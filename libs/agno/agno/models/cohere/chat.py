@@ -196,12 +196,8 @@ class Cohere(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().chat(
                 model=self.id,
                 messages=format_messages(messages, compress_tool_results),  # type: ignore
@@ -238,12 +234,8 @@ class Cohere(Model):
 
             tool_use: Dict[str, Any] = {}
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for response in self.get_client().chat_stream(
                 model=self.id,
@@ -278,12 +270,8 @@ class Cohere(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_async_client().chat(
                 model=self.id,
                 messages=format_messages(messages, compress_tool_results),  # type: ignore
@@ -320,12 +308,8 @@ class Cohere(Model):
 
             tool_use: Dict[str, Any] = {}
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async for response in self.get_async_client().chat_stream(
                 model=self.id,

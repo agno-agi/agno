@@ -217,12 +217,8 @@ class Claude(AnthropicClaude):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             response = self.get_client().messages.create(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
@@ -287,12 +283,8 @@ class Claude(AnthropicClaude):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             with self.get_client().messages.stream(
                 model=self.id,
@@ -339,12 +331,8 @@ class Claude(AnthropicClaude):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             response = await self.get_async_client().messages.create(
                 model=self.id,
@@ -404,12 +392,8 @@ class Claude(AnthropicClaude):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async with self.get_async_client().messages.stream(
                 model=self.id,

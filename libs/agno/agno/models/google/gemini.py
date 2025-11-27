@@ -331,10 +331,7 @@ class Gemini(Model):
 
             # Initialize MessageMetrics if None
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
@@ -383,10 +380,7 @@ class Gemini(Model):
 
             # Initialize MessageMetrics if None
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             for response in self.get_client().models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
@@ -433,10 +427,7 @@ class Gemini(Model):
 
             # Initialize MessageMetrics if None
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
@@ -485,10 +476,7 @@ class Gemini(Model):
 
             # Initialize MessageMetrics if None
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await self.get_client().aio.models.generate_content_stream(
                 model=self.id,

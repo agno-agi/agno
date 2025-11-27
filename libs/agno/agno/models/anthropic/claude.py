@@ -527,20 +527,16 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
             else:
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = self.get_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -602,10 +598,8 @@ class Claude(Model):
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 with self.get_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -614,10 +608,8 @@ class Claude(Model):
                     for chunk in stream:
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
             else:
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 with self.get_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -665,20 +657,16 @@ class Claude(Model):
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
             else:
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 provider_response = await self.get_async_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -736,10 +724,8 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
             if self._has_beta_features(response_format=response_format, tools=tools):
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -748,10 +734,8 @@ class Claude(Model):
                     async for chunk in stream:
                         yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
             else:
-                # Initialize MessageMetrics if None
-                if assistant_message.metrics is None:
-                    assistant_message.metrics = MessageMetrics()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 async with self.get_async_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore

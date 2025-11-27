@@ -391,12 +391,8 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
             assistant_message.metrics.stop_timer()
 
@@ -444,12 +440,8 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
@@ -503,12 +495,8 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async with self.get_async_client() as client:
                 response = await client.converse(modelId=self.id, messages=formatted_messages, **body)
@@ -559,12 +547,8 @@ class AwsBedrock(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}

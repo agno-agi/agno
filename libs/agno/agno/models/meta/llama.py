@@ -222,12 +222,8 @@ class Llama(Model):
         """
         Send a chat completion request to the Llama API.
         """
-        # Initialize MessageMetrics if None
-
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
@@ -259,12 +255,8 @@ class Llama(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        # Initialize MessageMetrics if None
-
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -299,10 +291,7 @@ class Llama(Model):
         try:
             # Initialize MessageMetrics if None
 
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
@@ -337,12 +326,8 @@ class Llama(Model):
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
 
-        # Initialize MessageMetrics if None
-
-        if assistant_message.metrics is None:
-            assistant_message.metrics = MessageMetrics()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         try:
             async for chunk in await self.get_async_client().chat.completions.create(

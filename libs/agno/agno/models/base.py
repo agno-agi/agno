@@ -304,6 +304,19 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
+        """
+        Ensure message metrics are initialized and timer is started.
+        This should be called before making model API calls.
+        
+        Args:
+            assistant_message: The assistant message to initialize metrics for
+        """
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
+        if assistant_message.metrics.timer is None or assistant_message.metrics.timer.start_time is None:
+            assistant_message.metrics.start_timer()
+
     def response(
         self,
         messages: List[Message],

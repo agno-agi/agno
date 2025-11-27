@@ -183,12 +183,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             response = client.chat(messages=formatted_messages, **request_params)
             assistant_message.metrics.stop_timer()
 
@@ -224,12 +220,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await client.achat(messages=formatted_messages, **request_params)
             assistant_message.metrics.stop_timer()
 
@@ -265,12 +257,8 @@ class WatsonX(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in client.chat_stream(messages=formatted_messages, **request_params):
                 yield self._parse_provider_response_delta(chunk)
@@ -306,12 +294,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            # Initialize MessageMetrics if None
-
-            if assistant_message.metrics is None:
-                assistant_message.metrics = MessageMetrics()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
             async for chunk in async_stream:
