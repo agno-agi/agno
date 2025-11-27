@@ -1,8 +1,8 @@
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
@@ -511,8 +511,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools:
         for tool in team.tools:
-            type_name = type(tool).__name__
-            if type_name in ("MCPTools", "MultiMCPTools"):
+            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+            ):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -522,8 +524,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools:
                     for tool in member.tools:
-                        type_name = type(tool).__name__
-                        if type_name in ("MCPTools", "MultiMCPTools"):
+                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                        if hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        ):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -567,8 +571,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools:
                 for tool in step.agent.tools:
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
+                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                    if hasattr(type(tool), "__mro__") and any(
+                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                    ):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -590,8 +596,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools:
             for tool in step.tools:
-                type_name = type(tool).__name__
-                if type_name in ("MCPTools", "MultiMCPTools"):
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
@@ -628,3 +636,119 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
         return str(input_content)
     else:
         return str(input_content)
+
+
+def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
+    """Map JSON schema type to Python type with recursive handling.
+
+    Args:
+        field_schema: JSON schema dictionary for a single field
+        field_name: Name of the field (used for nested model naming)
+
+    Returns:
+        Python type corresponding to the JSON schema type
+    """
+    if not isinstance(field_schema, dict):
+        return Any
+
+    json_type = field_schema.get("type")
+
+    # Handle basic types
+    if json_type == "string":
+        return str
+    elif json_type == "integer":
+        return int
+    elif json_type == "number":
+        return float
+    elif json_type == "boolean":
+        return bool
+    elif json_type == "null":
+        return type(None)
+    elif json_type == "array":
+        # Handle arrays with item type specification
+        items_schema = field_schema.get("items")
+        if items_schema and isinstance(items_schema, dict):
+            item_type = _get_python_type_from_json_schema(items_schema, f"{field_name}Item")
+            return List[item_type]  # type: ignore
+        else:
+            # No item type specified - use generic list
+            return List[Any]
+    elif json_type == "object":
+        # Recursively create nested Pydantic model
+        nested_properties = field_schema.get("properties", {})
+        nested_required = field_schema.get("required", [])
+        nested_title = field_schema.get("title", field_name)
+
+        # Build field definitions for nested model
+        nested_fields = {}
+        for nested_field_name, nested_field_schema in nested_properties.items():
+            nested_field_type = _get_python_type_from_json_schema(nested_field_schema, nested_field_name)
+
+            if nested_field_name in nested_required:
+                nested_fields[nested_field_name] = (nested_field_type, ...)
+            else:
+                nested_fields[nested_field_name] = (Optional[nested_field_type], None)  # type: ignore[assignment]
+
+        # Create nested model if it has fields
+        if nested_fields:
+            return create_model(nested_title, **nested_fields)  # type: ignore
+        else:
+            # Empty object schema - use generic dict
+            return Dict[str, Any]
+    else:
+        # Unknown or unspecified type - fallback to Any
+        if json_type:
+            logger.warning(f"Unknown JSON schema type '{json_type}' for field '{field_name}', using Any")
+        return Any
+
+
+def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
+    """Convert a JSON schema dictionary to a Pydantic BaseModel class.
+
+    This function dynamically creates a Pydantic model from a JSON schema specification,
+    handling nested objects, arrays, and optional fields.
+
+    Args:
+        schema: JSON schema dictionary with 'properties', 'required', 'type', etc.
+
+    Returns:
+        Dynamically created Pydantic BaseModel class
+    """
+    import copy
+
+    # Deep copy to avoid modifying the original schema
+    schema = copy.deepcopy(schema)
+
+    # Extract schema components
+    model_name = schema.get("title", "DynamicModel")
+    properties = schema.get("properties", {})
+    required_fields = schema.get("required", [])
+
+    # Validate schema has properties
+    if not properties:
+        logger.warning(f"JSON schema '{model_name}' has no properties, creating empty model")
+
+    # Build field definitions for create_model
+    field_definitions = {}
+    for field_name, field_schema in properties.items():
+        try:
+            field_type = _get_python_type_from_json_schema(field_schema, field_name)
+
+            if field_name in required_fields:
+                # Required field: (type, ...)
+                field_definitions[field_name] = (field_type, ...)
+            else:
+                # Optional field: (Optional[type], None)
+                field_definitions[field_name] = (Optional[field_type], None)  # type: ignore[assignment]
+        except Exception as e:
+            logger.warning(f"Failed to process field '{field_name}' in schema '{model_name}': {e}")
+            # Skip problematic fields rather than failing entirely
+            continue
+
+    # Create and return the dynamic model
+    try:
+        return create_model(model_name, **field_definitions)  # type: ignore
+    except Exception as e:
+        logger.error(f"Failed to create dynamic model '{model_name}': {e}")
+        # Return a minimal model as fallback
+        return create_model(model_name)
