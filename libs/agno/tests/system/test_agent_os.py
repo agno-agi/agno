@@ -36,6 +36,7 @@ def wait_for_services():
 
     pytest.fail("Services did not become healthy in time")
 
+
 def test_multiple_containers_responding():
     """Test that requests are distributed across multiple containers."""
     containers_seen: Set[str] = set()
@@ -227,7 +228,6 @@ def test_run_agent_creates_session_stateless():
     )
     assert delete_response.status_code == 204
     print(f"✓ Cleaned up session: {session_id}")
-
 
 
 def test_health_check_all_containers():

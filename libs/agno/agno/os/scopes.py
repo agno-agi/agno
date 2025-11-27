@@ -22,7 +22,6 @@ Examples:
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set
-import fnmatch
 
 
 class AgentOSScope(str, Enum):
@@ -33,7 +32,7 @@ class AgentOSScope(str, Enum):
     - ADMIN: Grants full access to all endpoints
 
     ALL scopes use agent-os namespace format:
-    
+
     Global Resource Scopes:
     - agent-os:<id>:system:read - System configuration and model information
     - agent-os:<id>:agents:read - List all agents
@@ -61,7 +60,7 @@ class AgentOSScope(str, Enum):
     - agent-os:<id>:teams:<team-id>:run - Run specific team
     - agent-os:<id>:workflows:<workflow-id>:read - Read specific workflow
     - agent-os:<id>:workflows:<workflow-id>:run - Run specific workflow
-    
+
     Wildcards:
     - agent-os:*:agents:read - List agents from any OS
     - agent-os:<id>:agents:*:run - Run any agent in this OS
@@ -155,7 +154,7 @@ def parse_scope(scope: str) -> ParsedScope:
     if len(parts) == 5:
         resource_id = parts[3]
         is_wildcard_resource = resource_id == "*"
-        
+
         return ParsedScope(
             raw=scope,
             scope_type="agent-os",
@@ -308,7 +307,7 @@ def has_required_scopes(
         # Convert template scope to full scope
         # E.g., "agents:read" -> "agent-os:<id>:agents:read"
         # E.g., "agents:run" -> "agent-os:<id>:agents:<resource-id>:run" (for resource-specific)
-        
+
         parts = required_scope_str.split(":")
         if len(parts) == 2:
             resource, action = parts
@@ -319,7 +318,7 @@ def has_required_scopes(
             else:
                 # Global resource scope required
                 full_required_scope = f"agent-os:<id>:{resource}:{action}"
-            
+
             required = parse_scope(full_required_scope)
         else:
             required = parse_scope(required_scope_str)
@@ -336,7 +335,9 @@ def has_required_scopes(
     return True
 
 
-def get_accessible_resource_ids(user_scopes: List[str], resource_type: str, agent_os_id: Optional[str] = None) -> Set[str]:
+def get_accessible_resource_ids(
+    user_scopes: List[str], resource_type: str, agent_os_id: Optional[str] = None
+) -> Set[str]:
     """
     Get the set of resource IDs the user has access to.
 

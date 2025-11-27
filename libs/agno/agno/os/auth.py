@@ -1,4 +1,4 @@
-from typing import List, Optional, Set
+from typing import List, Set
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -143,6 +143,12 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
         >>> get_accessible_resources(request, "agents")
         {'*'}
     """
+    # Check if accessible_resource_ids is already cached in request state (set by JWT middleware)
+    # This happens when user doesn't have global scope but has specific resource scopes
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None:
+        return cached_ids
+
     # Get user's scopes from request state (set by JWT middleware)
     user_scopes = getattr(request.state, "scopes", [])
 
@@ -196,9 +202,7 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
     return [r for r in resources if r.id in accessible_ids]
 
 
-def check_resource_access(
-    request: Request, resource_id: str, resource_type: str, action: str = "read"
-) -> bool:
+def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
     """
     Check if user has access to a specific resource.
 

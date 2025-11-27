@@ -5,7 +5,7 @@ This example demonstrates the AgentOS RBAC system where ALL scopes use agent-os 
 
 Scope Format (ALL use agent-os namespace):
 1. Global resource scopes: agent-os:<os-id>:resource:action
-2. Per-resource scopes: agent-os:<os-id>:resource:<resource-id>:action  
+2. Per-resource scopes: agent-os:<os-id>:resource:<resource-id>:action
 3. Wildcard support: agent-os:*:... or agent-os:<os-id>:agents:*:run
 
 Scope Examples:
@@ -109,13 +109,13 @@ if __name__ == "__main__":
        - "agent-os:my-production-os:agents:*:run" - Run ANY agent in this OS (wildcard resource)
        - "agent-os:*:agents:*:run" - Run ANY agent in ANY OS (double wildcard)
     """
-    
+
     # EXAMPLE 1: Admin user - full access
     admin_token = create_token(
         user_id="admin_user",
         scopes=["admin"],
     )
-    
+
     # EXAMPLE 2: Power user - can list and run all agents in this OS
     power_user_token = create_token(
         user_id="power_user",
@@ -127,7 +127,7 @@ if __name__ == "__main__":
             "agent-os:my-production-os:sessions:write",
         ],
     )
-    
+
     # EXAMPLE 3: Limited user - can only run specific agents
     limited_user_token = create_token(
         user_id="limited_user",
@@ -139,7 +139,7 @@ if __name__ == "__main__":
             # Note: This user won't see admin-agent in GET /agents
         ],
     )
-    
+
     # EXAMPLE 4: Read-only user - can only view agents
     readonly_user_token = create_token(
         user_id="readonly_user",
@@ -149,7 +149,7 @@ if __name__ == "__main__":
             # Cannot run any agents
         ],
     )
-    
+
     # EXAMPLE 5: Wildcard user - can run any agent across all OS instances
     wildcard_user_token = create_token(
         user_id="wildcard_user",
@@ -158,7 +158,7 @@ if __name__ == "__main__":
             "agent-os:*:agents:*:run",  # Run any agent in any OS
         ],
     )
-    
+
     # EXAMPLE 6: Multi-OS user - access to multiple OS instances
     multi_os_user_token = create_token(
         user_id="multi_os_user",
@@ -173,55 +173,75 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("ADVANCED RBAC TEST TOKENS")
     print("=" * 80)
-    
+
     print("\n1. ADMIN USER (full access):")
-    print(f"   Scopes: ['admin']")
+    print("   Scopes: ['admin']")
     print(f"   Token: {admin_token[:50]}...")
-    
+
     print("\n2. POWER USER (OS-wide access):")
-    print(f"   Scopes: ['agent-os:my-production-os:system:read', ...]")
+    print("   Scopes: ['agent-os:my-production-os:system:read', ...]")
     print(f"   Token: {power_user_token[:50]}...")
-    
+
     print("\n3. LIMITED USER (specific agents only):")
-    print(f"   Scopes: ['agent-os:my-production-os:agents:web-search-agent:read', ...]")
+    print("   Scopes: ['agent-os:my-production-os:agents:web-search-agent:read', ...]")
     print(f"   Token: {limited_user_token[:50]}...")
-    
+
     print("\n4. READ-ONLY USER (view only):")
-    print(f"   Scopes: ['agent-os:my-production-os:agents:*:read', 'agent-os:my-production-os:system:read']")
+    print(
+        "   Scopes: ['agent-os:my-production-os:agents:*:read', 'agent-os:my-production-os:system:read']"
+    )
     print(f"   Token: {readonly_user_token[:50]}...")
-    
+
     print("\n5. WILDCARD USER (any agent, any OS):")
-    print(f"   Scopes: ['agent-os:*:agents:read', 'agent-os:*:agents:*:run']")
+    print("   Scopes: ['agent-os:*:agents:read', 'agent-os:*:agents:*:run']")
     print(f"   Token: {wildcard_user_token[:50]}...")
-    
+
     print("\n" + "=" * 80)
     print("TEST COMMANDS")
     print("=" * 80)
-    
+
     print("\n# Test admin access (should work for all endpoints):")
     print(f'curl -H "Authorization: Bearer {admin_token}" http://localhost:7777/agents')
     print(f'curl -H "Authorization: Bearer {admin_token}" http://localhost:7777/config')
-    
+
     print("\n# Test power user (should see all agents and run any):")
-    print(f'curl -H "Authorization: Bearer {power_user_token}" http://localhost:7777/agents')
-    print(f'curl -X POST -H "Authorization: Bearer {power_user_token}" \\\n'
-          f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs')
-    
-    print("\n# Test limited user (should only see 2 agents: web-search-agent and analyst-agent):")
-    print(f'curl -H "Authorization: Bearer {limited_user_token}" http://localhost:7777/agents')
-    print(f'curl -X POST -H "Authorization: Bearer {limited_user_token}" \\\n'
-          f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs')
-    
+    print(
+        f'curl -H "Authorization: Bearer {power_user_token}" http://localhost:7777/agents'
+    )
+    print(
+        f'curl -X POST -H "Authorization: Bearer {power_user_token}" \\\n'
+        f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs'
+    )
+
+    print(
+        "\n# Test limited user (should only see 2 agents: web-search-agent and analyst-agent):"
+    )
+    print(
+        f'curl -H "Authorization: Bearer {limited_user_token}" http://localhost:7777/agents'
+    )
+    print(
+        f'curl -X POST -H "Authorization: Bearer {limited_user_token}" \\\n'
+        f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs'
+    )
+
     print("\n# Test read-only user (should see all agents but cannot run):")
-    print(f'curl -H "Authorization: Bearer {readonly_user_token}" http://localhost:7777/agents')
-    print(f'curl -X POST -H "Authorization: Bearer {readonly_user_token}" \\\n'
-          f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs  # Should fail')
-    
+    print(
+        f'curl -H "Authorization: Bearer {readonly_user_token}" http://localhost:7777/agents'
+    )
+    print(
+        f'curl -X POST -H "Authorization: Bearer {readonly_user_token}" \\\n'
+        f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs  # Should fail'
+    )
+
     print("\n# Test wildcard user (should work across any OS and any agent):")
-    print(f'curl -H "Authorization: Bearer {wildcard_user_token}" http://localhost:7777/agents')
-    print(f'curl -X POST -H "Authorization: Bearer {wildcard_user_token}" \\\n'
-          f'  -F "message=test" http://localhost:7777/agents/admin-agent/runs')
-    
+    print(
+        f'curl -H "Authorization: Bearer {wildcard_user_token}" http://localhost:7777/agents'
+    )
+    print(
+        f'curl -X POST -H "Authorization: Bearer {wildcard_user_token}" \\\n'
+        f'  -F "message=test" http://localhost:7777/agents/admin-agent/runs'
+    )
+
     print("\n" + "=" * 80)
     print("SCOPE CHECKING BEHAVIOR")
     print("=" * 80)
@@ -243,9 +263,8 @@ For POST /agents/{agent_id}/runs:
 
 All scopes MUST use the agent-os namespace format!
     """)
-    
+
     print("\n" + "=" * 80 + "\n")
 
     # Serve the application
     agent_os.serve(app="advanced_scopes:app", port=7777, reload=True)
-

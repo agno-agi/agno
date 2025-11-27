@@ -43,6 +43,7 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     load_yaml_config,
+    resolve_origins,
     update_cors_middleware,
 )
 from agno.team.team import Team
@@ -104,6 +105,7 @@ class AgentOS:
         a2a_interface: bool = False,
         authorization: bool = False,
         authorization_secret: Optional[str] = None,
+        cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -135,6 +137,7 @@ class AgentOS:
             auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
             authorization_secret: The secret key for authorization
+            cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             telemetry: Whether to enable telemetry
 
         """
@@ -181,10 +184,12 @@ class AgentOS:
         # RBAC
         self.authorization = authorization
         self.authorization_secret = authorization_secret
-        
+
         if self.authorization and not self.id:
-            raise ValueError("Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS.")
-        
+            raise ValueError(
+                "Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS."
+            )
+
         if self.authorization and not self.authorization_secret:
             log_info("No authorization secret provided, generating a new 256-bit authorization secret")
 
@@ -195,6 +200,8 @@ class AgentOS:
 
             log_info(f"Authorization secret generated (256-bit, hex): {self.authorization_secret}")
 
+        # CORS configuration - merge user-provided origins with defaults from settings
+        self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -501,10 +508,12 @@ class AgentOS:
                 )
 
         # Update CORS middleware
-        update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
+        update_cors_middleware(fastapi_app, self.cors_allowed_origins)  # type: ignore
 
-        # Set agent_os_id on app state for RBAC
+        # Set agent_os_id and cors_allowed_origins on app state
+        # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
+        fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:
@@ -515,7 +524,6 @@ class AgentOS:
                 JWTMiddleware,
                 secret_key=self.authorization_secret,
                 authorization=self.authorization,
-                cors_allowed_origins=self.settings.cors_origin_list,
             )
 
         return fastapi_app

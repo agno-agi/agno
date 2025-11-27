@@ -81,10 +81,10 @@ def second_team(test_agent):
 @pytest.fixture
 def test_workflow():
     """Create a basic test workflow."""
-    
+
     async def simple_workflow(session_state):
         return "workflow result"
-    
+
     return Workflow(
         name="test-workflow",
         id="test-workflow",
@@ -95,10 +95,10 @@ def test_workflow():
 @pytest.fixture
 def second_workflow():
     """Create a second test workflow."""
-    
+
     async def another_workflow(session_state):
         return "another result"
-    
+
     return Workflow(
         name="second-workflow",
         id="second-workflow",
@@ -107,7 +107,7 @@ def second_workflow():
 
 
 def create_jwt_token(
-    scopes: list[str], 
+    scopes: list[str],
     user_id: str = "test_user",
     session_id: str | None = None,
     extra_claims: dict | None = None,
@@ -216,10 +216,12 @@ def test_wildcard_resource_grants_all_agents(test_agent):
     client = TestClient(app)
 
     # Token with wildcard resource scope for agents
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:*:read",
-        f"agent-os:{TEST_OS_ID}:agents:*:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:*:read",
+            f"agent-os:{TEST_OS_ID}:agents:*:run",
+        ]
+    )
 
     # Should grant both read and run for all agents
     response = client.get(
@@ -249,10 +251,12 @@ def test_wildcard_os_grants_cross_os_access(test_agent):
     client = TestClient(app)
 
     # Token with wildcard OS scope
-    token = create_jwt_token(scopes=[
-        "agent-os:*:agents:read",
-        "agent-os:*:agents:*:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            "agent-os:*:agents:read",
+            "agent-os:*:agents:*:run",
+        ]
+    )
 
     # Should work even though token doesn't specify specific OS ID
     response = client.get(
@@ -282,10 +286,12 @@ def test_per_resource_scope(test_agent, second_agent):
     client = TestClient(app)
 
     # Token with scope for only test-agent, not second-agent
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-        f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+            f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
+        ]
+    )
 
     # Should be able to run test-agent
     response = client.post(
@@ -317,10 +323,12 @@ def test_global_resource_scope(test_agent, second_agent):
     client = TestClient(app)
 
     # Token with global agents scope (no resource ID specified)
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:read",
-        f"agent-os:{TEST_OS_ID}:agents:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:read",
+            f"agent-os:{TEST_OS_ID}:agents:run",
+        ]
+    )
 
     # Should be able to list all agents
     response = client.get(
@@ -689,10 +697,12 @@ def test_agent_filtering_with_multiple_specific_scopes(test_agent, second_agent,
     client = TestClient(app)
 
     # Token with scopes for test-agent and second-agent only
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-        f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+            f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
+        ]
+    )
 
     response = client.get(
         "/agents",
@@ -719,12 +729,14 @@ def test_agent_run_blocked_without_specific_scope(test_agent, second_agent):
     client = TestClient(app)
 
     # Token with run scope for test-agent only
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-        f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
-        f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
-        # Note: No run scope for second-agent
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+            f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
+            f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
+            # Note: No run scope for second-agent
+        ]
+    )
 
     # Should be able to run test-agent
     response = client.post(
@@ -756,10 +768,12 @@ def test_agent_run_with_wildcard_scope(test_agent, second_agent):
     client = TestClient(app)
 
     # Token with wildcard run scope
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:*:read",
-        f"agent-os:{TEST_OS_ID}:agents:*:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:*:read",
+            f"agent-os:{TEST_OS_ID}:agents:*:run",
+        ]
+    )
 
     # Should be able to run both agents
     response = client.post(
@@ -790,10 +804,12 @@ def test_agent_run_with_global_scope(test_agent, second_agent):
     client = TestClient(app)
 
     # Token with global run scope (no resource ID)
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:read",
-        f"agent-os:{TEST_OS_ID}:agents:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:read",
+            f"agent-os:{TEST_OS_ID}:agents:run",
+        ]
+    )
 
     # Should be able to run both agents
     response = client.post(
@@ -909,12 +925,14 @@ def test_team_run_blocked_without_specific_scope(test_team, second_team):
     client = TestClient(app)
 
     # Token with run scope for test-team only
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:teams:test-team:read",
-        f"agent-os:{TEST_OS_ID}:teams:test-team:run",
-        f"agent-os:{TEST_OS_ID}:teams:second-team:read",
-        # Note: No run scope for second-team
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:teams:test-team:read",
+            f"agent-os:{TEST_OS_ID}:teams:test-team:run",
+            f"agent-os:{TEST_OS_ID}:teams:second-team:read",
+            # Note: No run scope for second-team
+        ]
+    )
 
     # Should be able to run test-team
     response = client.post(
@@ -946,10 +964,12 @@ def test_team_run_with_wildcard_scope(test_team, second_team):
     client = TestClient(app)
 
     # Token with wildcard run scope
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:teams:*:read",
-        f"agent-os:{TEST_OS_ID}:teams:*:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:teams:*:read",
+            f"agent-os:{TEST_OS_ID}:teams:*:run",
+        ]
+    )
 
     # Should be able to run both teams
     response = client.post(
@@ -980,10 +1000,12 @@ def test_team_run_with_global_scope(test_team, second_team):
     client = TestClient(app)
 
     # Token with global run scope
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:teams:read",
-        f"agent-os:{TEST_OS_ID}:teams:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:teams:read",
+            f"agent-os:{TEST_OS_ID}:teams:run",
+        ]
+    )
 
     # Should be able to run both teams
     response = client.post(
@@ -1099,12 +1121,14 @@ def test_workflow_run_blocked_without_specific_scope(test_workflow, second_workf
     client = TestClient(app)
 
     # Token with run scope for test-workflow only
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:workflows:test-workflow:read",
-        f"agent-os:{TEST_OS_ID}:workflows:test-workflow:run",
-        f"agent-os:{TEST_OS_ID}:workflows:second-workflow:read",
-        # Note: No run scope for second-workflow
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:workflows:test-workflow:read",
+            f"agent-os:{TEST_OS_ID}:workflows:test-workflow:run",
+            f"agent-os:{TEST_OS_ID}:workflows:second-workflow:read",
+            # Note: No run scope for second-workflow
+        ]
+    )
 
     # Should be able to run test-workflow
     response = client.post(
@@ -1136,10 +1160,12 @@ def test_workflow_run_with_wildcard_scope(test_workflow, second_workflow):
     client = TestClient(app)
 
     # Token with wildcard run scope
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:workflows:*:read",
-        f"agent-os:{TEST_OS_ID}:workflows:*:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:workflows:*:read",
+            f"agent-os:{TEST_OS_ID}:workflows:*:run",
+        ]
+    )
 
     # Should be able to run both workflows
     response = client.post(
@@ -1170,10 +1196,12 @@ def test_workflow_run_with_global_scope(test_workflow, second_workflow):
     client = TestClient(app)
 
     # Token with global run scope
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:workflows:read",
-        f"agent-os:{TEST_OS_ID}:workflows:run",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:workflows:read",
+            f"agent-os:{TEST_OS_ID}:workflows:run",
+        ]
+    )
 
     # Should be able to run both workflows
     response = client.post(
@@ -1214,11 +1242,13 @@ def test_mixed_resource_filtering(test_agent, second_agent, test_team, second_te
     # - Specific access to test-agent only
     # - Global access to all teams
     # - Wildcard access to all workflows
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-        f"agent-os:{TEST_OS_ID}:teams:read",
-        f"agent-os:{TEST_OS_ID}:workflows:*:read",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
+            f"agent-os:{TEST_OS_ID}:teams:read",
+            f"agent-os:{TEST_OS_ID}:workflows:*:read",
+        ]
+    )
 
     # Should only see test-agent
     response = client.get(
@@ -1268,9 +1298,11 @@ def test_no_access_to_resource_type(test_agent, test_team, test_workflow):
     client = TestClient(app)
 
     # Token with only agents scope, no teams or workflows scope
-    token = create_jwt_token(scopes=[
-        f"agent-os:{TEST_OS_ID}:agents:read",
-    ])
+    token = create_jwt_token(
+        scopes=[
+            f"agent-os:{TEST_OS_ID}:agents:read",
+        ]
+    )
 
     # Should see agents
     response = client.get(
