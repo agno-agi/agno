@@ -2225,7 +2225,10 @@ class AsyncMongoDb(AsyncBaseDb):
                         return 0  # Unknown
 
                 existing_level = get_component_level(
-                    existing.get("workflow_id"), existing.get("team_id"), existing.get("agent_id"), existing.get("name", "")
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
                 )
                 new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
 
@@ -2433,7 +2436,9 @@ class AsyncMongoDb(AsyncBaseDb):
                 error_count = 0
                 if spans_collection is not None:
                     total_spans = await spans_collection.count_documents({"trace_id": row["trace_id"]})
-                    error_count = await spans_collection.count_documents({"trace_id": row["trace_id"], "status_code": "ERROR"})
+                    error_count = await spans_collection.count_documents(
+                        {"trace_id": row["trace_id"], "status_code": "ERROR"}
+                    )
 
                 row["total_spans"] = total_spans
                 row["error_count"] = error_count

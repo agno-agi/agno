@@ -2149,7 +2149,11 @@ class FirestoreDb(BaseDb):
                 session_stats[session_id]["total_traces"] += 1
 
                 created_at = trace_data.get("created_at")
-                if created_at and session_stats[session_id]["first_trace_at"] and session_stats[session_id]["last_trace_at"]:
+                if (
+                    created_at
+                    and session_stats[session_id]["first_trace_at"]
+                    and session_stats[session_id]["last_trace_at"]
+                ):
                     if created_at < session_stats[session_id]["first_trace_at"]:
                         session_stats[session_id]["first_trace_at"] = created_at
                     if created_at > session_stats[session_id]["last_trace_at"]:
@@ -2209,7 +2213,9 @@ class FirestoreDb(BaseDb):
             traces_collection = self._get_collection(table_type="traces")
             if traces_collection:
                 try:
-                    docs = traces_collection.where(filter=FieldFilter("trace_id", "==", span.trace_id)).limit(1).stream()
+                    docs = (
+                        traces_collection.where(filter=FieldFilter("trace_id", "==", span.trace_id)).limit(1).stream()
+                    )
                     for doc in docs:
                         trace_data = doc.to_dict()
                         current_total = trace_data.get("total_spans", 0)
@@ -2279,10 +2285,12 @@ class FirestoreDb(BaseDb):
                         current_total = trace_data.get("total_spans", 0)
                         current_errors = trace_data.get("error_count", 0)
 
-                        doc.reference.update({
-                            "total_spans": current_total + spans_count,
-                            "error_count": current_errors + error_count,
-                        })
+                        doc.reference.update(
+                            {
+                                "total_spans": current_total + spans_count,
+                                "error_count": current_errors + error_count,
+                            }
+                        )
                         break
                 except Exception as update_error:
                     log_debug(f"Could not update trace span counts: {update_error}")

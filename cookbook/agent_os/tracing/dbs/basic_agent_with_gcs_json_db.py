@@ -5,7 +5,6 @@ Requirements:
 """
 
 import google.auth
-
 from agno.agent import Agent
 from agno.db.gcs_json import GcsJsonDb
 from agno.models.openai import OpenAIChat

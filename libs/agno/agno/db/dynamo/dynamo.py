@@ -2113,7 +2113,10 @@ class DynamoDb(BaseDb):
                         return 0
 
                 existing_level = get_component_level(
-                    existing.get("workflow_id"), existing.get("team_id"), existing.get("agent_id"), existing.get("name", "")
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
                 )
                 new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
                 should_update_name = new_level > existing_level
@@ -2515,7 +2518,11 @@ class DynamoDb(BaseDb):
                 session_stats[session_id]["total_traces"] += 1
 
                 created_at = trace_data.get("created_at")
-                if created_at and session_stats[session_id]["first_trace_at"] and session_stats[session_id]["last_trace_at"]:
+                if (
+                    created_at
+                    and session_stats[session_id]["first_trace_at"]
+                    and session_stats[session_id]["last_trace_at"]
+                ):
                     if created_at < session_stats[session_id]["first_trace_at"]:
                         session_stats[session_id]["first_trace_at"] = created_at
                     if created_at > session_stats[session_id]["last_trace_at"]:
