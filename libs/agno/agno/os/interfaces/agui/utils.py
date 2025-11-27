@@ -28,7 +28,7 @@ from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_warning, log_debug
+from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
 
 
