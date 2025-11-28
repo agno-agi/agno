@@ -146,12 +146,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
-            await self._create_table(table_name=table_name, table_type=table_type)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -166,7 +161,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         try:
             table_schema = get_table_schema_definition(table_type)
-            log_debug(f"Creating table {table_name}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -191,8 +185,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData()
-            table = Table(table_name, table_metadata, *columns)
+            table = Table(table_name, self.metadata, *columns)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -206,13 +199,18 @@ class AsyncSqliteDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create table
-            async with self.db_engine.begin() as conn:
-                await conn.run_sync(table.create, checkfirst=True)
+            table_created = False
+            if not await self.table_exists(table_name):
+                async with self.db_engine.begin() as conn:
+                    await conn.run_sync(table.create, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table {table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
                 try:
-                    log_debug(f"Creating index: {idx.name}")
                     # Check if index already exists
                     async with self.async_session_factory() as sess:
                         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = :index_name")
@@ -224,11 +222,16 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                     async with self.db_engine.begin() as conn:
                         await conn.run_sync(idx.create)
+                    log_debug(f"Created index: {idx.name} for table {table_name}")
 
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table '{table_name}'")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return table
 
         except Exception as e:
@@ -321,11 +324,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
-            if table_name != self.versions_table_name:
-                # Also store the schema version for the created table
-                latest_schema_version = MigrationManager(self).latest_schema_version
-                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -1231,12 +1229,14 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1259,16 +1259,18 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return [], 0
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = (await sess.execute(count_stmt)).scalar() or 0
