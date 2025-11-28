@@ -10,7 +10,7 @@ creative_studio_agent = Agent(
     name="Creative Studio",
     role="Generate stunning images from text descriptions",
     model=Gemini(id="gemini-3-pro-preview"),
-    tools=[NanoBananaTools(model="gemini-3-pro-image-preview")],
+    tools=[NanoBananaTools(model="gemini-2.5-flash-image")],
     description="You are an AI image generation agent that uses NanoBanana Tools to generate images.",
     instructions=dedent("""\
 1. Proceed with generating images immediately when asked. Only ask for confirmation if the user query is not clear or you need more information.
