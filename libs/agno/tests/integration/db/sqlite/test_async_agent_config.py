@@ -17,11 +17,11 @@ async def cleanup_agents_and_configs(async_sqlite_db_real: AsyncSqliteDb):
             configs_table = await async_sqlite_db_real._get_table("configs")
             if configs_table is not None:
                 await session.execute(configs_table.delete())
-            
+
             agents_table = await async_sqlite_db_real._get_table("agents")
             if agents_table is not None:
                 await session.execute(agents_table.delete())
-            
+
             await session.commit()
         except Exception:
             await session.rollback()
@@ -47,23 +47,24 @@ def sample_agent() -> Agent:
 async def test_create_new_agent_default_version(async_sqlite_db_real: AsyncSqliteDb, sample_agent: Agent):
     """Test creating a new agent without specifying a version (should default to v1.0)"""
     result = await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     assert result is not None
     assert result.id == sample_agent.id
     assert result.name == sample_agent.name
-    
+
     # Verify agent record was created with v1.0 as current_version
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
-        
+
         assert agent_row is not None
         assert agent_row.current_version == "v1.0"
         assert agent_row.deleted_at is None
-    
+
     # Verify config was created
     config = await async_sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config is not None
@@ -77,20 +78,21 @@ async def test_create_new_agent_default_version(async_sqlite_db_real: AsyncSqlit
 async def test_create_new_agent_custom_version(async_sqlite_db_real: AsyncSqliteDb, sample_agent: Agent):
     """Test creating a new agent with a custom version"""
     result = await async_sqlite_db_real.upsert_agent(sample_agent, version="v2.5")
-    
+
     assert result is not None
-    
+
     # Verify agent was created with custom version as current
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
-        
+
         assert agent_row is not None
         assert agent_row.current_version == "v2.5"
-    
+
     # Verify config was created with custom version
     config = await async_sqlite_db_real.get_config(sample_agent.id, "v2.5")
     assert config is not None
@@ -107,14 +109,14 @@ async def test_update_existing_agent_no_version(async_sqlite_db_real: AsyncSqlit
     """Test updating an existing agent without specifying version (should update current_version)"""
     # Create agent first
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Update agent
     sample_agent.description = "Updated description"
     result = await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     assert result is not None
     assert result.description == "Updated description"
-    
+
     # Verify the v1.0 config was updated
     config = await async_sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config is not None
@@ -127,27 +129,28 @@ async def test_update_existing_agent_new_version(async_sqlite_db_real: AsyncSqli
     """Test creating a new version of an existing agent"""
     # Create agent first
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Create new version
     sample_agent.description = "Version 2 description"
     result = await async_sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     assert result is not None
-    
+
     # Verify v1.0 still exists and unchanged
     config_v1 = await async_sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config_v1 is not None
     assert config_v1["config"]["description"] == "A test agent for integration tests"
-    
+
     # Verify v2.0 was created
     config_v2 = await async_sqlite_db_real.get_config(sample_agent.id, "v2.0")
     assert config_v2 is not None
     assert config_v2["config"]["description"] == "Version 2 description"
-    
+
     # Verify current_version is still v1.0 (not changed)
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
@@ -159,26 +162,25 @@ async def test_update_agent_no_current_version_set(async_sqlite_db_real: AsyncSq
     """Test updating an agent that has no current_version set (edge case)"""
     # Create agent first
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Manually clear current_version to simulate edge case
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
-        stmt = agents_table.update().where(
-            agents_table.c.agent_id == sample_agent.id
-        ).values(current_version=None)
+        stmt = agents_table.update().where(agents_table.c.agent_id == sample_agent.id).values(current_version=None)
         await sess.execute(stmt)
         await sess.commit()
-    
+
     # Update agent without version
     sample_agent.description = "Updated without version"
     result = await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     assert result is not None
-    
+
     # Should create v1.0 and set as current
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
@@ -195,10 +197,10 @@ async def test_get_agent_default_version(async_sqlite_db_real: AsyncSqliteDb, sa
     """Test getting an agent without specifying version (should use current_version)"""
     # Create agent
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Get agent without version
     retrieved_agent = await async_sqlite_db_real.get_agent(sample_agent.id)
-    
+
     assert retrieved_agent is not None
     assert isinstance(retrieved_agent, Agent)
     assert retrieved_agent.id == sample_agent.id
@@ -211,21 +213,21 @@ async def test_get_agent_specific_version(async_sqlite_db_real: AsyncSqliteDb, s
     """Test getting a specific version of an agent"""
     # Create agent
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Create v2.0
     sample_agent.description = "Version 2"
     await async_sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     # Get v1.0 explicitly
     agent_v1 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     assert agent_v1 is not None
     assert agent_v1.description == "A test agent for integration tests"
-    
+
     # Get v2.0 explicitly
     agent_v2 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
     assert agent_v2 is not None
     assert agent_v2.description == "Version 2"
-    
+
     # Get without version (should return v1.0 as it's current)
     agent_current = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert agent_current is not None
@@ -243,7 +245,7 @@ async def test_get_agent_nonexistent(async_sqlite_db_real: AsyncSqliteDb):
 async def test_get_agent_nonexistent_version(async_sqlite_db_real: AsyncSqliteDb, sample_agent: Agent):
     """Test getting a version that doesn't exist"""
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     result = await async_sqlite_db_real.get_agent(sample_agent.id, version="v99.0")
     assert result is None
 
@@ -260,20 +262,21 @@ async def test_set_agent_config_version(async_sqlite_db_real: AsyncSqliteDb, sam
     await async_sqlite_db_real.upsert_agent(sample_agent)
     sample_agent.description = "Version 2"
     await async_sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     # Switch to v2.0
     success = await async_sqlite_db_real.set_agent_config_version(sample_agent.id, "v2.0")
     assert success is True
-    
+
     # Verify current_version was updated
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
         assert agent_row.current_version == "v2.0"
-    
+
     # Verify get_agent now returns v2.0 by default
     agent = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert agent is not None
@@ -297,22 +300,23 @@ async def test_delete_agent_soft_delete(async_sqlite_db_real: AsyncSqliteDb, sam
     """Test soft deleting an agent (sets deleted_at timestamp)"""
     # Create agent
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Delete agent
     success = await async_sqlite_db_real.delete_agent(sample_agent.id)
     assert success is True
-    
+
     # Verify agent is soft deleted
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
-        
+
         assert agent_row is not None  # Row still exists
         assert agent_row.deleted_at is not None  # But has deleted_at timestamp
-    
+
     # Verify get_agent returns None for deleted agent
     agent = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert agent is None
@@ -334,15 +338,11 @@ async def test_delete_agent_nonexistent(async_sqlite_db_real: AsyncSqliteDb):
 async def test_upsert_config_create(async_sqlite_db_real: AsyncSqliteDb, sample_agent: Agent):
     """Test creating a new config"""
     config_data = sample_agent.to_dict()
-    
+
     result = await async_sqlite_db_real.upsert_config(
-        entity_id="test-entity",
-        entity_type="agent",
-        version="v1.0",
-        config=config_data,
-        notes="Test config"
+        entity_id="test-entity", entity_type="agent", version="v1.0", config=config_data, notes="Test config"
     )
-    
+
     assert result is not None
     assert result["entity_id"] == "test-entity"
     assert result["entity_type"] == "agent"
@@ -355,26 +355,18 @@ async def test_upsert_config_create(async_sqlite_db_real: AsyncSqliteDb, sample_
 async def test_upsert_config_update(async_sqlite_db_real: AsyncSqliteDb, sample_agent: Agent):
     """Test updating an existing config"""
     config_data_v1 = {"key": "value1"}
-    
+
     # Create initial config
     await async_sqlite_db_real.upsert_config(
-        entity_id="test-entity",
-        entity_type="agent",
-        version="v1.0",
-        config=config_data_v1,
-        notes="Initial"
+        entity_id="test-entity", entity_type="agent", version="v1.0", config=config_data_v1, notes="Initial"
     )
-    
+
     # Update config
     config_data_v2 = {"key": "value2", "new_key": "new_value"}
     result = await async_sqlite_db_real.upsert_config(
-        entity_id="test-entity",
-        entity_type="agent",
-        version="v1.0",
-        config=config_data_v2,
-        notes="Updated"
+        entity_id="test-entity", entity_type="agent", version="v1.0", config=config_data_v2, notes="Updated"
     )
-    
+
     assert result is not None
     assert result["config"] == config_data_v2
     assert result["notes"] == "Updated"
@@ -385,26 +377,27 @@ async def test_upsert_config_with_set_as_current(async_sqlite_db_real: AsyncSqli
     """Test creating a config and setting it as current for an agent"""
     # Create agent first
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Create new version and set as current
     config_data = sample_agent.to_dict()
     config_data["description"] = "Version 3"
-    
+
     result = await async_sqlite_db_real.upsert_config(
         entity_id=sample_agent.id,
         entity_type="agent",
         version="v3.0",
         config=config_data,
         notes="Version 3",
-        set_as_current=True
+        set_as_current=True,
     )
-    
+
     assert result is not None
-    
+
     # Verify current_version was updated
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
@@ -423,7 +416,7 @@ async def test_upsert_config_different_entity_types(async_sqlite_db_real: AsyncS
     )
     assert agent_config is not None
     assert agent_config["entity_type"] == "agent"
-    
+
     # Team config
     team_config = await async_sqlite_db_real.upsert_config(
         entity_id="team-1",
@@ -433,7 +426,7 @@ async def test_upsert_config_different_entity_types(async_sqlite_db_real: AsyncS
     )
     assert team_config is not None
     assert team_config["entity_type"] == "team"
-    
+
     # Workflow config
     workflow_config = await async_sqlite_db_real.upsert_config(
         entity_id="workflow-1",
@@ -449,7 +442,7 @@ async def test_upsert_config_different_entity_types(async_sqlite_db_real: AsyncS
 async def test_get_config(async_sqlite_db_real: AsyncSqliteDb):
     """Test retrieving a config"""
     config_data = {"key": "value"}
-    
+
     # Create config
     await async_sqlite_db_real.upsert_config(
         entity_id="test-entity",
@@ -457,10 +450,10 @@ async def test_get_config(async_sqlite_db_real: AsyncSqliteDb):
         version="v1.0",
         config=config_data,
     )
-    
+
     # Get config
     result = await async_sqlite_db_real.get_config("test-entity", "v1.0")
-    
+
     assert result is not None
     assert result["entity_id"] == "test-entity"
     assert result["version"] == "v1.0"
@@ -484,15 +477,15 @@ async def test_delete_config(async_sqlite_db_real: AsyncSqliteDb):
         version="v1.0",
         config={"key": "value"},
     )
-    
+
     # Verify it exists
     config = await async_sqlite_db_real.get_config("test-entity", "v1.0")
     assert config is not None
-    
+
     # Delete config
     success = await async_sqlite_db_real.delete_config("test-entity", "v1.0")
     assert success is True
-    
+
     # Verify it's gone
     config = await async_sqlite_db_real.get_config("test-entity", "v1.0")
     assert config is None
@@ -515,51 +508,51 @@ async def test_complete_versioning_workflow(async_sqlite_db_real: AsyncSqliteDb,
     """Test a complete workflow of versioning an agent"""
     # 1. Create initial agent (v1.0)
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # 2. Verify v1.0 is current
     agent = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert agent is not None
     assert agent.description == "A test agent for integration tests"
-    
+
     # 3. Create v2.0 with changes
     sample_agent.description = "Version 2 - Added new features"
     await async_sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     # 4. Create v3.0 with more changes
     sample_agent.description = "Version 3 - Major update"
     await async_sqlite_db_real.upsert_agent(sample_agent, version="v3.0")
-    
+
     # 5. Verify all versions exist
     v1 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     v2 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
     v3 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v3.0")
-    
+
     assert v1 is not None and v1.description == "A test agent for integration tests"
     assert v2 is not None and v2.description == "Version 2 - Added new features"
     assert v3 is not None and v3.description == "Version 3 - Major update"
-    
+
     # 6. Current version should still be v1.0
     current = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert current is not None
     assert current.description == "A test agent for integration tests"
-    
+
     # 7. Switch to v3.0
     await async_sqlite_db_real.set_agent_config_version(sample_agent.id, "v3.0")
-    
+
     # 8. Verify current version is now v3.0
     current = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert current is not None
     assert current.description == "Version 3 - Major update"
-    
+
     # 9. Update current version (v3.0) in place
     sample_agent.description = "Version 3 - Updated"
     await async_sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # 10. Verify v3.0 was updated
     current = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert current is not None
     assert current.description == "Version 3 - Updated"
-    
+
     # 11. Verify other versions unchanged
     v1 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     v2 = await async_sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
@@ -573,25 +566,25 @@ async def test_multiple_agents_with_versions(async_sqlite_db_real: AsyncSqliteDb
     # Create multiple agents
     agent1 = Agent(id="agent-1", name="Agent 1", model=OpenAIChat(id="gpt-4"))
     agent2 = Agent(id="agent-2", name="Agent 2", model=OpenAIChat(id="gpt-4"))
-    
+
     # Create both agents
     await async_sqlite_db_real.upsert_agent(agent1)
     await async_sqlite_db_real.upsert_agent(agent2)
-    
+
     # Create multiple versions for agent1
     agent1.description = "Agent 1 v2"
     await async_sqlite_db_real.upsert_agent(agent1, version="v2.0")
-    
+
     # Create one version for agent2
     agent2.description = "Agent 2 v2"
     await async_sqlite_db_real.upsert_agent(agent2, version="v2.0")
-    
+
     # Verify isolation
     a1_v1 = await async_sqlite_db_real.get_agent("agent-1", version="v1.0")
     a1_v2 = await async_sqlite_db_real.get_agent("agent-1", version="v2.0")
     a2_v1 = await async_sqlite_db_real.get_agent("agent-2", version="v1.0")
     a2_v2 = await async_sqlite_db_real.get_agent("agent-2", version="v2.0")
-    
+
     assert a1_v1 is not None and a1_v1.description is None
     assert a1_v2 is not None and a1_v2.description == "Agent 1 v2"
     assert a2_v1 is not None and a2_v1.description is None
@@ -602,7 +595,7 @@ async def test_multiple_agents_with_versions(async_sqlite_db_real: AsyncSqliteDb
 async def test_config_timestamps(async_sqlite_db_real: AsyncSqliteDb, sample_agent: Agent):
     """Test that config timestamps are properly set and updated"""
     import asyncio
-    
+
     # Create config
     result1 = await async_sqlite_db_real.upsert_config(
         entity_id="test-entity",
@@ -610,15 +603,15 @@ async def test_config_timestamps(async_sqlite_db_real: AsyncSqliteDb, sample_age
         version="v1.0",
         config={"key": "value1"},
     )
-    
+
     assert result1 is not None
     assert result1["created_at"] is not None
     assert result1["updated_at"] is not None
     created_at = result1["created_at"]
-    
+
     # Wait a bit
     await asyncio.sleep(0.1)
-    
+
     # Update config
     result2 = await async_sqlite_db_real.upsert_config(
         entity_id="test-entity",
@@ -626,7 +619,7 @@ async def test_config_timestamps(async_sqlite_db_real: AsyncSqliteDb, sample_age
         version="v1.0",
         config={"key": "value2"},
     )
-    
+
     assert result2 is not None
     assert result2["created_at"] == created_at  # Should be preserved
     assert result2["updated_at"] != created_at  # Should be updated
@@ -648,34 +641,34 @@ async def test_configs_isolated_between_entities(async_sqlite_db_real: AsyncSqli
         version="v1.0",
         config={"entity": "agent-1", "data": "agent data"},
     )
-    
+
     await async_sqlite_db_real.upsert_config(
         entity_id="team-1",
         entity_type="team",
         version="v1.0",
         config={"entity": "team-1", "data": "team data"},
     )
-    
+
     await async_sqlite_db_real.upsert_config(
         entity_id="workflow-1",
         entity_type="workflow",
         version="v1.0",
         config={"entity": "workflow-1", "data": "workflow data"},
     )
-    
+
     # Verify each config is unique
     agent_config = await async_sqlite_db_real.get_config("agent-1", "v1.0")
     team_config = await async_sqlite_db_real.get_config("team-1", "v1.0")
     workflow_config = await async_sqlite_db_real.get_config("workflow-1", "v1.0")
-    
+
     assert agent_config is not None
     assert agent_config["config"]["entity"] == "agent-1"
     assert agent_config["entity_type"] == "agent"
-    
+
     assert team_config is not None
     assert team_config["config"]["entity"] == "team-1"
     assert team_config["entity_type"] == "team"
-    
+
     assert workflow_config is not None
     assert workflow_config["config"]["entity"] == "workflow-1"
     assert workflow_config["entity_type"] == "workflow"
@@ -685,7 +678,7 @@ async def test_configs_isolated_between_entities(async_sqlite_db_real: AsyncSqli
 async def test_same_entity_multiple_versions(async_sqlite_db_real: AsyncSqliteDb):
     """Test that the same entity can have multiple version configs"""
     entity_id = "multi-version-agent"
-    
+
     # Create multiple versions
     versions = ["v1.0", "v1.1", "v2.0", "v2.1", "v3.0"]
     for version in versions:
@@ -694,9 +687,9 @@ async def test_same_entity_multiple_versions(async_sqlite_db_real: AsyncSqliteDb
             entity_type="agent",
             version=version,
             config={"version": version, "data": f"Config for {version}"},
-            notes=f"Notes for {version}"
+            notes=f"Notes for {version}",
         )
-    
+
     # Verify all versions exist and are independent
     for version in versions:
         config = await async_sqlite_db_real.get_config(entity_id, version)
@@ -710,7 +703,7 @@ async def test_same_entity_multiple_versions(async_sqlite_db_real: AsyncSqliteDb
 async def test_delete_version_doesnt_affect_others(async_sqlite_db_real: AsyncSqliteDb):
     """Test that deleting one version doesn't affect other versions"""
     entity_id = "delete-test-agent"
-    
+
     # Create multiple versions
     await async_sqlite_db_real.upsert_config(
         entity_id=entity_id,
@@ -730,15 +723,15 @@ async def test_delete_version_doesnt_affect_others(async_sqlite_db_real: AsyncSq
         version="v3.0",
         config={"version": "v3.0"},
     )
-    
+
     # Delete v2.0
     success = await async_sqlite_db_real.delete_config(entity_id, "v2.0")
     assert success is True
-    
+
     # Verify v2.0 is gone
     v2 = await async_sqlite_db_real.get_config(entity_id, "v2.0")
     assert v2 is None
-    
+
     # Verify v1.0 and v3.0 still exist
     v1 = await async_sqlite_db_real.get_config(entity_id, "v1.0")
     v3 = await async_sqlite_db_real.get_config(entity_id, "v3.0")
@@ -757,11 +750,11 @@ async def test_get_agent_after_soft_delete(async_sqlite_db_real: AsyncSqliteDb, 
     # Create and delete agent
     await async_sqlite_db_real.upsert_agent(sample_agent)
     await async_sqlite_db_real.delete_agent(sample_agent.id)
-    
+
     # Try to get agent
     agent = await async_sqlite_db_real.get_agent(sample_agent.id)
     assert agent is None
-    
+
     # Configs should still exist
     config = await async_sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config is not None
@@ -773,7 +766,7 @@ async def test_set_version_on_deleted_agent(async_sqlite_db_real: AsyncSqliteDb,
     # Create and delete agent
     await async_sqlite_db_real.upsert_agent(sample_agent)
     await async_sqlite_db_real.delete_agent(sample_agent.id)
-    
+
     # Try to set version
     success = await async_sqlite_db_real.set_agent_config_version(sample_agent.id, "v1.0")
     assert success is False
@@ -788,18 +781,19 @@ async def test_agent_metadata_preservation(async_sqlite_db_real: AsyncSqliteDb):
         description="Testing metadata",
         model=OpenAIChat(id="gpt-4"),
     )
-    
+
     # Create agent
     await async_sqlite_db_real.upsert_agent(agent)
-    
+
     # Verify agent table has correct metadata
     agents_table = await async_sqlite_db_real._get_table("agents")
     async with async_sqlite_db_real.async_session_factory() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == agent.id)
         result = await sess.execute(stmt)
         agent_row = result.fetchone()
-        
+
         assert agent_row is not None
         assert agent_row.agent_name == "Metadata Agent"
         assert agent_row.created_at is not None
@@ -816,18 +810,12 @@ async def test_config_with_complex_data(async_sqlite_db_real: AsyncSqliteDb):
             {"name": "calculator", "params": {"precision": 10}},
         ],
         "instructions": ["Be helpful", "Be concise"],
-        "metadata": {
-            "nested": {
-                "deeply": {
-                    "nested": "value"
-                }
-            }
-        },
+        "metadata": {"nested": {"deeply": {"nested": "value"}}},
         "numbers": [1, 2, 3, 4, 5],
         "boolean": True,
         "null_value": None,
     }
-    
+
     # Create config with complex data
     result = await async_sqlite_db_real.upsert_config(
         entity_id="complex-test",
@@ -835,9 +823,9 @@ async def test_config_with_complex_data(async_sqlite_db_real: AsyncSqliteDb):
         version="v1.0",
         config=complex_config,
     )
-    
+
     assert result is not None
-    
+
     # Retrieve and verify
     retrieved = await async_sqlite_db_real.get_config("complex-test", "v1.0")
     assert retrieved is not None
@@ -845,4 +833,3 @@ async def test_config_with_complex_data(async_sqlite_db_real: AsyncSqliteDb):
     assert retrieved["config"]["model"]["id"] == "gpt-4"
     assert len(retrieved["config"]["tools"]) == 2
     assert retrieved["config"]["metadata"]["nested"]["deeply"]["nested"] == "value"
-

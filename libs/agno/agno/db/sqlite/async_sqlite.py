@@ -9,7 +9,6 @@ from agno.db.base import AsyncBaseDb, SessionType
 if TYPE_CHECKING:
     from agno.agent import Agent
 from agno.db.migrations.manager import MigrationManager
-
 from agno.db.schemas.config import DEFAULT_VERSION
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -2409,16 +2408,16 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def get_agent(self, agent_id: str, version: Optional[str] = None):
         """
         Get an agent by ID, loading its configuration.
-        
+
         Args:
             agent_id: The agent ID
             version: Optional specific version to load. If None, uses current_version.
-            
+
         Returns:
             Agent object with configuration loaded, or None if not found
         """
         from agno.agent import Agent
-        
+
         try:
             agents_table = await self._get_table(table_type="agents")
             configs_table = await self._get_table(table_type="configs")
@@ -2428,44 +2427,42 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # Get agent metadata
                 stmt = select(agents_table).where(
-                    agents_table.c.agent_id == agent_id,
-                    agents_table.c.deleted_at.is_(None)
+                    agents_table.c.agent_id == agent_id, agents_table.c.deleted_at.is_(None)
                 )
                 result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
-                
+
                 agent_row = dict(result._mapping)
-                
+
                 # Determine which version to load
                 version_to_load = version or agent_row.get("current_version")
                 if not version_to_load:
                     log_warning(f"No version specified and no current_version set for agent {agent_id}")
                     return None
-                
+
                 # Get the config for this version
                 if configs_table is not None:
                     config_stmt = select(configs_table).where(
-                        configs_table.c.entity_id == agent_id,
-                        configs_table.c.version == version_to_load
+                        configs_table.c.entity_id == agent_id, configs_table.c.version == version_to_load
                     )
                     config_result = (await sess.execute(config_stmt)).fetchone()
                     if config_result is None:
                         log_warning(f"Config version {version_to_load} not found for agent {agent_id}")
                         return None
-                    
+
                     config_row = dict(config_result._mapping)
                     config_data = config_row.get("config", {})
-                    
+
                     # Merge agent metadata with config
                     agent_data = {
                         **config_data,
                         "id": agent_id,
                         "name": agent_row.get("agent_name"),
                     }
-                    
+
                     return Agent.from_dict(agent_data)
-                
+
                 return None
 
         except Exception as e:
@@ -2475,48 +2472,47 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def upsert_agent(self, agent: "Agent", version: Optional[str] = None) -> Optional["Agent"]:
         """
         Upsert an agent with its configuration.
-        
+
         Logic:
         - If agent_id exists and no version: Update the current_version's config
         - If agent_id exists and version provided: Create/update that specific version
         - If agent doesn't exist: Create new agent and first config with provided or default version
-        
+
         Args:
             agent: The Agent object to save
             version: Optional version string. If None and agent exists, updates current_version
-            
+
         Returns:
             The Agent object after upserting
         """
         from agno.agent import Agent
-        
+
         try:
             agents_table = await self._get_table(table_type="agents")
             if agents_table is None:
                 return None
 
             current_datetime = datetime.now().isoformat()
-            
+
             # If version is provided, use it, agent's existing version, or default to DEFAULT_VERSION
             version_to_use = version or agent.version or DEFAULT_VERSION
             agent.version = version_to_use
-            
+
             agent_dict = agent.to_dict()
 
             existing_agent = None
             async with self.async_session_factory() as sess, sess.begin():
                 # Check if agent exists
                 check_stmt = select(agents_table).where(
-                    agents_table.c.agent_id == agent.id,
-                    agents_table.c.deleted_at.is_(None)
+                    agents_table.c.agent_id == agent.id, agents_table.c.deleted_at.is_(None)
                 )
                 result = await sess.execute(check_stmt)
                 existing_agent = result.fetchone()
-            
+
             if existing_agent:
                 # Agent exists
                 existing_agent_dict = dict(existing_agent._mapping)
-                
+
                 if version is None:
                     # Update current_version's config
                     current_ver = existing_agent_dict.get("current_version")
@@ -2528,7 +2524,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                             version=current_ver,
                             config=agent_dict,
                             notes=None,
-                            set_as_current=False  # Already current
+                            set_as_current=False,  # Already current
                         )
                     else:
                         # No current version set, create DEFAULT_VERSION
@@ -2538,7 +2534,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                             version=DEFAULT_VERSION,
                             config=agent_dict,
                             notes="Initial version",
-                            set_as_current=True
+                            set_as_current=True,
                         )
                 else:
                     # Create/update the specified version
@@ -2548,9 +2544,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                         version=version,
                         config=agent_dict,
                         notes=None,
-                        set_as_current=False
+                        set_as_current=False,
                     )
-                
+
                 # Update agent metadata
                 async with self.async_session_factory() as sess, sess.begin():
                     stmt = (
@@ -2563,7 +2559,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         )
                     )
                     await sess.execute(stmt)
-                
+
             else:
                 async with self.async_session_factory() as sess, sess.begin():
                     # Agent doesn't exist - create new
@@ -2576,16 +2572,16 @@ class AsyncSqliteDb(AsyncBaseDb):
                         updated_at=current_datetime,
                     )
                     result = await sess.execute(stmt)
-                
+
                 await self.upsert_config(
                     entity_id=agent.id,
                     entity_type="agent",
                     version=version_to_use,
                     config=agent_dict,
                     notes="Initial version",
-                    set_as_current=False  # Already set in agent creation
+                    set_as_current=False,  # Already set in agent creation
                 )
-                
+
             return agent
 
         except Exception as e:
@@ -2595,11 +2591,11 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def set_agent_config_version(self, agent_id: str, version: str) -> bool:
         """
         Set the current_version pointer for an agent.
-        
+
         Args:
             agent_id: The agent ID
             version: The version string to set as current
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -2626,10 +2622,10 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def delete_agent(self, agent_id: str) -> bool:
         """
         Soft delete an agent by setting deleted_at timestamp.
-        
+
         Args:
             agent_id: The agent ID to delete
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -2657,11 +2653,11 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific config version for an entity (agent, team, or workflow).
-        
+
         Args:
             entity_id: The entity ID (agent_id, team_id, or workflow_id)
             version: The config version string
-            
+
         Returns:
             Dictionary with config data, or None if not found
         """
@@ -2692,7 +2688,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     ) -> Optional[Dict[str, Any]]:
         """
         Create or update a config version for an entity (agent, team, or workflow).
-        
+
         Args:
             entity_id: The entity ID (agent_id, team_id, or workflow_id)
             entity_type: The entity type ("agent", "team", or "workflow")
@@ -2700,7 +2696,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             config: The configuration dictionary
             notes: Optional notes about this configuration version
             set_as_current: If True, sets this version as the entity's current_version (only works for agents)
-            
+
         Returns:
             Dictionary with the upserted config data, or None if failed
         """
@@ -2734,13 +2730,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 row = result.fetchone()
                 if row is None:
                     return None
-                
+
                 config_data = dict(row._mapping)
-            
+
             # Optionally set this as the current version (for agents)
             if set_as_current and entity_type == "agent":
                 await self.set_agent_config_version(entity_id, version)
-            
+
             return config_data
 
         except Exception as e:
@@ -2750,11 +2746,11 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def delete_config(self, entity_id: str, version: str) -> bool:
         """
         Delete a specific config version.
-        
+
         Args:
             entity_id: The entity ID (agent_id, team_id, or workflow_id)
             version: The version string to delete
-            
+
         Returns:
             True if successful, False otherwise
         """

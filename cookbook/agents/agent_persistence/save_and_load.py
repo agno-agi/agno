@@ -1,9 +1,8 @@
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.db.sqlite import SqliteDb
-
 
 db = SqliteDb(db_file="tmp/agents.db")
 
@@ -11,7 +10,7 @@ db = SqliteDb(db_file="tmp/agents.db")
 # Create an agent and save the config to the DB
 # ------------------------------------------------------------
 agent = Agent(
-    id="web-search-agent", # Adding the ID is highly recommended for finding the config in the DB
+    id="web-search-agent",  # Adding the ID is highly recommended for finding the config in the DB
     name="Web Search Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,  # DB is required to save the agent's config
@@ -65,7 +64,7 @@ agent.save(
 # # ------------------------------------------------------------
 # new_agent = Agent(id="web-search-agent", db=db).load( # Loads the current version of the agent
 #     # version="v1.2" # Optional: Specify a specific version to load
-# ) 
+# )
 
 # new_agent.print_response("What is the current price of Apple?")
 
@@ -91,4 +90,4 @@ agent.save(
 # )
 
 # # Specify the version to use for this run
-# agent.print_response("What is the current price of NVIDIA?", version="v1.0")  
+# agent.print_response("What is the current price of NVIDIA?", version="v1.0")

@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
@@ -335,24 +335,24 @@ class BaseDb(ABC):
     @abstractmethod
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
-    
+
     # --- Configs ---
     @abstractmethod
     def get_agent(self, agent_id: str, version: Optional[str] = None):
         raise NotImplementedError
-    
+
     @abstractmethod
     def upsert_agent(self, agent: "Agent") -> Optional["Agent"]:
         raise NotImplementedError
-    
+
     @abstractmethod
     def delete_agent(self, agent_id: str) -> bool:
         raise NotImplementedError
-    
+
     @abstractmethod
     def set_agent_config_version(self, agent_id: str, version: str) -> bool:
         raise NotImplementedError
-    
+
     @abstractmethod
     def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
         """
@@ -361,13 +361,15 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_config(self, 
+    def upsert_config(
+        self,
         entity_id: str,
         entity_type: str,
         version: str,
         config: Dict[str, Any],
         notes: Optional[str] = None,
-        set_as_current: bool = False,) -> Optional[Dict[str, Any]]:
+        set_as_current: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """
         Upsert a config.
 
@@ -685,15 +687,15 @@ class AsyncBaseDb(ABC):
     @abstractmethod
     async def get_agent(self, agent_id: str, version: Optional[str] = None):
         raise NotImplementedError
-    
+
     @abstractmethod
     async def upsert_agent(self, agent: "Agent") -> Optional["Agent"]:
         raise NotImplementedError
-    
+
     @abstractmethod
     async def delete_agent(self, agent_id: str) -> bool:
         raise NotImplementedError
-    
+
     @abstractmethod
     async def set_agent_config_version(self, agent_id: str, version: str) -> bool:
         raise NotImplementedError
@@ -701,17 +703,19 @@ class AsyncBaseDb(ABC):
     @abstractmethod
     async def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
-    
+
     @abstractmethod
     async def delete_config(self, entity_id: str, version: str) -> bool:
         raise NotImplementedError
-    
+
     @abstractmethod
-    async def upsert_config(self, 
+    async def upsert_config(
+        self,
         entity_id: str,
         entity_type: str,
         version: str,
         config: Dict[str, Any],
         notes: Optional[str] = None,
-        set_as_current: bool = False,) -> Optional[Dict[str, Any]]:
+        set_as_current: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError

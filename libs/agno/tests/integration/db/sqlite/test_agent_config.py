@@ -17,11 +17,11 @@ def cleanup_agents_and_configs(sqlite_db_real: SqliteDb):
             configs_table = sqlite_db_real._get_table("configs")
             if configs_table is not None:
                 session.execute(configs_table.delete())
-            
+
             agents_table = sqlite_db_real._get_table("agents")
             if agents_table is not None:
                 session.execute(agents_table.delete())
-            
+
             session.commit()
         except Exception:
             session.rollback()
@@ -46,22 +46,23 @@ def sample_agent() -> Agent:
 def test_create_new_agent_default_version(sqlite_db_real: SqliteDb, sample_agent: Agent):
     """Test creating a new agent without specifying a version (should default to v1.0)"""
     result = sqlite_db_real.upsert_agent(sample_agent)
-    
+
     assert result is not None
     assert result.id == sample_agent.id
     assert result.name == sample_agent.name
-    
+
     # Verify agent record was created with v1.0 as current_version
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
-        
+
         assert agent_row is not None
         assert agent_row.current_version == "v1.0"
         assert agent_row.deleted_at is None
-    
+
     # Verify config was created
     config = sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config is not None
@@ -74,19 +75,20 @@ def test_create_new_agent_default_version(sqlite_db_real: SqliteDb, sample_agent
 def test_create_new_agent_custom_version(sqlite_db_real: SqliteDb, sample_agent: Agent):
     """Test creating a new agent with a custom version"""
     result = sqlite_db_real.upsert_agent(sample_agent, version="v2.5")
-    
+
     assert result is not None
-    
+
     # Verify agent was created with custom version as current
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
-        
+
         assert agent_row is not None
         assert agent_row.current_version == "v2.5"
-    
+
     # Verify config was created with custom version
     config = sqlite_db_real.get_config(sample_agent.id, "v2.5")
     assert config is not None
@@ -102,14 +104,14 @@ def test_update_existing_agent_no_version(sqlite_db_real: SqliteDb, sample_agent
     """Test updating an existing agent without specifying version (should update current_version)"""
     # Create agent first
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Update agent
     sample_agent.description = "Updated description"
     result = sqlite_db_real.upsert_agent(sample_agent)
-    
+
     assert result is not None
     assert result.description == "Updated description"
-    
+
     # Verify the v1.0 config was updated
     config = sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config is not None
@@ -121,27 +123,28 @@ def test_update_existing_agent_new_version(sqlite_db_real: SqliteDb, sample_agen
     """Test creating a new version of an existing agent"""
     # Create agent first
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Create new version
     sample_agent.description = "Version 2 description"
     result = sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     assert result is not None
-    
+
     # Verify v1.0 still exists and unchanged
     config_v1 = sqlite_db_real.get_config(sample_agent.id, "v1.0")
     assert config_v1 is not None
     assert config_v1["config"]["description"] == "A test agent for integration tests"
-    
+
     # Verify v2.0 was created
     config_v2 = sqlite_db_real.get_config(sample_agent.id, "v2.0")
     assert config_v2 is not None
     assert config_v2["config"]["description"] == "Version 2 description"
-    
+
     # Verify current_version is still v1.0 (not changed)
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
         assert agent_row.current_version == "v1.0"
@@ -151,26 +154,25 @@ def test_update_agent_no_current_version_set(sqlite_db_real: SqliteDb, sample_ag
     """Test updating an agent that has no current_version set (edge case)"""
     # Create agent first
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Manually clear current_version to simulate edge case
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
-        stmt = agents_table.update().where(
-            agents_table.c.agent_id == sample_agent.id
-        ).values(current_version=None)
+        stmt = agents_table.update().where(agents_table.c.agent_id == sample_agent.id).values(current_version=None)
         sess.execute(stmt)
         sess.commit()
-    
+
     # Update agent without version
     sample_agent.description = "Updated without version"
     result = sqlite_db_real.upsert_agent(sample_agent)
-    
+
     assert result is not None
-    
+
     # Should create v1.0 and set as current
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
         assert agent_row.current_version == "v1.0"
@@ -185,10 +187,10 @@ def test_get_agent_default_version(sqlite_db_real: SqliteDb, sample_agent: Agent
     """Test getting an agent without specifying version (should use current_version)"""
     # Create agent
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Get agent without version
     retrieved_agent = sqlite_db_real.get_agent(sample_agent.id)
-    
+
     assert retrieved_agent is not None
     assert isinstance(retrieved_agent, Agent)
     assert retrieved_agent.id == sample_agent.id
@@ -200,23 +202,23 @@ def test_get_agent_specific_version(sqlite_db_real: SqliteDb, sample_agent: Agen
     """Test getting a specific version of an agent"""
     # Create agent
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Create v2.0
     sample_agent.description = "Version 2"
     sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     # Get v1.0 explicitly
     agent_v1 = sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     assert agent_v1 is not None
     assert agent_v1.description == "A test agent for integration tests"
     assert agent_v1.version == "v1.0"
-    
+
     # Get v2.0 explicitly
     agent_v2 = sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
     assert agent_v2 is not None
     assert agent_v2.description == "Version 2"
     assert agent_v2.version == "v2.0"
-    
+
     # Get without version (should return v1.0 as it's current)
     agent_current = sqlite_db_real.get_agent(sample_agent.id)
     assert agent_current is not None
@@ -233,7 +235,7 @@ def test_get_agent_nonexistent(sqlite_db_real: SqliteDb):
 def test_get_agent_nonexistent_version(sqlite_db_real: SqliteDb, sample_agent: Agent):
     """Test getting a version that doesn't exist"""
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     result = sqlite_db_real.get_agent(sample_agent.id, version="v99.0")
     assert result is None
 
@@ -249,19 +251,20 @@ def test_set_agent_config_version(sqlite_db_real: SqliteDb, sample_agent: Agent)
     sqlite_db_real.upsert_agent(sample_agent)
     sample_agent.description = "Version 2"
     sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     # Switch to v2.0
     success = sqlite_db_real.set_agent_config_version(sample_agent.id, "v2.0")
     assert success is True
-    
+
     # Verify current_version was updated
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
         assert agent_row.current_version == "v2.0"
-    
+
     # Verify get_agent now returns v2.0 by default
     agent = sqlite_db_real.get_agent(sample_agent.id)
     assert agent is not None
@@ -283,21 +286,22 @@ def test_delete_agent_soft_delete(sqlite_db_real: SqliteDb, sample_agent: Agent)
     """Test soft deleting an agent (sets deleted_at timestamp)"""
     # Create agent
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Delete agent
     success = sqlite_db_real.delete_agent(sample_agent.id)
     assert success is True
-    
+
     # Verify agent is soft deleted
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
-        
+
         assert agent_row is not None  # Row still exists
         assert agent_row.deleted_at is not None  # But has deleted_at timestamp
-    
+
     # Verify get_agent returns None for deleted agent
     agent = sqlite_db_real.get_agent(sample_agent.id)
     assert agent is None
@@ -317,15 +321,11 @@ def test_delete_agent_nonexistent(sqlite_db_real: SqliteDb):
 def test_upsert_config_create(sqlite_db_real: SqliteDb, sample_agent: Agent):
     """Test creating a new config"""
     config_data = sample_agent.to_dict()
-    
+
     result = sqlite_db_real.upsert_config(
-        entity_id="test-entity",
-        entity_type="agent",
-        version="v1.0",
-        config=config_data,
-        notes="Test config"
+        entity_id="test-entity", entity_type="agent", version="v1.0", config=config_data, notes="Test config"
     )
-    
+
     assert result is not None
     assert result["entity_id"] == "test-entity"
     assert result["entity_type"] == "agent"
@@ -337,26 +337,18 @@ def test_upsert_config_create(sqlite_db_real: SqliteDb, sample_agent: Agent):
 def test_upsert_config_update(sqlite_db_real: SqliteDb, sample_agent: Agent):
     """Test updating an existing config"""
     config_data_v1 = {"key": "value1"}
-    
+
     # Create initial config
     sqlite_db_real.upsert_config(
-        entity_id="test-entity",
-        entity_type="agent",
-        version="v1.0",
-        config=config_data_v1,
-        notes="Initial"
+        entity_id="test-entity", entity_type="agent", version="v1.0", config=config_data_v1, notes="Initial"
     )
-    
+
     # Update config
     config_data_v2 = {"key": "value2", "new_key": "new_value"}
     result = sqlite_db_real.upsert_config(
-        entity_id="test-entity",
-        entity_type="agent",
-        version="v1.0",
-        config=config_data_v2,
-        notes="Updated"
+        entity_id="test-entity", entity_type="agent", version="v1.0", config=config_data_v2, notes="Updated"
     )
-    
+
     assert result is not None
     assert result["config"] == config_data_v2
     assert result["notes"] == "Updated"
@@ -366,26 +358,27 @@ def test_upsert_config_with_set_as_current(sqlite_db_real: SqliteDb, sample_agen
     """Test creating a config and setting it as current for an agent"""
     # Create agent first
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # Create new version and set as current
     config_data = sample_agent.to_dict()
     config_data["description"] = "Version 3"
-    
+
     result = sqlite_db_real.upsert_config(
         entity_id=sample_agent.id,
         entity_type="agent",
         version="v3.0",
         config=config_data,
         notes="Version 3",
-        set_as_current=True
+        set_as_current=True,
     )
-    
+
     assert result is not None
-    
+
     # Verify current_version was updated
     agents_table = sqlite_db_real._get_table("agents")
     with sqlite_db_real.Session() as sess:
         from sqlalchemy import select
+
         stmt = select(agents_table).where(agents_table.c.agent_id == sample_agent.id)
         agent_row = sess.execute(stmt).fetchone()
         assert agent_row.current_version == "v3.0"
@@ -402,7 +395,7 @@ def test_upsert_config_different_entity_types(sqlite_db_real: SqliteDb):
     )
     assert agent_config is not None
     assert agent_config["entity_type"] == "agent"
-    
+
     # Team config
     team_config = sqlite_db_real.upsert_config(
         entity_id="team-1",
@@ -412,7 +405,7 @@ def test_upsert_config_different_entity_types(sqlite_db_real: SqliteDb):
     )
     assert team_config is not None
     assert team_config["entity_type"] == "team"
-    
+
     # Workflow config
     workflow_config = sqlite_db_real.upsert_config(
         entity_id="workflow-1",
@@ -427,7 +420,7 @@ def test_upsert_config_different_entity_types(sqlite_db_real: SqliteDb):
 def test_get_config(sqlite_db_real: SqliteDb):
     """Test retrieving a config"""
     config_data = {"key": "value"}
-    
+
     # Create config
     sqlite_db_real.upsert_config(
         entity_id="test-entity",
@@ -435,10 +428,10 @@ def test_get_config(sqlite_db_real: SqliteDb):
         version="v1.0",
         config=config_data,
     )
-    
+
     # Get config
     result = sqlite_db_real.get_config("test-entity", "v1.0")
-    
+
     assert result is not None
     assert result["entity_id"] == "test-entity"
     assert result["version"] == "v1.0"
@@ -460,15 +453,15 @@ def test_delete_config(sqlite_db_real: SqliteDb):
         version="v1.0",
         config={"key": "value"},
     )
-    
+
     # Verify it exists
     config = sqlite_db_real.get_config("test-entity", "v1.0")
     assert config is not None
-    
+
     # Delete config
     success = sqlite_db_real.delete_config("test-entity", "v1.0")
     assert success is True
-    
+
     # Verify it's gone
     config = sqlite_db_real.get_config("test-entity", "v1.0")
     assert config is None
@@ -489,51 +482,51 @@ def test_complete_versioning_workflow(sqlite_db_real: SqliteDb, sample_agent: Ag
     """Test a complete workflow of versioning an agent"""
     # 1. Create initial agent (v1.0)
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # 2. Verify v1.0 is current
     agent = sqlite_db_real.get_agent(sample_agent.id)
     assert agent is not None
     assert agent.description == "A test agent for integration tests"
-    
+
     # 3. Create v2.0 with changes
     sample_agent.description = "Version 2 - Added new features"
     sqlite_db_real.upsert_agent(sample_agent, version="v2.0")
-    
+
     # 4. Create v3.0 with more changes
     sample_agent.description = "Version 3 - Major update"
     sqlite_db_real.upsert_agent(sample_agent, version="v3.0")
-    
+
     # 5. Verify all versions exist
     v1 = sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     v2 = sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
     v3 = sqlite_db_real.get_agent(sample_agent.id, version="v3.0")
-    
+
     assert v1 is not None and v1.description == "A test agent for integration tests"
     assert v2 is not None and v2.description == "Version 2 - Added new features"
     assert v3 is not None and v3.description == "Version 3 - Major update"
-    
+
     # 6. Current version should still be v1.0
     current = sqlite_db_real.get_agent(sample_agent.id)
     assert current is not None
     assert current.description == "A test agent for integration tests"
-    
+
     # 7. Switch to v3.0
     sqlite_db_real.set_agent_config_version(sample_agent.id, "v3.0")
-    
+
     # 8. Verify current version is now v3.0
     current = sqlite_db_real.get_agent(sample_agent.id)
     assert current is not None
     assert current.description == "Version 3 - Major update"
-    
+
     # 9. Update current version (v3.0) in place
     sample_agent.description = "Version 3 - Updated"
     sqlite_db_real.upsert_agent(sample_agent)
-    
+
     # 10. Verify v3.0 was updated
     current = sqlite_db_real.get_agent(sample_agent.id)
     assert current is not None
     assert current.description == "Version 3 - Updated"
-    
+
     # 11. Verify other versions unchanged
     v1 = sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     v2 = sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
@@ -546,25 +539,25 @@ def test_multiple_agents_with_versions(sqlite_db_real: SqliteDb):
     # Create multiple agents
     agent1 = Agent(id="agent-1", name="Agent 1", model=OpenAIChat(id="gpt-4"))
     agent2 = Agent(id="agent-2", name="Agent 2", model=OpenAIChat(id="gpt-4"))
-    
+
     # Create both agents
     sqlite_db_real.upsert_agent(agent1)
     sqlite_db_real.upsert_agent(agent2)
-    
+
     # Create multiple versions for agent1
     agent1.description = "Agent 1 v2"
     sqlite_db_real.upsert_agent(agent1, version="v2.0")
-    
+
     # Create one version for agent2
     agent2.description = "Agent 2 v2"
     sqlite_db_real.upsert_agent(agent2, version="v2.0")
-    
+
     # Verify isolation
     a1_v1 = sqlite_db_real.get_agent("agent-1", version="v1.0")
     a1_v2 = sqlite_db_real.get_agent("agent-1", version="v2.0")
     a2_v1 = sqlite_db_real.get_agent("agent-2", version="v1.0")
     a2_v2 = sqlite_db_real.get_agent("agent-2", version="v2.0")
-    
+
     assert a1_v1 is not None and a1_v1.description is None
     assert a1_v2 is not None and a1_v2.description == "Agent 1 v2"
     assert a2_v1 is not None and a2_v1.description is None
@@ -574,7 +567,7 @@ def test_multiple_agents_with_versions(sqlite_db_real: SqliteDb):
 def test_config_timestamps(sqlite_db_real: SqliteDb, sample_agent: Agent):
     """Test that config timestamps are properly set and updated"""
     import time
-    
+
     # Create config
     result1 = sqlite_db_real.upsert_config(
         entity_id="test-entity",
@@ -582,15 +575,15 @@ def test_config_timestamps(sqlite_db_real: SqliteDb, sample_agent: Agent):
         version="v1.0",
         config={"key": "value1"},
     )
-    
+
     assert result1 is not None
     assert result1["created_at"] is not None
     assert result1["updated_at"] is not None
     created_at = result1["created_at"]
-    
+
     # Wait a bit
     time.sleep(0.1)
-    
+
     # Update config
     result2 = sqlite_db_real.upsert_config(
         entity_id="test-entity",
@@ -598,9 +591,8 @@ def test_config_timestamps(sqlite_db_real: SqliteDb, sample_agent: Agent):
         version="v1.0",
         config={"key": "value2"},
     )
-    
+
     assert result2 is not None
     assert result2["created_at"] == created_at  # Should be preserved
     assert result2["updated_at"] != created_at  # Should be updated
     assert result2["updated_at"] > created_at  # Should be newer
-

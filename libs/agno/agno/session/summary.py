@@ -263,4 +263,3 @@ class SessionSummaryManager:
             self.summaries_updated = True
 
         return session_summary
-    

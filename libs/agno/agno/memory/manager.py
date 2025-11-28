@@ -1403,7 +1403,6 @@ class MemoryManager:
         if enable_clear_memory:
             functions.append(clear_memory)
         return functions
-    
 
     async def _aget_db_tools(
         self,
@@ -1541,4 +1540,3 @@ class MemoryManager:
         if enable_clear_memory:
             functions.append(clear_memory)
         return functions
-    

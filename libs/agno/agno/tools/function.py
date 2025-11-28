@@ -152,6 +152,7 @@ class Function(BaseModel):
             requires_confirmation=data.get("requires_confirmation"),
             external_execution=data.get("external_execution"),
         )
+
     def model_copy(self, *, deep: bool = False) -> "Function":
         """
         Override model_copy to handle callable fields that can't be deep copied (pickled).

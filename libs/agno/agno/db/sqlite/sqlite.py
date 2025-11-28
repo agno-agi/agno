@@ -2400,16 +2400,16 @@ class SqliteDb(BaseDb):
     def get_agent(self, agent_id: str, version: Optional[str] = None):
         """
         Get an agent by ID, loading its configuration.
-        
+
         Args:
             agent_id: The agent ID
             version: Optional specific version to load. If None, uses current_version.
-            
+
         Returns:
             Agent object with configuration loaded, or None if not found
         """
         from agno.agent import Agent
-        
+
         try:
             agents_table = self._get_table(table_type="agents")
             configs_table = self._get_table(table_type="configs")
@@ -2419,35 +2419,33 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 # Get agent metadata
                 stmt = select(agents_table).where(
-                    agents_table.c.agent_id == agent_id,
-                    agents_table.c.deleted_at.is_(None)
+                    agents_table.c.agent_id == agent_id, agents_table.c.deleted_at.is_(None)
                 )
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
-                
+
                 agent_row = dict(result._mapping)
-                
+
                 # Determine which version to load
                 version_to_load = version or agent_row.get("current_version")
                 if not version_to_load:
                     log_warning(f"No version specified and no current_version set for agent {agent_id}")
                     return None
-                
+
                 # Get the config for this version
                 if configs_table is not None:
                     config_stmt = select(configs_table).where(
-                        configs_table.c.entity_id == agent_id,
-                        configs_table.c.version == version_to_load
+                        configs_table.c.entity_id == agent_id, configs_table.c.version == version_to_load
                     )
                     config_result = sess.execute(config_stmt).fetchone()
                     if config_result is None:
                         log_warning(f"Config version {version_to_load} not found for agent {agent_id}")
                         return None
-                    
+
                     config_row = dict(config_result._mapping)
                     config_data = config_row.get("config", {})
-                    
+
                     # Merge agent metadata with config
                     agent_data = {
                         **config_data,
@@ -2455,7 +2453,7 @@ class SqliteDb(BaseDb):
                         "name": agent_row.get("agent_name"),
                     }
                     return Agent.from_dict(agent_data)
-                
+
                 return None
 
         except Exception as e:
@@ -2465,53 +2463,52 @@ class SqliteDb(BaseDb):
     def upsert_agent(self, agent: "Agent", version: Optional[str] = None) -> Optional["Agent"]:
         """
         Upsert an agent with its configuration.
-        
+
         Logic:
         - If agent_id exists and no version: Update the current_version's config
         - If agent_id exists and version provided: Create/update that specific version
         - If agent doesn't exist: Create new agent and first config with provided or default version
-        
+
         Args:
             agent: The Agent object to save
             version: Optional version string. If None and agent exists, updates current_version
-            
+
         Returns:
             The Agent object after upserting
         """
-        
+
         try:
             # Ensure both agents and configs tables exist before starting transaction
             agents_table = self._get_table(table_type="agents", create_table_if_not_found=True)
             if agents_table is None:
                 return None
-            
+
             # Pre-create configs table to avoid nested transaction issues
             configs_table = self._get_table(table_type="configs", create_table_if_not_found=True)
             if configs_table is None:
                 return None
 
             current_datetime = datetime.now().isoformat()
-            
+
             # Figure out the version to use
             # If version is provided, use it, agent's existing version, or default to DEFAULT_VERSION
             version_to_use = version or agent.version or DEFAULT_VERSION
             agent.version = version_to_use
-            
+
             agent_dict = agent.to_dict()
 
             existing_agent = None
             with self.Session() as sess, sess.begin():
                 # Check if agent exists
                 check_stmt = select(agents_table).where(
-                    agents_table.c.agent_id == agent.id,
-                    agents_table.c.deleted_at.is_(None)
+                    agents_table.c.agent_id == agent.id, agents_table.c.deleted_at.is_(None)
                 )
                 existing_agent = sess.execute(check_stmt).fetchone()
-            
+
             if existing_agent:
                 # Agent exists
                 existing_agent_dict = dict(existing_agent._mapping)
-                
+
                 if version is None:
                     # Update current_version's config
                     current_ver = existing_agent_dict.get("current_version")
@@ -2523,7 +2520,7 @@ class SqliteDb(BaseDb):
                             version=current_ver,
                             config=agent_dict,
                             notes=None,
-                            set_as_current=False  # Already current
+                            set_as_current=False,  # Already current
                         )
                     else:
                         # No current version set, create DEFAULT_VERSION
@@ -2533,7 +2530,7 @@ class SqliteDb(BaseDb):
                             version=DEFAULT_VERSION,
                             config=agent_dict,
                             notes="Initial version",
-                            set_as_current=True
+                            set_as_current=True,
                         )
                 else:
                     # Create/update the specified version
@@ -2543,9 +2540,9 @@ class SqliteDb(BaseDb):
                         version=version,
                         config=agent_dict,
                         notes=None,
-                        set_as_current=False
+                        set_as_current=False,
                     )
-                
+
                 # Update agent metadata
                 with self.Session() as sess, sess.begin():
                     stmt = (
@@ -2558,9 +2555,8 @@ class SqliteDb(BaseDb):
                         )
                     )
                     sess.execute(stmt)
-                
+
             else:
-                
                 with self.Session() as sess, sess.begin():
                     # Create agent
                     stmt = sqlite.insert(agents_table).values(
@@ -2573,7 +2569,7 @@ class SqliteDb(BaseDb):
                         deleted_at=None,
                     )
                     sess.execute(stmt)
-                
+
                 # Create first config
                 self.upsert_config(
                     entity_id=agent.id,
@@ -2581,10 +2577,9 @@ class SqliteDb(BaseDb):
                     version=version_to_use,
                     config=agent_dict,
                     notes="Initial version",
-                    set_as_current=False  # Already set in agent creation
+                    set_as_current=False,  # Already set in agent creation
                 )
-            
-                
+
             return agent
 
         except Exception as e:
@@ -2594,11 +2589,11 @@ class SqliteDb(BaseDb):
     def set_agent_config_version(self, agent_id: str, version: str) -> bool:
         """
         Set the current_version pointer for an agent.
-        
+
         Args:
             agent_id: The agent ID
             version: The version string to set as current
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -2625,10 +2620,10 @@ class SqliteDb(BaseDb):
     def delete_agent(self, agent_id: str) -> bool:
         """
         Soft delete an agent by setting deleted_at timestamp.
-        
+
         Args:
             agent_id: The agent ID to delete
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -2656,11 +2651,11 @@ class SqliteDb(BaseDb):
     def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific config version for an entity (agent, team, or workflow).
-        
+
         Args:
             entity_id: The entity ID (agent_id, team_id, or workflow_id)
             version: The config version string
-            
+
         Returns:
             Dictionary with config data, or None if not found
         """
@@ -2691,7 +2686,7 @@ class SqliteDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """
         Create or update a config version for an entity (agent, team, or workflow).
-        
+
         Args:
             entity_id: The entity ID (agent_id, team_id, or workflow_id)
             entity_type: The entity type ("agent", "team", or "workflow")
@@ -2699,7 +2694,7 @@ class SqliteDb(BaseDb):
             config: The configuration dictionary
             notes: Optional notes about this configuration version
             set_as_current: If True, sets this version as the entity's current_version (only works for agents)
-            
+
         Returns:
             Dictionary with the upserted config data, or None if failed
         """
@@ -2734,13 +2729,13 @@ class SqliteDb(BaseDb):
                 row = result.fetchone()
                 if row is None:
                     return None
-                
+
                 config_data = dict(row._mapping)
-            
+
             # Optionally set this as the current version (for agents)
             if set_as_current and entity_type == "agent":
                 self.set_agent_config_version(entity_id, version)
-                
+
             return config_data
 
         except Exception as e:
@@ -2750,11 +2745,11 @@ class SqliteDb(BaseDb):
     def delete_config(self, entity_id: str, version: str) -> bool:
         """
         Delete a specific config version.
-        
+
         Args:
             entity_id: The entity ID (agent_id, team_id, or workflow_id)
             version: The version string to delete
-            
+
         Returns:
             True if successful, False otherwise
         """

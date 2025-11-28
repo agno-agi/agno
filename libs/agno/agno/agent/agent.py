@@ -416,13 +416,13 @@ class Agent:
     compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
-    
+
     # --- Config ---
     # If True, the agent reloads the config from the database on each run
     reload_on_run: bool = False
     # The version of the config to use
     version: Optional[str] = None
-    
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -677,7 +677,7 @@ class Agent:
 
         self.reload_on_run = reload_on_run
         self.version = version
-        
+
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
             log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
@@ -1864,7 +1864,7 @@ class Agent:
         # Reload agent configuration if needed (for async databases)
         if self.reload_on_run and self._has_async_db():
             await self._areload_from_db(version=self.version)
-        
+
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
@@ -2139,7 +2139,7 @@ class Agent:
         # Reload agent configuration if needed (for async databases)
         if self.reload_on_run and self._has_async_db():
             await self._areload_from_db(version=self.version)
-        
+
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Start the Run by yielding a RunStarted event
@@ -2562,11 +2562,12 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        # Load the agent from the cached config_id
-        # Note: We handle reload differently for async vs sync databases
-        # For async databases, reload happens in the async execution path
-        if self.reload_on_run and not self._has_async_db():
-            self._reload_from_db(version=self.version)
+        # # Load the agent from the cached config_id
+        # # Note: We handle reload differently for async vs sync databases
+        # # For async databases, reload happens in the async execution path
+        # if self.reload_on_run and not self._has_async_db():
+        #     self._reload_from_db(version=self.version)
+        # TODO: Handle reload for async databases
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
@@ -5692,15 +5693,19 @@ class Agent:
 
         return agent_tools
 
-    def _parse_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]], model: Model, run_context: Optional[RunContext] = None) -> List[Union[Function, dict]]:
-
+    def _parse_tools(
+        self,
+        tools: List[Union[Toolkit, Callable, Function, Dict]],
+        model: Model,
+        run_context: Optional[RunContext] = None,
+    ) -> List[Union[Function, dict]]:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
         self._tool_instructions = []
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context is not None else None
-        
+
         # Check if we need strict mode for the functions for the model
         strict = False
         if (
@@ -10857,7 +10862,6 @@ class Agent:
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
 
-
     ###########################################################################
     # Config functions
     ###########################################################################
@@ -10990,6 +10994,7 @@ class Agent:
                 except Exception as e:
                     # Skip tools that can't be serialized
                     from agno.utils.log import log_warning
+
                     log_warning(f"Could not serialize tool {tool}: {e}")
             if serialized_tools:
                 config["tools"] = serialized_tools
@@ -11227,6 +11232,7 @@ class Agent:
         # --- Handle MemoryManager reconstruction ---
         if "memory_manager" in config:
             from agno.memory import MemoryManager
+
             memory_manager_data = config["memory_manager"]
             if isinstance(memory_manager_data, dict):
                 config["memory_manager"] = MemoryManager.from_dict(memory_manager_data)
@@ -11234,6 +11240,7 @@ class Agent:
         # --- Handle SessionSummaryManager reconstruction ---
         if "session_summary_manager" in config:
             from agno.session import SessionSummaryManager
+
             session_summary_manager_data = config["session_summary_manager"]
             if isinstance(session_summary_manager_data, dict):
                 config["session_summary_manager"] = SessionSummaryManager.from_dict(session_summary_manager_data)
@@ -11241,6 +11248,7 @@ class Agent:
         # --- Handle CultureManager reconstruction ---
         if "culture_manager" in config:
             from agno.culture import CultureManager
+
             culture_manager_data = config["culture_manager"]
             if isinstance(culture_manager_data, dict):
                 config["culture_manager"] = CultureManager.from_dict(culture_manager_data)
@@ -11248,6 +11256,7 @@ class Agent:
         # --- Handle Knowledge reconstruction ---
         if "knowledge" in config:
             from agno.knowledge import Knowledge
+
             knowledge_data = config["knowledge"]
             if isinstance(knowledge_data, dict):
                 config["knowledge"] = Knowledge.from_dict(knowledge_data)
@@ -11255,13 +11264,13 @@ class Agent:
         # --- Handle CompressionManager reconstruction ---
         if "compression_manager" in config:
             from agno.compression.manager import CompressionManager
+
             compression_manager_data = config["compression_manager"]
             if isinstance(compression_manager_data, dict):
                 config["compression_manager"] = CompressionManager.from_dict(compression_manager_data)
-                
+
         # Create and return the agent
         return cls(**config)
-    
 
     def save(self, version: Optional[str] = None) -> "Agent":
         """
@@ -11269,7 +11278,7 @@ class Agent:
         """
         if not self.db:
             raise ValueError("Database is not set. This is required to save the agent as config.")
-        
+
         if self._has_async_db():
             raise ValueError("Async database not supported for save. Use asave instead.")
 
@@ -11287,7 +11296,6 @@ class Agent:
         else:
             return self.db.upsert_agent(self, version=version)
 
-
     def load(self, version: Optional[str] = None) -> "Agent":
         """
         Load the agent from the database.
@@ -11295,7 +11303,7 @@ class Agent:
         if not self.db:
             raise ValueError("Database is not set. This is required to load the agent.")
         return self.db.get_agent(agent_id=self.id, version=version)
-    
+
     async def aload(self, version: Optional[str] = None) -> "Agent":
         """
         Load the agent from the database.
@@ -11303,7 +11311,23 @@ class Agent:
         if not self.db:
             raise ValueError("Database is not set. This is required to load the agent.")
         return await self.db.get_agent(agent_id=self.id, version=version)
-    
+
+    def delete(self) -> None:
+        """
+        Delete the agent from the database.
+        """
+        if not self.db:
+            raise ValueError("Database is not set. This is required to delete the agent.")
+        self.db.delete_agent(agent_id=self.id)
+
+    async def adelete(self) -> None:
+        """
+        Delete the agent from the database.
+        """
+        if not self.db:
+            raise ValueError("Database is not set. This is required to delete the agent.")
+        await self.db.delete_agent(agent_id=self.id)
+
     def _reload_from_db(self, version: Optional[str] = None) -> None:
         """
         Reload agent configuration from the database and update all attributes.
@@ -11312,42 +11336,42 @@ class Agent:
         if not self.db:
             log_warning("Cannot reload agent: database is not set.")
             return
-        
+
         if not self.id:
             log_warning("Cannot reload agent: agent ID is not set.")
             return
-        
+
         # Handle async database
         if self._has_async_db():
             raise ValueError("Cannot use sync reload with async database. Use async reload instead.")
-        
+
         # Handle sync database
         loaded_agent = self.load(version=version)
         if loaded_agent is None:
             log_warning(f"Cannot reload agent: agent {self.id} not found in database.")
             return
-        
+
         # Preserve the database connection and agent ID
         preserved_db = self.db
         preserved_id = self.id
-        
+
         # Copy all attributes from the loaded agent to self
         from dataclasses import fields
-        
+
         for field in fields(self):
             field_name = field.name
             # Skip internal/private fields and preserve db/id
             if field_name.startswith("_") or field_name in ("db", "id"):
                 continue
-            
+
             # Copy the attribute from loaded_agent to self
             if hasattr(loaded_agent, field_name):
                 setattr(self, field_name, getattr(loaded_agent, field_name))
-        
+
         # Restore preserved attributes
         self.db = preserved_db
         self.id = preserved_id
-    
+
     async def _areload_from_db(self, version: Optional[str] = None) -> None:
         """
         Async reload agent configuration from the database and update all attributes.
@@ -11356,35 +11380,34 @@ class Agent:
         if not self.db:
             log_warning("Cannot reload agent: database is not set.")
             return
-        
+
         if not self.id:
             log_warning("Cannot reload agent: agent ID is not set.")
             return
-        
+
         # Load the agent from the database
         loaded_agent = await self.aload(version=version)
         if loaded_agent is None:
             log_warning(f"Cannot reload agent: agent {self.id} not found in database.")
             return
-        
+
         # Preserve the database connection and agent ID
         preserved_db = self.db
         preserved_id = self.id
-        
+
         # Copy all attributes from the loaded agent to self
         from dataclasses import fields
-        
+
         for field in fields(self):
             field_name = field.name
             # Skip internal/private fields and preserve db/id
             if field_name.startswith("_") or field_name in ("db", "id"):
                 continue
-            
+
             # Copy the attribute from loaded_agent to self
             if hasattr(loaded_agent, field_name):
                 setattr(self, field_name, getattr(loaded_agent, field_name))
-        
+
         # Restore preserved attributes
         self.db = preserved_db
         self.id = preserved_id
-    
