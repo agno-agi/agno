@@ -209,16 +209,19 @@ def test_get_agent_specific_version(sqlite_db_real: SqliteDb, sample_agent: Agen
     agent_v1 = sqlite_db_real.get_agent(sample_agent.id, version="v1.0")
     assert agent_v1 is not None
     assert agent_v1.description == "A test agent for integration tests"
+    assert agent_v1.version == "v1.0"
     
     # Get v2.0 explicitly
     agent_v2 = sqlite_db_real.get_agent(sample_agent.id, version="v2.0")
     assert agent_v2 is not None
     assert agent_v2.description == "Version 2"
+    assert agent_v2.version == "v2.0"
     
     # Get without version (should return v1.0 as it's current)
     agent_current = sqlite_db_real.get_agent(sample_agent.id)
     assert agent_current is not None
     assert agent_current.description == "A test agent for integration tests"
+    assert agent_current.version == "v1.0"
 
 
 def test_get_agent_nonexistent(sqlite_db_real: SqliteDb):

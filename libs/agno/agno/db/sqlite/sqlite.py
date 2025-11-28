@@ -191,11 +191,7 @@ class SqliteDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            # Check if table already exists in metadata to avoid conflicts
-            if table_name in self.metadata.tables:
-                table = self.metadata.tables[table_name]
-            else:
-                table = Table(table_name, self.metadata, *columns)
+            table = Table(table_name, self.metadata, *columns)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -2496,8 +2492,14 @@ class SqliteDb(BaseDb):
                 return None
 
             current_datetime = datetime.now().isoformat()
+            
+            # Figure out the version to use
+            version_to_use = agent.version or version or "v1.0"
+            agent.version = version_to_use
+            
             agent_dict = agent.to_dict()
 
+            existing_agent = None
             with self.Session() as sess, sess.begin():
                 # Check if agent exists
                 check_stmt = select(agents_table).where(
@@ -2505,46 +2507,47 @@ class SqliteDb(BaseDb):
                     agents_table.c.deleted_at.is_(None)
                 )
                 existing_agent = sess.execute(check_stmt).fetchone()
+            
+            if existing_agent:
+                # Agent exists
+                existing_agent_dict = dict(existing_agent._mapping)
                 
-                if existing_agent:
-                    # Agent exists
-                    existing_agent_dict = dict(existing_agent._mapping)
-                    
-                    if version is None:
-                        # Update current_version's config
-                        current_ver = existing_agent_dict.get("current_version")
-                        if current_ver:
-                            # Update the existing current version
-                            self.upsert_config(
-                                entity_id=agent.id,
-                                entity_type="agent",
-                                version=current_ver,
-                                config=agent_dict,
-                                notes=None,
-                                set_as_current=False  # Already current
-                            )
-                        else:
-                            # No current version set, create v1.0
-                            self.upsert_config(
-                                entity_id=agent.id,
-                                entity_type="agent",
-                                version="v1.0",
-                                config=agent_dict,
-                                notes="Initial version",
-                                set_as_current=True
-                            )
-                    else:
-                        # Create/update the specified version
+                if version is None:
+                    # Update current_version's config
+                    current_ver = existing_agent_dict.get("current_version")
+                    if current_ver:
+                        # Update the existing current version
                         self.upsert_config(
                             entity_id=agent.id,
                             entity_type="agent",
-                            version=version,
+                            version=current_ver,
                             config=agent_dict,
                             notes=None,
-                            set_as_current=False
+                            set_as_current=False  # Already current
                         )
-                    
-                    # Update agent metadata
+                    else:
+                        # No current version set, create v1.0
+                        self.upsert_config(
+                            entity_id=agent.id,
+                            entity_type="agent",
+                            version="v1.0",
+                            config=agent_dict,
+                            notes="Initial version",
+                            set_as_current=True
+                        )
+                else:
+                    # Create/update the specified version
+                    self.upsert_config(
+                        entity_id=agent.id,
+                        entity_type="agent",
+                        version=version,
+                        config=agent_dict,
+                        notes=None,
+                        set_as_current=False
+                    )
+                
+                # Update agent metadata
+                with self.Session() as sess, sess.begin():
                     stmt = (
                         agents_table.update()
                         .where(agents_table.c.agent_id == agent.id)
@@ -2556,11 +2559,10 @@ class SqliteDb(BaseDb):
                         )
                     )
                     sess.execute(stmt)
-                    
-                else:
-                    # Agent doesn't exist - create new
-                    version_to_use = version or "v1.0"
-                    
+                
+            else:
+                
+                with self.Session() as sess, sess.begin():
                     # Create agent
                     stmt = sqlite.insert(agents_table).values(
                         agent_id=agent.id,
@@ -2573,19 +2575,19 @@ class SqliteDb(BaseDb):
                         deleted_at=None,
                     )
                     sess.execute(stmt)
-                    
-                    # Create first config
-                    self.upsert_config(
-                        entity_id=agent.id,
-                        entity_type="agent",
-                        version=version_to_use,
-                        config=agent_dict,
-                        notes="Initial version",
-                        set_as_current=False  # Already set in agent creation
-                    )
                 
-                agent.version = version_to_use
-                return agent
+                # Create first config
+                self.upsert_config(
+                    entity_id=agent.id,
+                    entity_type="agent",
+                    version=version_to_use,
+                    config=agent_dict,
+                    notes="Initial version",
+                    set_as_current=False  # Already set in agent creation
+                )
+            
+                
+            return agent
 
         except Exception as e:
             log_error(f"Error upserting agent: {e}")
@@ -2736,12 +2738,12 @@ class SqliteDb(BaseDb):
                     return None
                 
                 config_data = dict(row._mapping)
+            
+            # Optionally set this as the current version (for agents)
+            if set_as_current and entity_type == "agent":
+                self.set_agent_config_version(entity_id, version)
                 
-                # Optionally set this as the current version (for agents)
-                if set_as_current and entity_type == "agent":
-                    self.set_agent_config_version(entity_id, version)
-                
-                return config_data
+            return config_data
 
         except Exception as e:
             log_error(f"Error upserting config: {e}")

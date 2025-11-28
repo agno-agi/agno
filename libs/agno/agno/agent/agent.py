@@ -423,7 +423,6 @@ class Agent:
     # The version of the config to use
     version: Optional[str] = None
     
-
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -535,6 +534,7 @@ class Agent:
         update_cultural_knowledge: bool = False,
         add_culture_to_context: Optional[bool] = None,
         reload_on_run: bool = False,
+        version: Optional[str] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -676,6 +676,7 @@ class Agent:
         self.add_culture_to_context = add_culture_to_context
 
         self.reload_on_run = reload_on_run
+        self.version = version
         
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
