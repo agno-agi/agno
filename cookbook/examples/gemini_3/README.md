@@ -41,11 +41,14 @@ export GOOGLE_API_KEY=your-api-key
 
 ### Run All Agents via AgentOS
 
+AgentOS is a runtime for agents in Agno. Learn more about it [here](https://docs.agno.com/agent-os/overview).
+
+First, start the local AgentOS server:
 ```bash
 python run.py
 ```
 
-Visit os.agno.com and add http://localhost:7777 as an OS endpoint. You can then interact with the agents via the web interface. You can also open the browser and navigate to http://localhost:7777/docs to see the documentation of the agents.
+Visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an OS endpoint. You can then interact with the agents via the web interface. You can also open the browser and navigate to `http://localhost:7777/docs` to see the documentation of the agents.
 
 ### Run Individual Examples
 
@@ -69,7 +72,7 @@ python product_comparison_agent.py
 | `research_agent.py`           | `research_agent`           | Grounding               | user_memories + session_summaries |
 | `product_comparison_agent.py` | `product_comparison_agent` | URL Context + Grounding | user_memories + history           |
 
-## Database
+### Database
 
 All agents use SqliteDb for persistence (configured in `db.py`):
 
@@ -80,6 +83,8 @@ from db import demo_db
 
 ## Google-Specific Features
 
+Agno supports a variety of Google-specific features. Learn more about them [here](https://docs.agno.com/integrations/models/native/google/overview).
+
 | Feature       | Parameter           | Description                  |
 | ------------- | ------------------- | ---------------------------- |
 | Google Search | `search=True`       | Search the web (Gemini 2.0+) |
@@ -87,7 +92,7 @@ from db import demo_db
 | URL Context   | `url_context=True`  | Analyze web page content     |
 | NanoBanana    | `NanoBananaTools()` | Image generation toolkit     |
 
-# Updating the dependencies
+## Updating the dependencies
 
 ```bash
 pip-compile requirements.ini
