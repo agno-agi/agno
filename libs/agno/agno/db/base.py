@@ -1,15 +1,17 @@
 from abc import ABC, abstractmethod
 from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.db.schemas.config import EntityConfig
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
+
+if TYPE_CHECKING:
+    from agno.agent.agent import Agent
 
 
 class SessionType(str, Enum):
@@ -32,6 +34,7 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        agents_table: Optional[str] = None,
         configs_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         id: Optional[str] = None,
@@ -43,6 +46,7 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.agents_table_name = agents_table or "agno_agents"
         self.configs_table_name = configs_table or "agno_configs"
         self.versions_table_name = versions_table or "agno_schema_versions"
 
@@ -333,46 +337,37 @@ class BaseDb(ABC):
         raise NotImplementedError
     
     # --- Configs ---
-    
     @abstractmethod
-    def get_config(self, id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a config by ID.
-
-        Args:
-            id (str): The ID of the config to get.
-
-        Returns:
-            Optional[Dict[str, Any]]: The config, or None if no config is found.
-        """
+    def get_agent(self, agent_id: str, version: Optional[str] = None):
         raise NotImplementedError
     
     @abstractmethod
-    def get_config_for_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[EntityConfig]:
-        """
-        Get a config for an entity by entity_id and version.
-        
-        This has to return a unique config. If multiple configs are found, it will raise an error.
-        """
+    def upsert_agent(self, agent: "Agent") -> Optional["Agent"]:
         raise NotImplementedError
     
     @abstractmethod
-    def get_configs(self, entity_id: Optional[str] = None, entity_type: Optional[str] = None) -> Optional[List[EntityConfig]]:
+    def delete_agent(self, agent_id: str) -> bool:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def set_agent_config_version(self, agent_id: str, version: str) -> bool:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
         """
-        Get all configs by entity_id and entity_type.
-
-        Args:
-            entity_id (Optional[str]): The ID of the entity to get configs for.
-            entity_type (Optional[str]): The type of entity to get configs for.
-
-        Returns:
-            Optional[List[EntityConfig]]: The configs, or None if no configs are found.
+        Get a config by entity_id and version.
         """
         raise NotImplementedError
 
-
     @abstractmethod
-    def upsert_config(self, config: EntityConfig) -> Optional[EntityConfig]:
+    def upsert_config(self, 
+        entity_id: str,
+        entity_type: str,
+        version: str,
+        config: Dict[str, Any],
+        notes: Optional[str] = None,
+        set_as_current: bool = False,) -> Optional[Dict[str, Any]]:
         """
         Upsert a config.
 
@@ -382,6 +377,10 @@ class BaseDb(ABC):
         Returns:
             Optional[EntityConfig]: The upserted config, or None if the operation fails.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_config(self, entity_id: str, version: str) -> bool:
         raise NotImplementedError
 
 
@@ -397,6 +396,7 @@ class AsyncBaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        agents_table: Optional[str] = None,
         configs_table: Optional[str] = None,
         versions_table: Optional[str] = None,
     ):
@@ -407,6 +407,7 @@ class AsyncBaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.culture_table_name = culture_table or "agno_culture"
+        self.agents_table_name = agents_table or "agno_agents"
         self.configs_table_name = configs_table or "agno_configs"
         self.versions_table_name = versions_table or "agno_schema_versions"
 
@@ -682,51 +683,35 @@ class AsyncBaseDb(ABC):
 
     # --- Configs ---
     @abstractmethod
-    async def get_config(self, id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a config by ID.
-
-        Args:
-            id (str): The ID of the config to get.
-
-        Returns:
-            Optional[Dict[str, Any]]: The config, or None if no config is found.
-        """
+    async def get_agent(self, agent_id: str, version: Optional[str] = None):
         raise NotImplementedError
     
     @abstractmethod
-    async def get_config_for_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[EntityConfig]:
-        """
-        Get a config for an entity by entity_id and version.
-        
-        This has to return a unique config. If multiple configs are found, it will raise an error.
-        """
+    async def upsert_agent(self, agent: "Agent") -> Optional["Agent"]:
         raise NotImplementedError
     
     @abstractmethod
-    async def get_configs(self, entity_id: Optional[str] = None, entity_type: Optional[str] = None) -> Optional[List[EntityConfig]]:
-        """
-        Get all configs by entity_id and entity_type.
-
-        Args:
-            entity_id (Optional[str]): The ID of the entity to get configs for.
-            entity_type (Optional[str]): The type of entity to get configs for.
-
-        Returns:
-            Optional[List[EntityConfig]]: The configs, or None if no configs are found.
-        """
+    async def delete_agent(self, agent_id: str) -> bool:
+        raise NotImplementedError
+    
+    @abstractmethod
+    async def set_agent_config_version(self, agent_id: str, version: str) -> bool:
         raise NotImplementedError
 
-
     @abstractmethod
-    async def upsert_config(self, config: EntityConfig) -> Optional[EntityConfig]:
-        """
-        Upsert a config.
-
-        Args:
-            config (EntityConfig): The config to upsert.
-
-        Returns:
-            Optional[EntityConfig]: The upserted config, or None if the operation fails.
-        """
+    async def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+    
+    @abstractmethod
+    async def delete_config(self, entity_id: str, version: str) -> bool:
+        raise NotImplementedError
+    
+    @abstractmethod
+    async def upsert_config(self, 
+        entity_id: str,
+        entity_type: str,
+        version: str,
+        config: Dict[str, Any],
+        notes: Optional[str] = None,
+        set_as_current: bool = False,) -> Optional[Dict[str, Any]]:
         raise NotImplementedError

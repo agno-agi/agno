@@ -149,5 +149,18 @@ def sqlite_db_real(temp_storage_db_file) -> SqliteDb:
 
 
 @pytest.fixture
+def async_sqlite_db_real(temp_storage_db_file) -> AsyncSqliteDb:
+    """Create AsyncSqliteDb with real async SQLite engine"""
+    return AsyncSqliteDb(
+        session_table="test_sessions",
+        memory_table="test_memories",
+        metrics_table="test_metrics",
+        eval_table="test_evals",
+        knowledge_table="test_knowledge",
+        db_file=temp_storage_db_file,
+    )
+
+
+@pytest.fixture
 def image_path():
     return Path(__file__).parent / "res" / "images" / "golden_gate.png"

@@ -6,6 +6,9 @@ Core Rules
 - PostgreSQL in production, SQLite for dev only
 - Start with single agent, scale up only when needed
 
+When you run code:
+- Always first run `source .venv/bin/activate && source .envrc`
+
 Basic Agent (start here):
 ```python
 from agno.agent import Agent

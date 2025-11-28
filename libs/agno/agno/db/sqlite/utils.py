@@ -7,7 +7,6 @@ from uuid import uuid4
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.schemas.culture import CulturalKnowledge
-from agno.db.schemas.config import EntityConfig
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -430,14 +429,3 @@ def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKn
             "team_id": db_row.get("team_id"),
         }
     )
-
-def deserialize_config_from_db(db_row: Dict[str, Any]) -> EntityConfig:
-    """Deserialize a database row to a Config object.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        Config: The config object.
-    """
-    return EntityConfig.from_dict(db_row)

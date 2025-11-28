@@ -7,7 +7,9 @@ from agno.db.sqlite import SqliteDb
 
 db = SqliteDb(db_file="tmp/agents.db")
 
-# Create a basic agent
+# ------------------------------------------------------------
+# Create an agent and save the config to the DB
+# ------------------------------------------------------------
 agent = Agent(
     id="web-search-agent", # Adding the ID is highly recommended for finding the config in the DB
     name="Web Search Agent",
@@ -21,33 +23,72 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("What is the current price of Tesla?")
+agent.print_response("What is the current price of NVIDIA?")
 
-# Save the agent's config in the DB
-saved_config = agent.save_config()
+# Save the agent to the DB
+agent.save(
+    # version = "v1.0"  # Optional: Specify a custom version
+)
+
+
+# ------------------------------------------------------------
+# Modify the agent and save the config to the DB
+# ------------------------------------------------------------
 
 # Change the agent
 agent.add_tool(HackerNewsTools())
 
-# Save the new config in the DB
-saved_config = agent.save_config()
+# Save the new agent in the DB (optionally specify a version)
+agent.save(version="v1.1")
+
+
+# ------------------------------------------------------------
+# Modify the config directly in the DB
+# ------------------------------------------------------------
 
 # Update the config in the DB
-saved_config.config["enable_session_summaries"] = True
-updated_config = agent.update_config(saved_config)
-
-assert updated_config.config["enable_session_summaries"] == True
-
-### Create a new agent from an existing config
-new_agent = Agent.from_config(db=db, config_id=updated_config.id)
-
-new_agent.print_response("What is the current price of NVIDIA?")
-
-
-### Create a new agent from a config ID
-new_new_agent = Agent(db=db, 
-    config_id=updated_config.id,
-    # run_from_config=True # Re-hydrate the agent on each run (optional)
+agent_config = agent.to_dict()
+agent_config["enable_session_summaries"] = True
+agent.db.upsert_config(
+    entity_id=agent.id,
+    entity_type="agent",
+    version="v1.2",
+    config=agent_config,
+    notes="Enabled session summaries",
+    set_as_current=True, # Set the config as the current version for the agent
 )
 
-new_new_agent.print_response("What is the current price of Apple?")
+agent = agent.load()  # Loads the current version of the agent
+
+# ------------------------------------------------------------
+# Create a new agent instance and load the current version of the agent
+# ------------------------------------------------------------
+new_agent = Agent(id="web-search-agent", db=db).load( # Loads the current version of the agent
+    # version="v1.2" # Optional: Specify a specific version to load
+) 
+
+new_agent.print_response("What is the current price of Apple?")
+
+
+# ------------------------------------------------------------
+# Reload the agent from config on each run
+# ------------------------------------------------------------
+agent = Agent(
+    id="web-search-agent", # Adding the ID is required to find the config in the DB
+    db=db,  # DB is required to save/load the agent's config
+    reload_on_run=True,  # Reload the config on each run (useful if you change the config in the background)
+)
+
+agent.print_response("What is the current price of NVIDIA?")
+
+
+# ------------------------------------------------------------
+# Reload the agent from config on each run
+# ------------------------------------------------------------
+agent = Agent(
+    id="web-search-agent", # Adding the ID is highly recommended for finding the config in the DB
+    db=db,  # DB is required to save the agent's config
+)
+
+# Specify the version to use for this run
+agent.print_response("What is the current price of NVIDIA?", version="v1.0")  

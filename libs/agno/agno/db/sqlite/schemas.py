@@ -108,13 +108,23 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
 }
 
-AGNO_CONFIGS_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "entity_id": {"type": String, "nullable": False, "index": True},  # To allow search on all configs for a specific entity (agent/team/workflow)
-    "entity_type": {"type": String, "nullable": False, "index": True},  # To allow search on all configs for agents/teams/workflows
-    "config": {"type": JSON, "nullable": False},
-    "version": {"type": String, "nullable": True},
+AGENTS_TABLE_SCHEMA = {
+    "agent_id": {"type": String, "primary_key": True, "nullable": False},
+    "agent_name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": String, "nullable": True},
+    "current_version": {"type": String, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": String, "nullable": False, "index": True},
+    "updated_at": {"type": String, "nullable": True},
+    "deleted_at": {"type": String, "nullable": True},
+}
+
+AGNO_CONFIGS_TABLE_SCHEMA = {
+    "entity_id": {"type": String, "primary_key": True, "nullable": False},
+    "version": {"type": String, "primary_key": True, "nullable": False},
+    "entity_type": {"type": String, "nullable": False, "index": True},
+    "config": {"type": JSON, "nullable": False},
+    "notes": {"type": String, "nullable": True},
     "created_at": {"type": String, "nullable": False, "index": True},
     "updated_at": {"type": String, "nullable": True},
 }
@@ -144,6 +154,9 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
+        "agents": AGENTS_TABLE_SCHEMA,
+        # "teams": TEAMS_TABLE_SCHEMA,
+        # "workflows": WORKFLOWS_TABLE_SCHEMA,
         "configs": AGNO_CONFIGS_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
     }
