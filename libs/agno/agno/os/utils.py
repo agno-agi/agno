@@ -300,6 +300,39 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
+async def get_all_agents_from_db(dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> List[Agent]:
+    """Get all agents from all databases."""
+    from sqlalchemy import select
+
+    from agno.db.base import AsyncBaseDb
+
+    agents = []
+    seen_agent_ids = set()
+
+    # TODO: Implement this
+    return agents
+
+
+async def get_agent_by_id_from_db(agent_id: str, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> Optional[Agent]:
+    """Get an agent by ID from all databases."""
+    from agno.db.base import AsyncBaseDb
+
+    for db_list in dbs.values():
+        for db in db_list:
+            try:
+                if isinstance(db, AsyncBaseDb):
+                    agent = await db.get_agent(agent_id=agent_id)
+                else:
+                    agent = db.get_agent(agent_id=agent_id)
+
+                if agent:
+                    return agent
+            except Exception:
+                continue
+
+    return None
+
+
 def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
     if team_id is None or teams is None:
         return None
