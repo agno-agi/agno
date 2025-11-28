@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.exceptions import ModelProviderError
 from agno.models.openai.like import OpenAILike
 from agno.run.agent import RunOutput
 
@@ -33,6 +34,25 @@ class OpenRouter(OpenAILike):
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for OPENROUTER_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        # Fetch API key from env if not already set
+        if not self.api_key:
+            self.api_key = getenv("OPENROUTER_API_KEY")
+            if not self.api_key:
+                raise ModelProviderError(
+                    message="OPENROUTER_API_KEY not set. Please set the OPENROUTER_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+
+        return super()._get_client_params()
 
     def get_request_params(
         self,
