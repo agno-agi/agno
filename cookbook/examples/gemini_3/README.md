@@ -14,7 +14,7 @@ This directory contains examples demonstrating Google's unique AI features:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/agno-ai/agno.git
+git clone https://github.com/agno-agi/agno.git
 cd agno/cookbook/examples/gemini_3
 ```
 
@@ -91,9 +91,3 @@ Agno supports a variety of Google-specific features. Learn more about them [here
 | Grounding     | `grounding=True`    | Search with citations        |
 | URL Context   | `url_context=True`  | Analyze web page content     |
 | NanoBanana    | `NanoBananaTools()` | Image generation toolkit     |
-
-## Updating the dependencies
-
-```bash
-pip-compile requirements.ini
-```
