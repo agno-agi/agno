@@ -7,7 +7,7 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, Coroutine, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -218,7 +218,7 @@ class Knowledge:
             skip_if_exists: Whether to skip adding content if it already exists
             remote_content: Optional remote content (S3, GCS, etc.) to add
         """
-        asyncio.run(self.add_contents_async(*args, **kwargs))
+        self._run_on_loop(self.add_contents_async(*args, **kwargs))
 
     # --- Add Content ---
 
@@ -345,7 +345,7 @@ class Knowledge:
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
         """
-        asyncio.run(
+        self._run_on_loop(
             self.add_content_async(
                 name=name,
                 description=description,
@@ -363,6 +363,19 @@ class Knowledge:
                 auth=auth,
             )
         )
+
+    def _run_on_loop(self, main: Coroutine[Any, Any, None]) -> None:
+        """
+        Run an awaitable coroutine on an asyncio loop.
+
+        Args:
+            main: The coroutine to execute on the asyncio loop.
+        """
+        try:
+            asyncio.get_running_loop()
+            asyncio.ensure_future(main)
+        except RuntimeError:
+            asyncio.run(main)
 
     def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
         """
