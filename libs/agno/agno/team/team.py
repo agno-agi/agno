@@ -5291,6 +5291,7 @@ class Team:
 
         _function_names = []
         _functions: List[Union[Function, dict]] = []
+        self._tool_instructions = []
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
