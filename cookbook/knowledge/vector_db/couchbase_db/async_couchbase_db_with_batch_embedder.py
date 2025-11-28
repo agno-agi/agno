@@ -156,6 +156,8 @@ knowledge_base = Knowledge(
         couchbase_connection_string=connection_string,
         cluster_options=cluster_options,
         search_index=search_index,
+        # Embedder is optional - if not provided, OpenAIEmbedder with dimensions=1536 will be used by default
+        # Here we explicitly configure it with batch embedding enabled
         embedder=OpenAIEmbedder(
             id="text-embedding-3-large",
             dimensions=3072,
