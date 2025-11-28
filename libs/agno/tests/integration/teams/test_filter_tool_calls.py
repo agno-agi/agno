@@ -37,30 +37,50 @@ def test_tool_calls_filtering(team):
     response3 = team.run("What is the weather in Shanghai?")
     assert response3.messages is not None
     tool_calls_run3 = sum(1 for m in response3.messages if m.role == "tool")
-    assert tool_calls_run3 == 2, "Expected 2 tool calls in run 3 (1 history + 1 current)"
+    assert tool_calls_run3 == 3, "Expected 3 tool calls in run 3 (2 history + 1 current)"
 
-    history_tool_calls_run3 = sum(
-        1 for m in response3.messages if m.role == "tool" and getattr(m, "from_history", False)
+    history_tool_calls_run3 = [m for m in response3.messages if m.role == "tool" and getattr(m, "from_history", False)]
+    current_tool_calls_run3 = [
+        m for m in response3.messages if m.role == "tool" and not getattr(m, "from_history", False)
+    ]
+    assert len(history_tool_calls_run3) == 2, "Expected 2 tool calls from history in run 3"
+    assert len(current_tool_calls_run3) == 1, "Expected 1 current tool call in run 3"
+
+    # Verify the pruned message contains required elements
+    assert (
+        history_tool_calls_run3[0].content
+        == '[RESULT_PRUNED] tool_name:get_weather, tool_args:{"city": "Tokyo"} result has been pruned to limit context size. You DO NOT know the details of this tool result anymore. If you need to access data from this tool, you MUST call the tool again.'
     )
-    current_tool_calls_run3 = sum(
-        1 for m in response3.messages if m.role == "tool" and not getattr(m, "from_history", False)
-    )
-    assert history_tool_calls_run3 == 1, "Expected 1 tool call from history in run 3"
-    assert current_tool_calls_run3 == 1, "Expected 1 current tool call in run 3"
+
+    # Verify unpruned tool calls have normal content
+    assert history_tool_calls_run3[1].content == "The weather in Delhi is sunny."
+    assert current_tool_calls_run3[0].content == "The weather in Shanghai is sunny."
 
     response4 = team.run("What is the weather in Mumbai?")
     assert response4.messages is not None
     tool_calls_run4 = sum(1 for m in response4.messages if m.role == "tool")
-    assert tool_calls_run4 == 2, "Expected 2 tool calls in run 4 (1 history + 1 current)"
+    assert tool_calls_run4 == 4, "Expected 2 tool calls in run 4 (3 history + 1 current)"
 
-    history_tool_calls_run4 = sum(
-        1 for m in response4.messages if m.role == "tool" and getattr(m, "from_history", False)
+    history_tool_calls_run4 = [m for m in response4.messages if m.role == "tool" and getattr(m, "from_history", False)]
+    current_tool_calls_run4 = [
+        m for m in response4.messages if m.role == "tool" and not getattr(m, "from_history", False)
+    ]
+    assert len(history_tool_calls_run4) == 3, "Expected 3 tool calls from history in run 4"
+    assert len(current_tool_calls_run4) == 1, "Expected 1 current tool call in run 4"
+
+    # Verify the pruned message contains required elements
+    assert (
+        history_tool_calls_run4[0].content
+        == '[RESULT_PRUNED] tool_name:get_weather, tool_args:{"city": "Tokyo"} result has been pruned to limit context size. You DO NOT know the details of this tool result anymore. If you need to access data from this tool, you MUST call the tool again.'
     )
-    current_tool_calls_run4 = sum(
-        1 for m in response4.messages if m.role == "tool" and not getattr(m, "from_history", False)
+    assert (
+        history_tool_calls_run4[1].content
+        == '[RESULT_PRUNED] tool_name:get_weather, tool_args:{"city": "Delhi"} result has been pruned to limit context size. You DO NOT know the details of this tool result anymore. If you need to access data from this tool, you MUST call the tool again.'
     )
-    assert history_tool_calls_run4 == 1, "Expected 1 tool call from history in run 4"
-    assert current_tool_calls_run4 == 1, "Expected 1 current tool call in run 4"
+
+    # Verify unpruned tool calls have normal content
+    assert history_tool_calls_run4[2].content == "The weather in Shanghai is sunny."
+    assert current_tool_calls_run4[0].content == "The weather in Mumbai is sunny."
 
 
 def test_tool_calls_in_db(team):
@@ -78,6 +98,10 @@ def test_tool_calls_in_db(team):
     # Count all tool calls in database
     db_tool_calls = sum(1 for m in session_messages if m.role == "tool")
     assert db_tool_calls == 4, "Database should store all 4 tool calls"
+
+    # Verify database has unpruned content (no [RESULT_PRUNED] markers)
+    pruned_in_db = [m for m in session_messages if m.role == "tool" and m.content and "[RESULT_PRUNED]" in m.content]
+    assert len(pruned_in_db) == 0, "Database should not have pruned content"
 
 
 def test_no_filtering(shared_db):
