@@ -9,6 +9,7 @@ from agno.db.base import BaseDb, SessionType
 if TYPE_CHECKING:
     from agno.agent import Agent
 from agno.db.migrations.manager import MigrationManager
+from agno.db.schemas.config import DEFAULT_VERSION
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -2452,9 +2453,7 @@ class SqliteDb(BaseDb):
                         **config_data,
                         "id": agent_id,
                         "name": agent_row.get("agent_name"),
-                        "description": agent_row.get("description"),
                     }
-                    
                     return Agent.from_dict(agent_data)
                 
                 return None
@@ -2494,7 +2493,8 @@ class SqliteDb(BaseDb):
             current_datetime = datetime.now().isoformat()
             
             # Figure out the version to use
-            version_to_use = agent.version or version or "v1.0"
+            # If version is provided, use it, agent's existing version, or default to DEFAULT_VERSION
+            version_to_use = version or agent.version or DEFAULT_VERSION
             agent.version = version_to_use
             
             agent_dict = agent.to_dict()
@@ -2526,11 +2526,11 @@ class SqliteDb(BaseDb):
                             set_as_current=False  # Already current
                         )
                     else:
-                        # No current version set, create v1.0
+                        # No current version set, create DEFAULT_VERSION
                         self.upsert_config(
                             entity_id=agent.id,
                             entity_type="agent",
-                            version="v1.0",
+                            version=DEFAULT_VERSION,
                             config=agent_dict,
                             notes="Initial version",
                             set_as_current=True
@@ -2553,7 +2553,6 @@ class SqliteDb(BaseDb):
                         .where(agents_table.c.agent_id == agent.id)
                         .values(
                             agent_name=agent.name or "Unnamed Agent",
-                            description=agent.description,
                             metadata=agent_dict.get("metadata"),
                             updated_at=current_datetime,
                         )
@@ -2567,7 +2566,6 @@ class SqliteDb(BaseDb):
                     stmt = sqlite.insert(agents_table).values(
                         agent_id=agent.id,
                         agent_name=agent.name or "Unnamed Agent",
-                        description=agent.description,
                         current_version=version_to_use,
                         metadata=agent_dict.get("metadata"),
                         created_at=current_datetime,

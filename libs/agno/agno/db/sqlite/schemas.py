@@ -111,7 +111,6 @@ CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
 AGENTS_TABLE_SCHEMA = {
     "agent_id": {"type": String, "primary_key": True, "nullable": False},
     "agent_name": {"type": String, "nullable": False, "index": True},
-    "description": {"type": String, "nullable": True},
     "current_version": {"type": String, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
     "created_at": {"type": String, "nullable": False, "index": True},

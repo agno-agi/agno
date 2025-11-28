@@ -1599,9 +1599,8 @@ class Agent:
             )
 
         # Load the agent from the cached config_id
-        if self.run_from_config:
-            # Re-hydrate the agent from the stored config
-            self._load_from_config()
+        if self.reload_on_run:
+            self._reload_from_db(version=self.version)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
@@ -1862,6 +1861,10 @@ class Agent:
         15. Create session summary
         16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
+        # Reload agent configuration if needed (for async databases)
+        if self.reload_on_run and self._has_async_db():
+            await self._areload_from_db(version=self.version)
+        
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
@@ -2133,6 +2136,10 @@ class Agent:
         12. Create session summary
         13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
+        # Reload agent configuration if needed (for async databases)
+        if self.reload_on_run and self._has_async_db():
+            await self._areload_from_db(version=self.version)
+        
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Start the Run by yielding a RunStarted event
@@ -2554,6 +2561,12 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
+
+        # Load the agent from the cached config_id
+        # Note: We handle reload differently for async vs sync databases
+        # For async databases, reload happens in the async execution path
+        if self.reload_on_run and not self._has_async_db():
+            self._reload_from_db(version=self.version)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
@@ -11245,310 +11258,10 @@ class Agent:
             compression_manager_data = config["compression_manager"]
             if isinstance(compression_manager_data, dict):
                 config["compression_manager"] = CompressionManager.from_dict(compression_manager_data)
-
+                
         # Create and return the agent
         return cls(**config)
     
-    def _load_from_config(self):
-        """Load configuration from database and populate current instance attributes."""
-        if not self.db:
-            raise ValueError("Database is not set. This is required to load the agent from a config.")
-        if self.config_id is None:
-            raise ValueError("No config_id provided. This is required to load the agent from a config.")
-        
-        config = self.db.get_config(self.config_id)
-        if config is None:
-            raise ValueError(f"No config found for config_id: {self.config_id}")
-        
-        # Get the config dict
-        config_dict = config.config
-        
-        # Import necessary classes for reconstruction
-        from agno.models.utils import get_model
-        from agno.tools.function import Function
-        from agno.memory import MemoryManager
-        from agno.session import SessionSummaryManager
-        from agno.culture import CultureManager
-        from agno.knowledge import Knowledge
-        
-        # --- Handle Model reconstruction and assignment ---
-        if "model" in config_dict:
-            model_data = config_dict["model"]
-            if isinstance(model_data, dict) and "provider" in model_data and "id" in model_data:
-                model_str = f"{model_data['provider']}:{model_data['id']}"
-                self.model = get_model(model_str)
-            else:
-                self.model = get_model(model_data)
-        
-        # --- Basic attributes ---
-        if "name" in config_dict:
-            self.name = config_dict["name"]
-        if "id" in config_dict:
-            self.id = config_dict["id"]
-        if "introduction" in config_dict:
-            self.introduction = config_dict["introduction"]
-        if "user_id" in config_dict:
-            self.user_id = config_dict["user_id"]
-        
-        # --- Session settings ---
-        if "session_id" in config_dict:
-            self.session_id = config_dict["session_id"]
-        if "session_state" in config_dict:
-            self.session_state = config_dict["session_state"]
-        if "add_session_state_to_context" in config_dict:
-            self.add_session_state_to_context = config_dict["add_session_state_to_context"]
-        if "overwrite_db_session_state" in config_dict:
-            self.overwrite_db_session_state = config_dict["overwrite_db_session_state"]
-        if "enable_agentic_state" in config_dict:
-            self.enable_agentic_state = config_dict["enable_agentic_state"]
-        if "cache_session" in config_dict:
-            self.cache_session = config_dict["cache_session"]
-        if "search_session_history" in config_dict:
-            self.search_session_history = config_dict["search_session_history"]
-        if "num_history_sessions" in config_dict:
-            self.num_history_sessions = config_dict["num_history_sessions"]
-        if "enable_session_summaries" in config_dict:
-            self.enable_session_summaries = config_dict["enable_session_summaries"]
-        if "add_session_summary_to_context" in config_dict:
-            self.add_session_summary_to_context = config_dict["add_session_summary_to_context"]
-        
-        # --- Dependencies ---
-        if "dependencies" in config_dict:
-            self.dependencies = config_dict["dependencies"]
-        if "add_dependencies_to_context" in config_dict:
-            self.add_dependencies_to_context = config_dict["add_dependencies_to_context"]
-        
-        # --- Memory settings ---
-        if "memory_manager" in config_dict and config_dict["memory_manager"]:
-            # TODO: implement memory manager reconstruction
-            pass
-        if "enable_agentic_memory" in config_dict:
-            self.enable_agentic_memory = config_dict["enable_agentic_memory"]
-        if "enable_user_memories" in config_dict:
-            self.enable_user_memories = config_dict["enable_user_memories"]
-        if "add_memories_to_context" in config_dict:
-            self.add_memories_to_context = config_dict["add_memories_to_context"]
-        
-        # --- Session summary manager ---
-        if "session_summary_manager" in config_dict and config_dict["session_summary_manager"]:
-            # TODO: implement session summary manager reconstruction
-            pass
-        
-        # --- History settings ---
-        if "add_history_to_context" in config_dict:
-            self.add_history_to_context = config_dict["add_history_to_context"]
-        if "num_history_runs" in config_dict:
-            self.num_history_runs = config_dict["num_history_runs"]
-        if "num_history_messages" in config_dict:
-            self.num_history_messages = config_dict["num_history_messages"]
-        if "max_tool_calls_from_history" in config_dict:
-            self.max_tool_calls_from_history = config_dict["max_tool_calls_from_history"]
-        if "store_media" in config_dict:
-            self.store_media = config_dict["store_media"]
-        if "store_tool_messages" in config_dict:
-            self.store_tool_messages = config_dict["store_tool_messages"]
-        if "store_history_messages" in config_dict:
-            self.store_history_messages = config_dict["store_history_messages"]
-        
-        # --- Knowledge settings ---
-        if "knowledge" in config_dict and config_dict["knowledge"]:
-            # TODO: implement knowledge reconstruction
-            pass
-        if "knowledge_filters" in config_dict:
-            self.knowledge_filters = config_dict["knowledge_filters"]
-        if "enable_agentic_knowledge_filters" in config_dict:
-            self.enable_agentic_knowledge_filters = config_dict["enable_agentic_knowledge_filters"]
-        if "add_knowledge_to_context" in config_dict:
-            self.add_knowledge_to_context = config_dict["add_knowledge_to_context"]
-        if "references_format" in config_dict:
-            self.references_format = config_dict["references_format"]
-        
-        # --- Metadata ---
-        if "metadata" in config_dict:
-            self.metadata = config_dict["metadata"]
-        
-        # --- Tools ---
-        if "tools" in config_dict:
-            tools_data = config_dict["tools"]
-            reconstructed_tools = []
-            for tool_data in tools_data:
-                try:
-                    reconstructed_tools.append(Function.from_dict(tool_data))
-                except Exception:
-                    reconstructed_tools.append(tool_data)
-            self.tools = reconstructed_tools if reconstructed_tools else []
-        
-        if "tool_call_limit" in config_dict:
-            self.tool_call_limit = config_dict["tool_call_limit"]
-        if "tool_choice" in config_dict:
-            self.tool_choice = config_dict["tool_choice"]
-        
-        # --- Reasoning settings ---
-        if "reasoning" in config_dict:
-            self.reasoning = config_dict["reasoning"]
-        if "reasoning_model" in config_dict:
-            reasoning_model_data = config_dict["reasoning_model"]
-            if isinstance(reasoning_model_data, dict) and "provider" in reasoning_model_data and "id" in reasoning_model_data:
-                reasoning_model_str = f"{reasoning_model_data['provider']}:{reasoning_model_data['id']}"
-                self.reasoning_model = get_model(reasoning_model_str)
-            else:
-                self.reasoning_model = get_model(reasoning_model_data)
-        if "reasoning_min_steps" in config_dict:
-            self.reasoning_min_steps = config_dict["reasoning_min_steps"]
-        if "reasoning_max_steps" in config_dict:
-            self.reasoning_max_steps = config_dict["reasoning_max_steps"]
-        
-        # --- Default tools settings ---
-        if "read_chat_history" in config_dict:
-            self.read_chat_history = config_dict["read_chat_history"]
-        if "search_knowledge" in config_dict:
-            self.search_knowledge = config_dict["search_knowledge"]
-        if "update_knowledge" in config_dict:
-            self.update_knowledge = config_dict["update_knowledge"]
-        if "read_tool_call_history" in config_dict:
-            self.read_tool_call_history = config_dict["read_tool_call_history"]
-        if "send_media_to_model" in config_dict:
-            self.send_media_to_model = config_dict["send_media_to_model"]
-        
-        # --- System message settings ---
-        if "system_message" in config_dict:
-            self.system_message = config_dict["system_message"]
-        if "system_message_role" in config_dict:
-            self.system_message_role = config_dict["system_message_role"]
-        if "build_context" in config_dict:
-            self.build_context = config_dict["build_context"]
-        
-        # --- Context building settings ---
-        if "description" in config_dict:
-            self.description = config_dict["description"]
-        if "instructions" in config_dict:
-            self.instructions = config_dict["instructions"]
-        if "expected_output" in config_dict:
-            self.expected_output = config_dict["expected_output"]
-        if "additional_context" in config_dict:
-            self.additional_context = config_dict["additional_context"]
-        if "markdown" in config_dict:
-            self.markdown = config_dict["markdown"]
-        if "add_name_to_context" in config_dict:
-            self.add_name_to_context = config_dict["add_name_to_context"]
-        if "add_datetime_to_context" in config_dict:
-            self.add_datetime_to_context = config_dict["add_datetime_to_context"]
-        if "add_location_to_context" in config_dict:
-            self.add_location_to_context = config_dict["add_location_to_context"]
-        if "timezone_identifier" in config_dict:
-            self.timezone_identifier = config_dict["timezone_identifier"]
-        if "resolve_in_context" in config_dict:
-            self.resolve_in_context = config_dict["resolve_in_context"]
-        
-        # --- User message settings ---
-        if "user_message_role" in config_dict:
-            self.user_message_role = config_dict["user_message_role"]
-        if "build_user_context" in config_dict:
-            self.build_user_context = config_dict["build_user_context"]
-        
-        # --- Response settings ---
-        if "retries" in config_dict:
-            self.retries = config_dict["retries"]
-        if "delay_between_retries" in config_dict:
-            self.delay_between_retries = config_dict["delay_between_retries"]
-        if "exponential_backoff" in config_dict:
-            self.exponential_backoff = config_dict["exponential_backoff"]
-        
-        # --- Parser and output settings ---
-        if "parser_model" in config_dict:
-            parser_model_data = config_dict["parser_model"]
-            if isinstance(parser_model_data, dict) and "provider" in parser_model_data and "id" in parser_model_data:
-                parser_model_str = f"{parser_model_data['provider']}:{parser_model_data['id']}"
-                self.parser_model = get_model(parser_model_str)
-            else:
-                self.parser_model = get_model(parser_model_data)
-        if "parser_model_prompt" in config_dict:
-            self.parser_model_prompt = config_dict["parser_model_prompt"]
-        if "parse_response" in config_dict:
-            self.parse_response = config_dict["parse_response"]
-        if "output_model" in config_dict:
-            output_model_data = config_dict["output_model"]
-            if isinstance(output_model_data, dict) and "provider" in output_model_data and "id" in output_model_data:
-                output_model_str = f"{output_model_data['provider']}:{output_model_data['id']}"
-                self.output_model = get_model(output_model_str)
-            else:
-                self.output_model = get_model(output_model_data)
-        if "output_model_prompt" in config_dict:
-            self.output_model_prompt = config_dict["output_model_prompt"]
-        if "structured_outputs" in config_dict:
-            self.structured_outputs = config_dict["structured_outputs"]
-        if "use_json_mode" in config_dict:
-            self.use_json_mode = config_dict["use_json_mode"]
-        if "save_response_to_file" in config_dict:
-            self.save_response_to_file = config_dict["save_response_to_file"]
-        
-        # --- Streaming settings ---
-        if "stream" in config_dict:
-            self.stream = config_dict["stream"]
-        if "stream_events" in config_dict:
-            self.stream_events = config_dict["stream_events"]
-        if "store_events" in config_dict:
-            self.store_events = config_dict["store_events"]
-        
-        # --- Role and culture settings ---
-        if "role" in config_dict:
-            self.role = config_dict["role"]
-        if "culture_manager" in config_dict and config_dict["culture_manager"]:
-            # TODO: implement culture manager reconstruction
-            pass
-        if "enable_agentic_culture" in config_dict:
-            self.enable_agentic_culture = config_dict["enable_agentic_culture"]
-        if "update_cultural_knowledge" in config_dict:
-            self.update_cultural_knowledge = config_dict["update_cultural_knowledge"]
-        if "add_culture_to_context" in config_dict:
-            self.add_culture_to_context = config_dict["add_culture_to_context"]
-
-        # --- Team and workflow settings ---
-        if "team_id" in config_dict:
-            self.team_id = config_dict["team_id"]
-        if "workflow_id" in config_dict:
-            self.workflow_id = config_dict["workflow_id"]
-
-        # --- Context compression settings ---
-        if "compress_tool_results" in config_dict:
-            self.compress_tool_results = config_dict["compress_tool_results"]
-        if "compression_manager" in config_dict and config_dict["compression_manager"]:
-            # TODO: implement compression manager reconstruction
-            pass
-
-        # --- Config loading settings ---
-        if "run_from_config" in config_dict:
-            self.run_from_config = config_dict["run_from_config"]
-            
-        # --- Debug settings ---
-        if "debug_mode" in config_dict:
-            self.debug_mode = config_dict["debug_mode"]
-        if "debug_level" in config_dict:
-            self.debug_level = config_dict["debug_level"]
-        if "telemetry" in config_dict:
-            self.telemetry = config_dict["telemetry"]
-        
-        log_debug(f"Loaded agent configuration from config_id: {self.config_id}")
-
-    # @staticmethod
-    # def from_config(db: BaseDb, config_id: str) -> "Agent":
-    #     """
-    #     Load an agent from a config. Either provide a config_id or a config object.
-
-    #     Args:
-
-    #         config_id: The config ID to load the agent from.
-
-    #     Returns:
-    #         Agent: The agent loaded from the config.
-    #     """
-    #     config = db.get_config(config_id)
-
-    #     if config is None:
-    #         log_error(f"No config found for config_id: {config_id}")
-    #         return None
-
-    #     return Agent.from_dict(config=config.config)
 
     def save(self, version: Optional[str] = None) -> "Agent":
         """
@@ -11591,10 +11304,87 @@ class Agent:
             raise ValueError("Database is not set. This is required to load the agent.")
         return await self.db.get_agent(agent_id=self.id, version=version)
     
-    # def upsert_config(self, config: EntityConfig) -> Optional[EntityConfig]:
-    #     """
-    #     Upsert the agent's config in the database.
-    #     """
-    #     if not self.db:
-    #         raise ValueError("Database is not set. This is required to update the agent's config.")
-    #     return self.db.upsert_config(config=config)
+    def _reload_from_db(self, version: Optional[str] = None) -> None:
+        """
+        Reload agent configuration from the database and update all attributes.
+        Preserves the database connection and agent ID.
+        """
+        if not self.db:
+            log_warning("Cannot reload agent: database is not set.")
+            return
+        
+        if not self.id:
+            log_warning("Cannot reload agent: agent ID is not set.")
+            return
+        
+        # Handle async database
+        if self._has_async_db():
+            raise ValueError("Cannot use sync reload with async database. Use async reload instead.")
+        
+        # Handle sync database
+        loaded_agent = self.load(version=version)
+        if loaded_agent is None:
+            log_warning(f"Cannot reload agent: agent {self.id} not found in database.")
+            return
+        
+        # Preserve the database connection and agent ID
+        preserved_db = self.db
+        preserved_id = self.id
+        
+        # Copy all attributes from the loaded agent to self
+        from dataclasses import fields
+        
+        for field in fields(self):
+            field_name = field.name
+            # Skip internal/private fields and preserve db/id
+            if field_name.startswith("_") or field_name in ("db", "id"):
+                continue
+            
+            # Copy the attribute from loaded_agent to self
+            if hasattr(loaded_agent, field_name):
+                setattr(self, field_name, getattr(loaded_agent, field_name))
+        
+        # Restore preserved attributes
+        self.db = preserved_db
+        self.id = preserved_id
+    
+    async def _areload_from_db(self, version: Optional[str] = None) -> None:
+        """
+        Async reload agent configuration from the database and update all attributes.
+        Preserves the database connection and agent ID.
+        """
+        if not self.db:
+            log_warning("Cannot reload agent: database is not set.")
+            return
+        
+        if not self.id:
+            log_warning("Cannot reload agent: agent ID is not set.")
+            return
+        
+        # Load the agent from the database
+        loaded_agent = await self.aload(version=version)
+        if loaded_agent is None:
+            log_warning(f"Cannot reload agent: agent {self.id} not found in database.")
+            return
+        
+        # Preserve the database connection and agent ID
+        preserved_db = self.db
+        preserved_id = self.id
+        
+        # Copy all attributes from the loaded agent to self
+        from dataclasses import fields
+        
+        for field in fields(self):
+            field_name = field.name
+            # Skip internal/private fields and preserve db/id
+            if field_name.startswith("_") or field_name in ("db", "id"):
+                continue
+            
+            # Copy the attribute from loaded_agent to self
+            if hasattr(loaded_agent, field_name):
+                setattr(self, field_name, getattr(loaded_agent, field_name))
+        
+        # Restore preserved attributes
+        self.db = preserved_db
+        self.id = preserved_id
+    

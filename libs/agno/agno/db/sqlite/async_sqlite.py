@@ -9,6 +9,8 @@ from agno.db.base import AsyncBaseDb, SessionType
 if TYPE_CHECKING:
     from agno.agent import Agent
 from agno.db.migrations.manager import MigrationManager
+
+from agno.db.schemas.config import DEFAULT_VERSION
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -2460,7 +2462,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                         **config_data,
                         "id": agent_id,
                         "name": agent_row.get("agent_name"),
-                        "description": agent_row.get("description"),
                     }
                     
                     return Agent.from_dict(agent_data)
@@ -2495,8 +2496,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return None
 
             current_datetime = datetime.now().isoformat()
+            
+            # If version is provided, use it, agent's existing version, or default to DEFAULT_VERSION
+            version_to_use = version or agent.version or DEFAULT_VERSION
+            agent.version = version_to_use
+            
             agent_dict = agent.to_dict()
 
+            existing_agent = None
             async with self.async_session_factory() as sess, sess.begin():
                 # Check if agent exists
                 check_stmt = select(agents_table).where(
@@ -2505,84 +2512,81 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
                 result = await sess.execute(check_stmt)
                 existing_agent = result.fetchone()
+            
+            if existing_agent:
+                # Agent exists
+                existing_agent_dict = dict(existing_agent._mapping)
                 
-                if existing_agent:
-                    # Agent exists
-                    existing_agent_dict = dict(existing_agent._mapping)
-                    
-                    if version is None:
-                        # Update current_version's config
-                        current_ver = existing_agent_dict.get("current_version")
-                        if current_ver:
-                            # Update the existing current version
-                            await self.upsert_config(
-                                entity_id=agent.id,
-                                entity_type="agent",
-                                version=current_ver,
-                                config=agent_dict,
-                                notes=None,
-                                set_as_current=False  # Already current
-                            )
-                        else:
-                            # No current version set, create v1.0
-                            await self.upsert_config(
-                                entity_id=agent.id,
-                                entity_type="agent",
-                                version="v1.0",
-                                config=agent_dict,
-                                notes="Initial version",
-                                set_as_current=True
-                            )
-                    else:
-                        # Create/update the specified version
+                if version is None:
+                    # Update current_version's config
+                    current_ver = existing_agent_dict.get("current_version")
+                    if current_ver:
+                        # Update the existing current version
                         await self.upsert_config(
                             entity_id=agent.id,
                             entity_type="agent",
-                            version=version,
+                            version=current_ver,
                             config=agent_dict,
                             notes=None,
-                            set_as_current=False
+                            set_as_current=False  # Already current
                         )
-                    
-                    # Update agent metadata
+                    else:
+                        # No current version set, create DEFAULT_VERSION
+                        await self.upsert_config(
+                            entity_id=agent.id,
+                            entity_type="agent",
+                            version=DEFAULT_VERSION,
+                            config=agent_dict,
+                            notes="Initial version",
+                            set_as_current=True
+                        )
+                else:
+                    # Create/update the specified version
+                    await self.upsert_config(
+                        entity_id=agent.id,
+                        entity_type="agent",
+                        version=version,
+                        config=agent_dict,
+                        notes=None,
+                        set_as_current=False
+                    )
+                
+                # Update agent metadata
+                async with self.async_session_factory() as sess, sess.begin():
                     stmt = (
                         agents_table.update()
                         .where(agents_table.c.agent_id == agent.id)
                         .values(
                             agent_name=agent.name or "Unnamed Agent",
-                            description=agent.description,
                             metadata=agent_dict.get("metadata"),
                             updated_at=current_datetime,
                         )
                     )
                     await sess.execute(stmt)
-                    
-                else:
+                
+            else:
+                async with self.async_session_factory() as sess, sess.begin():
                     # Agent doesn't exist - create new
-                    version_to_use = version or "v1.0"
-                    
-                    # Create agent
                     stmt = sqlite.insert(agents_table).values(
                         agent_id=agent.id,
                         agent_name=agent.name or "Unnamed Agent",
-                        description=agent.description,
                         current_version=version_to_use,
                         metadata=agent_dict.get("metadata"),
                         created_at=current_datetime,
                         updated_at=current_datetime,
                     )
                     result = await sess.execute(stmt)
-                    
-                    await self.upsert_config(
-                        entity_id=agent.id,
-                        entity_type="agent",
-                        version=version_to_use,
-                        config=agent_dict,
-                        notes="Initial version",
-                        set_as_current=False  # Already set in agent creation
-                    )
-                    
-                return agent
+                
+                await self.upsert_config(
+                    entity_id=agent.id,
+                    entity_type="agent",
+                    version=version_to_use,
+                    config=agent_dict,
+                    notes="Initial version",
+                    set_as_current=False  # Already set in agent creation
+                )
+                
+            return agent
 
         except Exception as e:
             log_error(f"Error upserting agent: {e}")
@@ -2732,12 +2736,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return None
                 
                 config_data = dict(row._mapping)
-                
-                # Optionally set this as the current version (for agents)
-                if set_as_current and entity_type == "agent":
-                    await self.set_agent_config_version(entity_id, version)
-                
-                return config_data
+            
+            # Optionally set this as the current version (for agents)
+            if set_as_current and entity_type == "agent":
+                await self.set_agent_config_version(entity_id, version)
+            
+            return config_data
 
         except Exception as e:
             log_error(f"Error upserting config: {e}")

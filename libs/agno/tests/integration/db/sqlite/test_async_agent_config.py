@@ -802,7 +802,6 @@ async def test_agent_metadata_preservation(async_sqlite_db_real: AsyncSqliteDb):
         
         assert agent_row is not None
         assert agent_row.agent_name == "Metadata Agent"
-        assert agent_row.description == "Testing metadata"
         assert agent_row.created_at is not None
         assert agent_row.updated_at is not None
 
