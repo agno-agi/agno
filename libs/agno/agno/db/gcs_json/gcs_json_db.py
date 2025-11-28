@@ -635,13 +635,14 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics.
 
         Args:
             limit (Optional[int]): Maximum number of results to return.
             page (Optional[int]): Page number for pagination.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: List of user memory statistics and total count.
@@ -652,7 +653,9 @@ class GcsJsonDb(BaseDb):
 
             for memory in memories:
                 memory_user_id = memory.get("user_id")
-
+                # filter by user_id if provided
+                if user_id is not None and memory_user_id != user_id:
+                    continue
                 if memory_user_id:
                     if memory_user_id not in user_stats:
                         user_stats[memory_user_id] = {

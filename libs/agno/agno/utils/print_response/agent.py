@@ -179,6 +179,7 @@ def print_response_stream(
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
+                compression_manager=agent.compression_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -203,6 +204,10 @@ def print_response_stream(
             panels.append(summary_panel)
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
+
+        # Clear compression stats after final display
+        if agent.compression_manager is not None:
+            agent.compression_manager.stats.clear()
 
         response_timer.stop()
 
@@ -366,6 +371,7 @@ async def aprint_response_stream(
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
+                compression_manager=agent.compression_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -391,6 +397,10 @@ async def aprint_response_stream(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
+        # Clear compression stats after final display
+        if agent.compression_manager is not None:
+            agent.compression_manager.stats.clear()
+
         response_timer.stop()
 
         # Final update to remove the "Thinking..." status
@@ -407,6 +417,7 @@ def build_panels_stream(
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
     accumulated_tool_calls: Optional[List] = None,
+    compression_manager: Optional[Any] = None,
 ):
     panels = []
 
@@ -447,8 +458,18 @@ def build_panels_stream(
         for formatted_tool_call in formatted_tool_calls:
             tool_calls_content.append(f"• {formatted_tool_call}\n")
 
+        tool_calls_text = tool_calls_content.plain.rstrip()
+
+        # Add compression stats if available (don't clear - caller will clear after final display)
+        if compression_manager is not None and compression_manager.stats:
+            stats = compression_manager.stats
+            saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+            orig = stats.get("original_size", 1)
+            if stats.get("messages_compressed", 0) > 0:
+                tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
         tool_calls_panel = create_panel(
-            content=tool_calls_content.plain.rstrip(),
+            content=tool_calls_text,
             title="Tool Calls",
             border_style="yellow",
         )
@@ -589,6 +610,7 @@ def print_response(
             show_full_reasoning=show_full_reasoning,
             tags_to_include_in_markdown=tags_to_include_in_markdown,
             markdown=markdown,
+            compression_manager=agent.compression_manager,
         )
         panels.extend(additional_panels)
 
@@ -721,6 +743,7 @@ async def aprint_response(
             show_full_reasoning=show_full_reasoning,
             tags_to_include_in_markdown=tags_to_include_in_markdown,
             markdown=markdown,
+            compression_manager=agent.compression_manager,
         )
         panels.extend(additional_panels)
 
@@ -757,6 +780,7 @@ def build_panels(
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     markdown: bool = False,
+    compression_manager: Optional[Any] = None,
 ):
     panels = []
 
@@ -808,8 +832,19 @@ def build_panels(
         for formatted_tool_call in formatted_tool_calls:
             tool_calls_content.append(f"• {formatted_tool_call}\n")
 
+        tool_calls_text = tool_calls_content.plain.rstrip()
+
+        # Add compression stats if available
+        if compression_manager is not None and compression_manager.stats:
+            stats = compression_manager.stats
+            saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+            orig = stats.get("original_size", 1)
+            if stats.get("messages_compressed", 0) > 0:
+                tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+            compression_manager.stats.clear()
+
         tool_calls_panel = create_panel(
-            content=tool_calls_content.plain.rstrip(),
+            content=tool_calls_text,
             title="Tool Calls",
             border_style="yellow",
         )

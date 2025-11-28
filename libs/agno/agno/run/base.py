@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -22,6 +22,7 @@ class RunContext:
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Type[BaseModel]] = None
 
 
 @dataclass

@@ -873,6 +873,7 @@ class FirestoreDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -889,7 +890,10 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="memories")
 
-            query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
+            if user_id:
+                query = collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
+            else:
+                query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
 
             docs = query.stream()
 

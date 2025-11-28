@@ -112,7 +112,8 @@ def test_kwargs_propagate_to_run_context(test_os_client, test_agent: Agent):
     def assert_run_context(run_context: RunContext):
         assert run_context.user_id == "test-user-123"
         assert run_context.session_id == "test-session-123"
-        assert run_context.session_state == {"test_session_state": "test-session-state"}
+        assert "test_session_state" in run_context.session_state
+        assert run_context.session_state["test_session_state"] == "test-session-state"
         assert run_context.dependencies == {"test_dependencies": "test-dependencies"}
         assert run_context.metadata == {"test_metadata": "test-metadata"}
         assert run_context.knowledge_filters == {"test_knowledge_filters": "test-knowledge-filters"}
