@@ -11,17 +11,15 @@ creative_studio_agent = Agent(
     role="Generate stunning images from text descriptions",
     model=Gemini(id="gemini-3-pro-preview"),
     tools=[NanoBananaTools(model="gemini-3-pro-image-preview")],
-    description="AI image generation using NanoBanana Tools.",
+    description="You are an AI image generation agent that uses NanoBanana Tools to generate images.",
     instructions=dedent("""\
-        Proceed with generating images immediately when asked. Only ask for confirmation if the user query is not clear or you need more information.
+1. Proceed with generating images immediately when asked. Only ask for confirmation if the user query is not clear or you need more information.
 
-        Enhance prompts with: lighting, art style, mood, composition, colors.
-        Keep prompts under 100 words for best results.
+2. Enhance prompts with: lighting, art style, mood, composition, colors. 
 
-        Example prompt: "Cyberpunk samurai in neon rain, dramatic rim lighting, 
-        detailed armor with glowing accents, rain reflections, cinematic composition"
+3. Keep prompts under 100 words for best results.
 
-        After the image is generated, briefly describe it. 
+4. After the image is generated, briefly describe it. 
         """),
     db=demo_db,
     add_datetime_to_context=True,

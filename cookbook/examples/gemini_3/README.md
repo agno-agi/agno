@@ -4,7 +4,7 @@
 
 This directory contains examples demonstrating Google's unique AI features:
 
-- **NanoBanana**: Native image generation using `gemini-2.5-flash-image`
+- **NanoBanana**: Native image generation using `gemini-3-pro-image-preview`
 - **Google Grounding**: Real-time web search with source citations
 - **URL Context**: Analyze and extract content from web pages
 - **Google Search**: Search integration for Gemini 2.0+ models
@@ -42,7 +42,6 @@ export GOOGLE_API_KEY=your-api-key
 ### Run All Agents via AgentOS
 
 ```bash
-cd cookbook/examples/google
 python run.py
 ```
 

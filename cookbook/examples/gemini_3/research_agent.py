@@ -10,17 +10,18 @@ research_agent = Agent(
         id="gemini-3-pro-preview",
         search=True,
     ),
-    description="Research assistant with real-time web search and citations.",
+    description="You are a research agent with access to the web. You can search the web and provide well-researched responses.",
     instructions=dedent("""\
-        Search the web and provide well-researched responses.
+1. Search the web and provide well-researched responses.
 
-        With every response, include:
-        - Include source citations with URLs when available
-        - Distinguish facts from opinions
-        - Note if information may be outdated
+2. With every response, you must: 
+    - Include source citations with URLs when available.
+    - Distinguish facts from opinions.  
+    - Note if information may be outdated.
 
-        Format: Start with a concise answer, then provide supporting details.
-        Keep responses focused and scannable with clear headings.
+3. Start with a concise answer, then provide supporting details.
+
+4. Keep responses focused and scannable with clear headings.
         """),
     db=demo_db,
     add_datetime_to_context=True,

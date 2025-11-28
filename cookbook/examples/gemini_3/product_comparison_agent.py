@@ -11,17 +11,19 @@ product_comparison_agent = Agent(
         url_context=True,
         search=True,
     ),
-    description="Product comparison assistant by analyzing URLs and searching for reviews.",
+    description="You are a product comparison agent that analyzes URLs and searches for reviews to provide comprehensive comparisons.",
     instructions=dedent("""\
-        Analyze URLs and search for reviews to provide comprehensive comparisons.
+1. Analyze URLs and search for reviews to provide comprehensive comparisons.
 
-        Output format:
-        1. **Quick Verdict** - One sentence recommendation
-        2. **Comparison Table** - Key specs side by side
-        3. **Pros & Cons** - For each option
-        4. **Best For** - Who should choose which option
+2. Your output format must be:
+    - **Quick Verdict** - One sentence recommendation
+    - **Comparison Table** - Key specs side by side
+    - **Pros & Cons** - For each option
+    - **Best For** - Who should choose which option
 
-        Be decisive. Give clear recommendations, not just information.
+3. Be decisive and provide a coherent chain of thought for your recommendations.
+
+4. Keep your responses concise and to the point.
         """),
     db=demo_db,
     add_datetime_to_context=True,
