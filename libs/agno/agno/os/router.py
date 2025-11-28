@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -300,9 +301,14 @@ async def agent_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
+        # Pass background_tasks if provided
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
         run_response = agent.arun(
             input=message,
             session_id=session_id,
@@ -341,6 +347,7 @@ async def agent_continue_response_streamer(
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> AsyncGenerator:
     try:
         continue_response = agent.acontinue_run(
@@ -350,6 +357,7 @@ async def agent_continue_response_streamer(
             user_id=user_id,
             stream=True,
             stream_events=True,
+            background_tasks=background_tasks,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -384,10 +392,15 @@ async def team_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
+        # Pass background_tasks if provided
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
         run_response = team.arun(
             input=message,
             session_id=session_id,
@@ -494,9 +507,14 @@ async def workflow_response_streamer(
     input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
+        # Pass background_tasks if provided
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
         run_response = workflow.arun(
             input=input,
             session_id=session_id,
@@ -813,6 +831,7 @@ def get_base_router(
     async def create_agent_run(
         agent_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         message: str = Form(...),
         stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
@@ -951,6 +970,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -968,6 +988,7 @@ def get_base_router(
                         videos=base64_videos if base64_videos else None,
                         files=input_files if input_files else None,
                         stream=False,
+                        background_tasks=background_tasks,
                         **kwargs,
                     ),
                 )
@@ -1036,6 +1057,7 @@ def get_base_router(
         agent_id: str,
         run_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         tools: str = Form(...),  # JSON string of tools
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
@@ -1079,6 +1101,7 @@ def get_base_router(
                     updated_tools=updated_tools,
                     session_id=session_id,
                     user_id=user_id,
+                    background_tasks=background_tasks,
                 ),
                 media_type="text/event-stream",
             )
@@ -1092,6 +1115,7 @@ def get_base_router(
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,
+                        background_tasks=background_tasks,
                     ),
                 )
                 return run_response_obj.to_dict()
@@ -1229,6 +1253,7 @@ def get_base_router(
     async def create_team_run(
         team_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         message: str = Form(...),
         stream: bool = Form(True),
         monitor: bool = Form(True),
@@ -1338,6 +1363,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1353,6 +1379,7 @@ def get_base_router(
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
                     stream=False,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 return run_response.to_dict()
@@ -1683,6 +1710,7 @@ def get_base_router(
     async def create_workflow_run(
         workflow_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         message: str = Form(...),
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
@@ -1734,6 +1762,7 @@ def get_base_router(
                         input=message,
                         session_id=session_id,
                         user_id=user_id,
+                        background_tasks=background_tasks,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
@@ -1744,6 +1773,7 @@ def get_base_router(
                     session_id=session_id,
                     user_id=user_id,
                     stream=False,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 return run_response.to_dict()
