@@ -1515,8 +1515,6 @@ class SurrealDb(BaseDb):
             For other filters, the most recent trace is returned.
         """
         try:
-            from agno.tracing.schemas import Trace
-
             table = self._get_table("traces", create_table_if_not_found=False)
             spans_table = self._get_table("spans", create_table_if_not_found=False)
 
