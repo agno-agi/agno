@@ -59,8 +59,6 @@ python research_agent.py
 # Product Comparison (URL Context + Search)
 python product_comparison_agent.py
 
-# Visual Storytelling
-python visual_storyteller_agent.py
 ```
 
 ## Examples Overview
@@ -70,7 +68,6 @@ python visual_storyteller_agent.py
 | `creative_studio_agent.py`    | `creative_studio_agent`    | NanoBanana              | history                           |
 | `research_agent.py`           | `research_agent`           | Grounding               | user_memories + session_summaries |
 | `product_comparison_agent.py` | `product_comparison_agent` | URL Context + Grounding | user_memories + history           |
-| `visual_storyteller_agent.py` | `visual_storyteller_agent` | NanoBanana              | session_summaries + history       |
 
 ## Database
 
