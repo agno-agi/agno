@@ -8,11 +8,11 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tracing import setup_tracing
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
-from agno.tracing import setup_tracing
 
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")

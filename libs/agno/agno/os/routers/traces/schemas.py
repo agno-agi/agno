@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field
 def _derive_span_type(span: Any) -> str:
     """
     Derive the correct span type from span attributes.
-    
+
     OpenInference sets span_kind to:
     - AGENT for both agents and teams
     - CHAIN for workflows
-    
+
     We use additional context (agno.team.id, agno.workflow.id) to differentiate:
     - WORKFLOW: CHAIN spans or spans with agno.workflow.id
     - TEAM: AGENT spans with agno.team.id
@@ -19,18 +19,18 @@ def _derive_span_type(span: Any) -> str:
     - LLM, TOOL, etc.: unchanged
     """
     span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
-    
+
     # Check for workflow (CHAIN kind or has workflow.id)
     if span_kind == "CHAIN":
         return "WORKFLOW"
-    
+
     # Check for team vs agent
     if span_kind == "AGENT":
         # If it has a team.id attribute, it's a TEAM span
         if span.attributes.get("agno.team.id") or span.attributes.get("team.id"):
             return "TEAM"
         return "AGENT"
-    
+
     # Return original span kind for LLM, TOOL, etc.
     return span_kind
 
@@ -67,7 +67,7 @@ class TraceNode(BaseModel):
 
         # Derive the correct span type (AGENT, TEAM, WORKFLOW, LLM, TOOL, etc.)
         span_type = _derive_span_type(span)
-        
+
         # Also get the raw span_kind for metadata extraction logic
         span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
 
@@ -318,7 +318,7 @@ class TraceDetail(BaseModel):
         trace_duration_ms: Optional[int] = None,
     ) -> List[TraceNode]:
         """Build hierarchical tree from flat list of spans
-        
+
         Args:
             spans: List of span objects
             total_input_tokens: Total input tokens across all spans
@@ -378,13 +378,13 @@ class TraceDetail(BaseModel):
                 if total_output_tokens > 0:
                     root_metadata["total_output_tokens"] = total_output_tokens
 
-                # Use trace-level timing if available 
+                # Use trace-level timing if available
                 start_time = trace_start_time if trace_start_time else span.start_time
                 end_time = trace_end_time if trace_end_time else span.end_time
                 duration_ms = trace_duration_ms if trace_duration_ms is not None else span.duration_ms
-                
+
                 duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
-                
+
                 # Derive the correct span type (AGENT, TEAM, WORKFLOW, etc.)
                 span_type = _derive_span_type(span)
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
@@ -425,7 +425,7 @@ class TraceDetail(BaseModel):
                 # For workflow step spans (direct children of root), assign step_type by index
                 if step_index is not None and step_types_list and step_index < len(step_types_list):
                     node.step_type = step_types_list[step_index]
-                
+
                 return node
 
         # Sort root spans by start time

@@ -55,6 +55,8 @@ class SingleStoreDb(BaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a SingleStore database.
@@ -95,6 +97,8 @@ class SingleStoreDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             versions_table=versions_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -366,6 +370,26 @@ class SingleStoreDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.versions_table
+
+        if table_type == "traces":
+            self.traces_table = self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.traces_table
+
+        if table_type == "spans":
+            # Ensure traces table exists first (for foreign key)
+            self._get_table(table_type="traces", create_table_if_not_found=create_table_if_not_found)
+            self.spans_table = self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2340,13 +2364,125 @@ class SingleStoreDb(BaseDb):
             raise e
 
     # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
     def create_trace(self, trace: "Trace") -> None:
         """Create a single trace record in the database.
 
         Args:
             trace: The Trace object to store (one per trace_id).
         """
-        raise NotImplementedError
+        try:
+            table = self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                existing = sess.execute(select(table).where(table.c.trace_id == trace.trace_id)).fetchone()
+
+                if existing:
+                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+
+                    def get_component_level(workflow_id, team_id, agent_id, name):
+                        # Check if name indicates a root span
+                        is_root_name = ".run" in name or ".arun" in name
+
+                        if not is_root_name:
+                            return 0  # Child span (not a root)
+                        elif workflow_id:
+                            return 3  # Workflow root
+                        elif team_id:
+                            return 2  # Team root
+                        elif agent_id:
+                            return 1  # Agent root
+                        else:
+                            return 0  # Unknown
+
+                    existing_level = get_component_level(
+                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
+                    )
+                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                    # Only update name if new trace is from a higher or equal level
+                    should_update_name = new_level > existing_level
+
+                    # Parse existing start_time to calculate correct duration
+                    existing_start_time_str = existing.start_time
+                    if isinstance(existing_start_time_str, str):
+                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                    else:
+                        existing_start_time = trace.start_time
+
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                    update_values = {
+                        "end_time": trace.end_time.isoformat(),
+                        "duration_ms": recalculated_duration_ms,
+                        "status": trace.status,
+                        "name": trace.name if should_update_name else existing.name,
+                    }
+
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values["run_id"] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values["session_id"] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values["user_id"] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values["agent_id"] = trace.agent_id
+                    if trace.team_id is not None:
+                        update_values["team_id"] = trace.team_id
+                    if trace.workflow_id is not None:
+                        update_values["workflow_id"] = trace.workflow_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
+                        f"team_id={update_values.get('team_id', 'unchanged')}, "
+                    )
+
+                    update_stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    sess.execute(update_stmt)
+                else:
+                    trace_dict = trace.to_dict()
+                    trace_dict.pop("total_spans", None)
+                    trace_dict.pop("error_count", None)
+                    insert_stmt = mysql.insert(table).values(trace_dict)
+                    sess.execute(insert_stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
 
     def get_trace(
         self,
@@ -2366,7 +2502,39 @@ class SingleStoreDb(BaseDb):
             If multiple filters are provided, trace_id takes precedence.
             For other filters, the most recent trace is returned.
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return None
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = sess.execute(stmt).fetchone()
+
+                if result:
+                    return Trace.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
 
     def get_traces(
         self,
@@ -2400,7 +2568,66 @@ class SingleStoreDb(BaseDb):
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Trace
+
+            log_debug(
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    log_debug(f"Filtering by session_id={session_id}")
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching traces: {total_count}")
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
 
     def get_trace_stats(
         self,
@@ -2430,7 +2657,98 @@ class SingleStoreDb(BaseDb):
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 first_trace_at, last_trace_at.
         """
-        raise NotImplementedError
+        try:
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            with self.Session() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        table.c.team_id,
+                        table.c.workflow_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching sessions: {total_count}")
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} session stats")
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects (handle None values)
+                    first_trace_at = None
+                    last_trace_at = None
+                    if first_trace_at_str is not None:
+                        first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    if last_trace_at_str is not None:
+                        last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
 
     # --- Spans ---
     def create_span(self, span: "Span") -> None:
@@ -2439,7 +2757,17 @@ class SingleStoreDb(BaseDb):
         Args:
             span: The Span object to store.
         """
-        raise NotImplementedError
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = mysql.insert(table).values(span.to_dict())
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2447,7 +2775,21 @@ class SingleStoreDb(BaseDb):
         Args:
             spans: List of Span objects to store.
         """
-        raise NotImplementedError
+        if not spans:
+            return
+
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                for span in spans:
+                    stmt = mysql.insert(table).values(span.to_dict())
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2458,7 +2800,23 @@ class SingleStoreDb(BaseDb):
         Returns:
             Optional[Span]: The span if found, None otherwise.
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
 
     def get_spans(
         self,
@@ -2476,4 +2834,28 @@ class SingleStoreDb(BaseDb):
         Returns:
             List[Span]: List of matching spans.
         """
-        raise NotImplementedError
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []
