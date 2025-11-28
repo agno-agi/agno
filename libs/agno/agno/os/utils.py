@@ -189,11 +189,8 @@ def get_session_name(session: Dict[str, Any]) -> str:
         if not isinstance(run, dict):
             run = run.to_dict()
 
-        if run and run.get("messages"):
-            for message in run["messages"]:
-                if message["role"] == "user":
-                    return message["content"]
-    return ""
+        run_input = run.get("input").get("input_content") # type: ignore
+        return run_input
 
 
 def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
