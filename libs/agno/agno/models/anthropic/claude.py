@@ -154,7 +154,9 @@ class Claude(Model):
 
         self.api_key = self.api_key or getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
-            log_error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
+            raise ModelProviderError(
+                "ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable."
+            )
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
