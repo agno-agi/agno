@@ -43,10 +43,11 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     load_yaml_config,
+    resolve_origins,
     update_cors_middleware,
 )
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -102,14 +103,17 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        authorization: bool = False,
+        authorization_secret: Optional[str] = None,
+        cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
-        telemetry: bool = True,
         auto_provision_dbs: bool = True,
+        telemetry: bool = True,
     ):
         """Initialize AgentOS.
 
@@ -130,6 +134,10 @@ class AgentOS:
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
+            auto_provision_dbs: Whether to automatically provision databases
+            authorization: Whether to enable authorization
+            authorization_secret: The secret key for authorization
+            cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             telemetry: Whether to enable telemetry
 
         """
@@ -172,6 +180,28 @@ class AgentOS:
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
+
+        # RBAC
+        self.authorization = authorization
+        self.authorization_secret = authorization_secret
+
+        if self.authorization and not self.id:
+            raise ValueError(
+                "Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS."
+            )
+
+        if self.authorization and not self.authorization_secret:
+            log_info("No authorization secret provided, generating a new 256-bit authorization secret")
+
+            import secrets
+
+            # Generate 256 bits (32 bytes) of entropy, then encode as hex for JWT secret.
+            self.authorization_secret = secrets.token_hex(32)  # 32 bytes = 256 bits
+
+            log_info(f"Authorization secret generated (256-bit, hex): {self.authorization_secret}")
+
+        # CORS configuration - merge user-provided origins with defaults from settings
+        self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -478,7 +508,23 @@ class AgentOS:
                 )
 
         # Update CORS middleware
-        update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
+        update_cors_middleware(fastapi_app, self.cors_allowed_origins)  # type: ignore
+
+        # Set agent_os_id and cors_allowed_origins on app state
+        # This allows middleware (like JWT) to access these values
+        fastapi_app.state.agent_os_id = self.id
+        fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
+
+        # Add JWT middleware if authorization is enabled
+        if self.authorization:
+            from agno.os.middleware.jwt import JWTMiddleware
+
+            log_info("Adding JWT middleware for authorization")
+            fastapi_app.add_middleware(
+                JWTMiddleware,
+                secret_key=self.authorization_secret,
+                authorization=self.authorization,
+            )
 
         return fastapi_app
 

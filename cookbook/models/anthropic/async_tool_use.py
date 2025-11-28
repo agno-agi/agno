@@ -9,7 +9,7 @@ from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=Claude(id="claude-haiku-4-5-20251001"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
