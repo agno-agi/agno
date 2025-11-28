@@ -289,6 +289,9 @@ class BaseDb(ABC):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
@@ -583,6 +586,9 @@ class AsyncBaseDb(ABC):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError

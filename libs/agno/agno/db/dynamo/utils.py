@@ -107,8 +107,10 @@ def serialize_eval_record(eval_record: EvalRunRecord) -> Dict[str, Any]:
     return serialize_to_dynamo_item(
         {
             "run_id": eval_record.run_id,
+            "eval_id": getattr(eval_record, "eval_id", None),
             "eval_type": eval_record.eval_type,
             "eval_data": eval_record.eval_data,
+            "eval_input": eval_record.eval_input,
             "name": getattr(eval_record, "name", None),
             "agent_id": getattr(eval_record, "agent_id", None),
             "team_id": getattr(eval_record, "team_id", None),
@@ -116,6 +118,8 @@ def serialize_eval_record(eval_record: EvalRunRecord) -> Dict[str, Any]:
             "model_id": getattr(eval_record, "model_id", None),
             "model_provider": getattr(eval_record, "model_provider", None),
             "evaluated_component_name": getattr(eval_record, "evaluated_component_name", None),
+            "parent_run_id": getattr(eval_record, "parent_run_id", None),
+            "parent_session_id": getattr(eval_record, "parent_session_id", None),
         }
     )
 
@@ -128,7 +132,22 @@ def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
         data["created_at"] = datetime.fromtimestamp(data["created_at"], tz=timezone.utc)
     if "updated_at" in data and data["updated_at"]:
         data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
-    return EvalRunRecord(run_id=data["run_id"], eval_type=data["eval_type"], eval_data=data["eval_data"])
+    return EvalRunRecord(
+        run_id=data["run_id"],
+        eval_id=data.get("eval_id"),
+        eval_type=data["eval_type"],
+        eval_data=data["eval_data"],
+        eval_input=data.get("eval_input"),
+        agent_id=data.get("agent_id"),
+        model_id=data.get("model_id"),
+        model_provider=data.get("model_provider"),
+        team_id=data.get("team_id"),
+        workflow_id=data.get("workflow_id"),
+        name=data.get("name"),
+        evaluated_component_name=data.get("evaluated_component_name"),
+        parent_run_id=data.get("parent_run_id"),
+        parent_session_id=data.get("parent_session_id"),
+    )
 
 
 # -- DB Utils --

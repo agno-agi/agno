@@ -46,6 +46,7 @@ USER_MEMORY_TABLE_SCHEMA = {
 
 EVAL_TABLE_SCHEMA = {
     "run_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "eval_id": {"type": lambda: String(128), "nullable": True},
     "eval_type": {"type": lambda: String(50), "nullable": False},
     "eval_data": {"type": JSON, "nullable": False},
     "eval_input": {"type": JSON, "nullable": False},
@@ -56,6 +57,8 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": lambda: String(128), "nullable": True},
     "model_provider": {"type": lambda: String(128), "nullable": True},
     "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
+    "parent_run_id": {"type": lambda: String(128), "nullable": True},
+    "parent_session_id": {"type": lambda: String(128), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }

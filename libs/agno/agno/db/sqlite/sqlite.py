@@ -1883,10 +1883,10 @@ class SqliteDb(BaseDb):
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from the database.
+        """Delete multiple eval runs from the database by their run_ids.
 
         Args:
-            eval_run_ids (List[str]): List of eval run IDs to delete.
+            eval_run_ids (List[str]): List of run IDs (not eval IDs) to delete.
         """
         try:
             table = self._get_table(table_type="evals")
@@ -1908,19 +1908,16 @@ class SqliteDb(BaseDb):
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        """Get an eval run from the database.
+        """Get a specific eval run from the database by its run_id.
 
         Args:
-            eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            eval_run_id (str): The run_id of the eval run to get.
+            deserialize (Optional[bool]): Whether to deserialize to EvalRunRecord. Defaults to True.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-                - When deserialize=True: EvalRunRecord object
-                - When deserialize=False: EvalRun dictionary
-
-        Raises:
-            Exception: If an error occurs during retrieval.
+                - When deserialize=True: EvalRunRecord object or None if not found
+                - When deserialize=False: Dictionary or None if not found
         """
         try:
             table = self._get_table(table_type="evals")
@@ -1955,6 +1952,9 @@ class SqliteDb(BaseDb):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
@@ -1969,9 +1969,11 @@ class SqliteDb(BaseDb):
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            eval_id (Optional[str]): The ID of the eval configuration to filter by. Returns all runs of this eval.
+            parent_run_id (Optional[str]): The parent run ID to filter by (for evals linked to agent/team runs).
+            parent_session_id (Optional[str]): The parent session ID to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2000,6 +2002,12 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.model_id == model_id)
                 if eval_type is not None and len(eval_type) > 0:
                     stmt = stmt.where(table.c.eval_type.in_(eval_type))
+                if eval_id is not None:
+                    stmt = stmt.where(table.c.eval_id == eval_id)
+                if parent_run_id is not None:
+                    stmt = stmt.where(table.c.parent_run_id == parent_run_id)
+                if parent_session_id is not None:
+                    stmt = stmt.where(table.c.parent_session_id == parent_session_id)
                 if filter_type is not None:
                     if filter_type == EvalFilterType.AGENT:
                         stmt = stmt.where(table.c.agent_id.is_not(None))

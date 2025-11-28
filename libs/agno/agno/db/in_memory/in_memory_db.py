@@ -933,7 +933,11 @@ class InMemoryDb(BaseDb):
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from in-memory storage."""
+        """Delete multiple eval runs from the database by their run_ids.
+
+        Args:
+            eval_run_ids (List[str]): List of run IDs (not eval IDs) to delete.
+        """
         try:
             original_count = len(self._eval_runs)
             self._eval_runs = [run for run in self._eval_runs if run.get("run_id") not in eval_run_ids]
@@ -951,7 +955,17 @@ class InMemoryDb(BaseDb):
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        """Get an eval run from in-memory storage."""
+        """Get a specific eval run from the database by its run_id.
+
+        Args:
+            eval_run_id (str): The run_id of the eval run to get.
+            deserialize (Optional[bool]): Whether to deserialize to EvalRunRecord. Defaults to True.
+
+        Returns:
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object or None if not found
+                - When deserialize=False: Dictionary or None if not found
+        """
         try:
             for run_data in self._eval_runs:
                 if run_data.get("run_id") == eval_run_id:
@@ -978,9 +992,34 @@ class InMemoryDb(BaseDb):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        """Get all eval runs from in-memory storage with filtering and pagination."""
+        """Get eval runs from the database with optional filtering.
+
+        Args:
+            limit (Optional[int]): Maximum number of eval runs to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Column to sort by.
+            sort_order (Optional[str]): Sort order (asc/desc).
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            workflow_id (Optional[str]): Filter by workflow ID.
+            model_id (Optional[str]): Filter by model ID.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            eval_type (Optional[List[EvalType]]): Filter by eval type(s).
+            eval_id (Optional[str]): Filter by eval configuration ID (returns all runs of this eval).
+            parent_run_id (Optional[str]): Filter by parent run ID.
+            parent_session_id (Optional[str]): Filter by parent session ID.
+            deserialize (Optional[bool]): Whether to deserialize to EvalRunRecord objects. Defaults to True.
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: Tuple of (list of dictionaries, total count)
+        """
         try:
             # Apply filters
             filtered_runs = []
@@ -996,6 +1035,12 @@ class InMemoryDb(BaseDb):
                 if eval_type is not None and len(eval_type) > 0:
                     if run_data.get("eval_type") not in eval_type:
                         continue
+                if eval_id is not None and run_data.get("eval_id") != eval_id:
+                    continue
+                if parent_run_id is not None and run_data.get("parent_run_id") != parent_run_id:
+                    continue
+                if parent_session_id is not None and run_data.get("parent_session_id") != parent_session_id:
+                    continue
                 if filter_type is not None:
                     if filter_type == EvalFilterType.AGENT and run_data.get("agent_id") is None:
                         continue

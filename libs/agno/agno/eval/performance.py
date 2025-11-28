@@ -8,7 +8,10 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
+from agno.eval.base import BaseEvalHook
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.run.agent import RunInput, RunOutput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -177,7 +180,7 @@ class PerformanceResult:
 
 
 @dataclass
-class PerformanceEval:
+class PerformanceEval(BaseEvalHook):
     """
     Evaluate the performance of a function by measuring run time and peak memory usage.
 
@@ -193,8 +196,14 @@ class PerformanceEval:
 
     # Evaluation name
     name: Optional[str] = None
-    # Evaluation UUID
+    # Evaluation UUID that will be same across runs
     eval_id: str = field(default_factory=lambda: str(uuid4()))
+    # Run UUID that will be different across runs
+    run_id: Optional[str] = None
+    # Parent run ID to link this eval to the agent/team run
+    parent_run_id: Optional[str] = None
+    # Parent session ID to link this eval to the agent/team session
+    parent_session_id: Optional[str] = None
     # Number of warm-up runs (not included in final stats)
     warmup_runs: Optional[int] = 10
     # Number of measured iterations
@@ -478,6 +487,78 @@ class PerformanceEval:
 
         return adjusted_usage, current_snapshot
 
+    def _log_eval_to_db(
+        self,
+        run_id: str,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+    ) -> None:
+        """Helper method to log eval results to database"""
+        if not self.db:
+            return
+
+        eval_input = {
+            "num_iterations": self.num_iterations,
+            "warmup_runs": self.warmup_runs,
+        }
+
+        log_eval_run(
+            db=self.db,  # type: ignore[arg-type]
+            run_id=run_id,
+            eval_id=self.eval_id,
+            run_data=self._parse_eval_run_data(),
+            eval_type=EvalType.PERFORMANCE,
+            name=self.name if self.name is not None else None,
+            evaluated_component_name=self.func.__name__,
+            agent_id=agent_id or self.agent_id,
+            team_id=team_id or self.team_id,
+            model_id=model_id or self.model_id,
+            model_provider=model_provider or self.model_provider,
+            eval_input=eval_input,
+            parent_run_id=parent_run_id or self.parent_run_id,
+            parent_session_id=parent_session_id or self.parent_session_id,
+        )
+
+    async def _async_log_eval_to_db(
+        self,
+        run_id: str,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+    ) -> None:
+        """Async helper method to log eval results to database"""
+        if not self.db:
+            return
+
+        eval_input = {
+            "num_iterations": self.num_iterations,
+            "warmup_runs": self.warmup_runs,
+        }
+
+        await async_log_eval(
+            db=self.db,
+            run_id=run_id,
+            eval_id=self.eval_id,
+            run_data=self._parse_eval_run_data(),
+            eval_type=EvalType.PERFORMANCE,
+            name=self.name if self.name is not None else None,
+            evaluated_component_name=self.func.__name__,
+            agent_id=agent_id or self.agent_id,
+            team_id=team_id or self.team_id,
+            model_id=model_id or self.model_id,
+            model_provider=model_provider or self.model_provider,
+            eval_input=eval_input,
+            parent_run_id=parent_run_id or self.parent_run_id,
+            parent_session_id=parent_session_id or self.parent_session_id,
+        )
+
     def run(
         self, *, print_summary: bool = False, print_results: bool = False, memory_growth_tracking: bool = False
     ) -> PerformanceResult:
@@ -586,32 +667,16 @@ class PerformanceEval:
             self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
-        if self.db:
-            eval_input = {
-                "num_iterations": self.num_iterations,
-                "warmup_runs": self.warmup_runs,
-            }
-
-            log_eval_run(
-                db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=self._parse_eval_run_data(),
-                eval_type=EvalType.PERFORMANCE,
-                name=self.name if self.name is not None else None,
-                evaluated_component_name=self.func.__name__,
-                agent_id=self.agent_id,
-                team_id=self.team_id,
-                model_id=self.model_id,
-                model_provider=self.model_provider,
-                eval_input=eval_input,
-            )
+        # Generate a run_id for this run allowing the same eval object to be run multiple times
+        self.run_id = str(uuid4())
+        self._log_eval_to_db(run_id=self.run_id)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                    run_id=self.run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
                 ),
             )
 
@@ -729,32 +794,16 @@ class PerformanceEval:
             self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
-        if self.db:
-            eval_input = {
-                "num_iterations": self.num_iterations,
-                "warmup_runs": self.warmup_runs,
-            }
-
-            await async_log_eval(
-                db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=self._parse_eval_run_data(),
-                eval_type=EvalType.PERFORMANCE,
-                name=self.name if self.name is not None else None,
-                evaluated_component_name=self.func.__name__,
-                agent_id=self.agent_id,
-                team_id=self.team_id,
-                model_id=self.model_id,
-                model_provider=self.model_provider,
-                eval_input=eval_input,
-            )
+        # Generate a run_id for this run allowing the same eval object to be run multiple times
+        self.run_id = str(uuid4())
+        await self._async_log_eval_to_db(run_id=self.run_id)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                    run_id=self.run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
                 ),
             )
 
@@ -771,3 +820,94 @@ class PerformanceEval:
             "measure_memory": self.measure_memory,
             "measure_runtime": self.measure_runtime,
         }
+
+    def pre_check(self, run_input: Union[RunInput, TeamRunInput], session=None) -> None:
+        """Perform sync pre-evals check."""
+        pass
+
+    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput], session=None) -> None:
+        """Perform async pre-evals check."""
+        pass
+
+    def post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
+        """Perform sync post-evals check and tie eval to the parent run."""
+        # Run the evaluation if it hasn't been run yet (even without DB)
+        if not self.result:
+            # Temporarily disable DB logging to avoid duplicate entries without parent fields
+            temp_db = self.db
+            self.db = None
+            self.run(print_summary=False, print_results=False)
+            self.db = temp_db
+
+        if not self.db or self.func is None:
+            return
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("post_check() is not supported with an async DB. Use async_post_check() instead.")
+
+        # Extract metadata from run_output
+        if isinstance(run_output, RunOutput):
+            agent_id = run_output.agent_id
+            team_id = None
+            model_id = run_output.model
+            model_provider = run_output.model_provider
+        elif isinstance(run_output, TeamRunOutput):
+            agent_id = None
+            team_id = run_output.team_id
+            model_id = run_output.model
+            model_provider = run_output.model_provider
+        else:
+            raise TypeError(f"run_output must be RunOutput or TeamRunOutput, got {type(run_output)}")
+
+        # Generate a run_id for this run allowing the same eval hook to be used multiple times or across multiple agents
+        self.run_id = str(uuid4())
+
+        self._log_eval_to_db(
+            run_id=self.run_id,
+            parent_run_id=run_output.run_id,
+            parent_session_id=run_output.session_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+        )
+
+    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
+        """Perform async post-evals check and tie eval to the parent run."""
+        # Run the evaluation if it hasn't been run yet (even without DB)
+        if not self.result:
+            # Temporarily disable DB logging to avoid duplicate entries without parent fields
+            temp_db = self.db
+            self.db = None
+            await self.arun(print_summary=False, print_results=False)
+            self.db = temp_db
+
+        if not self.db or self.func is None:
+            return
+
+        # Extract metadata from run_output
+        if isinstance(run_output, RunOutput):
+            agent_id = run_output.agent_id
+            team_id = None
+            model_id = run_output.model
+            model_provider = run_output.model_provider
+        elif isinstance(run_output, TeamRunOutput):
+            agent_id = None
+            team_id = run_output.team_id
+            model_id = run_output.model
+            model_provider = run_output.model_provider
+        else:
+            raise TypeError(f"run_output must be RunOutput or TeamRunOutput, got {type(run_output)}")
+
+        # Generate a run_id for this run allowing the same eval hook to be used multiple times or across multiple agents
+        self.run_id = str(uuid4())
+
+        await self._async_log_eval_to_db(
+            run_id=self.run_id,
+            parent_run_id=run_output.run_id,
+            parent_session_id=run_output.session_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+        )

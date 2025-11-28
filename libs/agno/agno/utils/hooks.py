@@ -7,8 +7,17 @@ from agno.utils.log import log_warning
 def normalize_hooks(
     hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
     async_mode: bool = False,
+    hook_mode: str = "pre",
 ) -> Optional[List[Callable[..., Any]]]:
-    """Normalize hooks to a list format"""
+    """Normalize hooks to a list format
+
+    Args:
+        hooks: List of hook functions or hook instances
+        async_mode: Whether to use async versions of methods
+        hook_mode: Either "pre" or "post" to determine which method to extract
+    """
+    from agno.eval.base import BaseEvalHook
+
     result_hooks: List[Callable[..., Any]] = []
 
     if hooks is not None:
@@ -18,6 +27,17 @@ def normalize_hooks(
                     result_hooks.append(hook.async_check)
                 else:
                     result_hooks.append(hook.check)
+            elif isinstance(hook, BaseEvalHook):
+                if hook_mode == "pre":
+                    if async_mode:
+                        result_hooks.append(hook.async_pre_check)
+                    else:
+                        result_hooks.append(hook.pre_check)
+                else:
+                    if async_mode:
+                        result_hooks.append(hook.async_post_check)
+                    else:
+                        result_hooks.append(hook.post_check)
             else:
                 # Check if the hook is async and used within sync methods
                 if not async_mode:

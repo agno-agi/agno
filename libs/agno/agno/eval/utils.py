@@ -25,6 +25,9 @@ def log_eval_run(
     evaluated_component_name: Optional[str] = None,
     team_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    eval_id: Optional[str] = None,
+    parent_run_id: Optional[str] = None,
+    parent_session_id: Optional[str] = None,
 ) -> None:
     """Call the API to create an evaluation run."""
 
@@ -32,6 +35,7 @@ def log_eval_run(
         db.create_eval_run(
             EvalRunRecord(
                 run_id=run_id,
+                eval_id=eval_id,
                 eval_type=eval_type,
                 eval_data=run_data,
                 eval_input=eval_input,
@@ -42,6 +46,8 @@ def log_eval_run(
                 evaluated_component_name=evaluated_component_name,
                 team_id=team_id,
                 workflow_id=workflow_id,
+                parent_run_id=parent_run_id,
+                parent_session_id=parent_session_id,
             )
         )
     except Exception as e:
@@ -61,6 +67,9 @@ async def async_log_eval(
     evaluated_component_name: Optional[str] = None,
     team_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    eval_id: Optional[str] = None,
+    parent_run_id: Optional[str] = None,
+    parent_session_id: Optional[str] = None,
 ) -> None:
     """Call the API to create an evaluation run."""
 
@@ -69,6 +78,7 @@ async def async_log_eval(
             await db.create_eval_run(
                 EvalRunRecord(
                     run_id=run_id,
+                    eval_id=eval_id,
                     eval_type=eval_type,
                     eval_data=run_data,
                     eval_input=eval_input,
@@ -79,12 +89,15 @@ async def async_log_eval(
                     evaluated_component_name=evaluated_component_name,
                     team_id=team_id,
                     workflow_id=workflow_id,
+                    parent_run_id=parent_run_id,
+                    parent_session_id=parent_session_id,
                 )
             )
         else:
             db.create_eval_run(
                 EvalRunRecord(
                     run_id=run_id,
+                    eval_id=eval_id,
                     eval_type=eval_type,
                     eval_data=run_data,
                     eval_input=eval_input,
@@ -95,6 +108,8 @@ async def async_log_eval(
                     evaluated_component_name=evaluated_component_name,
                     team_id=team_id,
                     workflow_id=workflow_id,
+                    parent_run_id=parent_run_id,
+                    parent_session_id=parent_session_id,
                 )
             )
     except Exception as e:
