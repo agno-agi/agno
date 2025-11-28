@@ -1,7 +1,7 @@
 from pathlib import Path
 from textwrap import dedent
 
-from agno.agent import Agent
+from agno.agent import Agent, RunOutput
 from agno.models.google import Gemini
 from agno.tools.nano_banana import NanoBananaTools
 from db import demo_db
@@ -50,5 +50,6 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    if creative_studio_agent.run_response and creative_studio_agent.run_response.images:
-        save_images(creative_studio_agent.run_response)
+    run_response = creative_studio_agent.get_last_run_output()
+    if run_response and isinstance(run_response, RunOutput) and run_response.images:
+        save_images(run_response)

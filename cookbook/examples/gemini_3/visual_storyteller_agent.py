@@ -1,7 +1,7 @@
 from pathlib import Path
 from textwrap import dedent
 
-from agno.agent import Agent
+from agno.agent import Agent, RunOutput
 from agno.models.google import Gemini
 from agno.tools.nano_banana import NanoBananaTools
 from db import demo_db
@@ -63,10 +63,6 @@ if __name__ == "__main__":
 
     visual_storyteller_agent.print_response(story_prompt, stream=True)
 
-    if (
-        visual_storyteller_agent.run_response
-        and visual_storyteller_agent.run_response.images
-    ):
-        save_story_images(
-            visual_storyteller_agent.run_response, "mars_garden_adventure"
-        )
+    run_response = visual_storyteller_agent.get_last_run_output()
+    if run_response and isinstance(run_response, RunOutput) and run_response.images:
+        save_story_images(run_response, "mars_garden_adventure")
