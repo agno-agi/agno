@@ -1210,280 +1210,265 @@ class Agent:
         """
 
         # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
-        # 1. Execute pre-hooks
-        run_input = cast(RunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            # Can modify the run input
-            try:
-                pre_hook_iterator = self._execute_pre_hooks(
-                    hooks=self.pre_hooks,  # type: ignore
-                    run_response=run_response,
-                    run_input=run_input,
-                    run_context=run_context,
-                    session=session,
-                    user_id=user_id,
-                    debug_mode=debug_mode,
-                    stream_events=stream_events,
-                    **kwargs,
-                )
-                for event in pre_hook_iterator:
-                    yield event
-            except Exception as e:
-                run_response.status = RunStatus.error
-                run_response.content = str(e)
-                run_response.error = create_run_error_event(run_response, error=str(e))
-                self._cleanup_and_store(
-                    run_response=run_response,
-                    session=session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
-                yield create_run_error_event(run_response, error=str(e))
-                return
-
-        # 2. Determine tools for model
-        processed_tools = self.get_tools(
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-        )
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            processed_tools=processed_tools,
-            run_response=run_response,
-            session=session,
-            run_context=run_context,
-        )
-
-        # 3. Prepare run messages
-        run_messages: RunMessages = self._get_run_messages(
-            run_response=run_response,
-            input=run_input.input_content,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
-
-        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-
-        # Start memory creation on a separate thread (runs concurrently with the main execution loop)
-        memory_future = None
-        # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background thread.")
-            memory_future = self.background_executor.submit(
-                self._make_memories, run_messages=run_messages, user_id=user_id
-            )
-
-        # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
-        cultural_knowledge_future = None
-        if (
-            run_messages.user_message is not None
-            and self.culture_manager is not None
-            and self.update_cultural_knowledge
-        ):
-            log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_future = self.background_executor.submit(
-                self._make_cultural_knowledge, run_messages=run_messages
-            )
-
         try:
-            # Start the Run by yielding a RunStarted event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_run_started_event(run_response),
-                    run_response,
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
+            register_run(run_response.run_id)  # type: ignore
+            # 1. Execute pre-hooks
+            run_input = cast(RunInput, run_response.input)
+            self.model = cast(Model, self.model)
+            if self.pre_hooks is not None:
+                # Can modify the run input
+                pre_hook_iterator = self._execute_pre_hooks(
+                        hooks=self.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_input=run_input,
+                        run_context=run_context,
+                        session=session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                        **kwargs,
+                    )
+                for event in pre_hook_iterator:
+                        yield event
+            # 2. Determine tools for model
+            processed_tools = self.get_tools(
+                run_response=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+            )
+            _tools = self._determine_tools_for_model(
+                model=self.model,
+                processed_tools=processed_tools,
+                run_response=run_response,
+                session=session,
+                run_context=run_context,
+            )
+
+            # 3. Prepare run messages
+            run_messages: RunMessages = self._get_run_messages(
+                run_response=run_response,
+                input=run_input.input_content,
+                session=session,
+                run_context=run_context,
+                user_id=user_id,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
+                **kwargs,
+            )
+            if len(run_messages.messages) == 0:
+                log_error("No messages to be sent to the model.")
+
+            log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+            # Start memory creation on a separate thread (runs concurrently with the main execution loop)
+            memory_future = None
+            # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background thread.")
+                memory_future = self.background_executor.submit(
+                    self._make_memories, run_messages=run_messages, user_id=user_id
                 )
 
-            # 5. Reason about the task if reasoning is enabled
-            yield from self._handle_reasoning_stream(
-                run_response=run_response,
-                run_messages=run_messages,
-                stream_events=stream_events,
-            )
+            # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
+            cultural_knowledge_future = None
+            if (
+                run_messages.user_message is not None
+                and self.culture_manager is not None
+                and self.update_cultural_knowledge
+            ):
+                log_debug("Starting cultural knowledge creation in background thread.")
+                cultural_knowledge_future = self.background_executor.submit(
+                    self._make_cultural_knowledge, run_messages=run_messages
+                )
 
-            # Check for cancellation before model processing
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Start the Run by yielding a RunStarted event
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_run_started_event(run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
-            # 6. Process model response
-            if self.output_model is None:
-                for event in self._handle_model_response_stream(
-                    session=session,
+                # 5. Reason about the task if reasoning is enabled
+                yield from self._handle_reasoning_stream(
                     run_response=run_response,
                     run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
                     stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                from agno.run.agent import (
-                    IntermediateRunContentEvent,
-                    RunContentEvent,
-                )  # type: ignore
+                )
 
-                for event in self._handle_model_response_stream(
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
+                # Check for cancellation before model processing
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 6. Process model response
+                if self.output_model is None:
+                    for event in self._handle_model_response_stream(
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
+                else:
+                    from agno.run.agent import (
+                        IntermediateRunContentEvent,
+                        RunContentEvent,
+                    )  # type: ignore
 
-                # If an output model is provided, generate output using the output model
-                for event in self._generate_response_with_output_model_stream(
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    stream_events=stream_events,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event  # type: ignore
+                    for event in self._handle_model_response_stream(
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if isinstance(event, RunContentEvent):
+                            if stream_events:
+                                yield IntermediateRunContentEvent(
+                                    content=event.content,
+                                    content_type=event.content_type,
+                                )
+                        else:
+                            yield event
 
-            # Check for cancellation after model processing
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                    # If an output model is provided, generate output using the output model
+                    for event in self._generate_response_with_output_model_stream(
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        stream_events=stream_events,
+                    ):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event  # type: ignore
 
-            # 7. Parse response with parser model if provided
-            yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
-            )
+                # Check for cancellation after model processing
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # We should break out of the run function
-            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                # 7. Parse response with parser model if provided
+                yield from self._parse_response_with_parser_model_stream(
+                    session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                )
+
+                # We should break out of the run function
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    yield from wait_for_background_tasks_stream(
+                        memory_future=memory_future,
+                        cultural_knowledge_future=cultural_knowledge_future,
+                        stream_events=stream_events,
+                        run_response=run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+
+                    # Handle the paused run
+                    yield from self._handle_agent_run_paused_stream(
+                        run_response=run_response, session=session, user_id=user_id
+                    )
+                    return
+
+                # Yield RunContentCompletedEvent
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_run_content_completed_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+
+                # Execute post-hooks after output is generated but before response is returned
+                if self.post_hooks is not None:
+                    yield from self._execute_post_hooks(
+                        hooks=self.post_hooks,  # type: ignore
+                        run_output=run_response,
+                        run_context=run_context,
+                        session=session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                        **kwargs,
+                    )
+
+                # 8. Wait for background memory creation and cultural knowledge creation
                 yield from wait_for_background_tasks_stream(
                     memory_future=memory_future,
                     cultural_knowledge_future=cultural_knowledge_future,
                     stream_events=stream_events,
                     run_response=run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
                 )
 
-                # Handle the paused run
-                yield from self._handle_agent_run_paused_stream(
-                    run_response=run_response, session=session, user_id=user_id
-                )
-                return
+                # 9. Create session summary
+                if self.session_summary_manager is not None:
+                    # Upsert the RunOutput to Agent Session before creating the session summary
+                    session.upsert_run(run=run_response)
 
-            # Yield RunContentCompletedEvent
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_run_content_completed_event(from_run_response=run_response),
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_session_summary_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    try:
+                        self.session_summary_manager.create_session_summary(session=session)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {str(e)}")
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_session_summary_completed_event(
+                                from_run_response=run_response, session_summary=session.summary
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+
+                # Update run_response.session_state before creating RunCompletedEvent
+                # This ensures the event has the final state after all tool modifications
+                if session.session_data is not None and "session_state" in session.session_data:
+                    run_response.session_state = session.session_data["session_state"]
+
+                # Create the run completed event
+                completed_event = handle_event(  # type: ignore
+                    create_run_completed_event(from_run_response=run_response),
                     run_response,
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
 
-            # Execute post-hooks after output is generated but before response is returned
-            if self.post_hooks is not None:
-                yield from self._execute_post_hooks(
-                    hooks=self.post_hooks,  # type: ignore
-                    run_output=run_response,
-                    run_context=run_context,
-                    session=session,
-                    user_id=user_id,
-                    debug_mode=debug_mode,
-                    stream_events=stream_events,
-                    **kwargs,
+                # Set the run status to completed
+                run_response.status = RunStatus.completed
+
+                # 10. Cleanup and store the run response and session
+                self._cleanup_and_store(
+                    run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
-            # 8. Wait for background memory creation and cultural knowledge creation
-            yield from wait_for_background_tasks_stream(
-                memory_future=memory_future,
-                cultural_knowledge_future=cultural_knowledge_future,
-                stream_events=stream_events,
-                run_response=run_response,
-            )
-
-            # 9. Create session summary
-            if self.session_summary_manager is not None:
-                # Upsert the RunOutput to Agent Session before creating the session summary
-                session.upsert_run(run=run_response)
-
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_session_summary_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=self.events_to_skip,  # type: ignore
-                        store_events=self.store_events,
-                    )
-                try:
-                    self.session_summary_manager.create_session_summary(session=session)
-                except Exception as e:
-                    log_warning(f"Error in session summary creation: {str(e)}")
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_session_summary_completed_event(
-                            from_run_response=run_response, session_summary=session.summary
-                        ),
-                        run_response,
-                        events_to_skip=self.events_to_skip,  # type: ignore
-                        store_events=self.store_events,
-                    )
+                    yield completed_event  # type: ignore
 
-            # Update run_response.session_state before creating RunCompletedEvent
-            # This ensures the event has the final state after all tool modifications
-            if session.session_data is not None and "session_state" in session.session_data:
-                run_response.session_state = session.session_data["session_state"]
+                if yield_run_output:
+                    yield run_response
 
-            # Create the run completed event
-            completed_event = handle_event(  # type: ignore
-                create_run_completed_event(from_run_response=run_response),
-                run_response,
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+                # Log Agent Telemetry
+                self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 10. Cleanup and store the run response and session
-            self._cleanup_and_store(
-                run_response=run_response, session=session, run_context=run_context, user_id=user_id
-            )
-
-            if stream_events:
-                yield completed_event  # type: ignore
-
-            if yield_run_output:
-                yield run_response
-
-            # Log Agent Telemetry
-            self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
-
-            log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+                log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
         except RunCancelledException as e:
             # Handle run cancellation during streaming
@@ -1508,6 +1493,7 @@ class Agent:
             )
         except Exception as e:
             # Handle general exceptions during streaming
+            log_info("we can here")
             log_error(f"Run {run_response.run_id} encountered an error during streaming: {str(e)}")
             run_response.status = RunStatus.error
             # Don't overwrite content - preserve any partial content that was streamed
@@ -2093,6 +2079,7 @@ class Agent:
             )
 
             return run_response
+
         except Exception as e:
             run_response.error = create_run_error_event(run_response, error=str(e))
 
@@ -2163,44 +2150,44 @@ class Agent:
         13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+        memory_task = None
+        cultural_knowledge_task = None
+        try:
+            # Start the Run by yielding a RunStarted event
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_run_started_event(run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
 
-        # Start the Run by yielding a RunStarted event
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_run_started_event(run_response),
-                run_response,
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
+            # 1. Read or create session. Reads from the database if provided.
+            agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+
+            # 2. Update metadata and session state
+            self._update_metadata(session=agent_session)
+            # Initialize session state
+            run_context.session_state = self._initialize_session_state(
+                session_state=run_context.session_state or {},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_response.run_id,
             )
+            # Update session state from DB
+            if run_context.session_state is not None:
+                run_context.session_state = self._load_session_state(
+                    session=agent_session, session_state=run_context.session_state
+                )
 
-        # 1. Read or create session. Reads from the database if provided.
-        agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+            # 3. Resolve dependencies
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
 
-        # 2. Update metadata and session state
-        self._update_metadata(session=agent_session)
-        # Initialize session state
-        run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_response.run_id,
-        )
-        # Update session state from DB
-        if run_context.session_state is not None:
-            run_context.session_state = self._load_session_state(
-                session=agent_session, session_state=run_context.session_state
-            )
-
-        # 3. Resolve dependencies
-        if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(run_context=run_context)
-
-        # 4. Execute pre-hooks
-        run_input = cast(RunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            # Can modify the run input
-            try:
+            # 4. Execute pre-hooks
+            run_input = cast(RunInput, run_response.input)
+            self.model = cast(Model, self.model)
+            if self.pre_hooks is not None:
                 pre_hook_iterator = self._aexecute_pre_hooks(
                     hooks=self.pre_hooks,  # type: ignore
                     run_response=run_response,
@@ -2212,78 +2199,65 @@ class Agent:
                     stream_events=stream_events,
                     **kwargs,
                 )
-                async for event in pre_hook_iterator:
-                    yield event
-            except Exception as e:
-                run_response.status = RunStatus.error
-                run_response.content = str(e)
-                run_response.error = create_run_error_event(run_response, error=str(e))
-                await self._acleanup_and_store(
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                    user_id=user_id,
-                )
-                yield create_run_error_event(run_response, error=str(e))
-                return
+                async for _ in pre_hook_iterator:
+                    pass
 
-        # 5. Determine tools for model
-        self.model = cast(Model, self.model)
-        processed_tools = await self.aget_tools(
-            run_response=run_response,
-            run_context=run_context,
-            session=agent_session,
-            user_id=user_id,
-        )
+            # 5. Determine tools for model
+            self.model = cast(Model, self.model)
+            processed_tools = await self.aget_tools(
+                run_response=run_response,
+                run_context=run_context,
+                session=agent_session,
+                user_id=user_id,
+            )
 
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            processed_tools=processed_tools,
-            run_response=run_response,
-            run_context=run_context,
-            session=agent_session,
-        )
+            _tools = self._determine_tools_for_model(
+                model=self.model,
+                processed_tools=processed_tools,
+                run_response=run_response,
+                run_context=run_context,
+                session=agent_session,
+            )
 
-        # 6. Prepare run messages
-        run_messages: RunMessages = await self._aget_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            input=run_input.input_content,
-            session=agent_session,
-            user_id=user_id,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
+            # 6. Prepare run messages
+            run_messages: RunMessages = await self._aget_run_messages(
+                run_response=run_response,
+                run_context=run_context,
+                input=run_input.input_content,
+                session=agent_session,
+                user_id=user_id,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
+                **kwargs,
+            )
+            if len(run_messages.messages) == 0:
+                log_error("No messages to be sent to the model.")
 
-        # 7. Start memory creation as a background task (runs concurrently with the main execution)
-        memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background task.")
-            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            # 7. Start memory creation as a background task (runs concurrently with the main execution)
+            memory_task = None
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background task.")
+                memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
-        cultural_knowledge_task = None
-        if (
-            run_messages.user_message is not None
-            and self.culture_manager is not None
-            and self.update_cultural_knowledge
-        ):
-            log_debug("Starting cultural knowledge creation in background task.")
-            cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
+            # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
+            cultural_knowledge_task = None
+            if (
+                run_messages.user_message is not None
+                and self.culture_manager is not None
+                and self.update_cultural_knowledge
+            ):
+                log_debug("Starting cultural knowledge creation in background task.")
+                cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
 
-        try:
             # 8. Reason about the task if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(
                 run_response=run_response,
@@ -2492,10 +2466,8 @@ class Agent:
             # Handle general exceptions during async streaming
             log_error(f"Run {run_response.run_id} encountered an error during async streaming: {str(e)}")
             run_response.status = RunStatus.error
-            # Don't overwrite content - preserve any partial content that was streamed
-            # Only set content if it's empty
-            if not run_response.content:
-                run_response.content = str(e)
+
+            log_info(f"run response error: {run_response}")
 
             run_response.error = create_run_error_event(run_response, error=str(e))
 
@@ -2517,7 +2489,7 @@ class Agent:
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
                 try:
-                    await memory_task
+                    await memory_task 
                 except CancelledError:
                     pass
 
