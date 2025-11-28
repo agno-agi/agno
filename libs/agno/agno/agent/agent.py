@@ -4404,9 +4404,6 @@ class Agent:
 
         # Check if background_tasks is available and background mode is enabled
         if self.run_hooks_in_background and background_tasks is not None:
-            # Schedule post_hooks as background tasks
-            from inspect import iscoroutinefunction
-
             for hook in hooks:
                 # Prepare arguments for this hook
                 all_args = {

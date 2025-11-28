@@ -5,12 +5,13 @@ This example demonstrates how to run post-hooks as FastAPI background tasks,
 making them completely non-blocking.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunInput
-import asyncio
 
 
 # Pre-hook for logging request
@@ -32,7 +33,7 @@ async def log_analytics(run_output, agent, session):
     print(f"[Background Post-Hook] Logging analytics for run: {run_output.run_id}")
     print(f"[Background Post-Hook] Agent: {agent.name}")
     print(f"[Background Post-Hook] Session: {session.session_id}")
-    
+
     # Simulate a delay of 2 seconds
     await asyncio.sleep(2)
     print("[Background Post-Hook] Analytics logged successfully!")
