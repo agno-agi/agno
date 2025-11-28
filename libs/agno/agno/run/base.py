@@ -50,6 +50,7 @@ class BaseRunOutputEvent:
                 "additional_input",
                 "session_summary",
                 "metrics",
+                "run_input",
             ]
         }
 
@@ -134,6 +135,9 @@ class BaseRunOutputEvent:
         if hasattr(self, "session_summary") and self.session_summary is not None:
             _dict["session_summary"] = self.session_summary.to_dict()
 
+        if hasattr(self, "run_input") and self.run_input is not None:
+            _dict["run_input"] = self.run_input.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -201,6 +205,19 @@ class BaseRunOutputEvent:
             from agno.session.summary import SessionSummary
 
             data["session_summary"] = SessionSummary.from_dict(session_summary)
+
+        run_input = data.pop("run_input", None)
+        if run_input:
+            from agno.run.team import BaseTeamRunEvent
+
+            if issubclass(cls, BaseTeamRunEvent):
+                from agno.run.team import TeamRunInput
+
+                data["run_input"] = TeamRunInput.from_dict(run_input)
+            else:
+                from agno.run.agent import RunInput
+
+                data["run_input"] = RunInput.from_dict(run_input)
 
         # Filter data to only include fields that are actually defined in the target class
         from dataclasses import fields
