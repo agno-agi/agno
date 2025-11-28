@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
@@ -765,7 +766,8 @@ class FunctionCall(BaseModel):
             entrypoint_args["team"] = self.function._team
         # Check if the entrypoint has an run_context argument
         if "run_context" in signature(self.function.entrypoint).parameters:  # type: ignore
-            entrypoint_args["run_context"] = self.function._run_context
+            entrypoint_args["run_context"] = deepcopy(self.function._run_context)
+            entrypoint_args["run_context"].tool_call_id=self.call_id
         # Check if the entrypoint has an session_state argument
         if "session_state" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["session_state"] = self.function._session_state
@@ -800,7 +802,8 @@ class FunctionCall(BaseModel):
             hook_args["team"] = self.function._team
         # Check if the hook has an run_context argument
         if "run_context" in signature(hook).parameters:
-            hook_args["run_context"] = self.function._run_context
+            hook_args["run_context"] = deepcopy(self.function._run_context)
+            hook_args["run_context"].tool_call_id = self.call_id
         # Check if the hook has an session_state argument
         if "session_state" in signature(hook).parameters:
             hook_args["session_state"] = self.function._session_state
@@ -968,7 +971,8 @@ class FunctionCall(BaseModel):
                     pre_hook_args["team"] = self.function._team
                 # Check if the pre-hook has an run_context argument
                 if "run_context" in signature(self.function.pre_hook).parameters:
-                    pre_hook_args["run_context"] = self.function._run_context
+                    pre_hook_args["run_context"] = deepcopy(self.function._run_context)
+                    pre_hook_args["run_context"].tool_call_id = self.call_id
                 # Check if the pre-hook has an session_state argument
                 if "session_state" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["session_state"] = self.function._session_state
@@ -1003,7 +1007,8 @@ class FunctionCall(BaseModel):
                     post_hook_args["team"] = self.function._team
                 # Check if the post-hook has an run_context argument
                 if "run_context" in signature(self.function.post_hook).parameters:
-                    post_hook_args["run_context"] = self.function._run_context
+                    post_hook_args["run_context"] = deepcopy(self.function._run_context)
+                    post_hook_args["run_context"].tool_call_id = self.call_id
                 # Check if the post-hook has an session_state argument
                 if "session_state" in signature(self.function.post_hook).parameters:
                     post_hook_args["session_state"] = self.function._session_state
