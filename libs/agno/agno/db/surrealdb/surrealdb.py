@@ -7,6 +7,7 @@ from agno.db.postgres.utils import (
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import UserMemory
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -20,18 +21,22 @@ from agno.db.surrealdb.metrics import (
 )
 from agno.db.surrealdb.models import (
     TableType,
+    deserialize_context_item,
     deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
+    deserialize_record_id,
     deserialize_session,
     deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
+    desurrealize_dates,
     desurrealize_eval_run_record,
     desurrealize_session,
     desurrealize_user_memory,
     get_schema,
     get_session_type,
+    serialize_context_item,
     serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
@@ -64,6 +69,7 @@ class SurrealDb(BaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -85,6 +91,7 @@ class SurrealDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            context_table=context_table,
         )
         self._client = client
         self._db_url = db_url
@@ -106,6 +113,7 @@ class SurrealDb(BaseDb):
     def table_names(self) -> dict[TableType, str]:
         return {
             "agents": self._agents_table_name,
+            "context": self.context_table_name,
             "culture": self.culture_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
@@ -147,6 +155,8 @@ class SurrealDb(BaseDb):
             table_name = self.knowledge_table_name
         elif table_type == "culture":
             table_name = self.culture_table_name
+        elif table_type == "context":
+            table_name = self.context_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -1359,3 +1369,172 @@ class SurrealDb(BaseDb):
         if not raw or not deserialize:
             return raw
         return deserialize_eval_run_record(raw)
+
+    # -- Context methods --
+
+    def clear_context_items(self) -> None:
+        """Delete all context items from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("context")
+        _ = self.client.delete(table)
+
+    def delete_context_item(self, id: str) -> None:
+        """Delete a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        table = self._get_table("context")
+        rec_id = RecordID(table, id)
+        self.client.delete(rec_id)
+
+    def get_context_item(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Get a context item by ID.
+
+        Args:
+            id (str): The ID of the context item to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem object. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The context item if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("context")
+        rec_id = RecordID(table, id)
+        result = self.client.select(rec_id)
+
+        if result is None:
+            return None
+
+        # Convert RecordID to string id
+        if hasattr(result.get("id"), "id"):
+            result["id"] = result["id"].id
+        elif isinstance(result.get("id"), RecordID):
+            result["id"] = str(result["id"].id)
+
+        # Convert datetime objects to timestamps
+        if isinstance(result.get("created_at"), datetime):
+            result["created_at"] = int(result["created_at"].timestamp())
+        if isinstance(result.get("updated_at"), datetime):
+            result["updated_at"] = int(result["updated_at"].timestamp())
+
+        if not deserialize:
+            return result
+
+        return ContextItem.from_dict(result)
+
+    def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+        """Get all context items with filtering and pagination.
+
+        Args:
+            name (Optional[str]): Filter by name.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata fields.
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to ContextItem objects. Defaults to True.
+
+        Returns:
+            Union[List[ContextItem], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of ContextItem objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table("context")
+
+        # Build where clauses
+        where = WhereClause()
+        if name is not None:
+            where = where.and_("name", name)
+        if metadata is not None:
+            for key, value in metadata.items():
+                where = where.and_(f"metadata.{key}", value)
+
+        where_clause, where_vars = where.build()
+
+        # Total count
+        total_count = self._count(table, where_clause, where_vars)
+
+        # Query
+        order_limit_start_clause = order_limit_start(sort_by, sort_order, limit, page)
+        query = dedent(f"""
+            SELECT *
+            FROM {table}
+            {where_clause}
+            {order_limit_start_clause}
+        """)
+
+        results = self._query(query, where_vars, dict)
+
+        # Transform results using helper functions
+        transformed_results = []
+        for r in results:
+            transformed = deserialize_record_id(dict(r), "id")
+            transformed = desurrealize_dates(transformed)
+            transformed_results.append(transformed)
+
+        if not deserialize:
+            return transformed_results, total_count
+
+        return [deserialize_context_item(r) for r in results]
+
+    def upsert_context_item(
+        self, context_item: ContextItem, deserialize: Optional[bool] = True
+    ) -> Optional[Union[ContextItem, Dict[str, Any]]]:
+        """Upsert a context item in SurrealDB.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[ContextItem, Dict[str, Any]]]: The upserted context item.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        table = self._get_table("context", create_table_if_not_found=True)
+
+        # Generate ID if not provided
+        if context_item.id is None:
+            from uuid import uuid4
+
+            context_item.id = str(uuid4())
+
+        # Serialize the context item using the helper function
+        serialized = serialize_context_item(context_item, table)
+
+        result = self.client.upsert(serialized["id"], serialized)
+
+        if result is None:
+            return None
+
+        if not deserialize:
+            # Still need to desurrealize for raw dict return
+            result_copy = deserialize_record_id(result, "id")
+            result_copy = desurrealize_dates(result_copy)
+            return result_copy
+
+        return deserialize_context_item(result)

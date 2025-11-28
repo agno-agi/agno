@@ -121,6 +121,20 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
+CONTEXT_ITEM_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "content": {"type": Text, "nullable": False},
+    "description": {"type": Text, "nullable": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "variables": {"type": JSONB, "nullable": True},
+    "version": {"type": BigInteger, "nullable": False, "default": 1},
+    "parent_id": {"type": String, "nullable": True},
+    "optimization_notes": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -140,6 +154,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
+        "context": CONTEXT_ITEM_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
