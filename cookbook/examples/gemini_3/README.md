@@ -47,14 +47,14 @@ export GOOGLE_API_KEY=your-api-key
 
 ### Run All Agents via AgentOS
 
-AgentOS is a runtime for agents in Agno. Learn more about it [here](https://docs.agno.com/agent-os/overview).
+AgentOS is a runtime for agents in Agno. Learn more about it [here]([https://docs.agno.com/agent-os/overview](https://docs.agno.com/agent-os/overview?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini&utm_term=gemini)).
 
 First, start the local AgentOS server:
 ```bash
 python run.py
 ```
 
-Visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an OS endpoint. You can then interact with the agents via the web interface. You can also open the browser and navigate to `http://localhost:7777/docs` to see the documentation of the agents.
+Visit [os.agno.com]([https://os.agno.com](https://os.agno.com/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini&utm_term=gemini)) and add `http://localhost:7777` as an OS endpoint. You can then interact with the agents via the web interface. You can also open the browser and navigate to `http://localhost:7777/docs` to see the documentation of the agents.
 
 ### Run Individual Examples
 
@@ -89,7 +89,7 @@ from db import demo_db
 
 ## Google-Specific Features
 
-Agno supports a variety of Google-specific features. Learn more about them [here](https://docs.agno.com/integrations/models/native/google/overview).
+Agno supports a variety of Google-specific features. Learn more about them [here]([https://docs.agno.com/integrations/models/native/google/overview](https://docs.agno.com/integrations/models/native/google/overview?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini&utm_term=gemini)).
 
 | Feature       | Parameter           | Description                  |
 | ------------- | ------------------- | ---------------------------- |
