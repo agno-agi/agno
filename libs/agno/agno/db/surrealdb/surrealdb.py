@@ -1537,7 +1537,8 @@ class SurrealDb(BaseDb):
                 return None
 
             # Calculate total_spans and error_count
-            trace_id_val = trace_data.get("trace_id") or (trace_data.get("id").id if trace_data.get("id") else None)
+            id_obj = trace_data.get("id")
+            trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
             if trace_id_val:
                 count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
                 count_result = self._query_one(count_query, {"trace_id": trace_id_val}, dict)
@@ -1628,7 +1629,8 @@ class SurrealDb(BaseDb):
             # Add total_spans and error_count to each trace
             result_traces = []
             for trace_data in traces_raw:
-                trace_id_val = trace_data.get("trace_id") or (trace_data.get("id").id if trace_data.get("id") else None)
+                id_obj = trace_data.get("id")
+                trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
                 if trace_id_val:
                     count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
                     count_result = self._query_one(count_query, {"trace_id": trace_id_val}, dict)

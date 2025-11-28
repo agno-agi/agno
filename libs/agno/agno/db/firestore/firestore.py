@@ -1861,7 +1861,7 @@ class FirestoreDb(BaseDb):
                 existing_data = doc.to_dict()
                 break
 
-            if existing_data:
+            if existing_data and existing_doc is not None:
                 # Update existing trace
                 def get_component_level(workflow_id, team_id, agent_id, name):
                     is_root_name = ".run" in name or ".arun" in name

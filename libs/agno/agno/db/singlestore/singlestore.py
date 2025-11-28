@@ -375,7 +375,6 @@ class SingleStoreDb(BaseDb):
             self.traces_table = self._get_or_create_table(
                 table_name=self.trace_table_name,
                 table_type="traces",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.traces_table
@@ -386,7 +385,6 @@ class SingleStoreDb(BaseDb):
             self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
                 table_type="spans",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.spans_table
