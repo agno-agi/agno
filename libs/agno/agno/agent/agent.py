@@ -2152,6 +2152,8 @@ class Agent:
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         memory_task = None
         cultural_knowledge_task = None
+        agent_session = None
+
         try:
             # Start the Run by yielding a RunStarted event
             if stream_events:
@@ -2464,7 +2466,6 @@ class Agent:
             )
         except Exception as e:
             # Handle general exceptions during async streaming
-            log_error(f"Run {run_response.run_id} encountered an error during async streaming: {str(e)}")
             run_response.status = RunStatus.error
 
             log_info(f"run response error: {run_response}")
@@ -2480,7 +2481,7 @@ class Agent:
             )
 
             # Yield the error event
-            yield create_run_error_event(run_response, error=str(e))
+            yield run_response.error
         finally:
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
@@ -2489,7 +2490,7 @@ class Agent:
             if memory_task is not None and not memory_task.done():
                 memory_task.cancel()
                 try:
-                    await memory_task 
+                    await memory_task
                 except CancelledError:
                     pass
 
