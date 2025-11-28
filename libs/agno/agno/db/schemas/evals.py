@@ -28,6 +28,9 @@ class EvalRunRecord(BaseModel):
     evaluated_component_name: Optional[str] = None
 
     run_id: str
+    eval_id: Optional[str] = None
     eval_type: EvalType
     eval_data: Dict[str, Any]
     eval_input: Optional[Dict[str, Any]] = None
+    parent_run_id: Optional[str] = None
+    parent_session_id: Optional[str] = None

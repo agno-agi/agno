@@ -9,9 +9,12 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
+from agno.eval.base import BaseEvalHook
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
+from agno.run.agent import RunInput, RunOutput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team.team import Team
 from agno.utils.log import log_error, logger, set_log_level_to_debug, set_log_level_to_info
 
@@ -137,7 +140,7 @@ class AccuracyResult:
 
 
 @dataclass
-class AccuracyEval:
+class AccuracyEval(BaseEvalHook):
     """Interface to evaluate the accuracy of an Agent or Team, given a prompt and expected answer"""
 
     # Input to evaluate
@@ -151,8 +154,14 @@ class AccuracyEval:
 
     # Evaluation name
     name: Optional[str] = None
-    # Evaluation UUID
+    # Evaluation UUID that will be same across runs
     eval_id: str = field(default_factory=lambda: str(uuid4()))
+    # Run UUID that will be unique per run
+    run_id: Optional[str] = None
+    # Parent run ID to link this eval to the agent/team run
+    parent_run_id: Optional[str] = None
+    # Parent session ID to link this eval to the agent/team session
+    parent_session_id: Optional[str] = None
     # Number of iterations to run
     num_iterations: int = 1
     # Result of the evaluation
@@ -321,6 +330,87 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             logger.exception(f"Failed to evaluate accuracy asynchronously: {e}")
             return None
 
+    def _log_eval_to_db(
+        self,
+        run_id: str,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        evaluated_component_name: Optional[str] = None,
+    ) -> None:
+        """Helper method to log eval results to database"""
+        if not self.db:
+            return
+
+        log_eval_input = {
+            "additional_guidelines": self.additional_guidelines,
+            "additional_context": self.additional_context,
+            "num_iterations": self.num_iterations,
+            "expected_output": self.expected_output,
+            "input": self.input,
+        }
+
+        log_eval_run(
+            db=self.db,  # type: ignore[arg-type]
+            run_id=run_id,
+            run_data=asdict(self.result) if self.result else {},
+            eval_type=EvalType.ACCURACY,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            name=self.name if self.name is not None else None,
+            evaluated_component_name=evaluated_component_name,
+            eval_input=log_eval_input,
+            eval_id=self.eval_id,
+            parent_run_id=parent_run_id or self.parent_run_id,
+            parent_session_id=parent_session_id or self.parent_session_id,
+        )
+
+    async def _async_log_eval_to_db(
+        self,
+        run_id: str,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        evaluated_component_name: Optional[str] = None,
+    ) -> None:
+        """Helper method to asynchronously log eval results to database"""
+        if not self.db:
+            return
+
+        log_eval_input = {
+            "additional_guidelines": self.additional_guidelines,
+            "additional_context": self.additional_context,
+            "num_iterations": self.num_iterations,
+            "expected_output": self.expected_output,
+            "input": self.input,
+        }
+
+        await async_log_eval(
+            db=self.db,
+            run_id=run_id,
+            run_data=asdict(self.result) if self.result else {},
+            eval_type=EvalType.ACCURACY,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            name=self.name if self.name is not None else None,
+            evaluated_component_name=evaluated_component_name,
+            workflow_id=None,
+            eval_input=log_eval_input,
+            eval_id=self.eval_id,
+            parent_run_id=parent_run_id or self.parent_run_id,
+            parent_session_id=parent_session_id or self.parent_session_id,
+        )
+
     def run(
         self,
         *,
@@ -428,35 +518,24 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             model_provider = self.team.model.provider if self.team.model is not None else None
             evaluated_component_name = self.team.name
 
-        if self.db:
-            log_eval_input = {
-                "additional_guidelines": self.additional_guidelines,
-                "additional_context": self.additional_context,
-                "num_iterations": self.num_iterations,
-                "expected_output": self.expected_output,
-                "input": self.input,
-            }
+        # Generate a run_id for this run, allows the same eval object to be run multiple times
+        self.run_id = str(uuid4())
 
-            log_eval_run(
-                db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
-                eval_type=EvalType.ACCURACY,
-                agent_id=agent_id,
-                team_id=team_id,
-                model_id=model_id,
-                model_provider=model_provider,
-                name=self.name if self.name is not None else None,
-                evaluated_component_name=evaluated_component_name,
-                eval_input=log_eval_input,
-            )
+        self._log_eval_to_db(
+            run_id=self.run_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            evaluated_component_name=evaluated_component_name,
+        )
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=self.run_id,
                     eval_type=EvalType.ACCURACY,
                     data=self._get_telemetry_data(),
                 ),
@@ -570,35 +649,24 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             model_provider = self.team.model.provider if self.team.model is not None else None
             evaluated_component_name = self.team.name
 
+        # Generate a run_id for this run, allows the same eval object to be run multiple times
+        self.run_id = str(uuid4())
+
         # Log results to the Agno DB if requested
-        if self.db:
-            log_eval_input = {
-                "additional_guidelines": self.additional_guidelines,
-                "additional_context": self.additional_context,
-                "num_iterations": self.num_iterations,
-                "expected_output": self.expected_output,
-                "input": self.input,
-            }
-            await async_log_eval(
-                db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
-                eval_type=EvalType.ACCURACY,
-                agent_id=agent_id,
-                model_id=model_id,
-                model_provider=model_provider,
-                name=self.name if self.name is not None else None,
-                evaluated_component_name=evaluated_component_name,
-                team_id=team_id,
-                workflow_id=None,
-                eval_input=log_eval_input,
-            )
+        await self._async_log_eval_to_db(
+            run_id=self.run_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            evaluated_component_name=evaluated_component_name,
+        )
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
+                eval_run=EvalRunCreate(run_id=self.run_id, eval_type=EvalType.ACCURACY),
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -662,6 +730,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     eval_id=self.eval_id,
                     result=self.result,
                 )
+        # Generate a run_id for this run, allows the same eval object to be run multiple times
+        self.run_id = str(uuid4())
+
         # Log results to the Agno DB if requested
         if self.db:
             if isinstance(self.db, AsyncBaseDb):
@@ -687,27 +758,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     model_provider = None
                     evaluated_component_name = None
 
-                log_eval_input = {
-                    "additional_guidelines": self.additional_guidelines,
-                    "additional_context": self.additional_context,
-                    "num_iterations": self.num_iterations,
-                    "expected_output": self.expected_output,
-                    "input": self.input,
-                }
-
-                log_eval_run(
-                    db=self.db,
-                    run_id=self.eval_id,  # type: ignore
-                    run_data=asdict(self.result),
-                    eval_type=EvalType.ACCURACY,
-                    name=self.name if self.name is not None else None,
+                self._log_eval_to_db(
+                    run_id=self.run_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     model_id=model_id,
                     model_provider=model_provider,
                     evaluated_component_name=evaluated_component_name,
-                    workflow_id=None,
-                    eval_input=log_eval_input,
                 )
 
         if self.telemetry:
@@ -715,7 +772,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=self.run_id,
                     eval_type=EvalType.ACCURACY,
                     data=self._get_telemetry_data(),
                 ),
@@ -782,6 +839,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     eval_id=self.eval_id,
                     result=self.result,
                 )
+        # Generate a run_id for this run, allows the same eval object to be run multiple times
+        self.run_id = str(uuid4())
+
         # Log results to the Agno DB if requested
         if self.db:
             if self.agent is not None:
@@ -797,27 +857,24 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name
 
-            log_eval_input = {
-                "additional_guidelines": self.additional_guidelines,
-                "additional_context": self.additional_context,
-                "num_iterations": self.num_iterations,
-                "expected_output": self.expected_output,
-                "input": self.input,
-            }
-
-            await async_log_eval(
-                db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
-                eval_type=EvalType.ACCURACY,
-                name=self.name if self.name is not None else None,
+            await self._async_log_eval_to_db(
+                run_id=self.run_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
                 evaluated_component_name=evaluated_component_name,
-                workflow_id=None,
-                eval_input=log_eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+
+            await async_create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.run_id,
+                    eval_type=EvalType.ACCURACY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -832,3 +889,104 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             "model_provider": self.agent.model.provider if self.agent and self.agent.model else None,
             "num_iterations": self.num_iterations,
         }
+
+    def pre_check(self, run_input: Union[RunInput, TeamRunInput], session=None) -> None:
+        """Perform sync pre-evals check."""
+        pass
+
+    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput], session=None) -> None:
+        """Perform async pre-evals check."""
+        pass
+
+    def post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
+        """Perform sync post-evals check and tie eval to the parent run."""
+        # Extract output content to evaluate
+        output = run_output.content if run_output.content else ""
+
+        # Temporarily disable DB logging to avoid duplicate entries without parent fields
+        original_db = self.db
+        self.db = None
+
+        # Run the evaluation using run_with_output
+        self.run_with_output(output=output, print_results=False, print_summary=False)
+
+        # Restore DB
+        self.db = original_db
+
+        if not self.db:
+            return
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("post_check() is not supported with an async DB. Use async_post_check() instead.")
+
+        if self.db and self.run_id:
+            # Extract metadata from run_output
+            if isinstance(run_output, RunOutput):
+                agent_id = run_output.agent_id
+                team_id = None
+                model_id = run_output.model
+                model_provider = run_output.model_provider
+            elif isinstance(run_output, TeamRunOutput):
+                agent_id = None
+                team_id = run_output.team_id
+                model_id = run_output.model
+                model_provider = run_output.model_provider
+            else:
+                raise TypeError(f"run_output must be RunOutput or TeamRunOutput, got {type(run_output)}")
+
+            # Log the eval run with parent information
+            self._log_eval_to_db(
+                run_id=self.run_id,
+                parent_run_id=run_output.run_id,
+                parent_session_id=run_output.session_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                model_id=model_id,
+                model_provider=model_provider,
+                evaluated_component_name=self.name,
+            )
+
+    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
+        """Perform asynchronous post-evaluation check and tie eval to the parent run."""
+        # Extract output content to evaluate
+        output = run_output.content if run_output.content else ""
+
+        # Temporarily disable DB logging to avoid duplicate entries without parent fields
+        original_db = self.db
+        self.db = None
+
+        # Run the evaluation using arun_with_output
+        await self.arun_with_output(output=output, print_results=False, print_summary=False)
+
+        # Restore DB
+        self.db = original_db
+
+        if not self.db:
+            return
+
+        if self.db and self.run_id:
+            # Extract metadata from run_output
+            if isinstance(run_output, RunOutput):
+                agent_id = run_output.agent_id
+                team_id = None
+                model_id = run_output.model
+                model_provider = run_output.model_provider
+            elif isinstance(run_output, TeamRunOutput):
+                agent_id = None
+                team_id = run_output.team_id
+                model_id = run_output.model
+                model_provider = run_output.model_provider
+            else:
+                raise TypeError(f"run_output must be RunOutput or TeamRunOutput, got {type(run_output)}")
+
+            # Log the eval run with parent information
+            await self._async_log_eval_to_db(
+                run_id=self.run_id,
+                parent_run_id=run_output.run_id,
+                parent_session_id=run_output.session_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                model_id=model_id,
+                model_provider=model_provider,
+                evaluated_component_name=self.name,
+            )

@@ -1713,6 +1713,11 @@ class DynamoDb(BaseDb):
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database by their run_ids.
+
+        Args:
+            eval_run_ids (List[str]): List of run IDs (not eval IDs) to delete.
+        """
         if not eval_run_ids or not self.eval_table_name:
             return
 
@@ -1747,6 +1752,15 @@ class DynamoDb(BaseDb):
             raise e
 
     def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
+        """Get a specific eval run from the database by its run_id.
+
+        Args:
+            eval_run_id (str): The run_id of the eval run to get.
+            table (Optional[Any]): Unused parameter (kept for compatibility).
+
+        Returns:
+            Optional[EvalRunRecord]: EvalRunRecord object or None if not found.
+        """
         if not self.eval_table_name:
             return None
 
@@ -1774,8 +1788,34 @@ class DynamoDb(BaseDb):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get eval runs from the database with optional filtering.
+
+        Args:
+            limit (Optional[int]): Maximum number of eval runs to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Column to sort by.
+            sort_order (Optional[str]): Sort order (asc/desc).
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            workflow_id (Optional[str]): Filter by workflow ID.
+            model_id (Optional[str]): Filter by model ID.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            eval_type (Optional[List[EvalType]]): Filter by eval type(s).
+            eval_id (Optional[str]): Filter by eval configuration ID (returns all runs of this eval).
+            parent_run_id (Optional[str]): Filter by parent run ID.
+            parent_session_id (Optional[str]): Filter by parent session ID.
+            deserialize (Optional[bool]): Whether to deserialize to EvalRunRecord objects. Defaults to True.
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: Tuple of (list of dictionaries, total count)
+        """
         try:
             table_name = self._get_table("evals")
             if table_name is None:
@@ -1801,6 +1841,18 @@ class DynamoDb(BaseDb):
             if model_id:
                 filter_expressions.append("model_id = :model_id")
                 expression_values[":model_id"] = {"S": model_id}
+
+            if eval_id:
+                filter_expressions.append("eval_id = :eval_id")
+                expression_values[":eval_id"] = {"S": eval_id}
+
+            if parent_run_id:
+                filter_expressions.append("parent_run_id = :parent_run_id")
+                expression_values[":parent_run_id"] = {"S": parent_run_id}
+
+            if parent_session_id:
+                filter_expressions.append("parent_session_id = :parent_session_id")
+                expression_values[":parent_session_id"] = {"S": parent_session_id}
 
             if eval_type is not None and len(eval_type) > 0:
                 eval_type_conditions = []
