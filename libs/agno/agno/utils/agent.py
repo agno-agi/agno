@@ -1,10 +1,11 @@
 from asyncio import Future, Task
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
@@ -818,3 +819,120 @@ async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str
         raise Exception("Session not found")
 
     return session.get_chat_history()  # type: ignore
+
+
+def execute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state or {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    # Run the instructions function, await if it's awaitable, otherwise run directly (in thread)
+    if inspect.iscoroutinefunction(instructions):
+        raise Exception("Instructions function is async, use `agent.arun()` instead")
+
+    # Run the instructions function
+    return instructions(**instruction_args)
+
+
+def execute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    """Execute the system message function."""
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+    if inspect.iscoroutinefunction(system_message):
+        raise ValueError("System message function is async, use `agent.arun()` instead")
+
+    return system_message(**system_message_args)
+
+
+async def aexecute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state or {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    if inspect.iscoroutinefunction(instructions):
+        return await instructions(**instruction_args)
+    else:
+        return instructions(**instruction_args)
+
+
+async def aexecute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+
+    if inspect.iscoroutinefunction(system_message):
+        return await system_message(**system_message_args)
+    else:
+        return system_message(**system_message_args)
