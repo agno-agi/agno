@@ -1,8 +1,9 @@
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
-from agno.utils.timer import Timer
 from agno.utils.pricing import PricingConfig
+from agno.utils.timer import Timer
+
 
 @dataclass
 class Metrics:
@@ -47,11 +48,11 @@ class Metrics:
     def calculate_cost(self, model_id: str):
         """Populate cost metrics based on the PricingConfig registry."""
         costs = PricingConfig.calculate_cost(
-            model=model_id, 
-            input_tokens=self.input_tokens, 
+            model=model_id,
+            input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
             cache_read_tokens=self.cache_read_tokens,
-            cache_write_tokens=self.cache_write_tokens
+            cache_write_tokens=self.cache_write_tokens,
         )
         if costs:
             self.input_cost = costs["input_cost"]
@@ -64,18 +65,22 @@ class Metrics:
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer", None)
-        
+
         cleaned_dict = {}
         for k, v in metrics_dict.items():
             # Skip None, Zero values (except 0 if it's not a boolean check), or empty dicts
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0):
-                #Format costs to avoid scientific notation (e.g. 2.6e-05 -> "0.000026")
+            if (
+                v is not None
+                and (not isinstance(v, (int, float)) or v != 0)
+                and (not isinstance(v, dict) or len(v) > 0)
+            ):
+                # Format costs to avoid scientific notation (e.g. 2.6e-05 -> "0.000026")
                 if "cost" in k and isinstance(v, float):
                     cleaned_dict[k] = f"{v:.10f}".rstrip("0").rstrip(".")
                 else:
                     cleaned_dict[k] = v
         if self.total_cost is not None and self.currency:
-            cleaned_dict["currency"] = self.currency                
+            cleaned_dict["currency"] = self.currency
         return cleaned_dict
 
     def _sum_optional_floats(self, val1: Optional[float], val2: Optional[float]) -> Optional[float]:
@@ -86,7 +91,7 @@ class Metrics:
 
     def __add__(self, other: "Metrics") -> "Metrics":
         result_class = type(self)
-        
+
         # Calculate sums for costs
         new_input_cost = self._sum_optional_floats(self.input_cost, other.input_cost)
         new_output_cost = self._sum_optional_floats(self.output_cost, other.output_cost)
