@@ -61,7 +61,13 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
-from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
+    TeamRunEvent,
+    TeamRunInput,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+)
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -1501,6 +1507,15 @@ class Team:
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
+        except Exception as e:
+            log_error(f"Team run {run_response.run_id} encountered an error: {str(e)}")
+
+            run_response.error = create_team_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response
+            self._cleanup_and_store(run_response=run_response, session=session)
+
+            return run_response
         finally:
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1541,19 +1556,35 @@ class Team:
         self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
             # Can modify the run input
-            pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                run_input=run_input,
-                session=session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                stream_events=stream_events,
-                **kwargs,
-            )
-            for pre_hook_event in pre_hook_iterator:
-                yield pre_hook_event
+            try:
+                pre_hook_iterator = self._execute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    run_input=run_input,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    stream_events=stream_events,
+                    **kwargs,
+                )
+                for pre_hook_event in pre_hook_iterator:
+                    yield pre_hook_event
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                run_response.status = RunStatus.error
+                run_response.content = str(e)
+                error_event = create_team_run_error_event(
+                    from_run_response=run_response,
+                    error=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                run_response.error = error_event  # type: ignore
+                self._cleanup_and_store(run_response=run_response, session=session)
+                yield error_event
+                return
 
         # 2. Determine tools for model
         # Initialize team run context
@@ -2340,6 +2371,16 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
             return run_response
+        except Exception as e:
+            # Handle general exceptions during async non-streaming run
+            log_error(f"Team run {run_response.run_id} encountered an error: {str(e)}")
+
+            run_response.error = create_team_run_error_event(run_response, error=str(e))
+
+            # Cleanup and store the run response and session
+            await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+            return run_response
         finally:
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
@@ -2416,19 +2457,38 @@ class Team:
         run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
         if self.pre_hooks is not None:
-            pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                run_input=run_input,
-                session=team_session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                stream_events=stream_events,
-                **kwargs,
-            )
-            async for pre_hook_event in pre_hook_iterator:
-                yield pre_hook_event
+            try:
+                pre_hook_iterator = self._aexecute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    run_input=run_input,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    stream_events=stream_events,
+                    **kwargs,
+                )
+                async for pre_hook_event in pre_hook_iterator:
+                    yield pre_hook_event
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                run_response.status = RunStatus.error
+                run_response.content = str(e)
+                error_event = create_team_run_error_event(
+                    from_run_response=run_response,
+                    error=str(e),
+                    error_type=e.type,
+                    error_id=e.error_id,
+                    additional_data=e.additional_data,
+                )
+                run_response.error = error_event  # type: ignore
+                await self._acleanup_and_store(
+                    run_response=run_response,
+                    session=team_session,
+                )
+                yield error_event
+                return
 
         # 5. Determine tools for model
         team_run_context: Dict[str, Any] = {}
