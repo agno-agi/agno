@@ -29,6 +29,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -73,6 +74,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -86,6 +89,8 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -365,7 +370,7 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # If `output_schema` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -403,6 +408,12 @@ class Agent:
     update_cultural_knowledge: bool = False
     # If True, the agent adds cultural knowledge in the response
     add_culture_to_context: Optional[bool] = None
+
+    # --- Context Compression ---
+    # If True, compress tool call results to save context
+    compress_tool_results: bool = False
+    # Compression manager for compressing tool call results
+    compression_manager: Optional[CompressionManager] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -443,6 +454,8 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        compress_tool_results: bool = False,
+        compression_manager: Optional[CompressionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -545,6 +558,10 @@ class Agent:
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_to_context = add_session_summary_to_context
+
+        # Context compression settings
+        self.compress_tool_results = compress_tool_results
+        self.compression_manager = compression_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -685,10 +702,6 @@ class Agent:
         return self._background_executor
 
     @property
-    def should_parse_structured_output(self) -> bool:
-        return self.output_schema is not None and self.parse_response and self.parser_model is None
-
-    @property
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
 
@@ -823,6 +836,19 @@ class Agent:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
+    def _set_compression_manager(self) -> None:
+        if self.compress_tool_results and self.compression_manager is None:
+            self.compression_manager = CompressionManager(
+                model=self.model,
+            )
+
+        if self.compression_manager is not None and self.compression_manager.model is None:
+            self.compression_manager.model = self.model
+
+        # Check compression flag on the compression manager
+        if self.compression_manager is not None and self.compression_manager.compress_tool_results:
+            self.compress_tool_results = True
+
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -836,6 +862,9 @@ class Agent:
             self.parser_model = get_model(self.parser_model)
         if self.output_model is not None:
             self.output_model = get_model(self.output_model)
+
+        if self.compression_manager is not None and self.compression_manager.model is None:
+            self.compression_manager.model = self.model
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()
@@ -852,6 +881,8 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
+        if self.compress_tool_results or self.compression_manager is not None:
+            self._set_compression_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -870,10 +901,15 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -1041,6 +1077,7 @@ class Agent:
 
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
+
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1049,6 +1086,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -1058,7 +1096,7 @@ class Agent:
             self._generate_response_with_output_model(model_response, run_messages)
 
             # If a parser model is provided, structure the response separately
-            self._parse_response_with_parser_model(model_response, run_messages)
+            self._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
 
             # 7. Update the RunOutput with the model response
             self._update_run_response(
@@ -1078,7 +1116,7 @@ class Agent:
                 store_media_util(run_response, model_response)
 
             # 9. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 10. Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
@@ -1183,6 +1221,7 @@ class Agent:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             for event in pre_hook_iterator:
@@ -1276,6 +1315,7 @@ class Agent:
                     response_format=response_format,
                     stream_events=stream_events,
                     session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1293,6 +1333,7 @@ class Agent:
                     response_format=response_format,
                     stream_events=stream_events,
                     session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -1319,7 +1360,7 @@ class Agent:
 
             # 7. Parse response with parser model if provided
             yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events
+                session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
             )
 
             # We should break out of the run function
@@ -1357,6 +1398,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -1474,6 +1516,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -1501,6 +1544,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
@@ -1529,6 +1573,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
@@ -1598,6 +1643,10 @@ class Agent:
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
 
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
         # Initialize run context
         run_context = run_context or RunContext(
             run_id=run_id,
@@ -1605,7 +1654,10 @@ class Agent:
             user_id=user_id,
             session_state=session_state,
             dependencies=dependencies,
+            output_schema=output_schema,
         )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
 
         # Resolve dependencies
         if run_context.dependencies is not None:
@@ -1649,7 +1701,7 @@ class Agent:
         self.stream_events = self.stream_events or stream_events
 
         # Prepare arguments for the model
-        response_format = self._get_response_format() if self.parser_model is None else None
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
@@ -1910,6 +1962,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -1919,13 +1972,16 @@ class Agent:
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
             # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
+            await self._aparse_response_with_parser_model(
+                model_response=model_response, run_messages=run_messages, run_context=run_context
+            )
 
             # 10. Update the RunOutput with the model response
             self._update_run_response(
                 model_response=model_response,
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
             )
 
             # We should break out of the run function
@@ -1938,7 +1994,7 @@ class Agent:
                 )
 
             # 11. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 12. Store media if enabled
             if self.store_media:
@@ -2105,6 +2161,7 @@ class Agent:
                 session=agent_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             async for event in pre_hook_iterator:
@@ -2188,6 +2245,7 @@ class Agent:
                     response_format=response_format,
                     stream_events=stream_events,
                     session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2205,6 +2263,7 @@ class Agent:
                     response_format=response_format,
                     stream_events=stream_events,
                     session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -2231,7 +2290,7 @@ class Agent:
 
             # 10. Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events
+                session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
             ):
                 yield event
 
@@ -2268,6 +2327,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -2413,6 +2473,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -2439,6 +2500,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
@@ -2467,6 +2529,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
@@ -2554,8 +2617,6 @@ class Agent:
         self.stream = self.stream or stream
         self.stream_events = self.stream_events or stream_events
 
-        # Prepare arguments for the model
-        response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
         # Get knowledge filters
@@ -2570,6 +2631,10 @@ class Agent:
             else:
                 merge_dictionaries(metadata, self.metadata)
 
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
         # Initialize run context
         run_context = run_context or RunContext(
             run_id=run_id,
@@ -2579,7 +2644,13 @@ class Agent:
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
             metadata=metadata,
+            output_schema=output_schema,
         )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
+
+        # Prepare arguments for the model (must be after run_context is fully initialized)
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2866,7 +2937,7 @@ class Agent:
 
         # Prepare arguments for the model
         self._set_default_model()
-        response_format = self._get_response_format()
+        response_format = self._get_response_format(run_context=run_context)
         self.model = cast(Model, self.model)
 
         processed_tools = self.get_tools(
@@ -3023,7 +3094,7 @@ class Agent:
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
             # 4. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 5. Store media if enabled
             if self.store_media:
@@ -3134,6 +3205,7 @@ class Agent:
                 response_format=response_format,
                 stream_events=stream_events,
                 session_state=run_context.session_state,
+                run_context=run_context,
             ):
                 yield event
 
@@ -3167,6 +3239,7 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -3388,7 +3461,7 @@ class Agent:
                 merge_dictionaries(metadata, self.metadata)
 
         # Prepare arguments for the model
-        response_format = self._get_response_format()
+        response_format = self._get_response_format(run_context=run_context)
         self.model = cast(Model, self.model)
 
         # Initialize run context
@@ -3585,13 +3658,16 @@ class Agent:
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
             # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
+            await self._aparse_response_with_parser_model(
+                model_response=model_response, run_messages=run_messages, run_context=run_context
+            )
 
             # 9. Update the RunOutput with the model response
             self._update_run_response(
                 model_response=model_response,
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
             )
 
             # Break out of the run function if a tool call is paused
@@ -3601,7 +3677,7 @@ class Agent:
                 )
 
             # 10. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 11. Store media if enabled
             if self.store_media:
@@ -3797,6 +3873,7 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -3813,6 +3890,7 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -3839,7 +3917,7 @@ class Agent:
 
             # Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events
+                session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
             ):
                 yield event
 
@@ -3869,6 +3947,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3969,6 +4048,7 @@ class Agent:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
@@ -3990,25 +4070,10 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
-                    event=create_pre_hook_completed_event(
+                    event=create_pre_hook_started_event(
                         from_run_response=run_response,
                         run_input=run_input,
                         pre_hook_name=hook.__name__,
@@ -4016,6 +4081,23 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4038,6 +4120,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
@@ -4059,16 +4142,17 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_pre_hook_started_event(
+                        from_run_response=run_response,
+                        run_input=run_input,
+                        pre_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4079,16 +4163,17 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_pre_hook_completed_event(
-                        from_run_response=run_response,
-                        run_input=run_input,
-                        pre_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4110,6 +4195,7 @@ class Agent:
         run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
@@ -4131,30 +4217,32 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_post_hook_completed_event(
+                    event=create_post_hook_started_event(
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -4172,6 +4260,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -4193,15 +4282,16 @@ class Agent:
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_post_hook_started_event(
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4212,15 +4302,16 @@ class Agent:
                 else:
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_output,
-                    event=create_post_hook_completed_event(
-                        from_run_response=run_output,
-                        post_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4327,18 +4418,23 @@ class Agent:
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
-    def _convert_response_to_structured_format(self, run_response: Union[RunOutput, ModelResponse]):
+    def _convert_response_to_structured_format(
+        self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
+    ):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         # Convert the response to the structured format if needed
-        if self.output_schema is not None and not isinstance(run_response.content, self.output_schema):
+        if output_schema is not None and not isinstance(run_response.content, output_schema):
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    structured_output = parse_response_model_str(run_response.content, self.output_schema)
+                    structured_output = parse_response_model_str(run_response.content, output_schema)
 
                     # Update RunOutput
                     if structured_output is not None:
                         run_response.content = structured_output
                         if isinstance(run_response, RunOutput):
-                            run_response.content_type = self.output_schema.__name__
+                            run_response.content_type = output_schema.__name__
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
@@ -4681,15 +4777,19 @@ class Agent:
         model_response: ModelResponse,
         run_response: RunOutput,
         run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
     ):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         # Handle structured outputs
-        if self.output_schema is not None and model_response.parsed is not None:
+        if output_schema is not None and model_response.parsed is not None:
             # We get native structured outputs from the model
-            if self._model_should_return_structured_output():
+            if self._model_should_return_structured_output(run_context=run_context):
                 # Update the run_response content with the structured output
                 run_response.content = model_response.parsed
                 # Update the run_response content_type with the structured output class name
-                run_response.content_type = self.output_schema.__name__
+                run_response.content_type = output_schema.__name__
         else:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
@@ -4762,6 +4862,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -4771,8 +4872,12 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+        should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
+
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -4785,6 +4890,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4792,9 +4898,10 @@ class Agent:
                 model_response=model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=should_parse_structured_output,
                 stream_events=stream_events,
                 session_state=session_state,
+                run_context=run_context,
             )
 
         # Determine reasoning completed
@@ -4842,6 +4949,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -4851,8 +4959,12 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+        should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
+
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -4865,6 +4977,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -4874,9 +4987,10 @@ class Agent:
                 model_response=model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=should_parse_structured_output,
                 stream_events=stream_events,
                 session_state=session_state,
+                run_context=run_context,
             ):
                 yield event
 
@@ -4925,6 +5039,7 @@ class Agent:
         parse_structured_output: bool = False,
         stream_events: bool = False,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Iterator[RunOutputEvent]:
         from agno.run.workflow import WorkflowRunOutputEvent
 
@@ -4956,9 +5071,11 @@ class Agent:
                 if model_response_event.content is not None:
                     if parse_structured_output:
                         model_response.content = model_response_event.content
-                        self._convert_response_to_structured_format(model_response)
+                        self._convert_response_to_structured_format(model_response, run_context=run_context)
 
-                        content_type = self.output_schema.__name__  # type: ignore
+                        # Get output_schema from run_context
+                        output_schema = run_context.output_schema if run_context else None
+                        content_type = output_schema.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                     else:
@@ -5473,7 +5590,12 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                )
+
+                if is_mcp_tool:
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5493,9 +5615,8 @@ class Agent:
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
 
-                    agent_tools.append(tool)
-                else:
-                    agent_tools.append(tool)
+                # Add the tool (MCP tools that passed checks, or any non-MCP tool)
+                agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -5557,10 +5678,13 @@ class Agent:
         if processed_tools is not None and len(processed_tools) > 0:
             log_debug("Processing tools for model")
 
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
+
             # Check if we need strict mode for the functions for the model
             strict = False
             if (
-                self.output_schema is not None
+                output_schema is not None
                 and (self.structured_outputs or (not self.use_json_mode))
                 and model.supports_native_structured_outputs
             ):
@@ -5662,17 +5786,25 @@ class Agent:
 
         return _functions
 
-    def _model_should_return_structured_output(self):
+    def _model_should_return_structured_output(self, run_context: Optional[RunContext] = None):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         self.model = cast(Model, self.model)
         return bool(
             self.model.supports_native_structured_outputs
-            and self.output_schema is not None
+            and output_schema is not None
             and (not self.use_json_mode or self.structured_outputs)
         )
 
-    def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
+    def _get_response_format(
+        self, model: Optional[Model] = None, run_context: Optional[RunContext] = None
+    ) -> Optional[Union[Dict, Type[BaseModel]]]:
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         model = cast(Model, model or self.model)
-        if self.output_schema is None:
+        if output_schema is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
@@ -5680,7 +5812,7 @@ class Agent:
             if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.output_schema")
-                    return self.output_schema
+                    return output_schema
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
@@ -5693,8 +5825,8 @@ class Agent:
                     return {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": self.output_schema.__name__,
-                            "schema": self.output_schema.model_json_schema(),
+                            "name": output_schema.__name__,
+                            "schema": output_schema.model_json_schema(),
                         },
                     }
                 else:
@@ -6768,6 +6900,9 @@ class Agent:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
 
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
             if isinstance(self.system_message, Message):
@@ -6777,7 +6912,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -6806,25 +6943,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                # Check for run_context parameter
-                if "run_context" in signature.parameters:
-                    instruction_args["run_context"] = run_context or None
-
-                # Run the instructions function
-                _instructions = self.instructions(**instruction_args)
+                _instructions = execute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -6839,7 +6960,7 @@ class Agent:
         # 3.2 Build a list of additional information for the system message
         additional_information: List[str] = []
         # 3.2.1 Add instructions for using markdown
-        if self.markdown and self.output_schema is None:
+        if self.markdown and output_schema is None:
             additional_information.append("Use markdown to format your answers.")
         # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
@@ -7074,18 +7195,18 @@ class Agent:
         # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
-            self.output_schema is not None
+            output_schema is not None
             and self.parser_model is None
             and not (
                 (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         # 3.3.14 Add the response model format prompt if output_schema is provided
-        if self.output_schema is not None and self.parser_model is not None:
-            system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
+        if output_schema is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
@@ -7122,6 +7243,9 @@ class Agent:
             dependencies = run_context.dependencies or dependencies
             metadata = run_context.metadata or metadata
 
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
             if isinstance(self.system_message, Message):
@@ -7131,7 +7255,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -7161,20 +7287,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                _instructions = self.instructions(**instruction_args)
+                _instructions = await aexecute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -7189,7 +7304,7 @@ class Agent:
         # 3.2 Build a list of additional information for the system message
         additional_information: List[str] = []
         # 3.2.1 Add instructions for using markdown
-        if self.markdown and self.output_schema is None:
+        if self.markdown and output_schema is None:
             additional_information.append("Use markdown to format your answers.")
         # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
@@ -7427,18 +7542,18 @@ class Agent:
         # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
-            self.output_schema is not None
+            output_schema is not None
             and self.parser_model is None
             and not (
                 (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         # 3.3.14 Add the response model format prompt if output_schema is provided
-        if self.output_schema is not None and self.parser_model is not None:
-            system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
+        if output_schema is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
@@ -8255,16 +8370,20 @@ class Agent:
         self,
         model_response: ModelResponse,
         response_format: Optional[Union[Dict, Type[BaseModel]]],
+        run_context: Optional[RunContext] = None,
     ) -> List[Message]:
         """Get the messages for the parser model."""
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
             else "You are tasked with creating a structured output from the provided user message."
         )
 
-        if response_format == {"type": "json_object"} and self.output_schema is not None:
-            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+        if response_format == {"type": "json_object"} and output_schema is not None:
+            system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -8275,16 +8394,20 @@ class Agent:
         self,
         run_response: RunOutput,
         response_format: Optional[Union[Dict, Type[BaseModel]]],
+        run_context: Optional[RunContext] = None,
     ) -> List[Message]:
         """Get the messages for the parser model."""
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
             else "You are tasked with creating a structured output from the provided data."
         )
 
-        if response_format == {"type": "json_object"} and self.output_schema is not None:
-            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+        if response_format == {"type": "json_object"} and output_schema is not None:
+            system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -9323,14 +9446,21 @@ class Agent:
         else:
             log_warning("Unable to parse response with parser model")
 
-    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+    def _parse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         """Parse the model response using the parser model."""
         if self.parser_model is None:
             return
 
-        if self.output_schema is not None:
-            parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
+        if output_schema is not None:
+            parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
+            messages_for_parser_model = self._get_messages_for_parser_model(
+                model_response, parser_response_format, run_context=run_context
+            )
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -9345,15 +9475,20 @@ class Agent:
             log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model(
-        self, model_response: ModelResponse, run_messages: RunMessages
+        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
     ) -> None:
         """Parse the model response using the parser model."""
         if self.parser_model is None:
             return
 
-        if self.output_schema is not None:
-            parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
+        if output_schema is not None:
+            parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
+            messages_for_parser_model = self._get_messages_for_parser_model(
+                model_response, parser_response_format, run_context=run_context
+            )
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -9368,11 +9503,18 @@ class Agent:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_events: bool = True
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_events: bool = True,
+        run_context: Optional[RunContext] = None,
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
-            if self.output_schema is not None:
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
+
+            if output_schema is not None:
                 if stream_events:
                     yield handle_event(
                         create_parser_model_response_started_event(run_response),
@@ -9382,9 +9524,9 @@ class Agent:
                     )
 
                 parser_model_response = ModelResponse(content="")
-                parser_response_format = self._get_response_format(self.parser_model)
+                parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
-                    run_response, parser_response_format
+                    run_response, parser_response_format, run_context=run_context
                 )
                 for model_response_event in self.parser_model.response_stream(
                     messages=messages_for_parser_model,
@@ -9398,6 +9540,7 @@ class Agent:
                         model_response_event=model_response_event,
                         parse_structured_output=True,
                         stream_events=stream_events,
+                        run_context=run_context,
                     )
 
                 parser_model_response_message: Optional[Message] = None
@@ -9423,11 +9566,18 @@ class Agent:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_events: bool = True
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_events: bool = True,
+        run_context: Optional[RunContext] = None,
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
-            if self.output_schema is not None:
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
+
+            if output_schema is not None:
                 if stream_events:
                     yield handle_event(
                         create_parser_model_response_started_event(run_response),
@@ -9437,9 +9587,9 @@ class Agent:
                     )
 
                 parser_model_response = ModelResponse(content="")
-                parser_response_format = self._get_response_format(self.parser_model)
+                parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
-                    run_response, parser_response_format
+                    run_response, parser_response_format, run_context=run_context
                 )
                 model_response_stream = self.parser_model.aresponse_stream(
                     messages=messages_for_parser_model,
@@ -9454,6 +9604,7 @@ class Agent:
                         model_response_event=model_response_event,
                         parse_structured_output=True,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         yield event
 
@@ -10526,7 +10677,10 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
