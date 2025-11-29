@@ -20,10 +20,12 @@ from agno.utils.log import log_info
 TEMPLATE_TO_NAME_MAP: Dict[InfraStarterTemplate, str] = {
     InfraStarterTemplate.agent_infra_docker: "agent-infra-docker",
     InfraStarterTemplate.agent_infra_aws: "agent-infra-aws",
+    InfraStarterTemplate.agent_infra_railway: "agent-infra-railway",
 }
 TEMPLATE_TO_REPO_MAP: Dict[InfraStarterTemplate, str] = {
     InfraStarterTemplate.agent_infra_docker: "https://github.com/agno-agi/agent-infra-docker",
     InfraStarterTemplate.agent_infra_aws: "https://github.com/agno-agi/agent-infra-aws",
+    InfraStarterTemplate.agent_infra_railway: "https://github.com/agno-agi/agent-infra-railway",
 }
 
 

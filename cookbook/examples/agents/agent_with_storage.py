@@ -25,5 +25,5 @@ if __name__ == "__main__":
     agent.print_response("List my messages one by one")
 
     # Print all messages in this session
-    messages_in_session = agent.get_messages_for_session()
+    messages_in_session = agent.get_session_messages()
     pprint(messages_in_session)

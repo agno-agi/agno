@@ -101,7 +101,6 @@ async def main():
     await competitive_brief.aprint_response(
         "Create a competitive brief for Agno vs LangChain focusing on features and architecture.",
         stream=True,
-        stream_events=True,
     )
 
     # 2) Follow-up — should answer from history (no re-run)
@@ -111,7 +110,6 @@ async def main():
     await competitive_brief.aprint_response(
         "Which one would you recommend for a new project?",
         stream=True,
-        stream_events=True,  # stays True so the audience can see that nothing re-runs
     )
 
     # 3) Scope change — introduces new vendor; should trigger re-run
@@ -119,7 +117,6 @@ async def main():
     await competitive_brief.aprint_response(
         "Now add CrewAI to the comparison.",
         stream=True,
-        stream_events=True,
     )
 
 
