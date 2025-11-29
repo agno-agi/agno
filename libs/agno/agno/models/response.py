@@ -35,7 +35,7 @@ class ToolExecution:
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
 
-    created_at: int = int(time())
+    created_at: int = field(default_factory=lambda: int(time()))
 
     # User control flow requirements
     requires_confirmation: Optional[bool] = None
@@ -81,6 +81,7 @@ class ToolExecution:
             else None,
             external_execution_required=data.get("external_execution_required"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
+            **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
 
 
