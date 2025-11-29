@@ -8,9 +8,12 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
+from agno.models.utils import get_model
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
+    OptimizeMemoriesRequest,
+    OptimizeMemoriesResponse,
     UserMemoryCreateSchema,
     UserMemorySchema,
     UserStatsSchema,
@@ -470,6 +473,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_db(dbs, db_id, table)
         try:
+            # Ensure limit and page are integers
+            limit = int(limit) if limit is not None else 20
+            page = int(page) if page is not None else 1
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 user_stats, total_count = await db.get_user_memory_stats(
@@ -493,6 +499,146 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get user statistics: {str(e)}")
+
+    @router.post(
+        "/optimize-memories",
+        response_model=OptimizeMemoriesResponse,
+        status_code=200,
+        operation_id="optimize_memories",
+        summary="Optimize User Memories",
+        description=(
+            "Optimize all memories for a given user using the default summarize strategy. "
+            "This operation combines all memories into a single comprehensive summary, "
+            "achieving maximum token reduction while preserving all key information. "
+            "To use a custom model, specify the model parameter in 'provider:model_id' format "
+            "(e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022'). "
+            "If not specified, uses MemoryManager's default model (gpt-4o). "
+            "Set apply=false to preview optimization results without saving to database."
+        ),
+        responses={
+            200: {
+                "description": "Memories optimized successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "memories": [
+                                {
+                                    "memory_id": "f9361a69-2997-40c7-ae4e-a5861d434047",
+                                    "memory": "User has a 3-year-old golden retriever named Max who loves fetch and walks. Lives in San Francisco's Mission district, works as a product manager in tech. Enjoys hiking Bay Area trails, trying new restaurants (especially Japanese, Thai, Mexican), and learning piano for 1.5 years.",
+                                    "topics": ["pets", "location", "work", "hobbies", "food_preferences"],
+                                    "user_id": "user2",
+                                    "updated_at": "2025-11-18T10:30:00Z",
+                                }
+                            ],
+                            "memories_before": 4,
+                            "memories_after": 1,
+                            "tokens_before": 450,
+                            "tokens_after": 180,
+                            "tokens_saved": 270,
+                            "reduction_percentage": 60.0,
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Bad request - User ID is required or invalid model string format",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "No memories found for user", "model": NotFoundResponse},
+            500: {"description": "Failed to optimize memories", "model": InternalServerErrorResponse},
+        },
+    )
+    async def optimize_memories(
+        request: OptimizeMemoriesRequest,
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for optimization"),
+        table: Optional[str] = Query(default=None, description="Table to use for optimization"),
+    ) -> OptimizeMemoriesResponse:
+        """Optimize user memories using the default summarize strategy."""
+        from agno.memory import MemoryManager
+        from agno.memory.strategies.types import MemoryOptimizationStrategyType
+
+        try:
+            # Get database instance
+            db = await get_db(dbs, db_id, table)
+
+            # Create memory manager with optional model
+            if request.model:
+                try:
+                    model_instance = get_model(request.model)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+                memory_manager = MemoryManager(model=model_instance, db=db)
+            else:
+                # No model specified - use MemoryManager's default
+                memory_manager = MemoryManager(db=db)
+
+            # Get current memories to count tokens before optimization
+            if isinstance(db, AsyncBaseDb):
+                memories_before = await memory_manager.aget_user_memories(user_id=request.user_id)
+            else:
+                memories_before = memory_manager.get_user_memories(user_id=request.user_id)
+
+            if not memories_before:
+                raise HTTPException(status_code=404, detail=f"No memories found for user {request.user_id}")
+
+            # Count tokens before optimization
+            from agno.memory.strategies.summarize import SummarizeStrategy
+
+            strategy = SummarizeStrategy()
+            tokens_before = strategy.count_tokens(memories_before)
+            memories_before_count = len(memories_before)
+
+            # Optimize memories with default SUMMARIZE strategy
+            if isinstance(db, AsyncBaseDb):
+                optimized_memories = await memory_manager.aoptimize_memories(
+                    user_id=request.user_id,
+                    strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+                    apply=request.apply,
+                )
+            else:
+                optimized_memories = memory_manager.optimize_memories(
+                    user_id=request.user_id,
+                    strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+                    apply=request.apply,
+                )
+
+            # Count tokens after optimization
+            tokens_after = strategy.count_tokens(optimized_memories)
+            memories_after_count = len(optimized_memories)
+
+            # Calculate statistics
+            tokens_saved = tokens_before - tokens_after
+            reduction_percentage = (tokens_saved / tokens_before * 100.0) if tokens_before > 0 else 0.0
+
+            # Convert to schema objects
+            optimized_memory_schemas = [
+                UserMemorySchema(
+                    memory_id=mem.memory_id or "",
+                    memory=mem.memory or "",
+                    topics=mem.topics,
+                    agent_id=mem.agent_id,
+                    team_id=mem.team_id,
+                    user_id=mem.user_id,
+                    updated_at=mem.updated_at,
+                )
+                for mem in optimized_memories
+            ]
+
+            return OptimizeMemoriesResponse(
+                memories=optimized_memory_schemas,
+                memories_before=memories_before_count,
+                memories_after=memories_after_count,
+                tokens_before=tokens_before,
+                tokens_after=tokens_after,
+                tokens_saved=tokens_saved,
+                reduction_percentage=reduction_percentage,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to optimize memories for user {request.user_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to optimize memories: {str(e)}")
 
     return router
 

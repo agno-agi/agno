@@ -1,9 +1,11 @@
 import time
+import warnings
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     abulk_upsert_metrics,
@@ -47,6 +49,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
         """
@@ -68,6 +71,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             db_id: Deprecated, use id instead.
 
         Raises:
@@ -75,7 +79,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If none of the tables are provided.
         """
         if db_id is not None:
-            log_warning("db_id is deprecated and will be removed in a future version, use id instead.")
+            warnings.warn(
+                "The 'db_id' parameter is deprecated and will be removed in future versions. Use 'id' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         super().__init__(
             id=id or db_id,
@@ -85,6 +93,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -96,10 +105,13 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session factory
-        self.async_session_factory = async_sessionmaker(bind=self.db_engine)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.db_engine,
+            expire_on_commit=False,
+        )
 
     # -- DB methods --
     async def table_exists(self, table_name: str) -> bool:
@@ -122,19 +134,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
-    async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -163,8 +175,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -178,11 +189,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=db_schema)
+                await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
-            async with self.db_engine.begin() as conn:
-                await conn.run_sync(table.create, checkfirst=True)
+            table_created = False
+            if not await self.table_exists(table_name):
+                async with self.db_engine.begin() as conn:
+                    await conn.run_sync(table.create, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -192,110 +209,166 @@ class AsyncPostgresDb(AsyncBaseDb):
                         exists_query = text(
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
-                        result = await sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name})
+                        result = await sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     async with self.db_engine.begin() as conn:
                         await conn.run_sync(idx.create)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+                log_info(
+                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                )
+
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
     async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                    table_name=self.session_table_name, table_type="sessions"
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                    table_name=self.memory_table_name, table_type="memories"
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                    table_name=self.metrics_table_name, table_type="metrics"
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
-                )
+                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                    table_name=self.knowledge_table_name, table_type="knowledge"
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture", db_schema=self.db_schema
+                    table_name=self.culture_table_name, table_type="culture"
                 )
             return self.culture_table
 
+        if table_type == "versions":
+            if not hasattr(self, "versions_table"):
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name, table_type="versions"
+                )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = await ais_table_available(
+                session=sess, table_name=table_name, db_schema=self.db_schema
+            )
 
         if not table_is_available:
-            return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
             async with self.db_engine.connect() as conn:
 
                 def create_table(connection):
-                    return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
+                    return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
+
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
+
+    async def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = await self._get_table(table_type="versions")
+        if table is None:
+            return "2.0.0"
+
+        async with self.async_session_factory() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            if row is None:
+                return "2.0.0"
+
+            version_dict = dict(row._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = await self._get_table(table_type="versions")
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            await sess.execute(stmt)
 
     # -- Session methods --
     async def delete_session(self, session_id: str) -> bool:
@@ -748,7 +821,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
 
-    async def delete_user_memories(self, memory_ids: List[str]) -> None:
+    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
@@ -762,6 +835,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -1146,13 +1223,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise e
 
     async def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1173,16 +1251,18 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
@@ -1231,36 +1311,44 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="memories")
 
-            async with self.async_session_factory() as sess, sess.begin():
-                if memory.memory_id is None:
-                    memory.memory_id = str(uuid4())
+            current_time = int(time.time())
 
-                stmt = postgresql.insert(table).values(
-                    memory_id=memory.memory_id,
-                    memory=memory.memory,
-                    input=memory.input,
-                    user_id=memory.user_id,
-                    agent_id=memory.agent_id,
-                    team_id=memory.team_id,
-                    topics=memory.topics,
-                    updated_at=int(time.time()),
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["memory_id"],
-                    set_=dict(
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    if memory.memory_id is None:
+                        memory.memory_id = str(uuid4())
+
+                    stmt = postgresql.insert(table).values(
+                        memory_id=memory.memory_id,
                         memory=memory.memory,
-                        topics=memory.topics,
                         input=memory.input,
+                        user_id=memory.user_id,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
-                    ),
-                ).returning(table)
+                        topics=memory.topics,
+                        feedback=memory.feedback,
+                        created_at=memory.created_at,
+                        updated_at=memory.created_at,
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["memory_id"],
+                        set_=dict(
+                            memory=memory.memory,
+                            topics=memory.topics,
+                            input=memory.input,
+                            agent_id=memory.agent_id,
+                            team_id=memory.team_id,
+                            feedback=memory.feedback,
+                            updated_at=current_time,
+                            # Preserve created_at on update - don't overwrite existing value
+                            created_at=table.c.created_at,
+                        ),
+                    ).returning(table)
 
-                result = await sess.execute(stmt)
-                row = result.fetchone()
-                if row is None:
-                    return None
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
 
             memory_raw = dict(row._mapping)
 
