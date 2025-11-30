@@ -232,7 +232,6 @@ def demo_content_workflow():
         user="Content Manager",
         emoji="📝",
         stream=True,
-        stream_events=True,
     )
 
 

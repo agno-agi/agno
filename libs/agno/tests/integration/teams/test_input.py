@@ -57,7 +57,7 @@ def test_list_as_input():
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+                    "url": "https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg",
                 },
             },
         ]
@@ -143,11 +143,7 @@ def test_empty_string_with_image():
 
     response = team.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0
@@ -176,11 +172,7 @@ def test_none_input_with_image():
 
     response = team.run(
         input=None,
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0
@@ -209,11 +201,7 @@ def test_empty_string_with_multiple_media():
 
     response = team.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0
@@ -248,11 +236,7 @@ def test_empty_string_with_image_and_user_memories():
 
     response = team.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0
@@ -287,11 +271,7 @@ def test_none_input_with_image_and_user_memories():
 
     response = team.run(
         input=None,
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0
@@ -326,11 +306,7 @@ def test_empty_string_with_image_and_session_summaries():
 
     response = team.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0
@@ -365,11 +341,7 @@ def test_none_input_with_image_and_session_summaries():
 
     response = team.run(
         input=None,
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(url="https://www.exp1.com/wp-content/uploads/sites/7/2018/08/Golden-Gate-Bridge.jpg")],
     )
     assert response.content is not None
     assert len(response.content) > 0

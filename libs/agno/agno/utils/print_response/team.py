@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Unio
 
 from pydantic import BaseModel
 
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -24,6 +25,7 @@ def print_response(
     show_message: bool = True,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    show_member_responses: Optional[bool] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -33,7 +35,7 @@ def print_response(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -84,6 +86,7 @@ def print_response(
             videos=videos,
             files=files,
             stream=False,
+            stream_events=True,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
@@ -151,7 +154,7 @@ def print_response(
 
         if isinstance(run_response, TeamRunOutput):
             # Handle member responses
-            if team.show_members_responses:
+            if show_member_responses:
                 for member_response in run_response.member_responses:
                     # Handle member reasoning
                     reasoning_steps = []
@@ -257,6 +260,15 @@ def print_response(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
+                    # Add compression stats at end of tool calls
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("messages_compressed", 0) > 0:
+                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        team.compression_manager.stats.clear()
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -322,6 +334,7 @@ def print_response_stream(
     show_message: bool = True,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    show_member_responses: Optional[bool] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -333,7 +346,7 @@ def print_response_stream(
     markdown: bool = False,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -411,7 +424,7 @@ def print_response_stream(
             add_session_state_to_context=add_session_state_to_context,
             metadata=metadata,
             debug_mode=debug_mode,
-            yield_run_response=True,
+            yield_run_output=True,
             **kwargs,
         )
 
@@ -469,7 +482,7 @@ def print_response_stream(
                         team_tool_calls.append(tool)
 
             # Collect member tool calls, avoiding duplicates
-            if hasattr(resp, "member_responses") and resp.member_responses:
+            if show_member_responses and hasattr(resp, "member_responses") and resp.member_responses:
                 for member_response in resp.member_responses:
                     member_id = None
                     if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -531,7 +544,9 @@ def print_response_stream(
                 panels.append(status)
 
             # Process member responses and their tool calls
-            for member_response in resp.member_responses if hasattr(resp, "member_responses") else []:
+            for member_response in (
+                resp.member_responses if show_member_responses and hasattr(resp, "member_responses") else []
+            ):
                 member_id = None
                 member_name = "Team Member"
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -564,7 +579,7 @@ def print_response_stream(
                         panels.append(member_tool_calls_panel)
 
                 # Process member response content
-                if team.show_members_responses and member_id is not None:
+                if show_member_responses and member_id is not None:
                     show_markdown = False
                     if markdown:
                         show_markdown = True
@@ -606,6 +621,14 @@ def print_response_stream(
 
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
+
+                    # Add compression stats if available (don't clear - will be cleared in final_panels)
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("messages_compressed", 0) > 0:
+                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -707,7 +730,7 @@ def print_response_stream(
             final_panels.append(thinking_panel)
 
         # Add member tool calls and responses in correct order
-        if run_response is not None and hasattr(run_response, "member_responses"):
+        if show_member_responses and run_response is not None and hasattr(run_response, "member_responses"):
             for i, member_response in enumerate(run_response.member_responses):  # type: ignore
                 member_id = None
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -809,6 +832,15 @@ def print_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
+                # Add compression stats at end of tool calls
+                if team.compression_manager is not None and team.compression_manager.stats:
+                    stats = team.compression_manager.stats
+                    saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                    orig = stats.get("original_size", 1)
+                    if stats.get("messages_compressed", 0) > 0:
+                        tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    team.compression_manager.stats.clear()
+
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
                     title="Team Tool Calls",
@@ -856,6 +888,7 @@ async def aprint_response(
     show_message: bool = True,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    show_member_responses: Optional[bool] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -865,7 +898,7 @@ async def aprint_response(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -916,6 +949,7 @@ async def aprint_response(
             videos=videos,
             files=files,
             stream=False,
+            stream_events=True,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
@@ -983,7 +1017,7 @@ async def aprint_response(
 
         if isinstance(run_response, TeamRunOutput):
             # Handle member responses
-            if team.show_members_responses:
+            if show_member_responses:
                 for member_response in run_response.member_responses:
                     # Handle member reasoning
                     reasoning_steps = []
@@ -1087,6 +1121,15 @@ async def aprint_response(
 
                     tool_calls_text = "\n\n".join(lines)
 
+                    # Add compression stats at end of tool calls
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("messages_compressed", 0) > 0:
+                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        team.compression_manager.stats.clear()
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -1152,6 +1195,7 @@ async def aprint_response_stream(
     show_message: bool = True,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    show_member_responses: Optional[bool] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -1163,7 +1207,7 @@ async def aprint_response_stream(
     markdown: bool = False,
     stream_events: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     add_dependencies_to_context: Optional[bool] = None,
@@ -1251,7 +1295,7 @@ async def aprint_response_stream(
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
-            yield_run_response=True,
+            yield_run_output=True,
             **kwargs,
         ):
             if team_markdown is None:
@@ -1298,7 +1342,7 @@ async def aprint_response_stream(
                         team_tool_calls.append(tool)
 
             # Collect member tool calls, avoiding duplicates
-            if hasattr(resp, "member_responses") and resp.member_responses:
+            if show_member_responses and hasattr(resp, "member_responses") and resp.member_responses:
                 for member_response in resp.member_responses:
                     member_id = None
                     if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -1359,7 +1403,9 @@ async def aprint_response_stream(
                 panels.append(status)
 
             # Process member responses and their tool calls
-            for member_response in resp.member_responses if hasattr(resp, "member_responses") else []:
+            for member_response in (
+                resp.member_responses if show_member_responses and hasattr(resp, "member_responses") else []
+            ):
                 member_id = None
                 member_name = "Team Member"
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -1392,7 +1438,7 @@ async def aprint_response_stream(
                         panels.append(member_tool_calls_panel)
 
                 # Process member response content
-                if team.show_members_responses and member_id is not None:
+                if show_member_responses and member_id is not None:
                     show_markdown = False
                     if markdown:
                         show_markdown = True
@@ -1434,6 +1480,14 @@ async def aprint_response_stream(
 
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
+
+                    # Add compression stats if available (don't clear - will be cleared in final_panels)
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("messages_compressed", 0) > 0:
+                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1536,7 +1590,7 @@ async def aprint_response_stream(
             final_panels.append(thinking_panel)
 
         # Add member tool calls and responses in correct order
-        if run_response is not None and hasattr(run_response, "member_responses"):
+        if show_member_responses and run_response is not None and hasattr(run_response, "member_responses"):
             for i, member_response in enumerate(run_response.member_responses):
                 member_id = None
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -1654,6 +1708,15 @@ async def aprint_response_stream(
                         lines.append(wrapped_call)
 
                 tool_calls_text = "\n\n".join(lines)
+
+                # Add compression stats at end of tool calls
+                if team.compression_manager is not None and team.compression_manager.stats:
+                    stats = team.compression_manager.stats
+                    saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                    orig = stats.get("original_size", 1)
+                    if stats.get("messages_compressed", 0) > 0:
+                        tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    team.compression_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,

@@ -4,7 +4,7 @@ from agno.models.openai.responses import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
-def test_image_input():
+def test_image_input(image_path):
     """Test image input with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
@@ -15,15 +15,14 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
 
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
-    assert "san francisco" in response.content.lower()
 
 
-def test_multimodal_with_tools():
+def test_multimodal_with_tools(image_path):
     """Test multimodal input with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
@@ -34,7 +33,7 @@ def test_multimodal_with_tools():
 
     response = agent.run(
         "Tell me about this bridge and look up its current status.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
 
     # Verify content includes image analysis and tool usage

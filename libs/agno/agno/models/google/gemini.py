@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import json
 import time
 from collections.abc import AsyncIterator
@@ -26,12 +28,14 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
+        FileSearch,
         FunctionCallingConfigMode,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
+        Operation,
         Part,
         Retrieval,
         ThinkingConfig,
@@ -43,7 +47,9 @@ try:
         File as GeminiFile,
     )
 except ImportError:
-    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+    raise ImportError(
+        "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
+    )
 
 
 @dataclass
@@ -78,6 +84,10 @@ class Gemini(Model):
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
 
+    # Gemini File Search capabilities
+    file_search_store_names: Optional[List[str]] = None
+    file_search_metadata_filter: Optional[str] = None
+
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -92,6 +102,7 @@ class Gemini(Model):
     cached_content: Optional[Any] = None
     thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
     include_thoughts: Optional[bool] = None  # Include thought summaries in response
+    thinking_level: Optional[str] = None  # "low", "high"
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -130,7 +141,11 @@ class Gemini(Model):
         if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
-                log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+                raise ModelProviderError(
+                    message="GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
             client_params["api_key"] = self.api_key
         else:
             log_info("Using Vertex AI API")
@@ -145,6 +160,21 @@ class Gemini(Model):
 
         self.client = genai.Client(**client_params)
         return self.client
+
+    def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
+        """Append Gemini File Search tool to builtin_tools if file search is enabled.
+
+        Args:
+            builtin_tools: List of built-in tools to append to.
+        """
+        if not self.file_search_store_names:
+            return
+
+        log_debug("Gemini File Search enabled.")
+        file_search_config: Dict[str, Any] = {"file_search_store_names": self.file_search_store_names}
+        if self.file_search_metadata_filter:
+            file_search_config["metadata_filter"] = self.file_search_metadata_filter
+        builtin_tools.append(Tool(file_search=FileSearch(**file_search_config)))  # type: ignore[arg-type]
 
     def get_request_params(
         self,
@@ -197,11 +227,13 @@ class Gemini(Model):
             config["response_schema"] = prepare_response_schema(response_format)
 
         # Add thinking configuration
-        thinking_config_params = {}
+        thinking_config_params: Dict[str, Any] = {}
         if self.thinking_budget is not None:
             thinking_config_params["thinking_budget"] = self.thinking_budget
         if self.include_thoughts is not None:
             thinking_config_params["include_thoughts"] = self.include_thoughts
+        if self.thinking_level is not None:
+            thinking_config_params["thinking_level"] = self.thinking_level
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
@@ -238,6 +270,8 @@ class Gemini(Model):
             builtin_tools.append(
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
+
+        self._append_file_search_tool(builtin_tools)
 
         # Set tools in config
         if builtin_tools:
@@ -280,11 +314,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
@@ -325,11 +360,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -368,11 +404,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -414,11 +451,12 @@ class Gemini(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
         """
-        formatted_messages, system_message = self._format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -452,16 +490,18 @@ class Gemini(Model):
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def _format_messages(self, messages: List[Message]):
+    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
         Converts a list of Message objects to the Gemini-compatible format.
 
         Args:
             messages (List[Message]): The list of messages to convert.
+            compress_tool_results: Whether to compress tool results.
         """
         formatted_messages: List = []
         file_content: Optional[Union[GeminiFile, Part]] = None
         system_message = None
+
         for message in messages:
             role = message.role
             if role in ["system", "developer"]:
@@ -472,7 +512,8 @@ class Gemini(Model):
             role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
-            content = message.content
+            content = message.get_content(use_compressed_content=compress_tool_results)
+
             # Initialize message_parts to be used for Gemini
             message_parts: List[Any] = []
 
@@ -480,26 +521,47 @@ class Gemini(Model):
             if role == "model" and message.tool_calls is not None and len(message.tool_calls) > 0:
                 if content is not None:
                     content_str = content if isinstance(content, str) else str(content)
-                    message_parts.append(Part.from_text(text=content_str))
+                    part = Part.from_text(text=content_str)
+                    if message.provider_data and "thought_signature" in message.provider_data:
+                        part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
+                    message_parts.append(part)
                 for tool_call in message.tool_calls:
-                    message_parts.append(
-                        Part.from_function_call(
-                            name=tool_call["function"]["name"],
-                            args=json.loads(tool_call["function"]["arguments"]),
-                        )
+                    part = Part.from_function_call(
+                        name=tool_call["function"]["name"],
+                        args=json.loads(tool_call["function"]["arguments"]),
                     )
+                    if "thought_signature" in tool_call:
+                        part.thought_signature = base64.b64decode(tool_call["thought_signature"])
+                    message_parts.append(part)
             # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
-                for tool_call in message.tool_calls:
+                for idx, tool_call in enumerate(message.tool_calls):
+                    if isinstance(content, list) and idx < len(content):
+                        original_from_list = content[idx]
+
+                        if compress_tool_results:
+                            compressed_from_tool_call = tool_call.get("content")
+                            tc_content = compressed_from_tool_call if compressed_from_tool_call else original_from_list
+                        else:
+                            tc_content = original_from_list
+                    else:
+                        tc_content = message.get_content(use_compressed_content=compress_tool_results)
+
+                        if tc_content is None:
+                            tc_content = tool_call.get("content")
+                            if tc_content is None:
+                                tc_content = content
+
                     message_parts.append(
-                        Part.from_function_response(
-                            name=tool_call["tool_name"], response={"result": tool_call["content"]}
-                        )
+                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tc_content})
                     )
             # Regular text content
             else:
                 if isinstance(content, str):
-                    message_parts = [Part.from_text(text=content)]
+                    part = Part.from_text(text=content)
+                    if message.provider_data and "thought_signature" in message.provider_data:
+                        part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
+                    message_parts = [part]
 
             if role == "user" and message.tool_calls is None:
                 # Add images to the message for the model
@@ -759,24 +821,41 @@ class Gemini(Model):
         return None
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
-        Format function call results.
+        Format function call results for Gemini.
+
+        For combined messages:
+        - content: list of ORIGINAL content (for preservation)
+        - tool_calls[i]["content"]: compressed content if available (for API sending)
+
+        This allows the message to be saved with both original and compressed versions.
         """
-        combined_content: List = []
+        combined_original_content: List = []
         combined_function_result: List = []
         message_metrics = Metrics()
+
         if len(function_call_results) > 0:
-            for result in function_call_results:
-                combined_content.append(result.content)
-                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+            for idx, result in enumerate(function_call_results):
+                combined_original_content.append(result.content)
+                compressed_content = result.get_content(use_compressed_content=compress_tool_results)
+                combined_function_result.append(
+                    {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
+                )
                 message_metrics += result.metrics
 
-        if combined_content:
+        if combined_original_content:
             messages.append(
                 Message(
-                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="tool",
+                    content=combined_original_content,
+                    tool_calls=combined_function_result,
+                    metrics=message_metrics,
                 )
             )
 
@@ -834,6 +913,14 @@ class Gemini(Model):
                             else:
                                 model_response.content += content_str
 
+                    # Capture thought signature for text parts
+                    if hasattr(part, "thought_signature") and part.thought_signature:
+                        if model_response.provider_data is None:
+                            model_response.provider_data = {}
+                        model_response.provider_data["thought_signature"] = base64.b64encode(
+                            part.thought_signature
+                        ).decode("ascii")
+
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     # Handle audio responses (for TTS models)
                     if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
@@ -864,6 +951,10 @@ class Gemini(Model):
                             else "",
                         },
                     }
+
+                    # Capture thought signature for function calls
+                    if hasattr(part, "thought_signature") and part.thought_signature:
+                        tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
 
                     model_response.tool_calls.append(tool_call)
 
@@ -956,6 +1047,14 @@ class Gemini(Model):
                             else:
                                 model_response.content += text_content
 
+                        # Capture thought signature for text parts
+                        if hasattr(part, "thought_signature") and part.thought_signature:
+                            if model_response.provider_data is None:
+                                model_response.provider_data = {}
+                            model_response.provider_data["thought_signature"] = base64.b64encode(
+                                part.thought_signature
+                            ).decode("ascii")
+
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         # Audio responses
                         if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
@@ -988,6 +1087,10 @@ class Gemini(Model):
                                 else "",
                             },
                         }
+
+                        # Capture thought signature for function calls
+                        if hasattr(part, "thought_signature") and part.thought_signature:
+                            tool_call["thought_signature"] = base64.b64encode(part.thought_signature).decode("ascii")
 
                         model_response.tool_calls.append(tool_call)
 
@@ -1083,3 +1186,494 @@ class Gemini(Model):
             metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
 
         return metrics
+
+    def create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+        """
+        Create a new File Search store.
+
+        Args:
+            display_name: Optional display name for the store
+
+        Returns:
+            FileSearchStore: The created File Search store object
+        """
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+
+        try:
+            store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
+            log_info(f"Created File Search store: {store.name}")
+            return store
+        except Exception as e:
+            log_error(f"Error creating File Search store: {e}")
+            raise
+
+    async def async_create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+        """
+        Args:
+            display_name: Optional display name for the store
+
+        Returns:
+            FileSearchStore: The created File Search store object
+        """
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+
+        try:
+            store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
+            log_info(f"Created File Search store: {store.name}")
+            return store
+        except Exception as e:
+            log_error(f"Error creating File Search store: {e}")
+            raise
+
+    def list_file_search_stores(self, page_size: int = 100) -> List[Any]:
+        """
+        List all File Search stores.
+
+        Args:
+            page_size: Maximum number of stores to return per page
+
+        Returns:
+            List: List of FileSearchStore objects
+        """
+        try:
+            stores = []
+            for store in self.get_client().file_search_stores.list(config={"page_size": page_size}):
+                stores.append(store)
+            log_debug(f"Found {len(stores)} File Search stores")
+            return stores
+        except Exception as e:
+            log_error(f"Error listing File Search stores: {e}")
+            raise
+
+    async def async_list_file_search_stores(self, page_size: int = 100) -> List[Any]:
+        """
+        Async version of list_file_search_stores.
+
+        Args:
+            page_size: Maximum number of stores to return per page
+
+        Returns:
+            List: List of FileSearchStore objects
+        """
+        try:
+            stores = []
+            async for store in await self.get_client().aio.file_search_stores.list(config={"page_size": page_size}):
+                stores.append(store)
+            log_debug(f"Found {len(stores)} File Search stores")
+            return stores
+        except Exception as e:
+            log_error(f"Error listing File Search stores: {e}")
+            raise
+
+    def get_file_search_store(self, name: str) -> Any:
+        """
+        Get a specific File Search store by name.
+
+        Args:
+            name: The name of the store (e.g., 'fileSearchStores/my-store-123')
+
+        Returns:
+            FileSearchStore: The File Search store object
+        """
+        try:
+            store = self.get_client().file_search_stores.get(name=name)
+            log_debug(f"Retrieved File Search store: {name}")
+            return store
+        except Exception as e:
+            log_error(f"Error getting File Search store {name}: {e}")
+            raise
+
+    async def async_get_file_search_store(self, name: str) -> Any:
+        """
+        Args:
+            name: The name of the store
+
+        Returns:
+            FileSearchStore: The File Search store object
+        """
+        try:
+            store = await self.get_client().aio.file_search_stores.get(name=name)
+            log_debug(f"Retrieved File Search store: {name}")
+            return store
+        except Exception as e:
+            log_error(f"Error getting File Search store {name}: {e}")
+            raise
+
+    def delete_file_search_store(self, name: str, force: bool = False) -> None:
+        """
+        Delete a File Search store.
+
+        Args:
+            name: The name of the store to delete
+            force: If True, force delete even if store contains documents
+        """
+        try:
+            self.get_client().file_search_stores.delete(name=name, config={"force": force})
+            log_info(f"Deleted File Search store: {name}")
+        except Exception as e:
+            log_error(f"Error deleting File Search store {name}: {e}")
+            raise
+
+    async def async_delete_file_search_store(self, name: str, force: bool = True) -> None:
+        """
+        Async version of delete_file_search_store.
+
+        Args:
+            name: The name of the store to delete
+            force: If True, force delete even if store contains documents
+        """
+        try:
+            await self.get_client().aio.file_search_stores.delete(name=name, config={"force": force})
+            log_info(f"Deleted File Search store: {name}")
+        except Exception as e:
+            log_error(f"Error deleting File Search store {name}: {e}")
+            raise
+
+    def wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
+        """
+        Wait for a long-running operation to complete.
+
+        Args:
+            operation: The operation object to wait for
+            poll_interval: Seconds to wait between status checks
+            max_wait: Maximum seconds to wait before timing out
+
+        Returns:
+            Operation: The completed operation object
+
+        Raises:
+            TimeoutError: If operation doesn't complete within max_wait seconds
+        """
+        elapsed = 0
+        while not operation.done:
+            if elapsed >= max_wait:
+                raise TimeoutError(f"Operation timed out after {max_wait} seconds")
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            operation = self.get_client().operations.get(operation)
+            log_debug(f"Waiting for operation... ({elapsed}s elapsed)")
+
+        log_info("Operation completed successfully")
+        return operation
+
+    async def async_wait_for_operation(
+        self, operation: Operation, poll_interval: int = 5, max_wait: int = 600
+    ) -> Operation:
+        """
+        Async version of wait_for_operation.
+
+        Args:
+            operation: The operation object to wait for
+            poll_interval: Seconds to wait between status checks
+            max_wait: Maximum seconds to wait before timing out
+
+        Returns:
+            Operation: The completed operation object
+        """
+        elapsed = 0
+        while not operation.done:
+            if elapsed >= max_wait:
+                raise TimeoutError(f"Operation timed out after {max_wait} seconds")
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            operation = await self.get_client().aio.operations.get(operation)
+            log_debug(f"Waiting for operation... ({elapsed}s elapsed)")
+
+        log_info("Operation completed successfully")
+        return operation
+
+    def upload_to_file_search_store(
+        self,
+        file_path: Union[str, Path],
+        store_name: str,
+        display_name: Optional[str] = None,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Upload a file directly to a File Search store.
+
+        Args:
+            file_path: Path to the file to upload
+            store_name: Name of the File Search store
+            display_name: Optional display name for the file (will be visible in citations)
+            chunking_config: Optional chunking configuration
+                Example: {
+                    "white_space_config": {
+                        "max_tokens_per_chunk": 200,
+                        "max_overlap_tokens": 20
+                    }
+                }
+            custom_metadata: Optional custom metadata as list of dicts
+                Example: [
+                    {"key": "author", "string_value": "John Doe"},
+                    {"key": "year", "numeric_value": 2024}
+                ]
+
+        Returns:
+            Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
+        """
+        file_path = file_path if isinstance(file_path, Path) else Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
+            operation = self.get_client().file_search_stores.upload_to_file_search_store(
+                file=file_path,
+                file_search_store_name=store_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Upload initiated for {file_path.name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error uploading file to File Search store: {e}")
+            raise
+
+    async def async_upload_to_file_search_store(
+        self,
+        file_path: Union[str, Path],
+        store_name: str,
+        display_name: Optional[str] = None,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Args:
+            file_path: Path to the file to upload
+            store_name: Name of the File Search store
+            display_name: Optional display name for the file
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object
+        """
+        file_path = file_path if isinstance(file_path, Path) else Path(file_path)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        config: Dict[str, Any] = {}
+        if display_name:
+            config["display_name"] = display_name
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Uploading file {file_path.name} to File Search store {store_name}")
+            operation = await self.get_client().aio.file_search_stores.upload_to_file_search_store(
+                file=file_path,
+                file_search_store_name=store_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Upload initiated for {file_path.name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error uploading file to File Search store: {e}")
+            raise
+
+    def import_file_to_store(
+        self,
+        file_name: str,
+        store_name: str,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Import an existing uploaded file (via Files API) into a File Search store.
+
+        Args:
+            file_name: Name of the file already uploaded via Files API
+            store_name: Name of the File Search store
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object. Use wait_for_operation() to wait for completion.
+        """
+        config: Dict[str, Any] = {}
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Importing file {file_name} to File Search store {store_name}")
+            operation = self.get_client().file_search_stores.import_file(
+                file_search_store_name=store_name,
+                file_name=file_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Import initiated for {file_name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error importing file to File Search store: {e}")
+            raise
+
+    async def async_import_file_to_store(
+        self,
+        file_name: str,
+        store_name: str,
+        chunking_config: Optional[Dict[str, Any]] = None,
+        custom_metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Args:
+            file_name: Name of the file already uploaded via Files API
+            store_name: Name of the File Search store
+            chunking_config: Optional chunking configuration
+            custom_metadata: Optional custom metadata
+
+        Returns:
+            Operation: Long-running operation object
+        """
+        config: Dict[str, Any] = {}
+        if chunking_config:
+            config["chunking_config"] = chunking_config
+        if custom_metadata:
+            config["custom_metadata"] = custom_metadata
+
+        try:
+            log_info(f"Importing file {file_name} to File Search store {store_name}")
+            operation = await self.get_client().aio.file_search_stores.import_file(
+                file_search_store_name=store_name,
+                file_name=file_name,
+                config=config or None,  # type: ignore[arg-type]
+            )
+            log_info(f"Import initiated for {file_name}")
+            return operation
+        except Exception as e:
+            log_error(f"Error importing file to File Search store: {e}")
+            raise
+
+    def list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
+        """
+        Args:
+            store_name: Name of the File Search store
+            page_size: Maximum number of documents to return per page
+
+        Returns:
+            List: List of document objects
+        """
+        try:
+            documents = []
+            for doc in self.get_client().file_search_stores.documents.list(
+                parent=store_name, config={"page_size": page_size}
+            ):
+                documents.append(doc)
+            log_debug(f"Found {len(documents)} documents in store {store_name}")
+            return documents
+        except Exception as e:
+            log_error(f"Error listing documents in store {store_name}: {e}")
+            raise
+
+    async def async_list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
+        """
+        Async version of list_documents.
+
+        Args:
+            store_name: Name of the File Search store
+            page_size: Maximum number of documents to return per page
+
+        Returns:
+            List: List of document objects
+        """
+        try:
+            documents = []
+            # Await the AsyncPager first, then iterate
+            async for doc in await self.get_client().aio.file_search_stores.documents.list(
+                parent=store_name, config={"page_size": page_size}
+            ):
+                documents.append(doc)
+            log_debug(f"Found {len(documents)} documents in store {store_name}")
+            return documents
+        except Exception as e:
+            log_error(f"Error listing documents in store {store_name}: {e}")
+            raise
+
+    def get_document(self, document_name: str) -> Any:
+        """
+        Get a specific document by name.
+
+        Args:
+            document_name: Full name of the document
+                (e.g., 'fileSearchStores/store-123/documents/doc-456')
+
+        Returns:
+            Document object
+        """
+        try:
+            doc = self.get_client().file_search_stores.documents.get(name=document_name)
+            log_debug(f"Retrieved document: {document_name}")
+            return doc
+        except Exception as e:
+            log_error(f"Error getting document {document_name}: {e}")
+            raise
+
+    async def async_get_document(self, document_name: str) -> Any:
+        """
+        Async version of get_document.
+
+        Args:
+            document_name: Full name of the document
+
+        Returns:
+            Document object
+        """
+        try:
+            doc = await self.get_client().aio.file_search_stores.documents.get(name=document_name)
+            log_debug(f"Retrieved document: {document_name}")
+            return doc
+        except Exception as e:
+            log_error(f"Error getting document {document_name}: {e}")
+            raise
+
+    def delete_document(self, document_name: str) -> None:
+        """
+        Delete a document from a File Search store.
+
+        Args:
+            document_name: Full name of the document to delete
+
+        Example:
+            ```python
+            model = Gemini(id="gemini-2.5-flash")
+            model.delete_document("fileSearchStores/store-123/documents/doc-456")
+            ```
+        """
+        try:
+            self.get_client().file_search_stores.documents.delete(name=document_name)
+            log_info(f"Deleted document: {document_name}")
+        except Exception as e:
+            log_error(f"Error deleting document {document_name}: {e}")
+            raise
+
+    async def async_delete_document(self, document_name: str) -> None:
+        """
+        Async version of delete_document.
+
+        Args:
+            document_name: Full name of the document to delete
+        """
+        try:
+            await self.get_client().aio.file_search_stores.documents.delete(name=document_name)
+            log_info(f"Deleted document: {document_name}")
+        except Exception as e:
+            log_error(f"Error deleting document {document_name}: {e}")
+            raise
