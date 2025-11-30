@@ -8,7 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.os.config import ChatConfig, EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
+from agno.os.config import (
+    ChatConfig,
+    EvalsConfig,
+    KnowledgeConfig,
+    MemoryConfig,
+    MetricsConfig,
+    SessionConfig,
+    TracesConfig,
+)
 from agno.os.utils import (
     extract_input_media,
     format_team_tools,
@@ -152,6 +160,7 @@ class ConfigResponse(BaseModel):
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
+    traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")

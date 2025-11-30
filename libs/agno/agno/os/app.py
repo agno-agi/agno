@@ -27,6 +27,8 @@ from agno.os.config import (
     MetricsDomainConfig,
     SessionConfig,
     SessionDomainConfig,
+    TracesConfig,
+    TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
@@ -37,6 +39,7 @@ from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
+from agno.os.routers.traces import get_traces_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
@@ -109,6 +112,7 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        tracing: bool = False,
         auto_provision_dbs: bool = True,
     ):
         """Initialize AgentOS.
@@ -131,6 +135,7 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
+            tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -169,6 +174,7 @@ class AgentOS:
         self.description = description
 
         self.telemetry = telemetry
+        self.tracing = tracing
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
@@ -235,6 +241,7 @@ class AgentOS:
             get_session_router(dbs=self.dbs),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_traces_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
         ]
@@ -327,6 +334,11 @@ class AgentOS:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 
+            # Enable tracing if AgentOS has tracing enabled
+            if self.tracing and not agent.tracing:
+                agent.tracing = True
+                agent._setup_tracing()
+
             agent.initialize_agent()
 
             # Required for the built-in routes to work
@@ -340,6 +352,11 @@ class AgentOS:
         for team in self.teams:
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
+
+            # Enable tracing if AgentOS has tracing enabled
+            if self.tracing and not team.tracing:
+                team.tracing = True
+                team._setup_tracing()
 
             team.initialize_team()
 
@@ -447,6 +464,7 @@ class AgentOS:
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_traces_router(dbs=self.dbs),
         ]
 
         for router in routers:
@@ -820,6 +838,25 @@ class AgentOS:
                 )
 
         return evals_config
+
+    def _get_traces_config(self) -> TracesConfig:
+        traces_config = self.config.traces if self.config and self.config.traces else TracesConfig()
+
+        if traces_config.dbs is None:
+            traces_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in traces_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                traces_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=TracesDomainConfig(display_name=db_id),
+                    )
+                )
+
+        return traces_config
 
     def serve(
         self,
