@@ -2,7 +2,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.dynamo.schemas import get_table_schema_definition

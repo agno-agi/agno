@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.utils import (
