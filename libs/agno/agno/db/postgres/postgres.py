@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
@@ -26,12 +27,12 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Index, String, UniqueConstraint, func, update
+    from sqlalchemy import Index, String, UniqueConstraint, func, select, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -48,6 +49,7 @@ class PostgresDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -68,6 +70,7 @@ class PostgresDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -97,13 +100,14 @@ class PostgresDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            versions_table=versions_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session
-        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
 
     # -- DB methods --
     def table_exists(self, table_name: str) -> bool:
@@ -126,19 +130,19 @@ class PostgresDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
-            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
-    def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -167,8 +171,7 @@ class PostgresDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -182,10 +185,16 @@ class PostgresDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=db_schema)
+                create_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
-            table.create(self.db_engine, checkfirst=True)
+            table_created = False
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -196,24 +205,29 @@ class PostgresDb(BaseDb):
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
                         exists = (
-                            sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
+                            sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name}).scalar()
                             is not None
                         )
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     idx.create(self.db_engine)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_name} in schema {db_schema}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -221,7 +235,6 @@ class PostgresDb(BaseDb):
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type="sessions",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
@@ -230,7 +243,6 @@ class PostgresDb(BaseDb):
             self.memory_table = self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.memory_table
@@ -239,7 +251,6 @@ class PostgresDb(BaseDb):
             self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
@@ -248,7 +259,6 @@ class PostgresDb(BaseDb):
             self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.eval_table
@@ -257,7 +267,6 @@ class PostgresDb(BaseDb):
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
@@ -266,15 +275,22 @@ class PostgresDb(BaseDb):
             self.culture_table = self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.culture_table
 
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
-        self, table_name: str, table_type: str, db_schema: str, create_table_if_not_found: Optional[bool] = False
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
     ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
@@ -282,39 +298,72 @@ class PostgresDb(BaseDb):
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Optional[Table]: SQLAlchemy Table object representing the schema.
         """
 
         with self.Session() as sess, sess.begin():
-            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return self._create_table(table_name=table_name, table_type=table_type)
 
         if not is_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
+            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
             return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
 
-    # -- Session methods --
+    def get_latest_schema_version(self, table_name: str):
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
 
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            sess.execute(stmt)
+
+    # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -1149,13 +1198,14 @@ class PostgresDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1178,16 +1228,17 @@ class PostgresDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -1241,6 +1292,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = postgresql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1249,7 +1302,9 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1259,7 +1314,10 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
+                        feedback=memory.feedback,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
                     ),
                 ).returning(table)
 
@@ -1313,6 +1371,7 @@ class PostgresDb(BaseDb):
 
                 # Use preserved updated_at if flag is set (even if None), otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1322,6 +1381,8 @@ class PostgresDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1333,7 +1394,7 @@ class PostgresDb(BaseDb):
                 update_columns = {
                     col.name: insert_stmt.excluded[col.name]
                     for col in table.columns
-                    if col.name not in ["memory_id"]  # Don't update primary key
+                    if col.name not in ["memory_id", "created_at"]  # Don't update primary key or created_at
                 }
                 stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
                     table

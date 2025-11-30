@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -27,7 +28,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, Table, and_, func, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -48,6 +49,7 @@ class SqliteDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -69,6 +71,7 @@ class SqliteDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -86,6 +89,7 @@ class SqliteDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -133,10 +137,11 @@ class SqliteDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
-            self._create_table(table_name=table_name, table_type=table_type)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -151,7 +156,6 @@ class SqliteDb(BaseDb):
         """
         try:
             table_schema = get_table_schema_definition(table_type)
-            log_debug(f"Creating table {table_name} with schema: {table_schema}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -176,8 +180,7 @@ class SqliteDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData()
-            table = Table(table_name, table_metadata, *columns)
+            table = Table(table_name, self.metadata, *columns)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -191,12 +194,17 @@ class SqliteDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create table
-            table.create(self.db_engine, checkfirst=True)
+            table_created = False
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table '{table_name}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
                 try:
-                    log_debug(f"Creating index: {idx.name}")
                     # Check if index already exists
                     with self.Session() as sess:
                         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = :index_name")
@@ -207,13 +215,21 @@ class SqliteDb(BaseDb):
 
                     idx.create(self.db_engine)
 
+                    log_debug(f"Created index: {idx.name} for table {table_name}")
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table '{table_name}'")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return table
 
         except Exception as e:
+            from traceback import format_exc
+
+            print(format_exc())
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
@@ -267,6 +283,14 @@ class SqliteDb(BaseDb):
             )
             return self.culture_table
 
+        elif table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
@@ -292,6 +316,7 @@ class SqliteDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
+
             return self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -306,6 +331,42 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error loading existing table {table_name}: {e}")
             raise e
+
+    def get_latest_schema_version(self, table_name: str):
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = sqlite.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            sess.execute(stmt)
 
     # -- Session methods --
 
@@ -1116,8 +1177,8 @@ class SqliteDb(BaseDb):
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
                 if topics is not None:
-                    topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
-                    stmt = stmt.where(and_(*topic_conditions))
+                    for topic in topics:
+                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
                 if search_content is not None:
                     stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
 
@@ -1152,12 +1213,14 @@ class SqliteDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1180,19 +1243,20 @@ class SqliteDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Pagination
                 if limit is not None:
@@ -1242,6 +1306,8 @@ class SqliteDb(BaseDb):
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
+            current_time = int(time.time())
+
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
                     user_id=memory.user_id,
@@ -1251,7 +1317,9 @@ class SqliteDb(BaseDb):
                     memory=memory.memory,
                     topics=memory.topics,
                     input=memory.input,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1259,7 +1327,12 @@ class SqliteDb(BaseDb):
                         memory=memory.memory,
                         topics=memory.topics,
                         input=memory.input,
-                        updated_at=int(time.time()),
+                        agent_id=memory.agent_id,
+                        team_id=memory.team_id,
+                        feedback=memory.feedback,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
                     ),
                 ).returning(table)
 
@@ -1315,12 +1388,14 @@ class SqliteDb(BaseDb):
             # Prepare bulk data
             bulk_data = []
             current_time = int(time.time())
+
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 bulk_data.append(
                     {
                         "user_id": memory.user_id,
@@ -1329,6 +1404,9 @@ class SqliteDb(BaseDb):
                         "memory_id": memory.memory_id,
                         "memory": memory.memory,
                         "topics": memory.topics,
+                        "input": memory.input,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1346,7 +1424,10 @@ class SqliteDb(BaseDb):
                         input=stmt.excluded.input,
                         agent_id=stmt.excluded.agent_id,
                         team_id=stmt.excluded.team_id,
+                        feedback=stmt.excluded.feedback,
                         updated_at=stmt.excluded.updated_at,
+                        # Preserve created_at on update
+                        created_at=table.c.created_at,
                     ),
                 )
                 sess.execute(stmt, bulk_data)

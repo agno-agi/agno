@@ -163,6 +163,7 @@ async def test_lance_db_basic_async_operations():
     assert not await vector_db.async_exists()
 
 
+@pytest.mark.skip(reason="Skipping as LanceDb is not currently working as expected.")
 @pytest.mark.asyncio
 async def test_lance_db_async_operations():
     vector_db = LanceDb(

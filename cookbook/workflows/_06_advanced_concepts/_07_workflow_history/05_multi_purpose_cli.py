@@ -203,7 +203,6 @@ def demo_customer_support_cli():
         user="Customer",
         emoji="🆘",
         stream=True,
-        stream_events=True,
     )
 
 
@@ -220,7 +219,6 @@ def demo_medical_consultation_cli():
         user="Patient",
         emoji="🩺",
         stream=True,
-        stream_events=True,
     )
 
 
@@ -237,7 +235,6 @@ def demo_tutoring_cli():
         user="Student",
         emoji="🎓",
         stream=True,
-        stream_events=True,
     )
 
 
