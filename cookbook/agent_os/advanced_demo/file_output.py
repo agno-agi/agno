@@ -10,6 +10,7 @@ file_agent = Agent(
     name="File Output Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
+    send_media_to_model=False,
     tools=[FileGenerationTools(output_directory="tmp")],
     instructions="Just return the file url as it is don't do anythings.",
 )

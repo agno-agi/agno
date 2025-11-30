@@ -396,10 +396,20 @@ class File(BaseModel):
         name: Optional[str] = None,
         format: Optional[str] = None,
     ) -> "File":
-        """Create File from base64 encoded content"""
+        """Create File from base64 encoded content or plain text.
+        
+        Handles both base64-encoded binary content and plain text content
+        (which is stored as UTF-8 strings for text/* MIME types).
+        """
         import base64
 
-        content_bytes = base64.b64decode(base64_content)
+        try:
+            content_bytes = base64.b64decode(base64_content)
+        except Exception:
+            # If not valid base64, it might be plain text content (text/csv, text/plain, etc.)
+            # which is stored as UTF-8 strings, not base64
+            content_bytes = base64_content.encode("utf-8")
+
         return cls(
             content=content_bytes,
             id=id,
