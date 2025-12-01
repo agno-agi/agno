@@ -6,7 +6,6 @@ import pytest
 from agno.knowledge.document import Document
 from agno.utils.log import log_debug
 from agno.vectordb.distance import Distance
-from agno.vectordb.milvus import Milvus
 
 # Ensure Milvus is available and usable in the current environment.
 # This handles some CI errors when running Milvus in GitHub Actions.

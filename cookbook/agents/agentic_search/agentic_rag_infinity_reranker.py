@@ -73,9 +73,9 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_contents_async(
         urls=[
-            "https://docs.agno.com/concepts/agents/introduction.md",
-            "https://docs.agno.com/concepts/agents/tools.md",
-            "https://docs.agno.com/concepts/agents/knowledge.md",
+            "https://docs.agno.com/basics/agents/overview.md",
+            "https://docs.agno.com/basics/tools/overview.md",
+            "https://docs.agno.com/basics/knowledge/overview.md",
         ]
     )
 )

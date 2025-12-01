@@ -182,6 +182,14 @@ class DynamoDb(BaseDb):
 
         return table_name
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     # --- Sessions ---
 
     def delete_session(self, session_id: Optional[str] = None) -> bool:
@@ -846,6 +854,7 @@ class DynamoDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -873,7 +882,17 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("memories")
 
             # Build filter expression for user_id if provided
+            filter_expression = None
+            expression_attribute_values = {}
+            if user_id:
+                filter_expression = "user_id = :user_id"
+                expression_attribute_values[":user_id"] = {"S": user_id}
+
             scan_kwargs = {"TableName": table_name}
+            if filter_expression:
+                scan_kwargs["FilterExpression"] = filter_expression
+            if expression_attribute_values:
+                scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values  # type: ignore
 
             response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])

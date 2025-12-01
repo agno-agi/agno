@@ -24,6 +24,7 @@ from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.utils.agent import aexecute_instructions, aexecute_system_message
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
@@ -337,12 +338,20 @@ class AgentResponse(BaseModel):
             "read_tool_call_history": agent.read_tool_call_history,
         }
 
+        instructions = agent.instructions if agent.instructions else None
+        if instructions and callable(instructions):
+            instructions = await aexecute_instructions(instructions=instructions, agent=agent)
+
+        system_message = agent.system_message if agent.system_message else None
+        if system_message and callable(system_message):
+            system_message = await aexecute_system_message(system_message=system_message, agent=agent)
+
         system_message_info = {
-            "system_message": str(agent.system_message) if agent.system_message else None,
+            "system_message": str(system_message) if system_message else None,
             "system_message_role": agent.system_message_role,
             "build_context": agent.build_context,
             "description": agent.description,
-            "instructions": agent.instructions if agent.instructions else None,
+            "instructions": instructions,
             "expected_output": agent.expected_output,
             "additional_context": agent.additional_context,
             "markdown": agent.markdown,
@@ -458,7 +467,7 @@ class TeamResponse(BaseModel):
             "reasoning_max_steps": 10,
             # Default tools defaults
             "search_knowledge": True,
-            "read_team_history": False,
+            "read_chat_history": False,
             "get_member_information_tool": False,
             # System message defaults
             "system_message_role": "system",
@@ -556,16 +565,22 @@ class TeamResponse(BaseModel):
 
         default_tools_info = {
             "search_knowledge": team.search_knowledge,
-            "read_team_history": team.read_team_history,
+            "read_chat_history": team.read_chat_history,
             "get_member_information_tool": team.get_member_information_tool,
         }
 
-        team_instructions = (
-            team.instructions() if team.instructions and callable(team.instructions) else team.instructions
-        )
+        team_instructions = team.instructions if team.instructions else None
+        if team_instructions and callable(team_instructions):
+            team_instructions = await aexecute_instructions(instructions=team_instructions, agent=team, team=team)
+
+        team_system_message = team.system_message if team.system_message else None
+        if team_system_message and callable(team_system_message):
+            team_system_message = await aexecute_system_message(
+                system_message=team_system_message, agent=team, team=team
+            )
 
         system_message_info = {
-            "system_message": str(team.system_message) if team.system_message else None,
+            "system_message": team_system_message,
             "system_message_role": team.system_message_role,
             "description": team.description,
             "instructions": team_instructions,
@@ -883,6 +898,9 @@ class RunSchema(BaseModel):
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
+    citations: Optional[Dict[str, Any]] = Field(
+        None, description="Citations from the model (e.g., from Gemini grounding/search)"
+    )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
@@ -911,6 +929,7 @@ class RunSchema(BaseModel):
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             references=run_dict.get("references", []),
+            citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
             session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
@@ -940,6 +959,9 @@ class TeamRunSchema(BaseModel):
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
+    citations: Optional[Dict[str, Any]] = Field(
+        None, description="Citations from the model (e.g., from Gemini grounding/search)"
+    )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
@@ -970,6 +992,7 @@ class TeamRunSchema(BaseModel):
             if run_dict.get("created_at") is not None
             else None,
             references=run_dict.get("references", []),
+            citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
             session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
@@ -997,6 +1020,9 @@ class WorkflowRunSchema(BaseModel):
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     references: Optional[List[dict]] = Field(None, description="References cited in the workflow")
+    citations: Optional[Dict[str, Any]] = Field(
+        None, description="Citations from the model (e.g., from Gemini grounding/search)"
+    )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     images: Optional[List[dict]] = Field(None, description="Images included in the workflow")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the workflow")
@@ -1023,6 +1049,7 @@ class WorkflowRunSchema(BaseModel):
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
+            citations=run_response.get("citations", None),
             reasoning_messages=run_response.get("reasoning_messages", []),
             images=run_response.get("images", []),
             videos=run_response.get("videos", []),

@@ -626,7 +626,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run agent integration tests
         working-directory: .
         env:
@@ -658,7 +658,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run teams integration tests
         working-directory: .
         env:
@@ -688,7 +688,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run workflows integration tests
         working-directory: .
         env:
@@ -719,7 +719,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run embedder tests
         working-directory: .
         env:
@@ -750,7 +750,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
         env:
@@ -786,7 +786,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
         env:
@@ -864,6 +864,38 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/test_basic.py
 
+  test-agent-os:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run AgentOS integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py ./libs/agno/tests/integration/os
+
+
   test-clean-os:
     runs-on: ubuntu-latest
     strategy:
@@ -920,7 +952,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run remaining integration tests
         working-directory: .
         env:
@@ -964,8 +996,8 @@ jobs:
       - name: Verify agno_infra installation
         run: |
           source .venv/bin/activate
-          pip show agno-infra || exit 1
+          uv pip show agno-infra || exit 1
       - name: List installed packages
         run: |
           source .venv/bin/activate
-          pip list
+          uv pip list
