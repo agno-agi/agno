@@ -10,7 +10,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp", search=True),
+    model=Gemini(id="gemini-2.0-flash", search=True),
     markdown=True,
 )
 

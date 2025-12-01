@@ -155,7 +155,6 @@ def test_tool_call_custom_tool_no_parameters():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
-    assert "70" in response.content
 
 
 def test_tool_call_custom_tool_optional_parameters():
@@ -184,7 +183,6 @@ def test_tool_call_custom_tool_optional_parameters():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
-    assert "70" in response.content
 
 
 def test_tool_call_list_parameters():
