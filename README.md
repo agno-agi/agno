@@ -11,7 +11,7 @@
 <div align="center">
   <a href="https://docs.agno.com">Documentation</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://docs.agno.com/examples/introduction">Examples</a>
+  <a href="https://docs.agno.com/examples/use-cases/agents/overview">Examples</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://www.agno.com/?utm_source=github&utm_medium=readme&utm_campaign=agno-github">Website</a>
   <br />
@@ -31,9 +31,9 @@ Agno also provides a ready-to-use FastAPI app (called the AgentOS) for serving y
 
 ## Getting started
 
-If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and chat with it using the AgentOS UI.
+If you're new to Agno, follow our [quickstart](https://docs.agno.com/get-started/quickstart) to build your first Agent and chat with it using the AgentOS UI.
 
-After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
+After that, checkout the [examples gallery](https://docs.agno.com/examples/use-cases/agents/overview) and build real-world applications with Agno.
 
 ## Documentation, Community & More Examples
 
@@ -105,27 +105,27 @@ Agno brings a novel architecture that no other framework provides, your AgentOS 
 
 Agno is an incredibly feature-rich framework, designed for Agent Engineering. Here are some key features:
 
-| **Category** | **Feature** | **Description** |
-|---------------|-------------|-----------------|
-| **Core Intelligence** | **Model Agnostic** | Works with any model provider so you can use your favorite LLMs. |
-|  | **Type Safe** | Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior. |
-|  | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly into context. Perfect for dependency-driven agents. |
-| **Memory, Knowledge, and Persistence** | **Persistent Storage** | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
-|  | **User Memory** | Built-in memory system that allows Agents to recall user-specific context across sessions. |
-|  | **Agentic RAG** | Connect to 20+ vector stores (called **Knowledge** in Agno) with hybrid search + reranking out of the box. |
-|  | **Culture (Collective Memory)** | Shared knowledge that compounds across agents and time. |
-| **Execution & Control** | **Human-in-the-Loop** | Native support for confirmations, manual overrides, and external tool execution. |
-|  | **Guardrails** | Built-in safeguards for validation, security, and prompt protection. |
-|  | **Agent Lifecycle Hooks** | Pre- and post-hooks to validate or transform inputs and outputs. |
-|  | **MCP Integration** | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
-|  | **Toolkits** | 100+ built-in toolkits with thousands of tools, ready for use across data, code, web, and enterprise APIs. |
-| **Runtime & Evaluation** | **Runtime** | Pre-built FastAPI based runtime with SSE compatible endpoints, ready for production on day 1. |
-|  | **Control Plane (UI)** | Integrated interface to visualize, monitor, and debug agent activity in real time. |
-|  | **Natively Multimodal** | Agents can process and generate text, images, audio, video, and files. |
-|  | **Evals** | Measure your Agents' Accuracy, Performance, and Reliability. |
-| **Security & Privacy** | **Private by Design** | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
-|  | **Data Governance** | Your data lives securely in your Agent database, no external data sharing or vendor lock-in. |
-|  | **Access Control** | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools. |
+| **Category**                           | **Feature**                     | **Description**                                                                                                           |
+| -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Core Intelligence**                  | **Model Agnostic**              | Works with any model provider so you can use your favorite LLMs.                                                          |
+|                                        | **Type Safe**                   | Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior.                   |
+|                                        | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly into context. Perfect for dependency-driven agents.                |
+| **Memory, Knowledge, and Persistence** | **Persistent Storage**          | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages.                        |
+|                                        | **User Memory**                 | Built-in memory system that allows Agents to recall user-specific context across sessions.                                |
+|                                        | **Agentic RAG**                 | Connect to 20+ vector stores (called **Knowledge** in Agno) with hybrid search + reranking out of the box.                |
+|                                        | **Culture (Collective Memory)** | Shared knowledge that compounds across agents and time.                                                                   |
+| **Execution & Control**                | **Human-in-the-Loop**           | Native support for confirmations, manual overrides, and external tool execution.                                          |
+|                                        | **Guardrails**                  | Built-in safeguards for validation, security, and prompt protection.                                                      |
+|                                        | **Agent Lifecycle Hooks**       | Pre- and post-hooks to validate or transform inputs and outputs.                                                          |
+|                                        | **MCP Integration**             | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems.                         |
+|                                        | **Toolkits**                    | 100+ built-in toolkits with thousands of tools, ready for use across data, code, web, and enterprise APIs.                |
+| **Runtime & Evaluation**               | **Runtime**                     | Pre-built FastAPI based runtime with SSE compatible endpoints, ready for production on day 1.                             |
+|                                        | **Control Plane (UI)**          | Integrated interface to visualize, monitor, and debug agent activity in real time.                                        |
+|                                        | **Natively Multimodal**         | Agents can process and generate text, images, audio, video, and files.                                                    |
+|                                        | **Evals**                       | Measure your Agents' Accuracy, Performance, and Reliability.                                                              |
+| **Security & Privacy**                 | **Private by Design**           | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
+|                                        | **Data Governance**             | Your data lives securely in your Agent database, no external data sharing or vendor lock-in.                              |
+|                                        | **Access Control**              | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools.                               |
 
 Every part of Agno is built for real-world deployment — where developer experience meets production performance.
 

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.exceptions import ModelProviderError
 from agno.models.openai.like import OpenAILike
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -29,6 +30,23 @@ class Requesty(OpenAILike):
     api_key: Optional[str] = field(default_factory=lambda: getenv("REQUESTY_API_KEY"))
     base_url: str = "https://router.requesty.ai/v1"
     max_tokens: int = 1024
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for REQUESTY_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("REQUESTY_API_KEY")
+            if not self.api_key:
+                raise ModelProviderError(
+                    message="REQUESTY_API_KEY not set. Please set the REQUESTY_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+        return super()._get_client_params()
 
     def get_request_params(
         self,
