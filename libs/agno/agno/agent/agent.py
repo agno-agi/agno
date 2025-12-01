@@ -2153,9 +2153,12 @@ class Agent:
         13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+        
         memory_task = None
         cultural_knowledge_task = None
-        agent_session = None
+        
+        # 1. Read or create session. Reads from the database if provided.
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
         try:
             # Start the Run by yielding a RunStarted event
@@ -2167,8 +2170,6 @@ class Agent:
                     store_events=self.store_events,
                 )
 
-            # 1. Read or create session. Reads from the database if provided.
-            agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
             # 2. Update metadata and session state
             self._update_metadata(session=agent_session)
@@ -2467,6 +2468,7 @@ class Agent:
                 run_context=run_context,
                 user_id=user_id,
             )
+
         except Exception as e:
             # Handle exceptions during async streaming
             run_response.status = RunStatus.error
