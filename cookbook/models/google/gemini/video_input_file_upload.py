@@ -46,8 +46,13 @@ if not video_file:
         logger.error(f"Error uploading video: {e}")
 
 if __name__ == "__main__":
-    agent.print_response(
-        "Tell me about this video",
-        videos=[Video(content=video_file)],
-        stream=True,
-    )
+    if video_file and video_file.uri:
+        agent.print_response(
+            "Tell me about this video",
+            videos=[Video(url=video_file.uri)],
+            stream=True,
+        )
+    else:
+        print(
+            "No video file available. Please provide GOOGLE_API_KEY and ensure GreatRedSpot.mp4 exists."
+        )
