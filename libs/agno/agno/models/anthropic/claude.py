@@ -179,10 +179,6 @@ class Claude(Model):
         """
         # If model is in blacklist, it doesn't support structured outputs
         if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
-            log_warning(
-                f"Model '{self.id}' does not support structured outputs. "
-                "Structured output features will not be available for this model."
-            )
             return False
 
         # Check for legacy model patterns which don't support structured outputs
@@ -211,8 +207,14 @@ class Claude(Model):
             bool: True if structured outputs are in use
         """
         # Check for output_format usage
-        if response_format is not None and self._supports_structured_outputs():
-            return True
+        if response_format is not None:
+            if self._supports_structured_outputs():
+                return True
+            else:
+                log_warning(
+                    f"Model '{self.id}' does not support structured outputs. "
+                    "Structured output features will not be available for this model."
+                )
 
         # Check for strict tools
         if tools:
