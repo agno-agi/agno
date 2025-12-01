@@ -154,7 +154,9 @@ class Claude(Model):
 
         self.api_key = self.api_key or getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
-            log_error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
+            raise ModelProviderError(
+                "ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable."
+            )
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
@@ -177,13 +179,9 @@ class Claude(Model):
         """
         # If model is in blacklist, it doesn't support structured outputs
         if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
-            log_warning(
-                f"Model '{self.id}' does not support structured outputs. "
-                "Structured output features will not be available for this model."
-            )
             return False
 
-        # Check for legacy model patterns that don't support structured outputs
+        # Check for legacy model patterns which don't support structured outputs
         if self.id.startswith("claude-3-"):
             return False
         if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
@@ -209,8 +207,14 @@ class Claude(Model):
             bool: True if structured outputs are in use
         """
         # Check for output_format usage
-        if response_format is not None and self._supports_structured_outputs():
-            return True
+        if response_format is not None:
+            if self._supports_structured_outputs():
+                return True
+            else:
+                log_warning(
+                    f"Model '{self.id}' does not support structured outputs. "
+                    "Structured output features will not be available for this model."
+                )
 
         # Check for strict tools
         if tools:
@@ -221,64 +225,6 @@ class Claude(Model):
                         return True
 
         return False
-
-    def _has_beta_features(
-        self,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> bool:
-        """Check if the model has any Anthropic beta features enabled."""
-        return (
-            self.mcp_servers is not None
-            or self.context_management is not None
-            or self.skills is not None
-            or self.betas is not None
-            or self._using_structured_outputs(response_format, tools)
-        )
-
-    def get_client(self) -> AnthropicClient:
-        """
-        Returns an instance of the Anthropic client.
-        """
-        if self.client and not self.client.is_closed():
-            return self.client
-
-        _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
-        self.client = AnthropicClient(**_client_params)
-        return self.client
-
-    def get_async_client(self) -> AsyncAnthropicClient:
-        """
-        Returns an instance of the async Anthropic client.
-        """
-        if self.async_client and not self.async_client.is_closed():
-            return self.async_client
-
-        _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
-        self.async_client = AsyncAnthropicClient(**_client_params)
-        return self.async_client
 
     def _validate_thinking_support(self) -> None:
         """
@@ -375,6 +321,81 @@ class Claude(Model):
 
         return None
 
+    def _validate_structured_outputs_usage(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """
+        Validate that structured outputs are only used with supported models.
+
+        Raises:
+            ValueError: If structured outputs are used with unsupported model
+        """
+        if not self._using_structured_outputs(response_format, tools):
+            return
+
+        if not self._supports_structured_outputs():
+            raise ValueError(f"Model '{self.id}' does not support structured outputs.\n\n")
+
+    def _has_beta_features(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Check if the model has any Anthropic beta features enabled."""
+        return (
+            self.mcp_servers is not None
+            or self.context_management is not None
+            or self.skills is not None
+            or self.betas is not None
+            or self._using_structured_outputs(response_format, tools)
+        )
+
+    def get_client(self) -> AnthropicClient:
+        """
+        Returns an instance of the Anthropic client.
+        """
+        if self.client and not self.client.is_closed():
+            return self.client
+
+        _client_params = self._get_client_params()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["http_client"] = get_default_sync_client()
+        self.client = AnthropicClient(**_client_params)
+        return self.client
+
+    def get_async_client(self) -> AsyncAnthropicClient:
+        """
+        Returns an instance of the async Anthropic client.
+        """
+        if self.async_client and not self.async_client.is_closed():
+            return self.async_client
+
+        _client_params = self._get_client_params()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["http_client"] = get_default_async_client()
+        else:
+            # Use global async client when no custom http_client is provided
+            _client_params["http_client"] = get_default_async_client()
+        self.async_client = AsyncAnthropicClient(**_client_params)
+        return self.async_client
+
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -426,23 +447,6 @@ class Claude(Model):
             _request_params.update(self.request_params)
 
         return _request_params
-
-    def _validate_structured_outputs_usage(
-        self,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> None:
-        """
-        Validate that structured outputs are only used with supported models.
-
-        Raises:
-            ValueError: If structured outputs are used with unsupported model
-        """
-        if not self._using_structured_outputs(response_format, tools):
-            return
-
-        if not self._supports_structured_outputs():
-            raise ValueError(f"Model '{self.id}' does not support structured outputs.\n\n")
 
     def _prepare_request_kwargs(
         self,

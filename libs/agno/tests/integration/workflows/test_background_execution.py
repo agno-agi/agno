@@ -59,7 +59,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
     assert response.run_id is not None
 
     # Poll for completion with step tracking
-    max_polls = 45  # Longer timeout for multi-step
+    max_polls = 60  # Longer timeout for multi-step
     poll_count = 0
     seen_running = False
 

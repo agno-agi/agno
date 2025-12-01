@@ -7,6 +7,7 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
+from agno.exceptions import ModelProviderError
 from agno.models.meta.llama import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.models.llama import format_message
@@ -48,6 +49,23 @@ class LlamaOpenAI(OpenAILike):
 
     # Cached async client
     openai_async_client: Optional[AsyncOpenAIClient] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for LLAMA_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("LLAMA_API_KEY")
+            if not self.api_key:
+                raise ModelProviderError(
+                    message="LLAMA_API_KEY not set. Please set the LLAMA_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+        return super()._get_client_params()
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """

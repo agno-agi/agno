@@ -181,7 +181,7 @@ class SingleStoreDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            self._create_table(table_name=table_name, table_type=table_type)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -366,42 +366,6 @@ class SingleStoreDb(BaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def get_latest_schema_version(self, table_name: str) -> str:
-        """Get the latest version of the database schema."""
-        table = self._get_table(table_type="versions", create_table_if_not_found=True)
-        if table is None:
-            return "2.0.0"
-        with self.Session() as sess:
-            stmt = select(table)
-            # Latest version for the given table
-            stmt = stmt.where(table.c.table_name == table_name)
-            stmt = stmt.order_by(table.c.version.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
-            if result is None:
-                return "2.0.0"
-            version_dict = dict(result._mapping)
-            return version_dict.get("version") or "2.0.0"
-
-    def upsert_schema_version(self, table_name: str, version: str) -> None:
-        """Upsert the schema version into the database."""
-        table = self._get_table(table_type="versions", create_table_if_not_found=True)
-        if table is None:
-            return
-        current_datetime = datetime.now().isoformat()
-        with self.Session() as sess, sess.begin():
-            stmt = mysql.insert(table).values(
-                table_name=table_name,
-                version=version,
-                created_at=current_datetime,  # Store as ISO format string
-                updated_at=current_datetime,
-            )
-            # Update version if table_name already exists
-            stmt = stmt.on_duplicate_key_update(
-                version=version,
-                updated_at=current_datetime,
-            )
-            sess.execute(stmt)
-
     def _get_or_create_table(
         self,
         table_name: str,
@@ -449,6 +413,42 @@ class SingleStoreDb(BaseDb):
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             log_error(f"Error loading existing table {table_ref}: {e}")
             raise
+
+    def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = mysql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_duplicate_key_update(
+                version=version,
+                updated_at=current_datetime,
+            )
+            sess.execute(stmt)
 
     # -- Session methods --
     def delete_session(self, session_id: str) -> bool:

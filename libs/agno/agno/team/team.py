@@ -67,6 +67,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -80,6 +82,8 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -1012,7 +1016,12 @@ class Team:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
                     self._mcp_tools_initialized_on_run.append(tool)
@@ -3043,7 +3052,9 @@ class Team:
         run_response.messages = messages_for_run_response
 
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if model_response.tool_executions:
             for tool_call in model_response.tool_executions:
@@ -3137,7 +3148,9 @@ class Team:
         # Update the TeamRunOutput messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Update the run_response audio if streaming
         if full_model_response.audio is not None:
@@ -3221,7 +3234,9 @@ class Team:
         # Update the TeamRunOutput messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -3596,7 +3611,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session)
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
         self.save_session(session=session)
@@ -3613,7 +3628,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session)
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
         await self.asave_session(session=session)
@@ -3953,7 +3968,9 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     async def _agenerate_response_with_output_model(
         self, model_response: ModelResponse, run_messages: RunMessages
@@ -4018,7 +4035,9 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     def _handle_event(
         self,
@@ -4361,7 +4380,10 @@ class Team:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
@@ -4451,42 +4473,41 @@ class Team:
             async for item in reason_generator:
                 yield item
 
-    def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
-        """Sum the metrics of the given messages into a Metrics object"""
-        session_metrics = Metrics()
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-
-        # Get metrics of the team leader's messages
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
-                session_metrics += m.metrics
-
-        return session_metrics
-
-    def _calculate_metrics(self, messages: List[Message]) -> Metrics:
-        metrics = Metrics()
+    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
+        metrics = current_run_metrics or Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
 
+        # If the run metrics were already initialized, keep the time related metrics
+        if current_run_metrics is not None:
+            metrics.timer = current_run_metrics.timer
+            metrics.duration = current_run_metrics.duration
+            metrics.time_to_first_token = current_run_metrics.time_to_first_token
+
         return metrics
 
-    def _update_session_metrics(self, session: TeamSession):
+    def _get_session_metrics(self, session: TeamSession) -> Metrics:
+        # Get the session_metrics from the database
+        if session.session_data is not None and "session_metrics" in session.session_data:
+            session_metrics_from_db = session.session_data.get("session_metrics")
+            if session_metrics_from_db is not None:
+                if isinstance(session_metrics_from_db, dict):
+                    return Metrics(**session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, Metrics):
+                    return session_metrics_from_db
+
+        return Metrics()
+
+    def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         """Calculate session metrics"""
-
-        session_messages: List[Message] = []
-        for run in session.runs or []:
-            if run.messages is not None:
-                for m in run.messages:
-                    # Skipping messages from history to avoid duplicates
-                    if not m.from_history:
-                        session_messages.append(m)
-
-        # Calculate initial metrics
-        session_metrics = self._calculate_session_metrics(session_messages)
-
+        session_metrics = self._get_session_metrics(session=session)
+        # Add the metrics for the current run to the session metrics
+        if run_response.metrics is not None:
+            session_metrics += run_response.metrics
+        session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
 
@@ -5135,7 +5156,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5177,7 +5201,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     # Only add the tool if it successfully connected and built its tools
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
@@ -5278,6 +5305,7 @@ class Team:
 
         _function_names = []
         _functions: List[Union[Function, dict]] = []
+        self._tool_instructions = []
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5456,7 +5484,13 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(
+                    system_message=self.system_message,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -5480,15 +5514,13 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "team" in signature.parameters:
-                    _instructions = self.instructions(team=self)
-                elif "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                _instructions = execute_instructions(
+                    instructions=self.instructions,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -5764,7 +5796,13 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(
+                    system_message=self.system_message,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -5788,15 +5826,13 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "team" in signature.parameters:
-                    _instructions = self.instructions(team=self)
-                elif "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                _instructions = await aexecute_instructions(
+                    instructions=self.instructions,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -8535,8 +8571,7 @@ class Team:
 
         session = self.get_session(session_id=session_id)  # type: ignore
         if session is None:
-            log_warning(f"Session {session_id} not found")
-            return []
+            raise Exception("Session not found")
 
         return session.get_messages(
             team_id=self.id,

@@ -74,6 +74,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -87,6 +89,8 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -901,10 +905,15 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -5584,7 +5593,12 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                )
+
+                if is_mcp_tool:
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5604,9 +5618,8 @@ class Agent:
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
 
-                    agent_tools.append(tool)
-                else:
-                    agent_tools.append(tool)
+                # Add the tool (MCP tools that passed checks, or any non-MCP tool)
+                agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -6902,7 +6915,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -6931,25 +6946,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                # Check for run_context parameter
-                if "run_context" in signature.parameters:
-                    instruction_args["run_context"] = run_context or None
-
-                # Run the instructions function
-                _instructions = self.instructions(**instruction_args)
+                _instructions = execute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -7259,7 +7258,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -7289,20 +7290,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                _instructions = self.instructions(**instruction_args)
+                _instructions = await aexecute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -10690,7 +10680,10 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
