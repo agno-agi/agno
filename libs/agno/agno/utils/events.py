@@ -712,3 +712,13 @@ def handle_event(
             run_response.events = []
         run_response.events.append(event)  # type: ignore
     return event
+
+def add_error_event(
+    error: RunErrorEvent ,
+    events: Optional[List[RunOutputEvent]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+    
+    return events

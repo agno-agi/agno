@@ -127,6 +127,7 @@ from agno.utils.events import (
     create_tool_call_completed_event,
     create_tool_call_started_event,
     handle_event,
+    add_error_event,
 )
 from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
@@ -1166,6 +1167,11 @@ class Agent:
             return run_response
         except Exception as e:
             run_response.error = create_run_error_event(run_response, error=str(e))
+            # Add error event to list of events
+            run_error_event = create_run_error_event(run_response, error=str(e))
+            run_response.error = run_error_event
+            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+
 
             # Cleanup and store the run response and session
             self._cleanup_and_store(
@@ -1492,7 +1498,11 @@ class Agent:
         except Exception as e:
             # Handle exceptions during streaming
             run_response.status = RunStatus.error
-            run_response.error = create_run_error_event(run_response, error=str(e))
+            # Add error event to list of events
+            run_error_event = create_run_error_event(run_response, error=str(e))
+            run_response.error = run_error_event
+            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+
 
             self._cleanup_and_store(
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
@@ -2072,6 +2082,11 @@ class Agent:
 
         except Exception as e:
             run_response.error = create_run_error_event(run_response, error=str(e))
+            # Add error event to list of events
+            run_error_event = create_run_error_event(run_response, error=str(e))
+            run_response.error = run_error_event
+            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+
 
             # Cleanup and store the run response and session
             await self._acleanup_and_store(
@@ -2455,8 +2470,10 @@ class Agent:
         except Exception as e:
             # Handle exceptions during async streaming
             run_response.status = RunStatus.error
-
-            run_response.error = create_run_error_event(run_response, error=str(e))
+            # Add error event to list of events
+            run_error_event = create_run_error_event(run_response, error=str(e))
+            run_response.error = run_error_event
+            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
 
             # Cleanup and store the run response and session
             await self._acleanup_and_store(
