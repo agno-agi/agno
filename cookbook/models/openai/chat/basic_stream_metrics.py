@@ -9,7 +9,7 @@ from rich.pretty import pprint
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     reasoning_model=OpenAIChat(id="o1"),
-    output_model=OpenAIChat(id="gpt-4o-mini"),
+    output_model=OpenAIChat(id="o3-mini"),
     db=InMemoryDb(),
     markdown=True,
     tools=[DuckDuckGoTools()],

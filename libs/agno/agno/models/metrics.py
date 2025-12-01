@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from time import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from agno.utils.timer import Timer
 
@@ -163,6 +163,33 @@ class MessageMetrics:
 
 
 @dataclass
+class SessionModelMetrics:
+    """Metrics for a specific model instance aggregated across a session."""
+
+    id: str
+    provider: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    # Average duration across all runs using this model, in seconds
+    average_duration: Optional[float] = None
+    # Total number of runs that used this model
+    total_runs: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        metrics_dict = asdict(self)
+        # Only include valid fields
+        valid_fields = {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'average_duration', 'total_runs'}
+        metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
+        metrics_dict = {
+            k: v
+            for k, v in metrics_dict.items()
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+        }
+        return metrics_dict
+
+
+@dataclass
 class SessionMetrics:
     """Metrics for a session - aggregated token metrics from all runs.
     Excludes run-level timing fields like duration and time_to_first_token."""
@@ -190,12 +217,24 @@ class SessionMetrics:
     # Total number of runs in this session
     total_runs: int = 0
 
+    # Per-model metrics breakdown across the session
+    # List of SessionModelMetrics, one per unique (provider, id) combination
+    details: Optional[List[SessionModelMetrics]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
+        # Convert details SessionModelMetrics to dicts
+        if metrics_dict.get("details") is not None:
+            details_list = [
+                m.to_dict() if isinstance(m, SessionModelMetrics)
+                else {k: v for k, v in m.items() if k in {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'average_duration', 'total_runs'} and v is not None}
+                for m in metrics_dict["details"]
+            ]
+            metrics_dict["details"] = details_list
         metrics_dict = {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, (dict, list)) or len(v) > 0)
         }
         return metrics_dict
 
@@ -214,6 +253,71 @@ class SessionMetrics:
         elif other.average_duration is not None:
             average_duration = other.average_duration
 
+        # Merge details lists by (provider, id) combination
+        merged_details: Optional[List[SessionModelMetrics]] = None
+        if self.details or other.details:
+            merged_details = []
+            # Create a dict keyed by (provider, id) for efficient lookup
+            details_dict: Dict[Tuple[str, str], SessionModelMetrics] = {}
+            
+            # Add self.details
+            if self.details:
+                for model_metrics in self.details:
+                    key = (model_metrics.provider, model_metrics.id)
+                    if key not in details_dict:
+                        details_dict[key] = SessionModelMetrics(
+                            id=model_metrics.id,
+                            provider=model_metrics.provider,
+                            input_tokens=model_metrics.input_tokens,
+                            output_tokens=model_metrics.output_tokens,
+                            total_tokens=model_metrics.total_tokens,
+                            average_duration=model_metrics.average_duration,
+                            total_runs=model_metrics.total_runs,
+                        )
+                    else:
+                        existing = details_dict[key]
+                        existing.input_tokens += model_metrics.input_tokens
+                        existing.output_tokens += model_metrics.output_tokens
+                        existing.total_tokens += model_metrics.total_tokens
+                        existing.total_runs += model_metrics.total_runs
+                        # Calculate weighted average duration
+                        if model_metrics.average_duration is not None:
+                            if existing.average_duration is None:
+                                existing.average_duration = model_metrics.average_duration
+                            else:
+                                total_duration = (existing.average_duration * existing.total_runs) + (model_metrics.average_duration * model_metrics.total_runs)
+                                existing.average_duration = total_duration / existing.total_runs if existing.total_runs > 0 else None
+            
+            # Add other.details
+            if other.details:
+                for model_metrics in other.details:
+                    key = (model_metrics.provider, model_metrics.id)
+                    if key not in details_dict:
+                        details_dict[key] = SessionModelMetrics(
+                            id=model_metrics.id,
+                            provider=model_metrics.provider,
+                            input_tokens=model_metrics.input_tokens,
+                            output_tokens=model_metrics.output_tokens,
+                            total_tokens=model_metrics.total_tokens,
+                            average_duration=model_metrics.average_duration,
+                            total_runs=model_metrics.total_runs,
+                        )
+                    else:
+                        existing = details_dict[key]
+                        existing.input_tokens += model_metrics.input_tokens
+                        existing.output_tokens += model_metrics.output_tokens
+                        existing.total_tokens += model_metrics.total_tokens
+                        existing.total_runs += model_metrics.total_runs
+                        # Calculate weighted average duration
+                        if model_metrics.average_duration is not None:
+                            if existing.average_duration is None:
+                                existing.average_duration = model_metrics.average_duration
+                            else:
+                                total_duration = (existing.average_duration * existing.total_runs) + (model_metrics.average_duration * model_metrics.total_runs)
+                                existing.average_duration = total_duration / existing.total_runs if existing.total_runs > 0 else None
+            
+            merged_details = list(details_dict.values())
+
         result = SessionMetrics(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
@@ -226,6 +330,7 @@ class SessionMetrics:
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
             average_duration=average_duration,
             total_runs=total_runs,
+            details=merged_details,
         )
 
         return result

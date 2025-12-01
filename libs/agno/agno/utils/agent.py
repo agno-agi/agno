@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, 
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.metrics import Metrics, SessionMetrics
+from agno.models.metrics import Metrics, SessionMetrics, SessionModelMetrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
@@ -809,8 +809,26 @@ async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: 
                 metrics_dict.pop("duration", None)
                 metrics_dict.pop("time_to_first_token", None)
                 metrics_dict.pop("timer", None)
+                # Convert details list from dicts to SessionModelMetrics objects
+                if "details" in metrics_dict and isinstance(metrics_dict["details"], list):
+                    details_list = []
+                    for detail_dict in metrics_dict["details"]:
+                        if isinstance(detail_dict, dict):
+                            details_list.append(SessionModelMetrics(**detail_dict))
+                        elif isinstance(detail_dict, SessionModelMetrics):
+                            details_list.append(detail_dict)
+                    metrics_dict["details"] = details_list if details_list else None
                 return SessionMetrics(**metrics_dict)
             elif isinstance(session_metrics_data, SessionMetrics):
+                # Ensure details are SessionModelMetrics objects, not dicts
+                if session_metrics_data.details:
+                    details_list = []
+                    for detail in session_metrics_data.details:
+                        if isinstance(detail, dict):
+                            details_list.append(SessionModelMetrics(**detail))
+                        elif isinstance(detail, SessionModelMetrics):
+                            details_list.append(detail)
+                    session_metrics_data.details = details_list if details_list else None
                 return session_metrics_data
             elif isinstance(session_metrics_data, Metrics):
                 # Convert legacy Metrics to SessionMetrics

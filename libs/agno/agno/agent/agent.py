@@ -48,7 +48,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics, MessageMetrics, ModelMetrics, SessionMetrics
+from agno.models.metrics import Metrics, MessageMetrics, ModelMetrics, SessionMetrics, SessionModelMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -5105,14 +5105,21 @@ class Agent:
         run_response.messages = messages_for_run_response
         # Update the RunOutput metrics
         output_model_messages = getattr(run_messages, 'output_model_messages', None)
+        reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        # Also check run_response.reasoning_messages if reasoning_model_messages is not set
+        if reasoning_model_messages is None and run_response.reasoning_messages:
+            reasoning_model_messages = run_response.reasoning_messages
         run_response.metrics = self._calculate_run_metrics(
             model_messages=messages_for_run_response,
             output_model_messages=output_model_messages,
+            reasoning_model_messages=reasoning_model_messages,
             current_run_metrics=run_response.metrics
         )
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput):
         """Calculate session metrics - convert run Metrics to SessionMetrics"""
+        from agno.models.metrics import SessionModelMetrics
+        
         session_metrics = self._get_session_metrics(session=session)
 
         # Add the metrics for the current run to the session metrics
@@ -5129,7 +5136,6 @@ class Agent:
             session_metrics.cache_write_tokens += run_metrics.cache_write_tokens
             session_metrics.reasoning_tokens += run_metrics.reasoning_tokens
 
-
             # Calculate average duration
             session_metrics.total_runs += 1
             if run_metrics.duration is not None:
@@ -5141,6 +5147,57 @@ class Agent:
                         session_metrics.average_duration * (session_metrics.total_runs - 1) + run_metrics.duration
                     )
                     session_metrics.average_duration = total_duration / session_metrics.total_runs
+
+            # Track per-model metrics from run_metrics.details
+            if run_metrics.details:
+                # Initialize details list if needed
+                if session_metrics.details is None:
+                    session_metrics.details = []
+                
+                # Create a dict keyed by (provider, id) for efficient lookup
+                details_dict: Dict[Tuple[str, str], SessionModelMetrics] = {
+                    (m.provider, m.id): m for m in session_metrics.details
+                }
+                
+                # Process each model type in run_metrics.details
+                for model_type, model_metrics_list in run_metrics.details.items():
+                    for model_metrics in model_metrics_list:
+                        key = (model_metrics.provider, model_metrics.id)
+                        
+                        if key not in details_dict:
+                            # First time seeing this model - create new SessionModelMetrics
+                            # For duration, we'll track it per run and calculate average later
+                            # For now, we'll use the run's duration if available
+                            session_model_metrics = SessionModelMetrics(
+                                id=model_metrics.id,
+                                provider=model_metrics.provider,
+                                input_tokens=model_metrics.input_tokens,
+                                output_tokens=model_metrics.output_tokens,
+                                total_tokens=model_metrics.total_tokens,
+                                average_duration=run_metrics.duration,  # Use run duration for first occurrence
+                                total_runs=1,
+                            )
+                            details_dict[key] = session_model_metrics
+                        else:
+                            # Aggregate metrics for existing model
+                            existing = details_dict[key]
+                            existing.input_tokens += model_metrics.input_tokens
+                            existing.output_tokens += model_metrics.output_tokens
+                            existing.total_tokens += model_metrics.total_tokens
+                            existing.total_runs += 1
+                            # Calculate weighted average duration
+                            if run_metrics.duration is not None:
+                                if existing.average_duration is None:
+                                    existing.average_duration = run_metrics.duration
+                                else:
+                                    # Weighted average: (old_avg * old_count + new_duration) / new_count
+                                    total_duration = (
+                                        existing.average_duration * (existing.total_runs - 1) + run_metrics.duration
+                                    )
+                                    existing.average_duration = total_duration / existing.total_runs
+                
+                # Update session_metrics.details with the merged dict
+                session_metrics.details = list(details_dict.values())
 
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics.to_dict()
@@ -5225,9 +5282,14 @@ class Agent:
         run_response.messages = messages_for_run_response
         # Update the RunOutput metrics
         output_model_messages = getattr(run_messages, 'output_model_messages', None)
+        reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        # Also check run_response.reasoning_messages if reasoning_model_messages is not set
+        if reasoning_model_messages is None and run_response.reasoning_messages:
+            reasoning_model_messages = run_response.reasoning_messages
         run_response.metrics = self._calculate_run_metrics(
             model_messages=messages_for_run_response,
             output_model_messages=output_model_messages,
+            reasoning_model_messages=reasoning_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -5317,9 +5379,14 @@ class Agent:
         run_response.messages = messages_for_run_response
         # Update the RunOutput metrics
         output_model_messages = getattr(run_messages, 'output_model_messages', None)
+        reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        # Also check run_response.reasoning_messages if reasoning_model_messages is not set
+        if reasoning_model_messages is None and run_response.reasoning_messages:
+            reasoning_model_messages = run_response.reasoning_messages
         run_response.metrics = self._calculate_run_metrics(
             model_messages=messages_for_run_response,
             output_model_messages=output_model_messages,
+            reasoning_model_messages=reasoning_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -6347,8 +6414,26 @@ class Agent:
                     metrics_dict.pop("duration", None)
                     metrics_dict.pop("time_to_first_token", None)
                     metrics_dict.pop("timer", None)
+                    # Convert details list from dicts to SessionModelMetrics objects
+                    if "details" in metrics_dict and isinstance(metrics_dict["details"], list):
+                        details_list = []
+                        for detail_dict in metrics_dict["details"]:
+                            if isinstance(detail_dict, dict):
+                                details_list.append(SessionModelMetrics(**detail_dict))
+                            elif isinstance(detail_dict, SessionModelMetrics):
+                                details_list.append(detail_dict)
+                        metrics_dict["details"] = details_list if details_list else None
                     return SessionMetrics(**metrics_dict)
                 elif isinstance(session_metrics_from_db, SessionMetrics):
+                    # Ensure details are SessionModelMetrics objects, not dicts
+                    if session_metrics_from_db.details:
+                        details_list = []
+                        for detail in session_metrics_from_db.details:
+                            if isinstance(detail, dict):
+                                details_list.append(SessionModelMetrics(**detail))
+                            elif isinstance(detail, SessionModelMetrics):
+                                details_list.append(detail)
+                        session_metrics_from_db.details = details_list if details_list else None
                     return session_metrics_from_db
                 elif isinstance(session_metrics_from_db, Metrics):
                     # Convert legacy Metrics to SessionMetrics
@@ -9109,6 +9194,7 @@ class Agent:
         self,
         model_messages: Optional[List[Message]] = None,
         output_model_messages: Optional[List[Message]] = None,
+        reasoning_model_messages: Optional[List[Message]] = None,
         messages: Optional[List[Message]] = None,  # For backward compatibility
         current_run_metrics: Optional[Metrics] = None,
     ) -> Metrics:
@@ -9117,6 +9203,7 @@ class Agent:
         Args:
             model_messages: Messages from the main model (assistant messages)
             output_model_messages: Messages from the output_model (assistant messages)
+            reasoning_model_messages: Messages from the reasoning_model (assistant messages)
             messages: Legacy parameter - if provided, treated as model_messages
             current_run_metrics: Existing metrics to update (preserves timing)
         """
@@ -9196,6 +9283,40 @@ class Agent:
                     time_to_first_token=first_time_to_first_token,
                 )
                 details["output_model"] = [model_metrics]
+        
+        # Track reasoning_model metrics
+        if reasoning_model_messages and self.reasoning_model is not None:
+            reasoning_assistant_role = self.reasoning_model.assistant_message_role
+            reasoning_model_assistant_messages = [
+                m for m in reasoning_model_messages
+                if m.role == reasoning_assistant_role and m.metrics is not None
+            ]
+            
+            if reasoning_model_assistant_messages:
+                # Aggregate metrics from all reasoning_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in reasoning_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = self.reasoning_model.id
+                model_provider = self.reasoning_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["reasoning_model"] = [model_metrics]
         
         # Set details if we have any model metrics
         if details:
@@ -10181,9 +10302,14 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics - pass model-specific messages
+        reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        # Also check run_response.reasoning_messages if reasoning_model_messages is not set
+        if reasoning_model_messages is None and run_response.reasoning_messages:
+            reasoning_model_messages = run_response.reasoning_messages
         run_response.metrics = self._calculate_run_metrics(
             model_messages=messages_for_run_response,
             output_model_messages=run_messages.output_model_messages,
+            reasoning_model_messages=reasoning_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -10259,9 +10385,14 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics - pass model-specific messages
+        reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        # Also check run_response.reasoning_messages if reasoning_model_messages is not set
+        if reasoning_model_messages is None and run_response.reasoning_messages:
+            reasoning_model_messages = run_response.reasoning_messages
         run_response.metrics = self._calculate_run_metrics(
             model_messages=messages_for_run_response,
             output_model_messages=run_messages.output_model_messages,
+            reasoning_model_messages=reasoning_model_messages,
             current_run_metrics=run_response.metrics
         )
 
