@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.base import BaseEvalHook
+from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
@@ -140,7 +140,7 @@ class AccuracyResult:
 
 
 @dataclass
-class AccuracyEval(BaseEvalHook):
+class AccuracyEval(BaseEval):
     """Interface to evaluate the accuracy of an Agent or Team, given a prompt and expected answer"""
 
     # Input to evaluate
@@ -908,7 +908,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         self.db = None
 
         # Run the evaluation using run_with_output
-        self.run_with_output(output=output, print_results=False, print_summary=False)
+        self.run_with_output(output=output, print_results=self.print_results, print_summary=self.print_summary)
 
         # Restore DB
         self.db = original_db
@@ -956,7 +956,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         self.db = None
 
         # Run the evaluation using arun_with_output
-        await self.arun_with_output(output=output, print_results=False, print_summary=False)
+        await self.arun_with_output(output=output, print_results=self.print_results, print_summary=self.print_summary)
 
         # Restore DB
         self.db = original_db

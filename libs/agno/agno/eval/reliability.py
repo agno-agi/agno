@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 from agno.db.schemas.evals import EvalType
-from agno.eval.base import BaseEvalHook
+from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunInput, TeamRunOutput
@@ -40,7 +40,7 @@ class ReliabilityResult:
 
 
 @dataclass
-class ReliabilityEval(BaseEvalHook):
+class ReliabilityEval(BaseEval):
     """Evaluate the reliability of a model by checking the tool calls"""
 
     # Evaluation name
@@ -419,6 +419,10 @@ class ReliabilityEval(BaseEvalHook):
         # Use helper method to evaluate
         self.result = self._evaluate_from_run_output(run_output)
 
+        # Print results if requested
+        if self.print_results and self.result:
+            self.result.print_eval()
+
         if not self.db:
             return
 
@@ -457,6 +461,10 @@ class ReliabilityEval(BaseEvalHook):
         # Use helper method to evaluate
         self.result = self._evaluate_from_run_output(run_output)
 
+        # Print results if requested
+        if self.print_results and self.result:
+            self.result.print_eval()
+
         if not self.db:
             return
 
@@ -474,7 +482,7 @@ class ReliabilityEval(BaseEvalHook):
         else:
             raise TypeError(f"run_output must be RunOutput or TeamRunOutput, got {type(run_output)}")
 
-         # Generate a run_id for this run allowing the same eval object to be run multiple times
+        # Generate a run_id for this run allowing the same eval object to be run multiple times
         self.run_id = str(uuid4())
 
         await self._async_log_eval_to_db(

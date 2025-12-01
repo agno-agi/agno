@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.base import BaseEvalHook
+from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunInput, TeamRunOutput
@@ -180,7 +180,7 @@ class PerformanceResult:
 
 
 @dataclass
-class PerformanceEval(BaseEvalHook):
+class PerformanceEval(BaseEval):
     """
     Evaluate the performance of a function by measuring run time and peak memory usage.
 
@@ -836,7 +836,7 @@ class PerformanceEval(BaseEvalHook):
             # Temporarily disable DB logging to avoid duplicate entries without parent fields
             temp_db = self.db
             self.db = None
-            self.run(print_summary=False, print_results=False)
+            self.run(print_summary=self.print_summary, print_results=self.print_results)
             self.db = temp_db
 
         if not self.db or self.func is None:
@@ -879,7 +879,7 @@ class PerformanceEval(BaseEvalHook):
             # Temporarily disable DB logging to avoid duplicate entries without parent fields
             temp_db = self.db
             self.db = None
-            await self.arun(print_summary=False, print_results=False)
+            await self.arun(print_summary=self.print_summary, print_results=self.print_results)
             self.db = temp_db
 
         if not self.db or self.func is None:

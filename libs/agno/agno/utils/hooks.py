@@ -16,7 +16,7 @@ def normalize_hooks(
         async_mode: Whether to use async versions of methods
         hook_mode: Either "pre" or "post" to determine which method to extract
     """
-    from agno.eval.base import BaseEvalHook
+    from agno.eval.base import BaseEval
 
     result_hooks: List[Callable[..., Any]] = []
 
@@ -27,7 +27,7 @@ def normalize_hooks(
                     result_hooks.append(hook.async_check)
                 else:
                     result_hooks.append(hook.check)
-            elif isinstance(hook, BaseEvalHook):
+            elif isinstance(hook, BaseEval):
                 if hook_mode == "pre":
                     if async_mode:
                         result_hooks.append(hook.async_pre_check)

@@ -5,8 +5,8 @@ from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunInput, TeamRunOutput
 
 
-class BaseEvalHook(ABC):
-    """Abstract base class for all evaluation hooks."""
+class BaseEval(ABC):
+    """Abstract base class for all evaluations."""
 
     @abstractmethod
     def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:

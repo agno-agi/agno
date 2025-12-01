@@ -113,12 +113,8 @@ def attach_routes(
         eval_id: Optional[str] = Query(
             default=None, description="Eval ID (filter all runs for a specific eval configuration)"
         ),
-        parent_run_id: Optional[str] = Query(
-            default=None, description="Parent run ID"
-        ),
-        parent_session_id: Optional[str] = Query(
-            default=None, description="Parent session ID"
-        ),
+        parent_run_id: Optional[str] = Query(default=None, description="Parent run ID"),
+        parent_session_id: Optional[str] = Query(default=None, description="Parent session ID"),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
