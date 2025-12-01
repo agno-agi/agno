@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
@@ -767,3 +768,30 @@ def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb]) -> None:
         )
     except Exception as e:
         logger.warning(f"Failed to enable tracing: {e}")
+
+
+def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+    """Parse an ISO 8601 datetime string and convert to UTC.
+
+    Args:
+        datetime_str: ISO 8601 formatted datetime string (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T15:30:00+05:30')
+        param_name: Name of the parameter for error messages
+
+    Returns:
+        datetime object in UTC timezone
+
+    Raises:
+        HTTPException: If the datetime string is invalid
+    """
+    try:
+        dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+        # Convert to UTC if timezone-aware, otherwise assume UTC
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc)
+        else:
+            return dt.replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
+        )
