@@ -74,7 +74,11 @@ class Groq(Model):
         if not self.api_key:
             self.api_key = getenv("GROQ_API_KEY")
             if not self.api_key:
-                log_error("GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.")
+                raise ModelProviderError(
+                    message="GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
 
         # Define base client params
         base_params = {

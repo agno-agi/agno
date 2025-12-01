@@ -67,6 +67,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -80,6 +82,8 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -1007,7 +1011,12 @@ class Team:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
                     self._mcp_tools_initialized_on_run.append(tool)
@@ -4356,7 +4365,10 @@ class Team:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
@@ -5130,7 +5142,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5172,7 +5187,10 @@ class Team:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     # Only add the tool if it successfully connected and built its tools
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
@@ -5273,6 +5291,7 @@ class Team:
 
         _function_names = []
         _functions: List[Union[Function, dict]] = []
+        self._tool_instructions = []
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5451,7 +5470,13 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(
+                    system_message=self.system_message,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -5475,15 +5500,13 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "team" in signature.parameters:
-                    _instructions = self.instructions(team=self)
-                elif "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                _instructions = execute_instructions(
+                    instructions=self.instructions,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -5759,7 +5782,13 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(
+                    system_message=self.system_message,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -5783,15 +5812,13 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "team" in signature.parameters:
-                    _instructions = self.instructions(team=self)
-                elif "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                _instructions = await aexecute_instructions(
+                    instructions=self.instructions,
+                    agent=self,
+                    team=self,
+                    session_state=session_state,
+                    run_context=run_context,
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -8530,8 +8557,7 @@ class Team:
 
         session = self.get_session(session_id=session_id)  # type: ignore
         if session is None:
-            log_warning(f"Session {session_id} not found")
-            return []
+            raise Exception("Session not found")
 
         return session.get_messages(
             team_id=self.id,

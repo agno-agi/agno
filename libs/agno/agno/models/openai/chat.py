@@ -102,7 +102,11 @@ class OpenAIChat(Model):
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                raise ModelProviderError(
+                    message="OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
 
         # Define base client params
         base_params = {

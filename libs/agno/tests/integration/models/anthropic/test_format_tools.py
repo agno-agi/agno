@@ -64,6 +64,7 @@ def test_simple_function_tool():
                     "units": {"type": "string", "description": "Temperature units (celsius or fahrenheit)"},
                 },
                 "required": ["location", "units"],
+                "additionalProperties": False,
             },
         }
     ]

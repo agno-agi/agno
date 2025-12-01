@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
+from agno.exceptions import ModelProviderError
 from agno.models.openai.like import OpenAILike
 
 
@@ -32,6 +33,15 @@ class LangDB(OpenAILike):
     default_headers: Optional[dict] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
+        if not self.api_key:
+            self.api_key = getenv("LANGDB_API_KEY")
+            if not self.api_key:
+                raise ModelProviderError(
+                    message="LANGDB_API_KEY not set. Please set the LANGDB_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+
         if not self.project_id:
             raise ValueError("LANGDB_PROJECT_ID not set in the environment")
 
