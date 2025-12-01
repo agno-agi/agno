@@ -770,6 +770,20 @@ def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb]) -> None:
         logger.warning(f"Failed to enable tracing: {e}")
 
 
+def format_duration_ms(duration_ms: Optional[int]) -> str:
+    """Format a duration in milliseconds to a human-readable string.
+
+    Args:
+        duration_ms: Duration in milliseconds
+
+    Returns:
+        Formatted string like "150ms" or "1.50s"
+    """
+    if duration_ms is None or duration_ms < 1000:
+        return f"{duration_ms or 0}ms"
+    return f"{duration_ms / 1000:.2f}s"
+
+
 def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
     """Parse an ISO 8601 datetime string and convert to UTC.
 

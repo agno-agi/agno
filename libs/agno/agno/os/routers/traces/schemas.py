@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agno.os.utils import format_duration_ms
+
 
 def _derive_span_type(span: Any) -> str:
     """
@@ -58,13 +60,6 @@ class TraceNode(BaseModel):
     @classmethod
     def from_span(cls, span: Any, spans: Optional[List["TraceNode"]] = None) -> "TraceNode":
         """Create TraceNode from a Span object"""
-        # Format duration
-        duration_ms = span.duration_ms
-        if duration_ms < 1000:
-            duration_str = f"{duration_ms}ms"
-        else:
-            duration_str = f"{duration_ms / 1000:.2f}s"
-
         # Derive the correct span type (AGENT, TEAM, WORKFLOW, LLM, TOOL, etc.)
         span_type = _derive_span_type(span)
 
@@ -123,7 +118,7 @@ class TraceNode(BaseModel):
             id=span.span_id,
             name=span.name,
             type=span_type,
-            duration=duration_str,
+            duration=format_duration_ms(span.duration_ms),
             start_time=span.start_time,
             end_time=span.end_time,
             status=span.status_code,
@@ -159,19 +154,12 @@ class TraceSummary(BaseModel):
 
     @classmethod
     def from_trace(cls, trace: Any, input: Optional[str] = None) -> "TraceSummary":
-        # Format duration
-        duration_ms = trace.duration_ms
-        if duration_ms < 1000:
-            duration_str = f"{duration_ms}ms"
-        else:
-            duration_str = f"{duration_ms / 1000:.2f}s"
-
         # Use datetime objects directly (Pydantic will auto-serialize to ISO 8601)
         return cls(
             trace_id=trace.trace_id,
             name=trace.name,
             status=trace.status,
-            duration=duration_str,
+            duration=format_duration_ms(trace.duration_ms),
             start_time=trace.start_time,
             end_time=trace.end_time,
             total_spans=trace.total_spans,
@@ -226,13 +214,6 @@ class TraceDetail(BaseModel):
     @classmethod
     def from_trace_and_spans(cls, trace: Any, spans: List[Any]) -> "TraceDetail":
         """Create TraceDetail from a Trace and its Spans, building the tree structure"""
-        # Format duration
-        duration_ms = trace.duration_ms
-        if duration_ms < 1000:
-            duration_str = f"{duration_ms}ms"
-        else:
-            duration_str = f"{duration_ms / 1000:.2f}s"
-
         # Find root span to extract input/output/error
         root_span = next((s for s in spans if not s.parent_span_id), None)
         trace_input = None
@@ -290,7 +271,7 @@ class TraceDetail(BaseModel):
             trace_id=trace.trace_id,
             name=trace.name,
             status=trace.status,
-            duration=duration_str,
+            duration=format_duration_ms(trace.duration_ms),
             start_time=trace.start_time,
             end_time=trace.end_time,
             total_spans=trace.total_spans,
@@ -383,8 +364,6 @@ class TraceDetail(BaseModel):
                 end_time = trace_end_time if trace_end_time else span.end_time
                 duration_ms = trace_duration_ms if trace_duration_ms is not None else span.duration_ms
 
-                duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.2f}s"
-
                 # Derive the correct span type (AGENT, TEAM, WORKFLOW, etc.)
                 span_type = _derive_span_type(span)
                 span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
@@ -407,7 +386,7 @@ class TraceDetail(BaseModel):
                     id=span.span_id,
                     name=span.name,
                     type=span_type,
-                    duration=duration_str,
+                    duration=format_duration_ms(duration_ms),
                     start_time=start_time,
                     end_time=end_time,
                     status=span.status_code,
