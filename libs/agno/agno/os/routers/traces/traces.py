@@ -130,7 +130,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
-        import inspect
         import time as time_module
 
         # Get database using db_id or default to first available
@@ -181,7 +180,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     )
 
             if isinstance(db, AsyncBaseDb):
-                traces_result = await db.get_traces(
+                traces, total_count = await db.get_traces(
                     run_id=run_id,
                     session_id=session_id,
                     user_id=user_id,
@@ -195,7 +194,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     page=page,
                 )
             else:
-                traces_result = db.get_traces(
+                traces, total_count = db.get_traces(
                     run_id=run_id,
                     session_id=session_id,
                     user_id=user_id,
@@ -208,13 +207,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     limit=limit,
                     page=page,
                 )
-
-            if inspect.iscoroutine(traces_result):
-                result = await traces_result
-            else:
-                result = traces_result
-
-            traces, total_count = result
 
             end_time_ms = time_module.time() * 1000
             search_time_ms = round(end_time_ms - start_time_ms, 2)
@@ -224,11 +216,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             trace_inputs = {}
             for trace in traces:
-                spans_result = db.get_spans(trace_id=trace.trace_id)
-                if inspect.iscoroutine(spans_result):
-                    spans = await spans_result
+                if isinstance(db, AsyncBaseDb):
+                    spans = await db.get_spans(trace_id=trace.trace_id)
                 else:
-                    spans = spans_result
+                    spans = db.get_spans(trace_id=trace.trace_id)
 
                 # Find root span and extract input
                 root_span = next((s for s in spans if not s.parent_span_id), None)
@@ -359,24 +350,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
-        # Verify the database has trace support
-        if not hasattr(db, "get_trace") or not hasattr(db, "get_spans"):
-            raise HTTPException(status_code=500, detail="Selected database does not support traces")
-
         try:
-            import inspect
-
             # If span_id is provided, return just that span
             if span_id:
                 if isinstance(db, AsyncBaseDb):
-                    span_result = await db.get_span(span_id)
+                    span = await db.get_span(span_id)
                 else:
-                    span_result = db.get_span(span_id)
-
-                if inspect.iscoroutine(span_result):
-                    span = await span_result
-                else:
-                    span = span_result
+                    span = db.get_span(span_id)
 
                 if span is None:
                     raise HTTPException(status_code=404, detail="Span not found")
@@ -391,24 +371,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Otherwise, return full trace with hierarchy
             # Get trace
             if isinstance(db, AsyncBaseDb):
-                trace_result = await db.get_trace(trace_id=trace_id, run_id=run_id)
+                trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
             else:
-                trace_result = db.get_trace(trace_id=trace_id, run_id=run_id)
-
-            if inspect.iscoroutine(trace_result):
-                trace = await trace_result
-            else:
-                trace = trace_result
+                trace = db.get_trace(trace_id=trace_id, run_id=run_id)
 
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
 
             # Get all spans for this trace
-            spans_result = db.get_spans(trace_id=trace_id)
-            if inspect.iscoroutine(spans_result):
-                spans = await spans_result
+            if isinstance(db, AsyncBaseDb):
+                spans = await db.get_spans(trace_id=trace_id)
             else:
-                spans = spans_result
+                spans = db.get_spans(trace_id=trace_id)
 
             # Build hierarchical response
             return TraceDetail.from_trace_and_spans(trace, spans)
@@ -492,12 +466,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
-        # Verify the database has trace support
-        if not hasattr(db, "get_trace_stats"):
-            raise HTTPException(status_code=500, detail="Selected database does not support trace statistics")
-
         try:
-            import inspect
             import time as time_module
 
             start_time_ms = time_module.time() * 1000
@@ -544,7 +513,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     )
 
             if isinstance(db, AsyncBaseDb):
-                stats_result = await db.get_trace_stats(
+                stats_list, total_count = await db.get_trace_stats(
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
@@ -555,7 +524,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     page=page,
                 )
             else:
-                stats_result = db.get_trace_stats(
+                stats_list, total_count = db.get_trace_stats(
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
@@ -565,13 +534,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     limit=limit,
                     page=page,
                 )
-
-            if inspect.iscoroutine(stats_result):
-                result = await stats_result
-            else:
-                result = stats_result
-
-            stats_list, total_count = result
 
             end_time_ms = time_module.time() * 1000
             search_time_ms = round(end_time_ms - start_time_ms, 2)
