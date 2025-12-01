@@ -141,7 +141,11 @@ class Gemini(Model):
         if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
-                log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+                raise ModelProviderError(
+                    message="GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
             client_params["api_key"] = self.api_key
         else:
             log_info("Using Vertex AI API")
