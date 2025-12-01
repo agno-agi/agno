@@ -4493,8 +4493,8 @@ class Team:
                     return Metrics(**session_metrics_from_db)
                 elif isinstance(session_metrics_from_db, Metrics):
                     return session_metrics_from_db
-        else:
-            return Metrics()
+
+        return Metrics()
 
     def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         """Calculate session metrics"""
