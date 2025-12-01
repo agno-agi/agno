@@ -317,7 +317,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         elif table_type == "spans":
             if not hasattr(self, "spans_table"):
                 # Ensure traces table exists first (spans has FK to traces)
-                await self._get_table(table_type="traces", create_table_if_not_found=create_table_if_not_found)
+                await self._get_table(table_type="traces", create_table_if_not_found=True)
                 self.spans_table = await self._get_or_create_table(
                     table_name=self.span_table_name,
                     table_type="spans",

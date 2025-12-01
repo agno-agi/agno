@@ -182,7 +182,7 @@ class DynamoDb(BaseDb):
             table_name = self.trace_table_name
         elif table_type == "spans":
             # Ensure traces table exists first (spans reference traces)
-            self._get_table("traces", create_table_if_not_found=create_table_if_not_found)
+            self._get_table("traces", create_table_if_not_found=True)
             table_name = self.span_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
