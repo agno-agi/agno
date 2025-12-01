@@ -9,12 +9,18 @@ This directory contains examples demonstrating Google's unique AI features:
 - **URL Context**: Analyze and extract content from web pages
 - **Google Search**: Search integration for Gemini 2.0+ models
 
+## Why is Gemini 3 the best model for this example?
+
+- **Speed**: Blazingly fast inference helps to improve the chat experience when interacting with the agents in these examples.
+- **Reasoning**: With strong native reasoning capabilities, Gemini 3 ensures answers are accurate and well-reasoned. This is especially useful for the Research Agent example.
+- **Search & Context**: When adding web search and URL context to the agents that use Gemini 3, the native web search provides better results than external search tools.
+
 ## How to get started?
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/agno-ai/agno.git
+git clone https://github.com/agno-agi/agno.git
 cd agno/cookbook/examples/gemini_3
 ```
 
@@ -92,8 +98,28 @@ Agno supports a variety of Google-specific features. Learn more about them [here
 | URL Context   | `url_context=True`  | Analyze web page content     |
 | NanoBanana    | `NanoBananaTools()` | Image generation toolkit     |
 
-## Updating the dependencies
 
-```bash
-pip-compile requirements.ini
-```
+## See the agents in action on AgentOS
+
+
+<p align="center">
+  <img src="assets/agentos_2.png" alt="Creative Studio Demo" width="500"/>
+  <br>
+  <em>Creative Studio: AI Image Generation (NanoBanana + Gemini)</em>
+</p>
+
+<p align="center">
+  <img src="assets/agentos_3.png" alt="Research Agent Demo" width="500"/>
+  <br>
+  <em>Research Agent: Web Search &amp; Grounding with Google Gemini</em>
+</p>
+
+<p align="center">
+  <img src="assets/agentos_4.png" alt="Product Comparison Agent Demo" width="500"/>
+  <br>
+  <em>Product Comparison Agent: Analyze and compare products using URLs and search</em>
+</p>
+
+
+
+

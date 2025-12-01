@@ -35,6 +35,6 @@ product_comparison_agent = Agent(
 
 if __name__ == "__main__":
     product_comparison_agent.print_response(
-        f"Compare the Iphone 15 and Samsung Galaxy S25",
+        "Compare the Iphone 15 and Samsung Galaxy S25",
         stream=True,
     )

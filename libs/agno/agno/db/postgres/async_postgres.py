@@ -835,10 +835,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
-                
+
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
-                    
+
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
