@@ -1165,8 +1165,6 @@ class Agent:
 
             return run_response
         except Exception as e:
-            log_error(f"Run {run_response.run_id} encountered an error: {str(e)}")
-
             run_response.error = create_run_error_event(run_response, error=str(e))
 
             # Cleanup and store the run response and session
@@ -1492,18 +1490,10 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         except Exception as e:
-            # Handle general exceptions during streaming
-            log_info("we can here")
-            log_error(f"Run {run_response.run_id} encountered an error during streaming: {str(e)}")
+            # Handle exceptions during streaming
             run_response.status = RunStatus.error
-            # Don't overwrite content - preserve any partial content that was streamed
-            # Only set content if it's empty
-            if not run_response.content:
-                run_response.content = str(e)
-
             run_response.error = create_run_error_event(run_response, error=str(e))
 
-            # Cleanup and store the run response and session
             self._cleanup_and_store(
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
@@ -2465,10 +2455,8 @@ class Agent:
                 user_id=user_id,
             )
         except Exception as e:
-            # Handle general exceptions during async streaming
+            # Handle exceptions during async streaming
             run_response.status = RunStatus.error
-
-            log_info(f"run response error: {run_response}")
 
             run_response.error = create_run_error_event(run_response, error=str(e))
 
@@ -2591,7 +2579,6 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        # Initialize session early for error handling
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Create a run_id for this specific run
@@ -2612,7 +2599,7 @@ class Agent:
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
-        # Normalise hooks & guardails
+        # Normalise hooks & guardrails
         if not self._hooks_normalised:
             if self.pre_hooks:
                 self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
@@ -10637,9 +10624,7 @@ class Agent:
         session: AgentSession,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-    ) -> None:
-        log_debug(f"Cleaning up and storing run: {run_response.run_id}")
-        #  Scrub the stored run based on storage flags
+    ) -> None:        #  Scrub the stored run based on storage flags
         self._scrub_run_output_for_storage(run_response)
 
         # Stop the timer for the Run duration
