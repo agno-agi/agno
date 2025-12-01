@@ -2073,8 +2073,6 @@ class Agent:
         except Exception as e:
             run_response.error = create_run_error_event(run_response, error=str(e))
 
-            logger.error(f"Run {run_response.run_id} encountered an error: {str(e)}", exc_info=True)
-
             # Cleanup and store the run response and session
             await self._acleanup_and_store(
                 run_response=run_response,
