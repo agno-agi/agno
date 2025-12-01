@@ -8,7 +8,6 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tracing import setup_tracing
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
@@ -16,9 +15,6 @@ from agno.workflow.workflow import Workflow
 
 # Set up database
 db = SqliteDb(db_file="tmp/traces.db")
-
-# Set up tracing - this instruments ALL agents automatically
-setup_tracing(db=db)
 
 # === BASIC AGENTS ===
 researcher = Agent(
@@ -99,6 +95,7 @@ basic_workflow = Workflow(
 agent_os = AgentOS(
     description="Example app for tracing Basic Workflow",
     workflows=[basic_workflow],
+    tracing=True,
 )
 app = agent_os.get_app()
 

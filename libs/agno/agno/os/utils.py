@@ -752,3 +752,18 @@ def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
         logger.error(f"Failed to create dynamic model '{model_name}': {e}")
         # Return a minimal model as fallback
         return create_model(model_name)
+
+
+def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb]) -> None:
+    """Set up OpenTelemetry tracing for this agent/team/workflow."""
+    try:
+        from agno.tracing import setup_tracing
+
+        setup_tracing(db=db)
+    except ImportError:
+        logger.warning(
+            "tracing=True but OpenTelemetry packages not installed. "
+            "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to enable tracing: {e}")

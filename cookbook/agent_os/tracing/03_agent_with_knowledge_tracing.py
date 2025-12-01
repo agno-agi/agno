@@ -114,12 +114,12 @@ agno_assist = Agent(
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
-    tracing=True,  # Enable tracing
 )
 
 agent_os = AgentOS(
     description="Example app with Agno Docs Agent with knowledge and tracing",
     agents=[agno_assist],
+    tracing=True,
 )
 
 

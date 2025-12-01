@@ -425,11 +425,6 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
-    # --- Tracing ---
-    # tracing=True automatically sets up OpenTelemetry tracing for this agent
-    # Requires: a database (db) to store traces, and OpenTelemetry packages installed
-    # When enabled, all agent runs, model calls, and tool executions are automatically traced
-    tracing: bool = False
     # Deprecated. Use stream_events instead
     stream_intermediate_steps: Optional[bool] = None
 
@@ -533,7 +528,6 @@ class Agent:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
-        tracing: bool = False,
     ):
         self.model = model  # type: ignore[assignment]
         self.name = name
@@ -677,7 +671,6 @@ class Agent:
             debug_level = 1
         self.debug_level = debug_level
         self.telemetry = telemetry
-        self.tracing = tracing
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
@@ -694,32 +687,6 @@ class Agent:
         self._background_executor: Optional[Any] = None
 
         self._get_models()
-
-        # Set up tracing if enabled
-        if self.tracing:
-            self._setup_tracing()
-
-    def _setup_tracing(self) -> None:
-        """Set up OpenTelemetry tracing for this agent."""
-        if self.db is None:
-            log_warning(
-                "tracing=True but no database provided. "
-                "Tracing requires a database. Provide 'db' parameter to enable tracing."
-            )
-            return
-
-        try:
-            from agno.tracing import setup_tracing
-
-            setup_tracing(db=self.db)
-            log_debug(f"Tracing enabled for agent: {self.name or self.id}")
-        except ImportError:
-            log_warning(
-                "tracing=True but OpenTelemetry packages not installed. "
-                "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
-            )
-        except Exception as e:
-            log_warning(f"Failed to enable tracing for agent: {e}")
 
     @property
     def background_executor(self) -> Any:

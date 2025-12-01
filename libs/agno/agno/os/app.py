@@ -46,6 +46,7 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     load_yaml_config,
+    setup_tracing_for_os,
     update_cors_middleware,
 )
 from agno.team.team import Team
@@ -186,6 +187,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        if self.tracing:
+            self._setup_tracing()
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
@@ -334,11 +338,6 @@ class AgentOS:
                             if tool not in self.mcp_tools:
                                 self.mcp_tools.append(tool)
 
-            # Enable tracing if AgentOS has tracing enabled
-            if self.tracing and not agent.tracing:
-                agent.tracing = True
-                agent._setup_tracing()
-
             agent.initialize_agent()
 
             # Required for the built-in routes to work
@@ -352,11 +351,6 @@ class AgentOS:
         for team in self.teams:
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
-
-            # Enable tracing if AgentOS has tracing enabled
-            if self.tracing and not team.tracing:
-                team.tracing = True
-                team._setup_tracing()
 
             team.initialize_team()
 
@@ -385,6 +379,37 @@ class AgentOS:
 
                 # Required for the built-in routes to work
                 workflow.store_events = True
+
+    def _setup_tracing(self) -> None:
+        """Set up OpenTelemetry tracing for this AgentOS."""
+        # Find the first available database
+        db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+
+        for agent in self.agents or []:
+            if agent.db:
+                db = agent.db
+                break
+
+        if db is None:
+            for team in self.teams or []:
+                if team.db:
+                    db = team.db
+                    break
+
+        if db is None:
+            for workflow in self.workflows or []:
+                if workflow.db:
+                    db = workflow.db
+                    break
+
+        if db is None:
+            log_warning(
+                "tracing=True but no database found in any agent, team, or workflow. "
+                "Tracing requires a database. Provide 'db' parameter to at least one component."
+            )
+            return
+
+        setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
         if self.base_app:

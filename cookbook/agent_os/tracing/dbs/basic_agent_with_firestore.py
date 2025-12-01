@@ -9,15 +9,11 @@ from agno.db.firestore import FirestoreDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
-from agno.tracing import setup_tracing
 
 PROJECT_ID = ""  # Use your project ID here
 
 # Setup the Firestore database
 db = FirestoreDb(project_id=PROJECT_ID)
-
-# Set up tracing - this instruments ALL agents automatically
-setup_tracing(db=db)
 
 agent = Agent(
     name="HackerNews Agent",
@@ -32,6 +28,7 @@ agent = Agent(
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent],
+    tracing=True,
 )
 app = agent_os.get_app()
 

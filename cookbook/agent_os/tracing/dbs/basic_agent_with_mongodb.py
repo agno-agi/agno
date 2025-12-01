@@ -9,15 +9,11 @@ from agno.db.mongo import MongoDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
-from agno.tracing import setup_tracing
 
 # docker run -d -p 27017:27017 --name mongodb mongo:latest
 db_url = "mongodb://localhost:27017"
 
 db = MongoDb(db_url=db_url)
-
-# Set up tracing - this instruments ALL agents automatically
-setup_tracing(db=db)
 
 agent = Agent(
     name="HackerNews Agent",
@@ -32,6 +28,7 @@ agent = Agent(
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent],
+    tracing=True,
 )
 app = agent_os.get_app()
 

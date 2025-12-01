@@ -10,7 +10,6 @@ from agno.db.gcs_json import GcsJsonDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
-from agno.tracing import setup_tracing
 
 DEBUG_MODE = False
 # Obtain the default credentials and project id from your gcloud CLI session.
@@ -28,9 +27,6 @@ db = GcsJsonDb(
     credentials=credentials,
 )
 
-# Set up tracing - this instruments ALL agents automatically
-setup_tracing(db=db)
-
 agent = Agent(
     name="HackerNews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -44,6 +40,7 @@ agent = Agent(
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent],
+    tracing=True,
 )
 app = agent_os.get_app()
 

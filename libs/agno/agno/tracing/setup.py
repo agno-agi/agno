@@ -71,6 +71,12 @@ def setup_tracing(
             "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
         )
 
+    # Check if tracing is already set up (handles reload scenarios)
+    current_provider = trace_api.get_tracer_provider()
+    if isinstance(current_provider, TracerProvider):
+        # Already configured with a real TracerProvider, skip
+        return
+
     try:
         # Create tracer provider
         tracer_provider = TracerProvider()
@@ -87,13 +93,13 @@ def setup_tracing(
                 max_export_batch_size=max_export_batch_size,
                 schedule_delay_millis=schedule_delay_millis,
             )
-            logger.info(
+            logger.debug(
                 f"Tracing configured with BatchSpanProcessor "
                 f"(queue_size={max_queue_size}, batch_size={max_export_batch_size})"
             )
         else:
             processor = SimpleSpanProcessor(exporter)
-            logger.info("Tracing configured with SimpleSpanProcessor")
+            logger.debug("Tracing configured with SimpleSpanProcessor")
 
         tracer_provider.add_span_processor(processor)
 

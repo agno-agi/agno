@@ -47,7 +47,6 @@ reasoning_agent = Agent(
     add_datetime_to_context=True,
     stream_events=True,
     markdown=True,
-    tracing=True,  # Enable tracing
     db=db_sqlite,
 )
 
@@ -55,6 +54,7 @@ reasoning_agent = Agent(
 agent_os = AgentOS(
     description="Example app for reasoning agent with tracing",
     agents=[reasoning_agent],
+    tracing=True,
 )
 app = agent_os.get_app()
 

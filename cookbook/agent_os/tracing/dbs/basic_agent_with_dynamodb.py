@@ -9,12 +9,8 @@ from agno.db.dynamo import DynamoDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
-from agno.tracing import setup_tracing
 
 db = DynamoDb()
-
-# Set up tracing - this instruments ALL agents automatically
-setup_tracing(db=db)
 
 agent = Agent(
     name="HackerNews Agent",
@@ -29,6 +25,7 @@ agent = Agent(
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent],
+    tracing=True,
 )
 app = agent_os.get_app()
 

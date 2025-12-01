@@ -78,7 +78,7 @@ try:
         spans = db.get_spans(trace_id=trace.trace_id)
         print(f"\n   All spans in this trace ({len(spans)} spans):")
 
-        for span in sorted(spans, key=lambda s: s.start_time_ns):
+        for span in sorted(spans, key=lambda s: s.start_time):
             indent = "  " if span.parent_span_id else ""
             duration = (
                 f"{span.duration_ms}ms"

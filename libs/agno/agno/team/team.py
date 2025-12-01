@@ -445,11 +445,6 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
-    # --- Tracing ---
-    # tracing=True automatically sets up OpenTelemetry tracing for this team
-    # Requires: a database (db) to store traces, and OpenTelemetry packages installed
-    # When enabled, all team runs, member runs, model calls, and tool executions are automatically traced
-    tracing: bool = False
     # Deprecated. Use delegate_to_all_members instead.
     delegate_task_to_all_members: bool = False
 
@@ -554,7 +549,6 @@ class Team:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         telemetry: bool = True,
-        tracing: bool = False,
     ):
         if delegate_task_to_all_members:
             warnings.warn(
@@ -702,7 +696,6 @@ class Team:
         self.exponential_backoff = exponential_backoff
 
         self.telemetry = telemetry
-        self.tracing = tracing
 
         # TODO: Remove these
         # Images generated during this session
@@ -731,32 +724,6 @@ class Team:
         self._background_executor: Optional[Any] = None
 
         self._resolve_models()
-
-        # Set up tracing if enabled
-        if self.tracing:
-            self._setup_tracing()
-
-    def _setup_tracing(self) -> None:
-        """Set up OpenTelemetry tracing for this team."""
-        if self.db is None:
-            log_warning(
-                "tracing=True but no database provided. "
-                "Tracing requires a database. Provide 'db' parameter to enable tracing."
-            )
-            return
-
-        try:
-            from agno.tracing import setup_tracing
-
-            setup_tracing(db=self.db)
-            log_debug(f"Tracing enabled for team: {self.name or self.id}")
-        except ImportError:
-            log_warning(
-                "tracing=True but OpenTelemetry packages not installed. "
-                "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
-            )
-        except Exception as e:
-            log_warning(f"Failed to enable tracing for team: {e}")
 
     @property
     def background_executor(self) -> Any:

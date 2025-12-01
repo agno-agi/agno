@@ -11,7 +11,6 @@ from agno.db.singlestore import SingleStoreDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
-from agno.tracing import setup_tracing
 
 # Configure SingleStore DB connection
 USERNAME = getenv("SINGLESTORE_USERNAME")
@@ -26,9 +25,6 @@ db_url = (
 # Setup your Database
 db = SingleStoreDb(db_url=db_url)
 
-# Set up tracing - this instruments ALL agents automatically
-setup_tracing(db=db)
-
 agent = Agent(
     name="HackerNews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -42,6 +38,7 @@ agent = Agent(
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent],
+    tracing=True,
 )
 app = agent_os.get_app()
 
