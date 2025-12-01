@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=Claude(id="anthropic.claude-sonnet-4-20250514-v1:0"),
+    model=Claude(id="global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )
@@ -35,4 +35,4 @@ movie_agent = Agent(
 # movie_agent: RunOutput = movie_agent.run("New York")
 # pprint(movie_agent.content)
 
-movie_agent.print_response("New York")
+movie_agent.print_response("New York. Be brief.")

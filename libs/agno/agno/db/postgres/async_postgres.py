@@ -138,7 +138,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._create_table(table_name=table_name, table_type=table_type)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -821,7 +821,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
 
-    async def delete_user_memories(self, memory_ids: List[str]) -> None:
+    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
@@ -835,6 +835,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
