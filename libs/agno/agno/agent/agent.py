@@ -5294,6 +5294,7 @@ class Agent:
                             run_response.files = []
                         run_response.files.append(file_obj)
 
+
                 reasoning_step: Optional[ReasoningStep] = None
 
                 tool_executions_list = model_response_event.tool_executions
