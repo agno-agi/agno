@@ -1172,6 +1172,9 @@ class Agent:
             run_response.error = run_error_event
             run_response.events = add_error_event(error=run_error_event, events=run_response.events)
 
+            # If the content is None, set it to the error message
+            if run_response.content is None:
+                run_response.content = str(e)
 
             # Cleanup and store the run response and session
             self._cleanup_and_store(
@@ -1502,6 +1505,10 @@ class Agent:
             run_error_event = create_run_error_event(run_response, error=str(e))
             run_response.error = run_error_event
             run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+
+            # If the content is None, set it to the error message
+            if run_response.content is None:
+                run_response.content = str(e)
 
 
             self._cleanup_and_store(
@@ -2089,6 +2096,9 @@ class Agent:
             run_response.error = run_error_event
             run_response.events = add_error_event(error=run_error_event, events=run_response.events)
 
+            # If the content is None, set it to the error message
+            if run_response.content is None:
+                run_response.content = str(e)
 
             # Cleanup and store the run response and session
             await self._acleanup_and_store(
@@ -2478,6 +2488,10 @@ class Agent:
             run_error_event = create_run_error_event(run_response, error=str(e))
             run_response.error = run_error_event
             run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+
+            # If the content is None, set it to the error message
+            if run_response.content is None:
+                run_response.content = str(e)
 
             # Cleanup and store the run response and session
             await self._acleanup_and_store(
