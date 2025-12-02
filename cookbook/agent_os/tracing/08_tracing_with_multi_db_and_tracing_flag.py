@@ -9,7 +9,6 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
-from agno.tracing.setup import setup_tracing
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Set up databases - each agent has its own db
