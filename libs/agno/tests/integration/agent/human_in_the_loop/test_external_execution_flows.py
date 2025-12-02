@@ -195,3 +195,218 @@ def test_tool_call_multiple_requires_external_execution(shared_db):
     response = agent.continue_run(response)
     assert response.is_paused is False
     assert response.content
+
+
+# ============================================================================
+# New DX Tests using active_requirements and requirement.set_external_execution_result()
+# ============================================================================
+
+
+def test_run_requirement_external_execution(shared_db):
+    """Test the new DX for external execution using active_requirements"""
+
+    @tool(external_execution=True)
+    def send_email(to: str, subject: str, body: str):
+        # This function body won't be executed by the agent
+        pass
+
+    session_id = "test_session_external_execution"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[send_email],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Initial run that requires external execution
+    response = agent.run(
+        "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'",
+        session_id=session_id,
+    )
+
+    # Verify the run is paused and has active requirements
+    assert response.is_paused
+    assert len(response.active_requirements) == 1
+
+    # Get the requirement and verify it needs external execution
+    requirement = response.active_requirements[0]
+    assert requirement.needs_external_execution
+    assert requirement.tool.tool_name == "send_email"
+    assert requirement.tool.tool_args == {"to": "john@doe.com", "subject": "Test", "body": "Hello, how are you?"}
+
+    # Use the new DX to set external execution result
+    tool_args = requirement.tool.tool_args
+    assert tool_args is not None
+    result = f"Email sent to {tool_args['to']} with subject {tool_args['subject']}"
+    requirement.set_external_execution_result(result)
+
+    # Verify the result was set
+    assert requirement.tool.result == result
+
+    # Continue the run with run_id and requirements
+    response = agent.continue_run(
+        run_id=response.run_id, requirements=response.requirements, session_id=session_id
+    )
+
+    # Verify the run completed successfully
+    assert response.is_paused is False
+    assert response.tools is not None
+    assert response.tools[0].result == result
+
+
+def test_run_requirement_external_execution_with_entrypoint(shared_db):
+    """Test external execution by calling the tool entrypoint directly"""
+
+    @tool(external_execution=True)
+    def execute_shell_command(command: str) -> str:
+        """Execute a shell command (only ls is supported for testing)"""
+        if command.startswith("echo"):
+            return command.replace("echo ", "")
+        else:
+            return f"Executed: {command}"
+
+    session_id = "test_session_external_entrypoint"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[execute_shell_command],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Initial run that requires external execution
+    response = agent.run("Run the command 'echo Hello World'", session_id=session_id)
+
+    # Verify the run is paused
+    assert response.is_paused
+    assert len(response.active_requirements) == 1
+
+    # Get the requirement
+    requirement = response.active_requirements[0]
+    assert requirement.needs_external_execution
+    assert requirement.tool.tool_name == "execute_shell_command"
+
+    # Execute the tool externally using the entrypoint
+    tool_args = requirement.tool.tool_args
+    assert tool_args is not None
+    assert execute_shell_command.entrypoint is not None
+    result = execute_shell_command.entrypoint(**tool_args)  # type: ignore
+    requirement.set_external_execution_result(result)
+
+    # Continue the run
+    response = agent.continue_run(
+        run_id=response.run_id, requirements=response.requirements, session_id=session_id
+    )
+
+    # Verify completion
+    assert response.is_paused is False
+    assert response.tools is not None
+    assert response.tools[0].result is not None
+    assert "Hello World" in response.tools[0].result
+
+
+@pytest.mark.asyncio
+async def test_async_external_execution(shared_db):
+    """Test the new DX for async external execution using active_requirements"""
+
+    @tool(external_execution=True)
+    def send_email(to: str, subject: str, body: str):
+        pass
+
+    session_id = "test_session_async_external"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[send_email],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Initial async run that requires external execution
+    response = await agent.arun(
+        "Send an email to john@doe.com with the subject 'Test' and the body 'Hello'", session_id=session_id
+    )
+
+    # Verify the run is paused and has active requirements
+    assert response.is_paused
+    assert len(response.active_requirements) == 1
+
+    # Get the requirement and set result
+    requirement = response.active_requirements[0]
+    assert requirement.needs_external_execution
+
+    # Use the new DX to set external execution result
+    tool_args = requirement.tool.tool_args
+    assert tool_args is not None
+    result = f"Email sent to {tool_args['to']}"
+    requirement.set_external_execution_result(result)
+
+    # Continue the run with run_id and requirements
+    response = await agent.acontinue_run(
+        run_id=response.run_id, requirements=response.requirements, session_id=session_id
+    )
+
+    # Verify completion
+    assert response.is_paused is False
+    assert response.tools is not None
+    assert response.tools[0].result == result
+
+
+def test_streaming_external_execution(shared_db):
+    """Test the new DX for streaming external execution using active_requirements"""
+
+    @tool(external_execution=True)
+    def send_email(to: str, subject: str, body: str):
+        pass
+
+    session_id = "test_session_streaming_external"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[send_email],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Stream the initial run
+    paused_run_output = None
+    for run_output in agent.run(
+        "Send an email to john@doe.com with the subject 'Test' and the body 'Hello'",
+        session_id=session_id,
+        stream=True,
+    ):
+        if run_output.is_paused:  # type: ignore
+            paused_run_output = run_output
+            break
+
+    # Verify we got a paused run with requirements
+    assert paused_run_output is not None
+    assert paused_run_output.is_paused
+
+    # Get the requirement using new DX
+    requirements = paused_run_output.requirements  # type: ignore
+    assert requirements is not None
+    assert len(requirements) == 1
+
+    requirement = requirements[0]
+    assert requirement.needs_external_execution
+
+    # Set external execution result
+    tool_args = requirement.tool.tool_args
+    assert tool_args is not None
+    result = f"Email sent to {tool_args['to']}"
+    requirement.set_external_execution_result(result)
+
+    # Continue the run with streaming
+    final_output = None
+    for run_output in agent.continue_run(
+        run_id=paused_run_output.run_id,
+        updated_tools=paused_run_output.tools,  # type: ignore
+        session_id=session_id,
+        stream=True,
+        yield_run_output=True,
+    ):
+        final_output = run_output
+
+    # Verify completion
+    assert final_output is not None
+    assert final_output.is_paused is False  # type: ignore
+    assert final_output.tools is not None  # type: ignore
+    assert final_output.tools[0].result == result  # type: ignore
