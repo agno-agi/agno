@@ -231,3 +231,195 @@ def test_tool_call_multiple_requires_user_input():
     response = agent.continue_run(response)
     assert response.is_paused is False
     assert response.content
+
+
+def test_run_requirement_user_input(shared_db):
+    """Test the new DX for user input using active_requirements and field.value"""
+
+    @tool(requires_user_input=True, user_input_fields=["city"])
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    session_id = "test_session_user_input"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Initial run that requires user input
+    response = agent.run("What is the weather?", session_id=session_id)
+
+    # Verify the run is paused and has active requirements
+    assert response.is_paused
+    assert len(response.active_requirements) == 1
+
+    # Get the requirement and verify it needs user input
+    requirement = response.active_requirements[0]
+    assert requirement.needs_user_input
+    assert requirement.tool.tool_name == "get_the_weather"
+
+    input_schema = requirement.user_input_schema
+    assert input_schema is not None
+    assert len(input_schema) == 1
+    assert input_schema[0].name == "city"
+
+    # Set the field value
+    input_schema[0].value = "Tokyo"
+
+    # Verify the field was updated
+    assert input_schema[0].value == "Tokyo"
+
+    # Continue the run with run_id and requirements
+    response = agent.continue_run(run_id=response.run_id, requirements=response.requirements, session_id=session_id)
+
+    # Verify the run completed successfully
+    assert response.is_paused is False
+    assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+
+
+def test_run_requirement_user_input_multiple_fields(shared_db):
+    """Test the new DX for user input with multiple fields"""
+
+    @tool(requires_user_input=True, user_input_fields=["city", "temperature"])
+    def get_the_weather(city: str, temperature: int):
+        return f"It is currently {temperature} degrees and cloudy in {city}"
+
+    session_id = "test_session_user_input_multiple"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Initial run that requires user input
+    response = agent.run("What is the weather?", session_id=session_id)
+
+    # Verify the run is paused
+    assert response.is_paused
+    assert len(response.active_requirements) == 1
+
+    # Get the requirement
+    requirement = response.active_requirements[0]
+    assert requirement.needs_user_input
+
+    # Use the new DX to provide user input for multiple fields
+    input_schema = requirement.user_input_schema
+    assert input_schema is not None
+    assert len(input_schema) == 2
+
+    # Set values for all fields
+    for field in input_schema:
+        if field.name == "city":
+            field.value = "Tokyo"
+        elif field.name == "temperature":
+            field.value = 70
+
+    # Continue the run
+    response = agent.continue_run(run_id=response.run_id, requirements=response.requirements, session_id=session_id)
+
+    # Verify completion
+    assert response.is_paused is False
+    assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+
+
+@pytest.mark.asyncio
+async def test_async_user_input(shared_db):
+    """Test the new DX for async user input using active_requirements"""
+
+    @tool(requires_user_input=True, user_input_fields=["city"])
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    session_id = "test_session_async_user_input"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Initial async run that requires user input
+    response = await agent.arun("What is the weather?", session_id=session_id)
+
+    # Verify the run is paused and has active requirements
+    assert response.is_paused
+    assert len(response.active_requirements) == 1
+
+    # Get the requirement and provide input
+    requirement = response.active_requirements[0]
+    assert requirement.needs_user_input
+
+    # Use the new DX to provide user input
+    input_schema = requirement.user_input_schema
+    assert input_schema is not None
+    assert len(input_schema) == 1
+    input_schema[0].value = "Tokyo"
+
+    # Continue the run with run_id and requirements
+    response = await agent.acontinue_run(
+        run_id=response.run_id, requirements=response.requirements, session_id=session_id
+    )
+
+    # Verify completion
+    assert response.is_paused is False
+    assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+
+
+def test_streaming_user_input(shared_db):
+    """Test the new DX for streaming user input using active_requirements"""
+
+    @tool(requires_user_input=True, user_input_fields=["city"])
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    session_id = "test_session_streaming_user_input"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        db=shared_db,
+        telemetry=False,
+    )
+
+    # Stream the initial run
+    paused_run_output = None
+    for run_output in agent.run("What is the weather?", session_id=session_id, stream=True):
+        if run_output.is_paused:  # type: ignore
+            paused_run_output = run_output
+            break
+
+    # Verify we got a paused run with active requirements
+    assert paused_run_output is not None
+    assert paused_run_output.is_paused
+
+    # Get the requirement using new DX - note: streaming uses .requirements not .active_requirements
+    requirements = paused_run_output.requirements  # type: ignore
+    assert requirements is not None
+    assert len(requirements) == 1
+
+    requirement = requirements[0]
+    assert requirement.needs_user_input
+
+    # Provide user input
+    input_schema = requirement.user_input_schema
+    assert input_schema is not None
+    assert len(input_schema) == 1
+    input_schema[0].value = "Tokyo"
+
+    # Continue the run with streaming
+    final_output = None
+    for run_output in agent.continue_run(
+        run_id=paused_run_output.run_id,
+        updated_tools=paused_run_output.tools,  # type: ignore
+        session_id=session_id,
+        stream=True,
+        yield_run_output=True,
+    ):
+        final_output = run_output
+
+    # Verify completion
+    assert final_output is not None
+    assert final_output.is_paused is False  # type: ignore
+    assert final_output.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"  # type: ignore

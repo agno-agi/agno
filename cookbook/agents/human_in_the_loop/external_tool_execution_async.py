@@ -11,6 +11,7 @@ import asyncio
 import subprocess
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -37,6 +38,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[execute_shell_command],
     markdown=True,
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
 run_response = asyncio.run(agent.arun("What files do I have in my current directory?"))
@@ -44,14 +46,21 @@ if run_response.is_paused:
     for requirement in run_response.active_requirements:
         if requirement.needs_external_execution:
             if requirement.tool.tool_name == execute_shell_command.name:
-                print(f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally")
+                print(
+                    f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally"
+                )
                 # We execute the tool ourselves. You can also execute something completely external here.
                 result = execute_shell_command.entrypoint(**requirement.tool.tool_args)  # type: ignore
                 # We have to set the result on the tool execution object so that the agent can continue
-                requirement.set_result(result)
+                requirement.set_external_execution_result(result)
 
-    run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
-    pprint.pprint_run_response(run_response)
+run_response = asyncio.run(
+    agent.acontinue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
+)
+pprint.pprint_run_response(run_response)
 
 
 # Or for simple debug flow

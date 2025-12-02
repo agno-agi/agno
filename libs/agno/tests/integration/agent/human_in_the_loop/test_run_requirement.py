@@ -166,38 +166,6 @@ def test_run_requirement_reject_raises_error_when_not_needed(shared_db):
         requirement.reject()
 
 
-def test_run_requirement_answer_method(shared_db):
-    """Test that requirement.answer() correctly sets the user input"""
-
-    @tool(requires_user_input=True)
-    def get_user_preference(preference_type: str) -> str:
-        return f"User preference for {preference_type}"
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[get_user_preference],
-        db=shared_db,
-        telemetry=False,
-    )
-
-    response = agent.run("What is my food preference?")
-    assert response.is_paused
-    assert len(response.active_requirements) == 1
-
-    requirement = response.active_requirements[0]
-    assert requirement.needs_user_input is True
-    assert requirement.user_input is None
-    assert requirement.is_resolved() is False
-
-    user_response = "I prefer Italian food"
-    requirement.answer(user_response)
-
-    # Verify the answer was set and the tool was updated
-    assert requirement.user_input == user_response
-    assert requirement.tool.answered is True
-    assert requirement.is_resolved() is True
-
-
 def test_run_requirement_answer_raises_error_when_not_needed(shared_db):
     """Test that calling answer() on a requirement that doesn't need user input raises ValueError"""
 

@@ -282,6 +282,12 @@ class RunPausedEvent(BaseAgentRunEvent):
     def is_paused(self):
         return True
 
+    @property
+    def active_requirements(self) -> List["RunRequirement"]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
 
 @dataclass
 class RunContinuedEvent(BaseAgentRunEvent):
@@ -512,6 +518,7 @@ class RunRequirement:
 
     # External execution
     needs_external_execution: bool = False
+    external_execution_result: Optional[str] = None
 
     def __init__(self, tool_execution: ToolExecution):
         self.id = str(uuid4())
@@ -520,12 +527,6 @@ class RunRequirement:
         self.needs_user_input = tool_execution.requires_user_input or False
         self.user_input_schema = tool_execution.user_input_schema
         self.needs_external_execution = tool_execution.external_execution_required or False
-
-    def answer(self, user_response: str):
-        if not self.needs_user_input:
-            raise ValueError("This requirement does not require user input")
-        self.user_input = user_response
-        self.tool.answered = True
 
     def confirm(self):
         if not self.needs_confirmation:
@@ -539,6 +540,12 @@ class RunRequirement:
         self.confirmation = False
         self.tool.confirmed = False
 
+    def set_external_execution_result(self, result: str):
+        if not self.needs_external_execution:
+            raise ValueError("This requirement does not require external execution")
+        self.external_execution_result = result
+        self.tool.result = result
+
     def update_tools(self, tools: List[ToolExecution]):
         if self.confirmation is True:
             self.tool.confirmed = True
@@ -551,7 +558,9 @@ class RunRequirement:
 
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
-        return bool(self.confirmation is not None or self.user_input is not None)
+        return bool(
+            self.confirmation is not None or self.user_input is not None or self.external_execution_result is not None
+        )
 
 
 @dataclass
