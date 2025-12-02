@@ -551,7 +551,7 @@ class RunRequirement:
 
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
-        return bool(self.confirmation or self.user_input)
+        return bool(self.confirmation is not None or self.user_input is not None)
 
 
 @dataclass
