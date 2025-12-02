@@ -62,7 +62,6 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
-    RunErrorEvent as TeamRunErrorEvent,
     TeamRunEvent,
     TeamRunInput,
     TeamRunOutput,

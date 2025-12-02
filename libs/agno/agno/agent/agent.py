@@ -54,7 +54,6 @@ from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
-    RunErrorEvent,
     RunEvent,
     RunInput,
     RunOutput,
@@ -137,7 +136,6 @@ from agno.utils.log import (
     log_exception,
     log_info,
     log_warning,
-    logger,
     set_log_level_to_debug,
     set_log_level_to_info,
 )
