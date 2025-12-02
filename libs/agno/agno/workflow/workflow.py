@@ -198,6 +198,7 @@ class Workflow:
         session_state: Optional[Dict[str, Any]] = None,
         overwrite_db_session_state: bool = False,
         user_id: Optional[str] = None,
+        debug_level: Literal[1, 2] = 1,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
@@ -223,6 +224,7 @@ class Workflow:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
+        self.debug_level = debug_level
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
         self.stream = stream
@@ -1105,9 +1107,12 @@ class Workflow:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             use_workflow_logger()
+            debug_level: Literal[1, 2] = (
+                cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+            )
 
             self.debug_mode = True
-            set_log_level_to_debug(source_type="workflow")
+            set_log_level_to_debug(source_type="workflow", level=debug_level)
 
             # Propagate to steps - only if steps is iterable (not callable)
             if self.steps and not callable(self.steps):
