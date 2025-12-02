@@ -42,7 +42,6 @@ class AIMLAPI(OpenAILike):
                 raise ModelAuthenticationError(
                     message="AIMLAPI_API_KEY not set. Please set the AIMLAPI_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()
 
