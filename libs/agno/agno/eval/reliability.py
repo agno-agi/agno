@@ -4,16 +4,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.run.team import TeamRunOutput
 
 if TYPE_CHECKING:
     from rich.console import Console
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
-from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
-from agno.run.agent import RunInput
-from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.utils.log import logger
 
 
@@ -41,7 +39,7 @@ class ReliabilityResult:
 
 
 @dataclass
-class ReliabilityEval(BaseEval):
+class ReliabilityEval:
     """Evaluate the reliability of a model by checking the tool calls"""
 
     # Evaluation name
@@ -315,34 +313,3 @@ class ReliabilityEval(BaseEval):
             "model_id": self.agent_response.model if self.agent_response else None,
             "model_provider": self.agent_response.model_provider if self.agent_response else None,
         }
-
-    # Hook methods for using ReliabilityEval as a pre/post hook
-    def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Perform sync pre-evals check"""
-        pass
-
-    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Perform async pre-evals check"""
-        pass
-
-    def post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
-        """Perform sync post-evals check."""
-        if isinstance(run_output, RunOutput):
-            self.agent_response = run_output
-            self.team_response = None
-        elif isinstance(run_output, TeamRunOutput):
-            self.team_response = run_output
-            self.agent_response = None
-
-        self.run(print_results=self.print_results)
-
-    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
-        """Perform async post-evals check."""
-        if isinstance(run_output, RunOutput):
-            self.agent_response = run_output
-            self.team_response = None
-        elif isinstance(run_output, TeamRunOutput):
-            self.team_response = run_output
-            self.agent_response = None
-
-        await self.arun(print_results=self.print_results)

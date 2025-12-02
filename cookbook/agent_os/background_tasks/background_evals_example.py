@@ -20,7 +20,8 @@ db = AsyncSqliteDb(db_file="tmp/evals.db")
 # Function to benchmark
 async def count_to_100():
     import asyncio
-    await asyncio.sleep(2)  
+
+    await asyncio.sleep(2)
     total = 0
     for i in range(1, 101):
         total += i
@@ -34,7 +35,7 @@ performance_eval = PerformanceEval(
     warmup_runs=2,
     db=db,
     print_results=False,
-    print_summary=True,   # Just show summary
+    print_summary=True,  # Just show summary
     telemetry=False,
 )
 performance_eval.run_in_background = True

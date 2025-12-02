@@ -11,18 +11,22 @@ HOOK_RUN_IN_BACKGROUND_ATTR = "_agno_run_in_background"
 def _is_async_function(func: Callable) -> bool:
     """
     Check if a function is async, even when wrapped by decorators like @staticmethod.
+    Traverses the full wrapper chain to find the original function.
     """
-    from inspect import iscoroutine, iscoroutinefunction
+    from inspect import iscoroutinefunction, unwrap
 
-    # First, try the standard inspect functions
-    if iscoroutinefunction(func) or iscoroutine(func):
+    # First, try the standard inspect function on the wrapper
+    if iscoroutinefunction(func):
         return True
 
-    # If the function has a __wrapped__ attribute, check the original function
-    if hasattr(func, "__wrapped__"):
-        original_func = func.__wrapped__
-        if iscoroutinefunction(original_func) or iscoroutine(original_func):
+    # Use unwrap to traverse the full __wrapped__ chain to the original function
+    try:
+        original_func = unwrap(func)
+        if original_func is not func and iscoroutinefunction(original_func):
             return True
+    except ValueError:
+        # unwrap raises ValueError if it hits a cycle
+        pass
 
     # Check if the function has CO_COROUTINE flag in its code object
     try:
@@ -100,6 +104,11 @@ def hook(*args, **kwargs) -> Union[F, Callable[[F], F]]:
     def decorator(func: F) -> F:
         run_in_background = kwargs.get("run_in_background", False)
 
+        # Preserve existing hook attributes from previously applied decorators
+        # Use OR logic: if any decorator sets run_in_background=True, it stays True
+        existing_run_in_background = should_run_in_background(func)
+        final_run_in_background = run_in_background or existing_run_in_background
+
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             return func(*args, **kwargs)
@@ -114,8 +123,8 @@ def hook(*args, **kwargs) -> Union[F, Callable[[F], F]]:
         else:
             wrapper = sync_wrapper
 
-        # Set the background execution attribute
-        setattr(wrapper, HOOK_RUN_IN_BACKGROUND_ATTR, run_in_background)
+        # Set the background execution attribute (combined from all decorators)
+        setattr(wrapper, HOOK_RUN_IN_BACKGROUND_ATTR, final_run_in_background)
 
         return wrapper  # type: ignore
 
@@ -129,6 +138,7 @@ def hook(*args, **kwargs) -> Union[F, Callable[[F], F]]:
 def should_run_in_background(hook_func: Callable) -> bool:
     """
     Check if a hook function is marked to run in background.
+    Traverses the wrapper chain to find the attribute when multiple decorators are stacked.
 
     Args:
         hook_func: The hook function to check
@@ -136,4 +146,19 @@ def should_run_in_background(hook_func: Callable) -> bool:
     Returns:
         True if the hook is decorated with @hook(run_in_background=True)
     """
-    return getattr(hook_func, HOOK_RUN_IN_BACKGROUND_ATTR, False)
+    # Check the function directly first
+    if hasattr(hook_func, HOOK_RUN_IN_BACKGROUND_ATTR):
+        return getattr(hook_func, HOOK_RUN_IN_BACKGROUND_ATTR)
+
+    # Traverse the wrapper chain to find the attribute
+    current = hook_func
+    seen: set[int] = set()
+    while hasattr(current, "__wrapped__"):
+        if id(current) in seen:
+            break
+        seen.add(id(current))
+        current = current.__wrapped__
+        if hasattr(current, HOOK_RUN_IN_BACKGROUND_ATTR):
+            return getattr(current, HOOK_RUN_IN_BACKGROUND_ATTR)
+
+    return False

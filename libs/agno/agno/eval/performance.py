@@ -8,10 +8,7 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
-from agno.run.agent import RunInput, RunOutput
-from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -180,7 +177,7 @@ class PerformanceResult:
 
 
 @dataclass
-class PerformanceEval(BaseEval):
+class PerformanceEval:
     """
     Evaluate the performance of a function by measuring run time and peak memory usage.
 
@@ -776,34 +773,3 @@ class PerformanceEval(BaseEval):
             "measure_memory": self.measure_memory,
             "measure_runtime": self.measure_runtime,
         }
-
-    # Hook methods for using PerformanceEval as a pre/post hook
-    def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Perform sync pre-evals check"""
-        pass
-
-    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Perform async pre-evals check"""
-        pass
-
-    def post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
-        """Perform sync post-evals check."""
-        # Set agent context for DB logging if available
-        if agent is not None and hasattr(agent, "id"):
-            self.agent_id = agent.id
-            if hasattr(agent, "model") and agent.model:
-                self.model_id = agent.model.id
-                self.model_provider = agent.model.provider
-
-        self.run(print_summary=self.print_summary, print_results=self.print_results)
-
-    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
-        """Perform async post-evals check."""
-        # Set agent context for DB logging if available
-        if agent is not None and hasattr(agent, "id"):
-            self.agent_id = agent.id
-            if hasattr(agent, "model") and agent.model:
-                self.model_id = agent.model.id
-                self.model_provider = agent.model.provider
-
-        await self.arun(print_summary=self.print_summary, print_results=self.print_results)
