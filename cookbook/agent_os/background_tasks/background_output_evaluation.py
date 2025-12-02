@@ -18,7 +18,7 @@ import asyncio
 from datetime import datetime
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb
 from agno.hooks.decorator import hook
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -147,7 +147,7 @@ async def check_response_safety(run_output: RunOutput, agent: Agent) -> None:
 
 
 # Setup database for agent storage
-db = SqliteDb(db_file="tmp/evaluation.db")
+db = AsyncSqliteDb(db_file="tmp/evaluation.db")
 
 # Create the main agent with background evaluation hooks
 main_agent = Agent(

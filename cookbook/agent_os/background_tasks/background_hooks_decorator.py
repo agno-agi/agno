@@ -8,7 +8,7 @@ making them completely non-blocking.
 import asyncio
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb
 from agno.hooks.decorator import hook
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -51,7 +51,7 @@ agent = Agent(
     name="BackgroundTaskAgent",
     model=OpenAIChat(id="gpt-5-mini"),
     instructions="You are a helpful assistant",
-    db=SqliteDb(db_file="tmp/agent.db"),
+    db=AsyncSqliteDb(db_file="tmp/agent.db"),
     # Define hooks
     pre_hooks=[log_request],
     post_hooks=[log_analytics, send_notification],

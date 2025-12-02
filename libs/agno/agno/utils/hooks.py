@@ -57,7 +57,6 @@ def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
 def normalize_hooks(
     hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
     async_mode: bool = False,
-    hook_mode: str = "pre",
 ) -> Optional[List[Callable[..., Any]]]:
     """Normalize hooks to a list format
 
@@ -66,7 +65,6 @@ def normalize_hooks(
         async_mode: Whether to use async versions of methods
         hook_mode: Either "pre" or "post" to determine which method to extract
     """
-    from agno.eval.base import BaseEval
 
     result_hooks: List[Callable[..., Any]] = []
 
@@ -77,18 +75,6 @@ def normalize_hooks(
                     result_hooks.append(hook.async_check)
                 else:
                     result_hooks.append(hook.check)
-            elif isinstance(hook, BaseEval):
-                # Extract the appropriate method based on hook_mode
-                if hook_mode == "pre":
-                    method = hook.async_pre_check if async_mode else hook.pre_check
-                else:
-                    method = hook.async_post_check if async_mode else hook.post_check
-
-                # Wrap in partial to allow setting attributes
-                wrapped = partial(method)
-                wrapped.__name__ = method.__name__  # type: ignore
-                setattr(wrapped, HOOK_RUN_IN_BACKGROUND_ATTR, hook.run_in_background)
-                result_hooks.append(wrapped)
             else:
                 # Check if the hook is async and used within sync methods
                 if not async_mode:

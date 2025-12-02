@@ -662,7 +662,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 store_result_in_file(
                     file_path=self.file_path_to_save_results,
                     name=self.name,
-                    eval_id=run_id,
+                    eval_id=self.eval_id,
                     result=self.result,
                 )
         # Log results to the Agno DB if requested
