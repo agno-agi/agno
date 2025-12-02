@@ -9,22 +9,22 @@ from agno.models.openai.like import OpenAILike
 @dataclass
 class Nebius(OpenAILike):
     """
-    A class for interacting with Nebius AI Studio models.
+    A class for interacting with Nebius Token Factory models.
 
     Attributes:
         id (str): The model id. Defaults to "Qwen/Qwen3-235B-A22B"".
         name (str): The model name. Defaults to "Nebius".
         provider (str): The provider name. Defaults to "Nebius".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.studio.nebius.com/v1".
+        base_url (str): The base URL. Defaults to "https://api.tokenfactory.nebius.com/v1".
     """
 
-    id: str = "Qwen/Qwen3-4B-fast"  # Default model for chat
+    id: str = "openai/gpt-oss-20b"  # Default model for chat
     name: str = "Nebius"
     provider: str = "Nebius"
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("NEBIUS_API_KEY"))
-    base_url: str = "https://api.studio.nebius.com/v1/"
+    base_url: str = "https://api.tokenfactory.nebius.com/v1/"
 
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:

@@ -66,6 +66,10 @@ class JsonDb(BaseDb):
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
 
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
+
     def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
 
@@ -119,6 +123,14 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error writing to the {file_path} JSON file: {e}")
             raise e
+
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
 
     # -- Session methods --
 
@@ -621,13 +633,14 @@ class JsonDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -638,6 +651,9 @@ class JsonDb(BaseDb):
 
             for memory in memories:
                 memory_user_id = memory.get("user_id")
+                # filter by user_id if provided
+                if user_id is not None and memory_user_id != user_id:
+                    continue
                 if memory_user_id:
                     if memory_user_id not in user_stats:
                         user_stats[memory_user_id] = {

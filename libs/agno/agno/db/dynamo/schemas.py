@@ -74,6 +74,7 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
+        {"AttributeName": "created_at", "AttributeType": "S"},
         {"AttributeName": "updated_at", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
@@ -109,6 +110,15 @@ USER_MEMORY_TABLE_SCHEMA = {
             "KeySchema": [
                 {"AttributeName": "workflow_id", "KeyType": "HASH"},
                 {"AttributeName": "updated_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "workflow_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "workflow_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
@@ -176,6 +186,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
     "AttributeDefinitions": [
         {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "user_id", "AttributeType": "S"},
         {"AttributeName": "type", "AttributeType": "S"},
         {"AttributeName": "status", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -38,6 +40,7 @@ from agno.exceptions import (
     RunCancelledException,
     StopAgentRun,
 )
+from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
@@ -47,14 +50,15 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -70,7 +74,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
-    aget_chat_history_util,
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -84,7 +89,8 @@ from agno.utils.agent import (
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
-    get_chat_history_util,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -94,7 +100,9 @@ from agno.utils.agent import (
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
     set_session_name_util,
+    store_media_util,
     update_session_state_util,
+    validate_media_object_id,
     wait_for_background_tasks,
     wait_for_background_tasks_stream,
 )
@@ -230,7 +238,7 @@ class Agent:
     knowledge: Optional[Knowledge] = None
     # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
-    knowledge_filters: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
     add_knowledge_to_context: bool = False
@@ -262,9 +270,9 @@ class Agent:
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
-    pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None
+    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -362,7 +370,7 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # If `output_schema` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -372,8 +380,6 @@ class Agent:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
 
     # Persist the events on the run response
     store_events: bool = False
@@ -403,6 +409,12 @@ class Agent:
     # If True, the agent adds cultural knowledge in the response
     add_culture_to_context: Optional[bool] = None
 
+    # --- Context Compression ---
+    # If True, compress tool call results to save context
+    compress_tool_results: bool = False
+    # Compression manager for compressing tool call results
+    compression_manager: Optional[CompressionManager] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -413,10 +425,13 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
+    # Deprecated. Use stream_events instead
+    stream_intermediate_steps: Optional[bool] = None
+
     def __init__(
         self,
         *,
-        model: Optional[Model] = None,
+        model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
         introduction: Optional[str] = None,
@@ -439,6 +454,8 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        compress_tool_results: bool = False,
+        compression_manager: Optional[CompressionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -447,7 +464,7 @@ class Agent:
         store_tool_messages: bool = True,
         store_history_messages: bool = True,
         knowledge: Optional[Knowledge] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
@@ -457,10 +474,10 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
-        post_hooks: Optional[Union[List[Callable[..., Any]], List[BaseGuardrail]]] = None,
+        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         reasoning: bool = False,
-        reasoning_model: Optional[Model] = None,
+        reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
@@ -488,12 +505,12 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
-        parser_model: Optional[Model] = None,
+        parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
-        output_model: Optional[Model] = None,
+        output_model: Optional[Union[Model, str]] = None,
         output_model_prompt: Optional[str] = None,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
@@ -512,7 +529,7 @@ class Agent:
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
     ):
-        self.model = model
+        self.model = model  # type: ignore[assignment]
         self.name = name
         self.id = id
         self.introduction = introduction
@@ -541,6 +558,10 @@ class Agent:
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_to_context = add_session_summary_to_context
+
+        # Context compression settings
+        self.compress_tool_results = compress_tool_results
+        self.compression_manager = compression_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -578,7 +599,7 @@ class Agent:
         self.post_hooks = post_hooks
 
         self.reasoning = reasoning
-        self.reasoning_model = reasoning_model
+        self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
@@ -609,12 +630,12 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
-        self.parser_model = parser_model
+        self.parser_model = parser_model  # type: ignore[assignment]
         self.parser_model_prompt = parser_model_prompt
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.parse_response = parse_response
-        self.output_model = output_model
+        self.output_model = output_model  # type: ignore[assignment]
         self.output_model_prompt = output_model_prompt
 
         self.structured_outputs = structured_outputs
@@ -623,6 +644,13 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
+
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.stream_events = stream_events or stream_intermediate_steps
 
         self.store_events = store_events
@@ -658,6 +686,8 @@ class Agent:
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
 
+        self._get_models()
+
     @property
     def background_executor(self) -> Any:
         """Lazy initialization of shared thread pool executor for background tasks.
@@ -672,10 +702,6 @@ class Agent:
         return self._background_executor
 
     @property
-    def should_parse_structured_output(self) -> bool:
-        return self.output_schema is not None and self.parse_response and self.parser_model is None
-
-    @property
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
 
@@ -684,9 +710,13 @@ class Agent:
             self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
+        # Get the debug level from the environment variable or the default debug level
+        debug_level: Literal[1, 2] = (
+            cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+        )
         # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            set_log_level_to_debug(level=self.debug_level)
+            set_log_level_to_debug(level=debug_level)
         else:
             set_log_level_to_info()
 
@@ -810,9 +840,35 @@ class Agent:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
+    def _set_compression_manager(self) -> None:
+        if self.compress_tool_results and self.compression_manager is None:
+            self.compression_manager = CompressionManager(
+                model=self.model,
+            )
+
+        if self.compression_manager is not None and self.compression_manager.model is None:
+            self.compression_manager.model = self.model
+
+        # Check compression flag on the compression manager
+        if self.compression_manager is not None and self.compression_manager.compress_tool_results:
+            self.compress_tool_results = True
+
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
+
+    def _get_models(self) -> None:
+        if self.model is not None:
+            self.model = get_model(self.model)
+        if self.reasoning_model is not None:
+            self.reasoning_model = get_model(self.reasoning_model)
+        if self.parser_model is not None:
+            self.parser_model = get_model(self.parser_model)
+        if self.output_model is not None:
+            self.output_model = get_model(self.output_model)
+
+        if self.compression_manager is not None and self.compression_manager.model is None:
+            self.compression_manager.model = self.model
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self._set_default_model()
@@ -829,6 +885,8 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
+        if self.compress_tool_results or self.compression_manager is not None:
+            self._set_compression_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -847,10 +905,15 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -900,16 +963,13 @@ class Agent:
     def _run(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput:
@@ -943,9 +1003,7 @@ class Agent:
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -957,36 +1015,32 @@ class Agent:
         # 2. Determine tools for model
         processed_tools = self.get_tools(
             run_response=run_response,
+            run_context=run_context,
             session=session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
             session=session,
-            session_state=session_state,
-            dependencies=dependencies,
+            run_context=run_context,
         )
 
         # 3. Prepare run messages
         run_messages: RunMessages = self._get_run_messages(
             run_response=run_response,
+            run_context=run_context,
             input=run_input.input_content,
             session=session,
-            session_state=session_state,
             user_id=user_id,
             audio=run_input.audios,
             images=run_input.images,
             videos=run_input.videos,
             files=run_input.files,
-            knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
             tools=_tools,
             **kwargs,
         )
@@ -1027,6 +1081,7 @@ class Agent:
 
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
+
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1035,6 +1090,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -1044,7 +1100,7 @@ class Agent:
             self._generate_response_with_output_model(model_response, run_messages)
 
             # If a parser model is provided, structure the response separately
-            self._parse_response_with_parser_model(model_response, run_messages)
+            self._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
 
             # 7. Update the RunOutput with the model response
             self._update_run_response(
@@ -1061,21 +1117,19 @@ class Agent:
 
             # 8. Store media if enabled
             if self.store_media:
-                self._store_media(run_response, model_response)
+                store_media_util(run_response, model_response)
 
             # 9. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 10. Execute post-hooks after output is generated but before response is returned
             if self.post_hooks is not None:
                 post_hook_iterator = self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
+                    run_context=run_context,
                     session=session,
                     user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
                     debug_mode=debug_mode,
                     **kwargs,
                 )
@@ -1099,7 +1153,9 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 13. Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
 
             # Log Agent Telemetry
             self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
@@ -1114,7 +1170,9 @@ class Agent:
             run_response.status = RunStatus.cancelled
 
             # Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
 
             return run_response
         finally:
@@ -1124,18 +1182,15 @@ class Agent:
     def _run_stream(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: bool = False,
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
@@ -1166,12 +1221,11 @@ class Agent:
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
                 run_input=run_input,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             for event in pre_hook_iterator:
@@ -1180,17 +1234,16 @@ class Agent:
         # 2. Determine tools for model
         processed_tools = self.get_tools(
             run_response=run_response,
+            run_context=run_context,
             session=session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
             session=session,
-            session_state=session_state,
-            dependencies=dependencies,
+            run_context=run_context,
         )
 
         # 3. Prepare run messages
@@ -1198,18 +1251,15 @@ class Agent:
             run_response=run_response,
             input=run_input.input_content,
             session=session,
-            session_state=session_state,
+            run_context=run_context,
             user_id=user_id,
             audio=run_input.audios,
             images=run_input.images,
             videos=run_input.videos,
             files=run_input.files,
-            knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
             tools=_tools,
             **kwargs,
         )
@@ -1268,6 +1318,8 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -1284,6 +1336,8 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -1303,14 +1357,14 @@ class Agent:
                     stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                    yield event  # type: ignore
 
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 7. Parse response with parser model if provided
             yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events
+                session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
             )
 
             # We should break out of the run function
@@ -1344,12 +1398,11 @@ class Agent:
                 yield from self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -1387,6 +1440,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if session.session_data is not None and "session_state" in session.session_data:
+                run_response.session_state = session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(  # type: ignore
                 create_run_completed_event(from_run_response=run_response),
@@ -1399,12 +1457,14 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 10. Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
 
             if stream_events:
                 yield completed_event  # type: ignore
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Agent Telemetry
@@ -1430,7 +1490,9 @@ class Agent:
             )
 
             # Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
         finally:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -1446,17 +1508,19 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -1472,18 +1536,21 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: bool = False,
+        output_schema: Optional[Type[BaseModel]] = None,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -1498,18 +1565,21 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: bool = False,
+        output_schema: Optional[Type[BaseModel]] = None,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
@@ -1524,6 +1594,13 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -1533,9 +1610,9 @@ class Agent:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)
+                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)
+                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -1543,7 +1620,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
             images=images, videos=videos, audios=audio, files=files
         )
 
@@ -1566,12 +1643,29 @@ class Agent:
         )
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
+
         # Determine runtime dependencies
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            output_schema=output_schema,
+        )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
 
         # Resolve dependencies
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_dependencies)
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
@@ -1583,18 +1677,21 @@ class Agent:
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-        # Initialize Knowledge Filters
-        effective_filters = knowledge_filters
-
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
+            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -1608,15 +1705,12 @@ class Agent:
         self.stream_events = self.stream_events or stream_events
 
         # Prepare arguments for the model
-        response_format = self._get_response_format() if self.parser_model is None else None
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
+        if self.metadata is not None and metadata is not None:
+            merge_dictionaries(metadata, self.metadata)
 
         # Create a new run_response for this attempt
         run_response = RunOutput(
@@ -1625,7 +1719,8 @@ class Agent:
             agent_id=self.id,
             user_id=user_id,
             agent_name=self.name,
-            metadata=metadata,
+            metadata=run_context.metadata,
+            session_state=run_context.session_state,
             input=run_input,
         )
 
@@ -1642,23 +1737,22 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             try:
                 if stream:
                     response_iterator = self._run_stream(
                         run_response=run_response,
+                        run_context=run_context,
                         session=agent_session,
-                        session_state=session_state,
                         user_id=user_id,
-                        knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
-                        metadata=metadata,
-                        dependencies=run_dependencies,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -1666,15 +1760,12 @@ class Agent:
                 else:
                     response = self._run(
                         run_response=run_response,
+                        run_context=run_context,
                         session=agent_session,
-                        session_state=session_state,
                         user_id=user_id,
-                        knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
-                        metadata=metadata,
-                        dependencies=run_dependencies,
                         response_format=response_format,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -1727,16 +1818,13 @@ class Agent:
     async def _arun(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session_id: str,
-        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput:
@@ -1771,16 +1859,21 @@ class Agent:
         # 2. Update metadata and session state
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id
+        run_context.session_state = self._initialize_session_state(
+            session_state=run_context.session_state or {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_response.run_id,
         )
         # Update session state from DB
-        if session_state is not None:
-            session_state = self._load_session_state(session=agent_session, session_state=session_state)
+        if run_context.session_state is not None:
+            run_context.session_state = self._load_session_state(
+                session=agent_session, session_state=run_context.session_state
+            )
 
         # 3. Resolve dependencies
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
+        if run_context.dependencies is not None:
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 4. Execute pre-hooks
         run_input = cast(RunInput, run_response.input)
@@ -1790,10 +1883,8 @@ class Agent:
             pre_hook_iterator = self._aexecute_pre_hooks(
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
+                run_context=run_context,
                 run_input=run_input,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
                 session=agent_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
@@ -1807,36 +1898,33 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
-            session_state=session_state,
-            dependencies=dependencies,
         )
 
         # 6. Prepare run messages
         run_messages: RunMessages = await self._aget_run_messages(
             run_response=run_response,
+            run_context=run_context,
             input=run_input.input_content,
             session=agent_session,
-            session_state=session_state,
             user_id=user_id,
             audio=run_input.audios,
             images=run_input.images,
             videos=run_input.videos,
             files=run_input.files,
-            knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
             tools=_tools,
             **kwargs,
         )
@@ -1877,6 +1965,8 @@ class Agent:
                 tool_call_limit=self.tool_call_limit,
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
+                run_response=run_response,
+                compression_manager=self.compression_manager if self.compress_tool_results else None,
             )
 
             # Check for cancellation after model call
@@ -1886,13 +1976,16 @@ class Agent:
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
             # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
+            await self._aparse_response_with_parser_model(
+                model_response=model_response, run_messages=run_messages, run_context=run_context
+            )
 
             # 10. Update the RunOutput with the model response
             self._update_run_response(
                 model_response=model_response,
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
             )
 
             # We should break out of the run function
@@ -1905,20 +1998,18 @@ class Agent:
                 )
 
             # 11. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 12. Store media if enabled
             if self.store_media:
-                self._store_media(run_response, model_response)
+                store_media_util(run_response, model_response)
 
             # 13. Execute post-hooks (after output is generated but before response is returned)
             if self.post_hooks is not None:
                 async for _ in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
@@ -1944,7 +2035,12 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 16. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
 
             # Log Agent Telemetry
             await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
@@ -1960,7 +2056,12 @@ class Agent:
             run_response.status = RunStatus.cancelled
 
             # Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
 
             return run_response
 
@@ -1982,24 +2083,22 @@ class Agent:
                     await cultural_knowledge_task
                 except CancelledError:
                     pass
+
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
     async def _arun_stream(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session_id: str,
-        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: Optional[bool] = None,
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
@@ -2037,16 +2136,21 @@ class Agent:
         # 2. Update metadata and session state
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_response.run_id
+        run_context.session_state = self._initialize_session_state(
+            session_state=run_context.session_state or {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_response.run_id,
         )
         # Update session state from DB
-        if session_state is not None:
-            session_state = self._load_session_state(session=agent_session, session_state=session_state)
+        if run_context.session_state is not None:
+            run_context.session_state = self._load_session_state(
+                session=agent_session, session_state=run_context.session_state
+            )
 
         # 3. Resolve dependencies
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
+        if run_context.dependencies is not None:
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 4. Execute pre-hooks
         run_input = cast(RunInput, run_response.input)
@@ -2056,13 +2160,12 @@ class Agent:
             pre_hook_iterator = self._aexecute_pre_hooks(
                 hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
+                run_context=run_context,
                 run_input=run_input,
                 session=agent_session,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                stream_events=stream_events,
                 **kwargs,
             )
             async for event in pre_hook_iterator:
@@ -2072,36 +2175,33 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
-            session_state=session_state,
-            dependencies=dependencies,
         )
 
         # 6. Prepare run messages
         run_messages: RunMessages = await self._aget_run_messages(
             run_response=run_response,
+            run_context=run_context,
             input=run_input.input_content,
             session=agent_session,
-            session_state=session_state,
             user_id=user_id,
             audio=run_input.audios,
             images=run_input.images,
             videos=run_input.videos,
             files=run_input.files,
-            knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
-            dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
-            metadata=metadata,
             tools=_tools,
             **kwargs,
         )
@@ -2148,6 +2248,8 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -2164,6 +2266,8 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -2190,7 +2294,7 @@ class Agent:
 
             # 10. Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events
+                session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
             ):
                 yield event
 
@@ -2223,12 +2327,11 @@ class Agent:
                 async for event in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -2270,6 +2373,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                run_response.session_state = agent_session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(
                 create_run_completed_event(from_run_response=run_response),
@@ -2282,12 +2390,17 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 13. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
 
             if stream_events:
                 yield completed_event  # type: ignore
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Agent Telemetry
@@ -2313,7 +2426,12 @@ class Agent:
             )
 
             # Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
         finally:
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
@@ -2345,6 +2463,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2352,12 +2471,13 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -2370,6 +2490,7 @@ class Agent:
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2377,13 +2498,15 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: Optional[bool] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -2396,6 +2519,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2403,13 +2527,15 @@ class Agent:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        yield_run_response: Optional[bool] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
+        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
+        yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
@@ -2420,18 +2546,25 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
+        if yield_run_response is not None:
+            warnings.warn(
+                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
-        # Normalise hook & guardails
+        # Normalise hooks & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         # Initialize session
@@ -2440,12 +2573,12 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._validate_media_object_id(
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
             images=images, videos=videos, audios=audio, files=files
         )
 
         # Resolve variables
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -2470,6 +2603,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2482,14 +2621,12 @@ class Agent:
         self.stream = self.stream or stream
         self.stream_events = self.stream_events or stream_events
 
-        # Prepare arguments for the model
-        response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
         # Get knowledge filters
-        effective_filters = knowledge_filters
+        knowledge_filters = knowledge_filters
         if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
         if self.metadata is not None:
@@ -2497,6 +2634,27 @@ class Agent:
                 metadata = self.metadata
             else:
                 merge_dictionaries(metadata, self.metadata)
+
+        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+        if output_schema is None:
+            output_schema = self.output_schema
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+            output_schema=output_schema,
+        )
+        # output_schema parameter takes priority, even if run_context was provided
+        run_context.output_schema = output_schema
+
+        # Prepare arguments for the model (must be after run_context is fully initialized)
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2508,7 +2666,8 @@ class Agent:
             agent_id=self.id,
             user_id=user_id,
             agent_name=self.name,
-            metadata=metadata,
+            metadata=run_context.metadata,
+            session_state=run_context.session_state,
             input=run_input,
         )
 
@@ -2522,40 +2681,36 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             try:
                 # Pass the new run_response to _arun
                 if stream:
                     return self._arun_stream(  # type: ignore
                         run_response=run_response,
+                        run_context=run_context,
                         user_id=user_id,
                         response_format=response_format,
                         stream_events=stream_events,
-                        yield_run_response=yield_run_response,
-                        dependencies=run_dependencies,
+                        yield_run_output=yield_run_output,
                         session_id=session_id,
-                        session_state=session_state,
-                        knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
-                        metadata=metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
                         run_response=run_response,
+                        run_context=run_context,
                         user_id=user_id,
                         response_format=response_format,
-                        dependencies=run_dependencies,
                         session_id=session_id,
-                        session_state=session_state,
-                        knowledge_filters=effective_filters,
                         add_history_to_context=add_history,
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
-                        metadata=metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -2617,7 +2772,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2636,7 +2791,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2646,15 +2801,16 @@ class Agent:
         self,
         run_response: Optional[RunOutput] = None,
         *,
-        run_id: Optional[str] = None,
+        run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -2670,6 +2826,7 @@ class Agent:
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
+            run_context: The run context to use for the run.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for the run.
@@ -2687,6 +2844,7 @@ class Agent:
             raise Exception("continue_run() is not supported with an async DB. Please use acontinue_arun() instead.")
 
         session_id = run_response.session_id if run_response else session_id
+        run_id: str = run_response.run_id if run_response else run_id  # type: ignore
 
         session_id, user_id = self._initialize_session(
             session_id=session_id,
@@ -2706,24 +2864,32 @@ class Agent:
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,  # type: ignore
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+        )
 
         # Resolve dependencies
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_dependencies)
-
-        effective_filters = knowledge_filters
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
 
         # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
+        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
+            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
+        run_context.metadata = metadata
         if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
+            if run_context.metadata is None:
+                run_context.metadata = self.metadata
             else:
-                merge_dictionaries(metadata, self.metadata)
+                merge_dictionaries(run_context.metadata, self.metadata)
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -2733,6 +2899,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -2769,22 +2941,22 @@ class Agent:
 
         # Prepare arguments for the model
         self._set_default_model()
-        response_format = self._get_response_format()
+        response_format = self._get_response_format(run_context=run_context)
         self.model = cast(Model, self.model)
 
         processed_tools = self.get_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=effective_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
-            session_state=session_state,
-            dependencies=run_dependencies,
         )
 
         last_exception = None
@@ -2807,12 +2979,10 @@ class Agent:
                     response_iterator = self._continue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         tools=_tools,
                         user_id=user_id,
                         session=agent_session,
-                        session_state=session_state,
-                        dependencies=run_dependencies,
-                        metadata=metadata,
                         response_format=response_format,
                         stream_events=stream_events,
                         debug_mode=debug_mode,
@@ -2823,12 +2993,10 @@ class Agent:
                     response = self._continue_run(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         tools=_tools,
                         user_id=user_id,
                         session=agent_session,
-                        session_state=session_state,
-                        dependencies=run_dependencies,
-                        metadata=metadata,
                         response_format=response_format,
                         debug_mode=debug_mode,
                         **kwargs,
@@ -2875,11 +3043,9 @@ class Agent:
         self,
         run_response: RunOutput,
         run_messages: RunMessages,
+        run_context: RunContext,
         session: AgentSession,
         tools: List[Union[Function, dict]],
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
@@ -2932,22 +3098,20 @@ class Agent:
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
             # 4. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 5. Store media if enabled
             if self.store_media:
-                self._store_media(run_response, model_response)
+                store_media_util(run_response, model_response)
 
             # 6. Execute post-hooks
             if self.post_hooks is not None:
                 post_hook_iterator = self._execute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
+                    run_context=run_context,
                     session=session,
                     user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
                     debug_mode=debug_mode,
                     **kwargs,
                 )
@@ -2969,7 +3133,9 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 8. Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
 
             # Log Agent Telemetry
             self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
@@ -2982,7 +3148,9 @@ class Agent:
             run_response.content = str(e)
 
             # Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
 
             return run_response
         finally:
@@ -2993,14 +3161,12 @@ class Agent:
         self,
         run_response: RunOutput,
         run_messages: RunMessages,
+        run_context: RunContext,
         session: AgentSession,
         tools: List[Union[Function, dict]],
-        session_state: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs,
     ) -> Iterator[RunOutputEvent]:
@@ -3016,8 +3182,8 @@ class Agent:
         """
 
         # 1. Resolve dependencies
-        if dependencies is not None:
-            self._resolve_run_dependencies(dependencies=dependencies)
+        if run_context.dependencies is not None:
+            self._resolve_run_dependencies(run_context=run_context)
 
         # Start the Run by yielding a RunContinued event
         if stream_events:
@@ -3042,6 +3208,8 @@ class Agent:
                 tools=tools,
                 response_format=response_format,
                 stream_events=stream_events,
+                session_state=run_context.session_state,
+                run_context=run_context,
             ):
                 yield event
 
@@ -3072,11 +3240,10 @@ class Agent:
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
                     session=session,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 )
 
@@ -3110,6 +3277,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if session.session_data is not None and "session_state" in session.session_data:
+                run_response.session_state = session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(
                 create_run_completed_event(run_response),
@@ -3122,7 +3294,9 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 5. Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
 
             if stream_events:
                 yield completed_event  # type: ignore
@@ -3147,7 +3321,9 @@ class Agent:
             )
 
             # Cleanup and store the run response and session
-            self._cleanup_and_store(run_response=run_response, session=session, user_id=user_id)
+            self._cleanup_and_store(
+                run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
         finally:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -3165,7 +3341,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3184,7 +3360,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -3194,19 +3370,20 @@ class Agent:
         self,
         run_response: Optional[RunOutput] = None,
         *,
-        run_id: Optional[str] = None,
+        run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: bool = False,
+        yield_run_output: bool = False,
         **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
@@ -3219,12 +3396,13 @@ class Agent:
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
+            run_context: The run context to use for the run.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for continuing the run.
             metadata: The metadata to use for continuing the run.
             debug_mode: Whether to enable debug mode.
-            yield_run_response: Whether to yield the run response.
+            yield_run_output: Whether to yield the run response.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
         """
         if run_response is None and run_id is None:
@@ -3237,11 +3415,12 @@ class Agent:
             session_id=session_id,
             user_id=user_id,
         )
+        run_id: str = run_id or run_response.run_id if run_response else run_id  # type: ignore
 
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        dependencies = dependencies if dependencies is not None else self.dependencies
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -3251,6 +3430,12 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
@@ -3268,9 +3453,9 @@ class Agent:
         self.stream_events = self.stream_events or stream_events
 
         # Get knowledge filters
-        effective_filters = knowledge_filters
+        knowledge_filters = knowledge_filters
         if self.knowledge_filters or knowledge_filters:
-            effective_filters = self._get_effective_filters(knowledge_filters)
+            knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # Merge agent metadata with run metadata
         if self.metadata is not None:
@@ -3280,8 +3465,19 @@ class Agent:
                 merge_dictionaries(metadata, self.metadata)
 
         # Prepare arguments for the model
-        response_format = self._get_response_format()
+        response_format = self._get_response_format(run_context=run_context)
         self.model = cast(Model, self.model)
+
+        # Initialize run context
+        run_context = run_context or RunContext(
+            run_id=run_id,  # type: ignore
+            session_id=session_id,
+            user_id=user_id,
+            session_state={},
+            dependencies=dependencies,
+            knowledge_filters=knowledge_filters,
+            metadata=metadata,
+        )
 
         last_exception = None
         num_attempts = retries + 1
@@ -3290,16 +3486,14 @@ class Agent:
                 if stream:
                     return self._acontinue_run_stream(
                         run_response=run_response,
+                        run_context=run_context,
                         updated_tools=updated_tools,
-                        knowledge_filters=effective_filters,
                         run_id=run_id,
                         user_id=user_id,
                         session_id=session_id,
                         response_format=response_format,
-                        dependencies=run_dependencies,
                         stream_events=stream_events,
-                        metadata=metadata,
-                        yield_run_response=yield_run_response,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -3307,13 +3501,11 @@ class Agent:
                     return self._acontinue_run(  # type: ignore
                         session_id=session_id,
                         run_response=run_response,
+                        run_context=run_context,
                         updated_tools=updated_tools,
-                        knowledge_filters=effective_filters,
                         run_id=run_id,
                         user_id=user_id,
                         response_format=response_format,
-                        dependencies=run_dependencies,
-                        metadata=metadata,
                         debug_mode=debug_mode,
                         **kwargs,
                     )
@@ -3357,14 +3549,12 @@ class Agent:
     async def _acontinue_run(
         self,
         session_id: str,
+        run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs,
     ) -> RunOutput:
@@ -3392,18 +3582,20 @@ class Agent:
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
         # 2. Resolve dependencies
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
+        if run_context.dependencies is not None:
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 3. Update metadata and session state
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(
+        run_context.session_state = self._initialize_session_state(
             session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
         )
         # Update session state from DB
-        if session_state is not None:
-            session_state = self._load_session_state(session=agent_session, session_state=session_state)
+        if run_context.session_state is not None:
+            run_context.session_state = self._load_session_state(
+                session=agent_session, session_state=run_context.session_state
+            )
 
         # 4. Prepare run response
         if run_response is not None:
@@ -3430,17 +3622,17 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
-            session_state=session_state,
-            dependencies=dependencies,
         )
 
         # 6. Prepare run messages
@@ -3470,13 +3662,16 @@ class Agent:
             await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
             # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
+            await self._aparse_response_with_parser_model(
+                model_response=model_response, run_messages=run_messages, run_context=run_context
+            )
 
             # 9. Update the RunOutput with the model response
             self._update_run_response(
                 model_response=model_response,
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
             )
 
             # Break out of the run function if a tool call is paused
@@ -3486,11 +3681,11 @@ class Agent:
                 )
 
             # 10. Convert the response to the structured format if needed
-            self._convert_response_to_structured_format(run_response)
+            self._convert_response_to_structured_format(run_response, run_context=run_context)
 
             # 11. Store media if enabled
             if self.store_media:
-                self._store_media(run_response, model_response)
+                store_media_util(run_response, model_response)
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3499,12 +3694,10 @@ class Agent:
                 async for _ in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
+                    run_context=run_context,
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
                     **kwargs,
                 ):
                     pass
@@ -3526,7 +3719,12 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 14. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
 
             # Log Agent Telemetry
             await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
@@ -3542,7 +3740,12 @@ class Agent:
             run_response.status = RunStatus.cancelled
 
             # Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
 
             return run_response
         finally:
@@ -3555,16 +3758,14 @@ class Agent:
     async def _acontinue_run_stream(
         self,
         session_id: str,
+        run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        yield_run_response: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
@@ -3586,8 +3787,8 @@ class Agent:
         log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
         # 1. Resolve dependencies
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
+        if run_context.dependencies is not None:
+            await self._aresolve_run_dependencies(run_context=run_context)
 
         # 2. Read existing session from db
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -3595,12 +3796,14 @@ class Agent:
         # 3. Update session state and metadata
         self._update_metadata(session=agent_session)
         # Initialize session state
-        session_state = self._initialize_session_state(
+        run_context.session_state = self._initialize_session_state(
             session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
         )
         # Update session state from DB
-        if session_state is not None:
-            session_state = self._load_session_state(session=agent_session, session_state=session_state)
+        if run_context.session_state is not None:
+            run_context.session_state = self._load_session_state(
+                session=agent_session, session_state=run_context.session_state
+            )
 
         # 4. Prepare run response
         if run_response is not None:
@@ -3627,17 +3830,17 @@ class Agent:
         self.model = cast(Model, self.model)
         processed_tools = await self.aget_tools(
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
             user_id=user_id,
-            knowledge_filters=knowledge_filters,
         )
+
         _tools = self._determine_tools_for_model(
             model=self.model,
             processed_tools=processed_tools,
             run_response=run_response,
+            run_context=run_context,
             session=agent_session,
-            session_state=session_state,
-            dependencies=dependencies,
         )
 
         # 6. Prepare run messages
@@ -3674,6 +3877,7 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
@@ -3690,6 +3894,7 @@ class Agent:
                     tools=_tools,
                     response_format=response_format,
                     stream_events=stream_events,
+                    run_context=run_context,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
@@ -3716,7 +3921,7 @@ class Agent:
 
             # Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events
+                session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
             ):
                 yield event
 
@@ -3742,12 +3947,11 @@ class Agent:
                 async for event in self._aexecute_post_hooks(
                     hooks=self.post_hooks,  # type: ignore
                     run_output=run_response,
+                    run_context=run_context,
                     session=agent_session,
                     user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
                     debug_mode=debug_mode,
+                    stream_events=stream_events,
                     **kwargs,
                 ):
                     yield event
@@ -3780,6 +3984,11 @@ class Agent:
                         store_events=self.store_events,
                     )
 
+            # Update run_response.session_state before creating RunCompletedEvent
+            # This ensures the event has the final state after all tool modifications
+            if agent_session.session_data is not None and "session_state" in agent_session.session_data:
+                run_response.session_state = agent_session.session_data["session_state"]
+
             # Create the run completed event
             completed_event = handle_event(
                 create_run_completed_event(run_response),
@@ -3792,12 +4001,14 @@ class Agent:
             run_response.status = RunStatus.completed
 
             # 10. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+            )
 
             if stream_events:
                 yield completed_event  # type: ignore
 
-            if yield_run_response:
+            if yield_run_output:
                 yield run_response
 
             # Log Agent Telemetry
@@ -3819,7 +4030,12 @@ class Agent:
             )
 
             # Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=agent_session, user_id=user_id)
+            await self._acleanup_and_store(
+                run_response=run_response,
+                session=agent_session,
+                run_context=run_context,
+                user_id=user_id,
+            )
         finally:
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
@@ -3833,11 +4049,10 @@ class Agent:
         run_response: RunOutput,
         run_input: RunInput,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
@@ -3847,36 +4062,22 @@ class Agent:
         # Prepare all possible arguments once
         all_args = {
             "run_input": run_input,
+            "run_context": run_context,
             "agent": self,
             "session": session,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
-                    event=create_pre_hook_completed_event(
+                    event=create_pre_hook_started_event(
                         from_run_response=run_response,
                         run_input=run_input,
                         pre_hook_name=hook.__name__,
@@ -3884,6 +4085,23 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -3902,12 +4120,11 @@ class Agent:
         hooks: Optional[List[Callable[..., Any]]],
         run_response: RunOutput,
         run_input: RunInput,
+        run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
@@ -3919,25 +4136,27 @@ class Agent:
             "run_input": run_input,
             "agent": self,
             "session": session,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "run_context": run_context,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_response,
-                event=create_pre_hook_started_event(
-                    from_run_response=run_response,
-                    run_input=run_input,
-                    pre_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_pre_hook_started_event(
+                        from_run_response=run_response,
+                        run_input=run_input,
+                        pre_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -3948,16 +4167,17 @@ class Agent:
                     # Synchronous function
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_response,
-                    event=create_pre_hook_completed_event(
-                        from_run_response=run_response,
-                        run_input=run_input,
-                        pre_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_pre_hook_completed_event(
+                            from_run_response=run_response,
+                            run_input=run_input,
+                            pre_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -3976,11 +4196,10 @@ class Agent:
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        run_context: RunContext,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
@@ -3992,39 +4211,42 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
+            "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-            try:
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                hook(**filtered_args)
-
+            if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
-                    event=create_post_hook_completed_event(
+                    event=create_post_hook_started_event(
                         from_run_response=run_output,
                         post_hook_name=hook.__name__,
                     ),
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
+            try:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, all_args)
+
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
             except (InputCheckError, OutputCheckError) as e:
                 raise e
             except Exception as e:
@@ -4038,12 +4260,11 @@ class Agent:
         self,
         hooks: Optional[List[Callable[..., Any]]],
         run_output: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
@@ -4055,24 +4276,26 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
+            "run_context": run_context,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
             "user_id": user_id,
-            "session_state": session_state,
-            "dependencies": dependencies,
-            "metadata": metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
-            yield handle_event(  # type: ignore
-                run_response=run_output,
-                event=create_post_hook_started_event(
-                    from_run_response=run_output,
-                    post_hook_name=hook.__name__,
-                ),
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_output,
+                    event=create_post_hook_started_event(
+                        from_run_response=run_output,
+                        post_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
             try:
                 # Filter arguments to only include those that the hook accepts
                 filtered_args = filter_hook_args(hook, all_args)
@@ -4083,15 +4306,16 @@ class Agent:
                 else:
                     hook(**filtered_args)
 
-                yield handle_event(  # type: ignore
-                    run_response=run_output,
-                    event=create_post_hook_completed_event(
-                        from_run_response=run_output,
-                        post_hook_name=hook.__name__,
-                    ),
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_output,
+                        event=create_post_hook_completed_event(
+                            from_run_response=run_output,
+                            post_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
 
             except (InputCheckError, OutputCheckError) as e:
                 raise e
@@ -4198,18 +4422,23 @@ class Agent:
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
-    def _convert_response_to_structured_format(self, run_response: Union[RunOutput, ModelResponse]):
+    def _convert_response_to_structured_format(
+        self, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
+    ):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         # Convert the response to the structured format if needed
-        if self.output_schema is not None and not isinstance(run_response.content, self.output_schema):
+        if output_schema is not None and not isinstance(run_response.content, output_schema):
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    structured_output = parse_response_model_str(run_response.content, self.output_schema)
+                    structured_output = parse_response_model_str(run_response.content, output_schema)
 
                     # Update RunOutput
                     if structured_output is not None:
                         run_response.content = structured_output
                         if isinstance(run_response, RunOutput):
-                            run_response.content_type = self.output_schema.__name__
+                            run_response.content_type = output_schema.__name__
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
@@ -4547,39 +4776,24 @@ class Agent:
                 _t.requires_user_input = False
                 _t.answered = True
 
-    def _store_media(self, run_response: RunOutput, model_response: ModelResponse):
-        """Store media from model response in run_response for persistence"""
-        # Handle generated media fields from ModelResponse (generated media)
-        if model_response.images is not None:
-            for image in model_response.images:
-                self._add_image(image, run_response)  # Generated images go to run_response.images
-
-        if model_response.videos is not None:
-            for video in model_response.videos:
-                self._add_video(video, run_response)  # Generated videos go to run_response.videos
-
-        if model_response.audios is not None:
-            for audio in model_response.audios:
-                self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
-
-        if model_response.files is not None:
-            for file in model_response.files:
-                self._add_file(file, run_response)  # Generated files go to run_response.files
-
     def _update_run_response(
         self,
         model_response: ModelResponse,
         run_response: RunOutput,
         run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
     ):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         # Handle structured outputs
-        if self.output_schema is not None and model_response.parsed is not None:
+        if output_schema is not None and model_response.parsed is not None:
             # We get native structured outputs from the model
-            if self._model_should_return_structured_output():
+            if self._model_should_return_structured_output(run_context=run_context):
                 # Update the run_response content with the structured output
                 run_response.content = model_response.parsed
                 # Update the run_response content_type with the structured output class name
-                run_response.content_type = self.output_schema.__name__
+                run_response.content_type = output_schema.__name__
         else:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
@@ -4651,6 +4865,8 @@ class Agent:
         tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -4660,8 +4876,12 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+        should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
+
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -4674,6 +4894,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -4681,8 +4902,10 @@ class Agent:
                 model_response=model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=should_parse_structured_output,
                 stream_events=stream_events,
+                session_state=session_state,
+                run_context=run_context,
             )
 
         # Determine reasoning completed
@@ -4729,6 +4952,8 @@ class Agent:
         tools: Optional[List[Union[Function, dict]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
@@ -4738,8 +4963,12 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+        should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
+
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -4752,6 +4981,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -4761,8 +4991,10 @@ class Agent:
                 model_response=model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=should_parse_structured_output,
                 stream_events=stream_events,
+                session_state=session_state,
+                run_context=run_context,
             ):
                 yield event
 
@@ -4810,6 +5042,8 @@ class Agent:
         reasoning_state: Optional[Dict[str, Any]] = None,
         parse_structured_output: bool = False,
         stream_events: bool = False,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Iterator[RunOutputEvent]:
         from agno.run.workflow import WorkflowRunOutputEvent
 
@@ -4841,9 +5075,11 @@ class Agent:
                 if model_response_event.content is not None:
                     if parse_structured_output:
                         model_response.content = model_response_event.content
-                        self._convert_response_to_structured_format(model_response)
+                        self._convert_response_to_structured_format(model_response, run_context=run_context)
 
-                        content_type = self.output_schema.__name__  # type: ignore
+                        # Get output_schema from run_context
+                        output_schema = run_context.output_schema if run_context else None
+                        content_type = output_schema.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                     else:
@@ -4985,7 +5221,9 @@ class Agent:
                     # Store media in run_response if store_media is enabled
                     if self.store_media:
                         for image in model_response_event.images:
-                            self._add_image(image, run_response)
+                            if run_response.images is None:
+                                run_response.images = []
+                            run_response.images.append(image)
 
             # Handle tool interruption events
             elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
@@ -5022,23 +5260,39 @@ class Agent:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
-                if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    merge_dictionaries(
-                        session.session_data["session_state"],
-                        model_response_event.updated_session_state,
-                    )
+                if model_response_event.updated_session_state is not None:
+                    # update the session_state for RunOutput
+                    if session_state is not None:
+                        merge_dictionaries(session_state, model_response_event.updated_session_state)
+                    # update the DB session
+                    if session.session_data is not None and session.session_data.get("session_state") is not None:
+                        merge_dictionaries(
+                            session.session_data["session_state"], model_response_event.updated_session_state
+                        )
 
                 if model_response_event.images is not None:
                     for image in model_response_event.images:
-                        self._add_image(image, run_response)
+                        if run_response.images is None:
+                            run_response.images = []
+                        run_response.images.append(image)
 
                 if model_response_event.videos is not None:
                     for video in model_response_event.videos:
-                        self._add_video(video, run_response)
+                        if run_response.videos is None:
+                            run_response.videos = []
+                        run_response.videos.append(video)
 
                 if model_response_event.audios is not None:
                     for audio in model_response_event.audios:
-                        self._add_audio(audio, run_response)
+                        if run_response.audio is None:
+                            run_response.audio = []
+                        run_response.audio.append(audio)
+
+                if model_response_event.files is not None:
+                    for file_obj in model_response_event.files:
+                        if run_response.files is None:
+                            run_response.files = []
+                        run_response.files.append(file_obj)
 
                 reasoning_step: Optional[ReasoningStep] = None
 
@@ -5255,9 +5509,9 @@ class Agent:
     def get_tools(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -5306,7 +5560,7 @@ class Agent:
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
                             async_mode=False,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
                 else:
@@ -5314,7 +5568,7 @@ class Agent:
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
                             async_mode=False,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
 
@@ -5326,9 +5580,9 @@ class Agent:
     async def aget_tools(
         self,
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
         user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -5339,7 +5593,12 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                )
+
+                if is_mcp_tool:
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5359,9 +5618,8 @@ class Agent:
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
 
-                    agent_tools.append(tool)
-                else:
-                    agent_tools.append(tool)
+                # Add the tool (MCP tools that passed checks, or any non-MCP tool)
+                agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -5390,7 +5648,7 @@ class Agent:
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
                             async_mode=True,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
                 else:
@@ -5398,7 +5656,7 @@ class Agent:
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
                             async_mode=True,
-                            knowledge_filters=knowledge_filters,
+                            knowledge_filters=run_context.knowledge_filters,
                         )
                     )
 
@@ -5412,9 +5670,8 @@ class Agent:
         model: Model,
         processed_tools: List[Union[Toolkit, Callable, Function, Dict]],
         run_response: RunOutput,
+        run_context: RunContext,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
     ) -> List[Union[Function, dict]]:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
@@ -5424,10 +5681,13 @@ class Agent:
         if processed_tools is not None and len(processed_tools) > 0:
             log_debug("Processing tools for model")
 
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
+
             # Check if we need strict mode for the functions for the model
             strict = False
             if (
-                self.output_schema is not None
+                output_schema is not None
                 and (self.structured_outputs or (not self.use_json_mode))
                 and model.supports_native_structured_outputs
             ):
@@ -5519,8 +5779,9 @@ class Agent:
 
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
-                    func._session_state = session_state
-                    func._dependencies = dependencies
+                    func._run_context = run_context
+                    func._session_state = run_context.session_state
+                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
@@ -5528,17 +5789,25 @@ class Agent:
 
         return _functions
 
-    def _model_should_return_structured_output(self):
+    def _model_should_return_structured_output(self, run_context: Optional[RunContext] = None):
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         self.model = cast(Model, self.model)
         return bool(
             self.model.supports_native_structured_outputs
-            and self.output_schema is not None
+            and output_schema is not None
             and (not self.use_json_mode or self.structured_outputs)
         )
 
-    def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
+    def _get_response_format(
+        self, model: Optional[Model] = None, run_context: Optional[RunContext] = None
+    ) -> Optional[Union[Dict, Type[BaseModel]]]:
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         model = cast(Model, model or self.model)
-        if self.output_schema is None:
+        if output_schema is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
@@ -5546,7 +5815,7 @@ class Agent:
             if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.output_schema")
-                    return self.output_schema
+                    return output_schema
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
@@ -5559,8 +5828,8 @@ class Agent:
                     return {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": self.output_schema.__name__,
-                            "schema": self.output_schema.model_json_schema(),
+                            "name": output_schema.__name__,
+                            "schema": output_schema.model_json_schema(),
                         },
                     }
                 else:
@@ -5570,49 +5839,70 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def _resolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
+    def _resolve_run_dependencies(self, run_context: RunContext) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
         # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
-        if not isinstance(dependencies, dict):
-            log_warning("Dependencies is not a dict")
+        if not isinstance(run_context.dependencies, dict):
+            log_warning("Run dependencies are not a dict")
             return
 
-        for key, value in dependencies.items():
+        for key, value in run_context.dependencies.items():
             if iscoroutine(value) or iscoroutinefunction(value):
                 log_warning(f"Dependency {key} is a coroutine. Use agent.arun() or agent.aprint_response() instead.")
                 continue
             elif callable(value):
                 try:
                     sig = signature(value)
-                    result = value(agent=self) if "agent" in sig.parameters else value()
+
+                    # Build kwargs for the function
+                    kwargs: Dict[str, Any] = {}
+                    if "agent" in sig.parameters:
+                        kwargs["agent"] = self
+                    if "run_context" in sig.parameters:
+                        kwargs["run_context"] = run_context
+
+                    # Run the function
+                    result = value(**kwargs)
+
+                    # Carry the result in the run context
                     if result is not None:
-                        dependencies[key] = result
+                        run_context.dependencies[key] = result
+
                 except Exception as e:
                     log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
-                dependencies[key] = value
+                run_context.dependencies[key] = value
 
-    async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
+    async def _aresolve_run_dependencies(self, run_context: RunContext) -> None:
         from inspect import iscoroutine, iscoroutinefunction, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(dependencies, dict):
-            log_warning("Context is not a dict")
+        if not isinstance(run_context.dependencies, dict):
+            log_warning("Run dependencies are not a dict")
             return
 
-        for key, value in dependencies.items():
+        for key, value in run_context.dependencies.items():
             if not callable(value):
-                dependencies[key] = value
+                run_context.dependencies[key] = value
                 continue
             try:
                 sig = signature(value)
-                result = value(agent=self) if "agent" in sig.parameters else value()
 
+                # Build kwargs for the function
+                kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    kwargs["agent"] = self
+                if "run_context" in sig.parameters:
+                    kwargs["run_context"] = run_context
+
+                # Run the function
+                result = value(**kwargs)
                 if iscoroutine(result) or iscoroutinefunction(result):
-                    result = await result
-                dependencies[key] = result
+                    result = await result  # type: ignore
+
+                run_context.dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -5648,6 +5938,9 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
@@ -5658,12 +5951,17 @@ class Agent:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)  # type: ignore
+            return await self.db.get_session(session_id=session_id, session_type=session_type)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    def _upsert_session(self, session: AgentSession) -> Optional[AgentSession]:
+    def _upsert_session(
+        self, session: Union[AgentSession, TeamSession, WorkflowSession]
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Upsert a Session into the database."""
 
         try:
@@ -5671,16 +5969,24 @@ class Agent:
                 raise ValueError("Db not initialized")
             return self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
             return None
 
-    async def _aupsert_session(self, session: AgentSession) -> Optional[AgentSession]:
+    async def _aupsert_session(
+        self, session: Union[AgentSession, TeamSession, WorkflowSession]
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Upsert a Session into the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
             return await self.db.upsert_session(session=session)  # type: ignore
         except Exception as e:
+            import traceback
+
+            traceback.print_exc(limit=3)
             log_warning(f"Error upserting session into db: {e}")
             return None
 
@@ -5885,7 +6191,7 @@ class Agent:
     def get_session(
         self,
         session_id: Optional[str] = None,
-    ) -> Optional[AgentSession]:
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Load an AgentSession from database or cache.
 
         Args:
@@ -5946,7 +6252,7 @@ class Agent:
     async def aget_session(
         self,
         session_id: Optional[str] = None,
-    ) -> Optional[AgentSession]:
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """Load an AgentSession from database or cache.
 
         Args:
@@ -6001,7 +6307,7 @@ class Agent:
         log_debug(f"AgentSession {session_id_to_load} not found in db")
         return None
 
-    def save_session(self, session: AgentSession) -> None:
+    def save_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         """
         Save the AgentSession to storage
         """
@@ -6023,7 +6329,7 @@ class Agent:
             self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
-    async def asave_session(self, session: AgentSession) -> None:
+    async def asave_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         """
         Save the AgentSession to storage
         """
@@ -6043,36 +6349,6 @@ class Agent:
             else:
                 self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
-
-    def get_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return get_chat_history_util(self, session_id=session_id)
-
-    async def aget_chat_history(self, session_id: Optional[str] = None) -> List[Message]:
-        """Read the chat history from the session
-
-        Args:
-            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
-        Returns:
-            List[Message]: The chat history from the session.
-        """
-        session_id = session_id or self.session_id
-        if session_id is None:
-            log_warning("Session ID is not set, cannot get chat history")
-            return []
-
-        return await aget_chat_history_util(self, session_id=session_id)
 
     # -*- Session Management Functions
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
@@ -6099,12 +6375,16 @@ class Agent:
         if session is None:
             raise Exception("Session not found")
 
+        if not hasattr(session, "agent_data"):
+            raise Exception("Session is not an AgentSession")
+
         # -*- Rename Agent
         self.name = name
-        if session.agent_data is not None:
-            session.agent_data["name"] = name
+
+        if session.agent_data is not None:  # type: ignore
+            session.agent_data["name"] = name  # type: ignore
         else:
-            session.agent_data = {"name": name}
+            session.agent_data = {"name": name}  # type: ignore
 
         # -*- Save to storage
         if self._has_async_db():
@@ -6183,7 +6463,7 @@ class Agent:
 
         gen_session_name_prompt = "Conversation\n"
 
-        messages_for_generating_session_name = session.get_messages_for_session()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -6339,11 +6619,25 @@ class Agent:
             return
         await self.db.delete_session(session_id=session_id)  # type: ignore
 
-    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    def get_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
-            session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            session_id: The session ID to get the messages for. If not provided, the latest used session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6353,20 +6647,49 @@ class Agent:
             return []
 
         session = self.get_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
-        # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
+        return session.get_messages(
+            # Only filter by agent_id if this is part of a team
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
         )
 
-    async def aget_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
-        """Get messages for a session
+    async def aget_session_messages(
+        self,
+        session_id: Optional[str] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
+        skip_history_messages: bool = True,
+    ) -> List[Message]:
+        """Get all messages belonging to the given session.
 
         Args:
             session_id: The session ID to get the messages for. If not provided, the current cached session ID is used.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
+            skip_history_messages: Skip messages that were tagged as history in previous runs.
+
         Returns:
             List[Message]: The messages for the session.
         """
@@ -6376,13 +6699,50 @@ class Agent:
             return []
 
         session = await self.aget_session(session_id=session_id)
-
         if session is None:
             raise Exception("Session not found")
 
+        # Handle the case in which the agent is reusing a team session
+        if isinstance(session, TeamSession):
+            return session.get_messages(
+                member_ids=[self.id] if self.team_id and self.id else None,
+                last_n_runs=last_n_runs,
+                limit=limit,
+                skip_roles=skip_roles,
+                skip_statuses=skip_statuses,
+                skip_history_messages=skip_history_messages,
+            )
+
         # Only filter by agent_id if this is part of a team
-        return session.get_messages_from_last_n_runs(
+        return session.get_messages(
             agent_id=self.id if self.team_id is not None else None,
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=skip_roles,
+            skip_statuses=skip_statuses,
+            skip_history_messages=skip_history_messages,
+        )
+
+    def get_chat_history(self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return self.get_session_messages(session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"])
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return await self.aget_session_messages(
+            session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"]
         )
 
     def get_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
@@ -6390,6 +6750,7 @@ class Agent:
 
         Args:
             session_id: The session ID to get the summary for. If not provided, the current cached session ID is used.
+
         Returns:
             SessionSummary: The session summary.
         """
@@ -6402,7 +6763,7 @@ class Agent:
         if session is None:
             raise Exception(f"Session {session_id} not found")
 
-        return session.get_session_summary()
+        return session.get_session_summary()  # type: ignore
 
     async def aget_session_summary(self, session_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for the given session ID and user ID.
@@ -6421,7 +6782,7 @@ class Agent:
         if session is None:
             raise Exception(f"Session {session_id} not found")
 
-        return session.get_session_summary()
+        return session.get_session_summary()  # type: ignore
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -6481,10 +6842,10 @@ class Agent:
     def _format_message_with_state_variables(
         self,
         message: Any,
-        user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -6501,6 +6862,7 @@ class Agent:
             metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
+
         converted_msg = deepcopy(message)
         for var_name in format_variables.keys():
             # Only convert standalone {var_name} patterns, not nested ones
@@ -6520,12 +6882,13 @@ class Agent:
     def get_system_message(
         self,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -6533,6 +6896,15 @@ class Agent:
         2. If build_context is False, return None.
         3. Build and return the default system message for the Agent.
         """
+
+        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -6543,18 +6915,19 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
-            # Format the system message with the session state variables
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
                     user_id=user_id,
+                    session_state=session_state,
                     dependencies=dependencies,
                     metadata=metadata,
-                    session_state=session_state,
                 )
 
             # type: ignore
@@ -6573,20 +6946,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                _instructions = self.instructions(**instruction_args)
+                _instructions = execute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -6601,7 +6963,7 @@ class Agent:
         # 3.2 Build a list of additional information for the system message
         additional_information: List[str] = []
         # 3.2.1 Add instructions for using markdown
-        if self.markdown and self.output_schema is None:
+        if self.markdown and output_schema is None:
             additional_information.append("Use markdown to format your answers.")
         # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
@@ -6836,18 +7198,18 @@ class Agent:
         # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
-            self.output_schema is not None
+            output_schema is not None
             and self.parser_model is None
             and not (
                 (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         # 3.3.14 Add the response model format prompt if output_schema is provided
-        if self.output_schema is not None and self.parser_model is not None:
-            system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
+        if output_schema is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
@@ -6863,11 +7225,13 @@ class Agent:
     async def aget_system_message(
         self,
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
+        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
+        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -6875,6 +7239,15 @@ class Agent:
         2. If build_context is False, return None.
         3. Build and return the default system message for the Agent.
         """
+
+        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
 
         # 1. If the system_message is provided, use that.
         if self.system_message is not None:
@@ -6885,7 +7258,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -6915,20 +7290,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                _instructions = self.instructions(**instruction_args)
+                _instructions = await aexecute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -6943,7 +7307,7 @@ class Agent:
         # 3.2 Build a list of additional information for the system message
         additional_information: List[str] = []
         # 3.2.1 Add instructions for using markdown
-        if self.markdown and self.output_schema is None:
+        if self.markdown and output_schema is None:
             additional_information.append("Use markdown to format your answers.")
         # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
@@ -6988,7 +7352,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            valid_filters = await self.knowledge.async_get_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -7181,21 +7545,21 @@ class Agent:
         # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
-            self.output_schema is not None
+            output_schema is not None
             and self.parser_model is None
             and not (
                 (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+            system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         # 3.3.14 Add the response model format prompt if output_schema is provided
-        if self.output_schema is not None and self.parser_model is not None:
-            system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
+        if output_schema is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
         # 3.3.15 Add the session state to the system message
-        if self.add_session_state_to_context and session_state is not None:
+        if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
         # Return the system message
@@ -7212,17 +7576,18 @@ class Agent:
         self,
         *,
         run_response: RunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -7231,6 +7596,12 @@ class Agent:
         2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
+        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+            knowledge_filters = run_context.knowledge_filters or knowledge_filters
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -7238,7 +7609,7 @@ class Agent:
         if not self.build_user_context:
             return Message(
                 role=self.user_message_role or "user",
-                content=input,
+                content=input,  # type: ignore
                 images=None if not self.send_media_to_model else images,
                 audio=None if not self.send_media_to_model else audio,
                 videos=None if not self.send_media_to_model else videos,
@@ -7375,24 +7746,195 @@ class Agent:
                     **kwargs,
                 )
 
+    async def _aget_user_message(
+        self,
+        *,
+        run_response: RunOutput,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs: Any,
+    ) -> Optional[Message]:
+        """Return the user message for the Agent (async version).
+
+        1. If the user_message is provided, use that.
+        2. If build_user_context is False or if the message is a list, return the message as is.
+        3. Build the default user message for the Agent
+        """
+        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Get references from the knowledge base to use in the user message
+        references = None
+
+        # 1. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context:
+            return Message(
+                role=self.user_message_role or "user",
+                content=input,  # type: ignore
+                images=None if not self.send_media_to_model else images,
+                audio=None if not self.send_media_to_model else audio,
+                videos=None if not self.send_media_to_model else videos,
+                files=None if not self.send_media_to_model else files,
+                **kwargs,
+            )
+        # 2. Build the user message for the Agent
+        elif input is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role=self.user_message_role or "user",
+                    content="",
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+            else:
+                # If the input is None, return None
+                return None
+
+        else:
+            # Handle list messages by converting to string
+            if isinstance(input, list):
+                # Convert list to string (join with newlines if all elements are strings)
+                if all(isinstance(item, str) for item in input):
+                    message_content = "\n".join(input)  # type: ignore
+                else:
+                    message_content = str(input)
+
+                return Message(
+                    role=self.user_message_role,
+                    content=message_content,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
+            # If message is provided as a Message, use it directly
+            elif isinstance(input, Message):
+                return input
+            # If message is provided as a dict, try to validate it as a Message
+            elif isinstance(input, dict):
+                try:
+                    return Message.model_validate(input)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {e}")
+                    raise Exception(f"Failed to validate message: {e}")
+
+            # If message is provided as a BaseModel, convert it to a Message
+            elif isinstance(input, BaseModel):
+                try:
+                    # Create a user message with the BaseModel content
+                    content = input.model_dump_json(indent=2, exclude_none=True)
+                    return Message(role=self.user_message_role, content=content)
+                except Exception as e:
+                    log_warning(f"Failed to convert BaseModel to message: {e}")
+                    raise Exception(f"Failed to convert BaseModel to message: {e}")
+            else:
+                user_msg_content = input
+                if self.add_knowledge_to_context:
+                    if isinstance(input, str):
+                        user_msg_content = input
+                    elif callable(input):
+                        user_msg_content = input(agent=self)
+                    else:
+                        raise Exception("message must be a string or a callable when add_references is True")
+
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                        )
+                        if docs_from_knowledge is not None:
+                            references = MessageReferences(
+                                query=user_msg_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references: {e}")
+
+                if self.resolve_in_context:
+                    user_msg_content = self._format_message_with_state_variables(
+                        user_msg_content,
+                        user_id=user_id,
+                        session_state=session_state,
+                        dependencies=dependencies,
+                        metadata=metadata,
+                    )
+
+                # Convert to string for concatenation operations
+                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+                # 4.1 Add knowledge references to user message
+                if (
+                    self.add_knowledge_to_context
+                    and references is not None
+                    and references.references is not None
+                    and len(references.references) > 0
+                ):
+                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                    user_msg_content_str += "<references>\n"
+                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+                    user_msg_content_str += "</references>"
+                # 4.2 Add context to user message
+                if add_dependencies_to_context and dependencies is not None:
+                    user_msg_content_str += "\n\n<additional context>\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
+                    user_msg_content_str += "</additional context>"
+
+                # Use the string version for the final content
+                user_msg_content = user_msg_content_str
+
+                # Return the user message
+                return Message(
+                    role=self.user_message_role,
+                    content=user_msg_content,
+                    audio=None if not self.send_media_to_model else audio,
+                    images=None if not self.send_media_to_model else images,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
+                    **kwargs,
+                )
+
     def _get_run_messages(
         self,
         *,
         run_response: RunOutput,
+        run_context: RunContext,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: AgentSession,
-        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -7426,11 +7968,12 @@ class Agent:
         # 1. Add system message to run_messages
         system_message = self.get_system_message(
             session=session,
-            session_state=session_state,
+            run_context=run_context,
+            session_state=run_context.session_state,
+            dependencies=run_context.dependencies,
+            metadata=run_context.metadata,
             user_id=user_id,
             tools=tools,
-            dependencies=dependencies,
-            metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
         )
         if system_message is not None:
@@ -7475,10 +8018,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7515,16 +8058,13 @@ class Agent:
         ):
             user_message = self._get_user_message(
                 run_response=run_response,
-                session_state=session_state,
+                run_context=run_context,
                 input=input,
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
-                knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
-                metadata=metadata,
                 **kwargs,
             )
 
@@ -7589,13 +8129,14 @@ class Agent:
         run_response: RunOutput,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: AgentSession,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -7628,17 +8169,25 @@ class Agent:
         )
         """
 
+        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
+        if run_context is not None:
+            session_state = run_context.session_state or session_state
+            dependencies = run_context.dependencies or dependencies
+            metadata = run_context.metadata or metadata
+
         # Initialize the RunMessages object (no media here - that's in RunInput now)
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
         system_message = await self.aget_system_message(
             session=session,
+            run_context=run_context,
             session_state=session_state,
             user_id=user_id,
             tools=tools,
             dependencies=dependencies,
             metadata=metadata,
+            add_session_state_to_context=add_session_state_to_context,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -7682,10 +8231,10 @@ class Agent:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                last_n_messages=self.num_history_messages,
-                skip_role=skip_role,
+            history: List[Message] = session.get_messages(
+                last_n_runs=self.num_history_runs,
+                limit=self.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
             )
 
@@ -7720,18 +8269,19 @@ class Agent:
                 )
             )
         ):
-            user_message = self._get_user_message(
+            user_message = await self._aget_user_message(
                 run_response=run_response,
+                run_context=run_context,
                 session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
                 input=input,
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
                 knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
-                metadata=metadata,
                 **kwargs,
             )
 
@@ -7823,16 +8373,20 @@ class Agent:
         self,
         model_response: ModelResponse,
         response_format: Optional[Union[Dict, Type[BaseModel]]],
+        run_context: Optional[RunContext] = None,
     ) -> List[Message]:
         """Get the messages for the parser model."""
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
             else "You are tasked with creating a structured output from the provided user message."
         )
 
-        if response_format == {"type": "json_object"} and self.output_schema is not None:
-            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+        if response_format == {"type": "json_object"} and output_schema is not None:
+            system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -7843,16 +8397,20 @@ class Agent:
         self,
         run_response: RunOutput,
         response_format: Optional[Union[Dict, Type[BaseModel]]],
+        run_context: Optional[RunContext] = None,
     ) -> List[Message]:
         """Get the messages for the parser model."""
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
             else "You are tasked with creating a structured output from the provided data."
         )
 
-        if response_format == {"type": "json_object"} and self.output_schema is not None:
-            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+        if response_format == {"type": "json_object"} and output_schema is not None:
+            system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -7881,7 +8439,8 @@ class Agent:
         self,
         query: str,
         num_documents: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
@@ -7890,6 +8449,7 @@ class Agent:
             query (str): The query to search for.
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            validate_filters (bool): Whether to validate the filters against known valid filter keys.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -7900,19 +8460,23 @@ class Agent:
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            if validate_filters:
+                valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -7960,7 +8524,8 @@ class Agent:
         self,
         query: str,
         num_documents: Optional[int] = None,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        validate_filters: bool = False,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
@@ -7970,18 +8535,22 @@ class Agent:
             num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            if validate_filters:
+                valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
 
-            # Warn about invalid filter keys
-            if invalid_keys:  # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+                # Warn about invalid filter keys
+                if invalid_keys:  # type: ignore
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+                if invalid_keys == [] and valid_filters == {}:
+                    log_warning("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -8208,38 +8777,6 @@ class Agent:
         return metrics
 
     ###########################################################################
-    # Handle images, videos and audio
-    ###########################################################################
-
-    def _add_image(self, image: Image, run_response: RunOutput) -> None:
-        """Add an image to both the agent's stateful storage and the current run response"""
-        # Add to run response
-        if run_response.images is None:
-            run_response.images = []
-        run_response.images.append(image)
-
-    def _add_video(self, video: Video, run_response: RunOutput) -> None:
-        """Add a video to both the agent's stateful storage and the current run response"""
-        # Add to run response
-        if run_response.videos is None:
-            run_response.videos = []
-        run_response.videos.append(video)
-
-    def _add_audio(self, audio: Audio, run_response: RunOutput) -> None:
-        """Add audio to both the agent's stateful storage and the current run response"""
-        # Add to run response
-        if run_response.audio is None:
-            run_response.audio = []
-        run_response.audio.append(audio)
-
-    def _add_file(self, file: File, run_response: RunOutput) -> None:
-        """Add file to both the agent's stateful storage and the current run response"""
-        # Add to run response
-        if run_response.files is None:
-            run_response.files = []
-        run_response.files.append(file)
-
-    ###########################################################################
     # Reasoning
     ###########################################################################
 
@@ -8458,7 +8995,7 @@ class Agent:
                         store_events=self.store_events,
                     )
             else:
-                log_warning(
+                log_info(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True
@@ -8751,7 +9288,7 @@ class Agent:
                         store_events=self.store_events,
                     )
             else:
-                log_warning(
+                log_info(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True
@@ -8912,14 +9449,21 @@ class Agent:
         else:
             log_warning("Unable to parse response with parser model")
 
-    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+    def _parse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         """Parse the model response using the parser model."""
         if self.parser_model is None:
             return
 
-        if self.output_schema is not None:
-            parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
+        if output_schema is not None:
+            parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
+            messages_for_parser_model = self._get_messages_for_parser_model(
+                model_response, parser_response_format, run_context=run_context
+            )
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -8934,15 +9478,20 @@ class Agent:
             log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model(
-        self, model_response: ModelResponse, run_messages: RunMessages
+        self, model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
     ) -> None:
         """Parse the model response using the parser model."""
         if self.parser_model is None:
             return
 
-        if self.output_schema is not None:
-            parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
+        if output_schema is not None:
+            parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
+            messages_for_parser_model = self._get_messages_for_parser_model(
+                model_response, parser_response_format, run_context=run_context
+            )
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -8957,11 +9506,18 @@ class Agent:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_events: bool = True
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_events: bool = True,
+        run_context: Optional[RunContext] = None,
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
-            if self.output_schema is not None:
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
+
+            if output_schema is not None:
                 if stream_events:
                     yield handle_event(
                         create_parser_model_response_started_event(run_response),
@@ -8971,9 +9527,9 @@ class Agent:
                     )
 
                 parser_model_response = ModelResponse(content="")
-                parser_response_format = self._get_response_format(self.parser_model)
+                parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
-                    run_response, parser_response_format
+                    run_response, parser_response_format, run_context=run_context
                 )
                 for model_response_event in self.parser_model.response_stream(
                     messages=messages_for_parser_model,
@@ -8987,6 +9543,7 @@ class Agent:
                         model_response_event=model_response_event,
                         parse_structured_output=True,
                         stream_events=stream_events,
+                        run_context=run_context,
                     )
 
                 parser_model_response_message: Optional[Message] = None
@@ -9012,11 +9569,18 @@ class Agent:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, session: AgentSession, run_response: RunOutput, stream_events: bool = True
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        stream_events: bool = True,
+        run_context: Optional[RunContext] = None,
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
-            if self.output_schema is not None:
+            # Get output_schema from run_context
+            output_schema = run_context.output_schema if run_context else None
+
+            if output_schema is not None:
                 if stream_events:
                     yield handle_event(
                         create_parser_model_response_started_event(run_response),
@@ -9026,9 +9590,9 @@ class Agent:
                     )
 
                 parser_model_response = ModelResponse(content="")
-                parser_response_format = self._get_response_format(self.parser_model)
+                parser_response_format = self._get_response_format(self.parser_model, run_context=run_context)
                 messages_for_parser_model = self._get_messages_for_parser_model_stream(
-                    run_response, parser_response_format
+                    run_response, parser_response_format, run_context=run_context
                 )
                 model_response_stream = self.parser_model.aresponse_stream(
                     messages=messages_for_parser_model,
@@ -9043,6 +9607,7 @@ class Agent:
                         model_response_event=model_response_event,
                         parse_structured_output=True,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         yield event
 
@@ -9280,7 +9845,7 @@ class Agent:
             import json
 
             history: List[Dict[str, Any]] = []
-            all_chats = session.get_messages_for_session()
+            all_chats = session.get_messages()
 
             if len(all_chats) == 0:
                 return ""
@@ -9336,7 +9901,7 @@ class Agent:
     def _get_search_knowledge_base_function(
         self,
         run_response: RunOutput,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -9412,7 +9977,7 @@ class Agent:
     def _search_knowledge_base_with_agentic_filters_function(
         self,
         run_response: RunOutput,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -9433,7 +9998,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9468,7 +10035,9 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, validate_filters=True
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9492,7 +10061,7 @@ class Agent:
 
         return Function.from_callable(
             search_knowledge_base_function,
-            name="search_knowledge_base_with_agentic_filters",
+            name="search_knowledge_base",
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
@@ -9553,6 +10122,8 @@ class Agent:
                 session_type=SessionType.AGENT,
                 limit=num_history_sessions,
                 user_id=user_id,
+                sort_by="created_at",
+                sort_order="desc",
             )
 
             all_messages = []
@@ -9679,10 +10250,8 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
@@ -9715,15 +10284,8 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             print_response_stream(
@@ -9736,7 +10298,7 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9764,7 +10326,6 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9793,10 +10354,8 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -9823,15 +10382,8 @@ class Agent:
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             await aprint_response_stream(
@@ -9844,7 +10396,7 @@ class Agent:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 knowledge_filters=knowledge_filters,
                 debug_mode=debug_mode,
                 markdown=markdown,
@@ -9977,7 +10529,9 @@ class Agent:
 
         return None
 
-    def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _get_effective_filters(
+        self, knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> Optional[Any]:
         """
         Determine which knowledge filters to use, with priority to run-level filters.
 
@@ -9996,8 +10550,13 @@ class Agent:
         # If run has filters, they override agent filters
         if knowledge_filters:
             if effective_filters:
-                # Merge filters, with run filters taking priority
-                effective_filters.update(knowledge_filters)
+                if isinstance(knowledge_filters, dict):
+                    if isinstance(effective_filters, dict):
+                        effective_filters.update(knowledge_filters)
+                    else:
+                        effective_filters = knowledge_filters
+                elif isinstance(knowledge_filters, list):
+                    effective_filters = [*effective_filters, *knowledge_filters]
             else:
                 effective_filters = knowledge_filters
 
@@ -10006,13 +10565,24 @@ class Agent:
 
         return effective_filters
 
-    def _cleanup_and_store(self, run_response: RunOutput, session: AgentSession, user_id: Optional[str] = None) -> None:
+    def _cleanup_and_store(
+        self,
+        run_response: RunOutput,
+        session: AgentSession,
+        run_context: Optional[RunContext] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         #  Scrub the stored run based on storage flags
         self._scrub_run_output_for_storage(run_response)
 
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # Update run_response.session_state before saving
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+            run_response.session_state = run_context.session_state
 
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -10032,7 +10602,11 @@ class Agent:
         self.save_session(session=session)
 
     async def _acleanup_and_store(
-        self, run_response: RunOutput, session: AgentSession, user_id: Optional[str] = None
+        self,
+        run_response: RunOutput,
+        session: AgentSession,
+        run_context: Optional[RunContext] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         #  Scrub the stored run based on storage flags
         self._scrub_run_output_for_storage(run_response)
@@ -10040,6 +10614,11 @@ class Agent:
         # Stop the timer for the Run duration
         if run_response.metrics:
             run_response.metrics.stop_timer()
+
+        # Update run_response.session_state from session before saving
+        # This ensures RunOutput reflects all tool modifications
+        if session.session_data is not None and run_context is not None and run_context.session_state is not None:
+            run_response.session_state = run_context.session_state
 
         # Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
@@ -10055,7 +10634,14 @@ class Agent:
         # Calculate session metrics
         self._update_session_metrics(session=session, run_response=run_response)
 
-        # Save session to storage
+        # Update session state before saving the session
+        if run_context is not None and run_context.session_state is not None:
+            if session.session_data is not None:
+                session.session_data["session_state"] = run_context.session_state
+            else:
+                session.session_data = {"session_state": run_context.session_state}
+
+        # Save session to memory
         await self.asave_session(session=session)
 
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
@@ -10070,58 +10656,6 @@ class Agent:
 
         if not self.store_history_messages:
             scrub_history_messages_from_run_output(run_response)
-
-    def _validate_media_object_id(
-        self,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        audios: Optional[Sequence[Audio]] = None,
-        files: Optional[Sequence[File]] = None,
-    ) -> tuple:
-        """Convert raw Image/Video/Audio objects - now unified, so just return as-is."""
-        # With unified classes, no conversion needed - just ensure IDs are set
-        image_list = None
-        if images:
-            image_list = []
-            for img in images:
-                # Ensure ID is set (validation should handle this, but double-check)
-                if not img.id:
-                    from uuid import uuid4
-
-                    img.id = str(uuid4())
-                image_list.append(img)
-
-        video_list = None
-        if videos:
-            video_list = []
-            for vid in videos:
-                if not vid.id:
-                    from uuid import uuid4
-
-                    vid.id = str(uuid4())
-                video_list.append(vid)
-
-        audio_list = None
-        if audios:
-            audio_list = []
-            for aud in audios:
-                if not aud.id:
-                    from uuid import uuid4
-
-                    aud.id = str(uuid4())
-                audio_list.append(aud)
-
-        file_list = None
-        if files:
-            file_list = []
-            for file in files:
-                if not file.id:
-                    from uuid import uuid4
-
-                    file.id = str(uuid4())
-                file_list.append(file)
-
-        return image_list, video_list, audio_list, file_list
 
     def cli_app(
         self,
@@ -10146,7 +10680,10 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:

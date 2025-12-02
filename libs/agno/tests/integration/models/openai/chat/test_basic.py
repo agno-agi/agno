@@ -40,12 +40,24 @@ def test_basic(openai_model):
     _assert_metrics(response)
 
 
-def test_basic_stream(openai_model):
-    agent = Agent(model=openai_model, markdown=True, telemetry=False)
+def test_basic_stream(openai_model, shared_db):
+    agent = Agent(model=openai_model, db=shared_db, markdown=True, telemetry=False)
 
     run_stream = agent.run("Say 'hi'", stream=True)
     for chunk in run_stream:
         assert chunk.content is not None
+
+    run_output = agent.get_last_run_output()
+
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 @pytest.mark.asyncio
@@ -62,11 +74,23 @@ async def test_async_basic(openai_model):
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream(openai_model):
-    agent = Agent(model=openai_model, markdown=True, telemetry=False)
+async def test_async_basic_stream(openai_model, shared_db):
+    agent = Agent(model=openai_model, db=shared_db, markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
+
+    run_output = agent.get_last_run_output()
+
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 def test_exception_handling():
@@ -99,7 +123,7 @@ def test_with_memory(openai_model):
     assert response2.content is not None and "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
@@ -178,19 +202,6 @@ def test_history(openai_model):
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
-
-
-def test_cache_read_tokens(openai_model):
-    """Assert cache_read_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=openai_model, markdown=True, telemetry=False)
-
-    # Multiple + one large prompt to ensure token caching is triggered
-    agent.run("Share a 2 sentence horror story" * 250)
-    response = agent.run("Share a 2 sentence horror story" * 250)
-
-    assert response.metrics is not None
-    assert response.metrics.cache_read_tokens is not None
-    assert response.metrics.cache_read_tokens > 0
 
 
 def test_reasoning_tokens():

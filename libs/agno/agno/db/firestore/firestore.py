@@ -89,6 +89,17 @@ class FirestoreDb(BaseDb):
 
     # -- DB methods --
 
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a collection with the given name exists in the Firestore database.
+
+        Args:
+            table_name: Name of the collection to check
+
+        Returns:
+            bool: True if the collection exists in the database, False otherwise
+        """
+        return table_name in self.db_client.list_collections()
+
     def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
 
@@ -225,6 +236,14 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting session: {e}")
             raise e
+
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the database.
@@ -854,6 +873,7 @@ class FirestoreDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -870,7 +890,10 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="memories")
 
-            query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
+            if user_id:
+                query = collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
+            else:
+                query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
 
             docs = query.stream()
 

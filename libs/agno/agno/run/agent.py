@@ -266,6 +266,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -530,6 +531,7 @@ class RunOutput:
     references: Optional[List[MessageReferences]] = None
 
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 
@@ -694,7 +696,17 @@ class RunOutput:
             data = data.pop("run")
 
         events = data.pop("events", None)
-        events = [run_output_event_from_dict(event) for event in events] if events else None
+        final_events = []
+        for event in events or []:
+            if "agent_id" in event:
+                event = run_output_event_from_dict(event)
+            else:
+                # Use the factory from response.py for agent events
+                from agno.run.team import team_run_output_event_from_dict
+
+                event = team_run_output_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
 
         messages = data.pop("messages", None)
         messages = [Message.from_dict(message) for message in messages] if messages else None

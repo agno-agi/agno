@@ -60,6 +60,7 @@ class AzureAIFoundry(Model):
     stop: Optional[Union[str, List[str]]] = None
     seed: Optional[int] = None
     model_extras: Optional[Dict[str, Any]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     request_params: Optional[Dict[str, Any]] = None
     # Client parameters
     api_key: Optional[str] = None
@@ -116,7 +117,7 @@ class AzureAIFoundry(Model):
                         name=response_format.__name__,
                         schema=response_format.model_json_schema(),  # type: ignore
                         description=response_format.__doc__,
-                        strict=True,
+                        strict=self.strict_output,
                     ),
                 )
 
@@ -206,6 +207,7 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Azure AI API.
@@ -216,7 +218,7 @@ class AzureAIFoundry(Model):
 
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().complete(
-                messages=[format_message(m) for m in messages],
+                messages=[format_message(m, compress_tool_results) for m in messages],
                 **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -245,6 +247,7 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Azure AI API.
@@ -256,7 +259,7 @@ class AzureAIFoundry(Model):
 
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().complete(
-                messages=[format_message(m) for m in messages],
+                messages=[format_message(m, compress_tool_results) for m in messages],
                 **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -285,6 +288,7 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Azure AI API.
@@ -296,7 +300,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().complete(
-                messages=[format_message(m) for m in messages],
+                messages=[format_message(m, compress_tool_results) for m in messages],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             ):
@@ -324,6 +328,7 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Azure AI API.
@@ -335,7 +340,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().complete(
-                messages=[format_message(m) for m in messages],
+                messages=[format_message(m, compress_tool_results) for m in messages],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )

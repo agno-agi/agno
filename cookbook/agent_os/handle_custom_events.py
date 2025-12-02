@@ -11,6 +11,7 @@ from typing import Optional
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
+from agno.run import RunContext
 from agno.run.agent import CustomEvent
 from agno.team import Team
 
@@ -28,14 +29,18 @@ class CustomerProfileEvent(CustomEvent):
     customer_phone: Optional[str] = None
 
 
-async def get_customer_profile(session_state: dict):
+async def get_customer_profile(run_context: RunContext):
     """
     Get customer profiles.
     """
+    if run_context.session_state is None:
+        raise Exception("Session state is required")
 
-    customer_name = session_state.get("customer_name", "John Doe")
-    customer_email = session_state.get("customer_email", "john.doe@example.com")
-    customer_phone = session_state.get("customer_phone", "1234567890")
+    customer_name = run_context.session_state.get("customer_name", "John Doe")
+    customer_email = run_context.session_state.get(
+        "customer_email", "john.doe@example.com"
+    )
+    customer_phone = run_context.session_state.get("customer_phone", "1234567890")
 
     # We only need to yield the custom event, Agno will handle the rest.
     yield CustomerProfileEvent(
@@ -76,7 +81,7 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     """Run your AgentOS.
-    
+
     To test your custom events that read from session state, you can pass the session state on the request.
 
     Test getting customer profiles:
@@ -85,7 +90,7 @@ if __name__ == "__main__":
         --data-urlencode 'message=Find me information about the current customer.' \
         --data-urlencode 'user_id=user_123.' \
         --data-urlencode 'session_state={"customer_name": "John Doe", "customer_email": "john.doe@example.com", "customer_phone": "1234567890"}'
-        
+
     Or directly to the agent:
     curl --location 'http://localhost:7777/agents/customer-profile-agent/runs' \
         --header 'Content-Type: application/x-www-form-urlencoded' \

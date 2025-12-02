@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
 from agno.models.base import Model
+from agno.models.utils import get_model
 from agno.run.agent import Message
 from agno.utils.log import log_debug, log_warning
 
@@ -142,11 +143,14 @@ class SessionSummaryManager:
         if not session:
             return None
 
-        self.model = cast(Model, self.model)
+        self.model = get_model(self.model)
+        if self.model is None:
+            return None
+
         response_format = self.get_response_format(self.model)
 
         system_message = self.get_system_message(
-            conversation=session.get_messages_for_session(),  # type: ignore
+            conversation=session.get_messages(),  # type: ignore
             response_format=response_format,
         )
 
@@ -210,6 +214,7 @@ class SessionSummaryManager:
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
+        self.model = get_model(self.model)
         if self.model is None:
             return None
 
@@ -237,6 +242,7 @@ class SessionSummaryManager:
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
+        self.model = get_model(self.model)
         if self.model is None:
             return None
 

@@ -67,6 +67,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "agent_id"},
     {"key": "team_id"},
     {"key": "topics"},
+    {"key": "created_at"},
     {"key": "updated_at"},
     # Composite indexes for memory queries
     {"key": [("user_id", "ASCENDING"), ("agent_id", "ASCENDING")], "collection_group": False},

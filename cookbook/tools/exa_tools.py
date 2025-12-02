@@ -24,7 +24,6 @@ agent_specific = Agent(
             include_domains=["cnbc.com", "reuters.com", "bloomberg.com"],
             show_results=True,
             text=False,
-            highlights=False,
         )
     ],
     markdown=True,
@@ -37,7 +36,6 @@ agent = Agent(
             include_domains=["cnbc.com", "reuters.com", "bloomberg.com"],
             show_results=True,
             text=False,
-            highlights=False,
         )
     ],
     markdown=True,

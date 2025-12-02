@@ -1,9 +1,10 @@
 """WorkflowAgent - A restricted Agent for workflow orchestration"""
 
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from agno.agent import Agent
 from agno.models.base import Model
+from agno.run import RunContext
 from agno.workflow.types import WebSocketHandler
 
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ Guidelines:
         workflow: "Any",  # Workflow type
         session: "WorkflowSession",
         execution_input: "WorkflowExecutionInput",
-        session_state: Optional[Dict[str, Any]],
+        run_context: RunContext,
         stream: bool = False,
     ) -> Callable:
         """
@@ -91,7 +92,7 @@ Guidelines:
             workflow: The workflow instance
             session: The workflow session
             execution_input: The execution input
-            session_state: The session state
+            run_context: The run context
             stream: Whether to stream the workflow execution
         Returns:
             Callable tool function
@@ -150,9 +151,9 @@ Guidelines:
                 final_content = ""
                 for event in workflow._execute_stream(
                     session=session_from_db,
+                    run_context=run_context,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
-                    session_state=session_state,
                     stream_events=True,
                 ):
                     yield event
@@ -170,7 +171,7 @@ Guidelines:
                     session=session_from_db,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
-                    session_state=session_state,
+                    run_context=run_context,
                 )
 
                 if isinstance(result.content, str):
@@ -187,7 +188,7 @@ Guidelines:
         workflow: "Any",  # Workflow type
         session: "WorkflowSession",
         execution_input: "WorkflowExecutionInput",
-        session_state: Optional[Dict[str, Any]],
+        run_context: RunContext,
         stream: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
     ) -> Callable:
@@ -199,7 +200,7 @@ Guidelines:
             workflow: The workflow instance
             session: The workflow session
             execution_input: The execution input
-            session_state: The session state
+            run_context: The run context
             stream: Whether to stream the workflow execution
 
         Returns:
@@ -267,7 +268,7 @@ Guidelines:
                     user_id=session_from_db.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
-                    session_state=session_state,
+                    run_context=run_context,
                     stream_events=True,
                     websocket_handler=websocket_handler,
                 ):
@@ -285,7 +286,7 @@ Guidelines:
                     user_id=session_from_db.user_id,
                     execution_input=workflow_execution_input,
                     workflow_run_response=workflow_run_response,
-                    session_state=session_state,
+                    run_context=run_context,
                 )
 
                 if isinstance(result.content, str):
