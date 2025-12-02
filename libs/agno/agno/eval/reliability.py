@@ -164,7 +164,7 @@ class ReliabilityEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=run_id,  # type: ignore
+                run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
@@ -280,7 +280,7 @@ class ReliabilityEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=run_id,  # type: ignore
+                run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,

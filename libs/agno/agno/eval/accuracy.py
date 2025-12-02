@@ -700,7 +700,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
                 log_eval_run(
                     db=self.db,
-                    run_id=run_id,  # type: ignore
+                    run_id=self.eval_id,  # type: ignore
                     run_data=asdict(self.result),
                     eval_type=EvalType.ACCURACY,
                     name=self.name if self.name is not None else None,
@@ -813,7 +813,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
             await async_log_eval(
                 db=self.db,
-                run_id=run_id,  # type: ignore
+                run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
                 name=self.name if self.name is not None else None,

@@ -597,7 +597,7 @@ class PerformanceEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=run_id,  # type: ignore
+                run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
@@ -741,7 +741,7 @@ class PerformanceEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=run_id,  # type: ignore
+                run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
