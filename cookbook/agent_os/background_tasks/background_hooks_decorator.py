@@ -9,10 +9,10 @@ import asyncio
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.hooks.decorator import hook
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.run.agent import RunInput
-from agno.hooks.decorator import hook
 
 
 @hook(run_in_background=True)

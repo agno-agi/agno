@@ -6,7 +6,9 @@ from agno.hooks.decorator import HOOK_RUN_IN_BACKGROUND_ATTR
 from agno.utils.log import log_warning
 
 # Keys that should be deep copied for background hooks to prevent race conditions
-BACKGROUND_HOOK_COPY_KEYS = frozenset({"run_input", "run_context", "run_output", "session_state", "dependencies", "metadata"})
+BACKGROUND_HOOK_COPY_KEYS = frozenset(
+    {"run_input", "run_context", "run_output", "session_state", "dependencies", "metadata"}
+)
 
 
 def copy_args_for_background(args: Dict[str, Any]) -> Dict[str, Any]:

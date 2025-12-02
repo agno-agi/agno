@@ -94,8 +94,7 @@ def hook(*args, **kwargs) -> Union[F, Callable[[F], F]]:
     invalid_kwargs = set(kwargs.keys()) - VALID_KWARGS
     if invalid_kwargs:
         raise ValueError(
-            f"Invalid hook configuration arguments: {invalid_kwargs}. "
-            f"Valid arguments are: {sorted(VALID_KWARGS)}"
+            f"Invalid hook configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}"
         )
 
     def decorator(func: F) -> F:

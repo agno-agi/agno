@@ -4119,7 +4119,6 @@ class Agent:
             "debug_mode": debug_mode or self.debug_mode,
         }
 
-
         # Check if background_tasks is available and ALL hooks should run in background
         # Note: Pre-hooks running in background may not be able to modify run_input
         if self._run_hooks_in_background and background_tasks is not None:
@@ -4215,7 +4214,6 @@ class Agent:
             "debug_mode": debug_mode or self.debug_mode,
         }
 
-
         # Check if background_tasks is available and ALL hooks should run in background
         # Note: Pre-hooks running in background may not be able to modify run_input
         if self._run_hooks_in_background and background_tasks is not None:
@@ -4301,7 +4299,7 @@ class Agent:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
-        
+
         # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
