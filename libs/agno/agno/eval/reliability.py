@@ -137,7 +137,7 @@ class ReliabilityEval:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=run_id,
+                eval_id=self.eval_id,
                 result=self.result,
             )
 
@@ -180,7 +180,7 @@ class ReliabilityEval:
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=run_id,
+                    run_id=self.eval_id,
                     eval_type=EvalType.RELIABILITY,
                     data=self._get_telemetry_data(),
                 ),
@@ -296,7 +296,7 @@ class ReliabilityEval:
 
             await async_create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=run_id,
+                    run_id=self.eval_id,
                     eval_type=EvalType.RELIABILITY,
                     data=self._get_telemetry_data(),
                 ),

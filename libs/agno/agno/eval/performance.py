@@ -613,7 +613,7 @@ class PerformanceEval:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
@@ -757,7 +757,7 @@ class PerformanceEval:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
