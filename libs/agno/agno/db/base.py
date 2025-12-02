@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.schemas import UserMemory
@@ -9,6 +9,9 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
+
+if TYPE_CHECKING:
+    from agno.agent.agent import Agent
 
 
 class SessionType(str, Enum):
@@ -31,6 +34,8 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        agents_table: Optional[str] = None,
+        configs_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
@@ -41,6 +46,8 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.agents_table_name = agents_table or "agno_agents"
+        self.configs_table_name = configs_table or "agno_configs"
         self.versions_table_name = versions_table or "agno_schema_versions"
 
     @abstractmethod
@@ -329,6 +336,55 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
+    # --- Configs ---
+    @abstractmethod
+    def get_agent(self, agent_id: str, version: Optional[str] = None):
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_agent(self, agent: "Agent") -> Optional["Agent"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_agent(self, agent_id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_agent_config_version(self, agent_id: str, version: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a config by entity_id and version.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_config(
+        self,
+        entity_id: str,
+        entity_type: str,
+        version: str,
+        config: Dict[str, Any],
+        notes: Optional[str] = None,
+        set_as_current: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Upsert a config.
+
+        Args:
+            config (EntityConfig): The config to upsert.
+
+        Returns:
+            Optional[EntityConfig]: The upserted config, or None if the operation fails.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_config(self, entity_id: str, version: str) -> bool:
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -342,6 +398,8 @@ class AsyncBaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        agents_table: Optional[str] = None,
+        configs_table: Optional[str] = None,
         versions_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -351,6 +409,8 @@ class AsyncBaseDb(ABC):
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.culture_table_name = culture_table or "agno_culture"
+        self.agents_table_name = agents_table or "agno_agents"
+        self.configs_table_name = configs_table or "agno_configs"
         self.versions_table_name = versions_table or "agno_schema_versions"
 
     @abstractmethod
@@ -621,4 +681,41 @@ class AsyncBaseDb(ABC):
 
     @abstractmethod
     async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+        raise NotImplementedError
+
+    # --- Configs ---
+    @abstractmethod
+    async def get_agent(self, agent_id: str, version: Optional[str] = None):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_agent(self, agent: "Agent") -> Optional["Agent"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_agent(self, agent_id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def set_agent_config_version(self, agent_id: str, version: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_config(self, entity_id: str, version: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_config(self, entity_id: str, version: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_config(
+        self,
+        entity_id: str,
+        entity_type: str,
+        version: str,
+        config: Dict[str, Any],
+        notes: Optional[str] = None,
+        set_as_current: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
