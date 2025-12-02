@@ -796,7 +796,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return None
 
     # -- Memory methods --
-    async def delete_user_memory(self, memory_id: str):
+    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Returns:
@@ -810,6 +810,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
                 success = result.rowcount > 0  # type: ignore
