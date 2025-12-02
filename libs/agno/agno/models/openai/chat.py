@@ -101,12 +101,10 @@ class OpenAIChat(Model):
         # Fetch API key from env if not already set
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
-            log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
             if not self.api_key:
                 raise ModelAuthenticationError(
                     message="OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
 
         # Define base client params
@@ -452,6 +450,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -533,6 +534,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -611,6 +615,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -691,6 +698,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
