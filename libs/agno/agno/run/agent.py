@@ -539,7 +539,6 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
-    # Error details (populated when status is error)
     error: Optional[RunErrorEvent] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
