@@ -114,6 +114,15 @@ USER_MEMORY_TABLE_SCHEMA = {
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
+        {
+            "IndexName": "workflow_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "workflow_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
     ],
     "BillingMode": "PROVISIONED",
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
