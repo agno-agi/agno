@@ -17,11 +17,6 @@ try:
     OPENTELEMETRY_AVAILABLE = True
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
-    logger.warning(
-        "OpenTelemetry packages not installed. "
-        "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
-    )
-
 
 def setup_tracing(
     db: Union[BaseDb, AsyncBaseDb],
