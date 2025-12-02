@@ -11,7 +11,6 @@ import subprocess
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools import tool
 from agno.tools.toolkit import Toolkit
 from agno.utils import pprint
 
@@ -51,11 +50,16 @@ if run_response.is_paused:
     for requirement in run_response.active_requirements:
         if requirement.needs_external_execution:
             if requirement.tool.tool_name == "list_dir":
-                print(f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally")
+                print(
+                    f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally"
+                )
                 # We execute the tool ourselves. You can also execute something completely external here.
                 result = tools.list_dir(**requirement.tool.tool_args)  # type: ignore
                 # We have to set the result on the tool execution object so that the agent can continue
                 requirement.set_result(result)
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
     pprint.pprint_run_response(run_response)

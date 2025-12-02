@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -512,6 +513,7 @@ class RunRequirement:
     needs_external_execution: bool = False
 
     def __init__(self, tool_execution: ToolExecution):
+        self.id = str(uuid4())
         self.tool = tool_execution
         self.needs_confirmation = tool_execution.requires_confirmation or False
         self.needs_user_input = tool_execution.requires_user_input or False
@@ -535,6 +537,16 @@ class RunRequirement:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = False
         self.tool.confirmed = False
+
+    def update_tools(self, tools: List[ToolExecution]):
+        if self.confirmation is True:
+            self.tool.confirmed = True
+        elif self.confirmation is False:
+            self.tool.confirmed = False
+        elif self.user_input is not None:
+            self.tool.answered = True
+        else:
+            raise ValueError("This requirement does not require confirmation or user input")
 
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""

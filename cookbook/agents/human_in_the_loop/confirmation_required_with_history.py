@@ -83,5 +83,8 @@ if run_response.is_paused:
             else:
                 requirement.confirm()
 
-run_response = agent.continue_run(run_response=run_response)
+run_response = agent.continue_run(
+    run_id=run_response.run_id,
+    requirements=run_response.requirements,
+)
 pprint.pprint_run_response(run_response)

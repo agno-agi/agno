@@ -87,7 +87,10 @@ while run_response.is_paused:
                 # Update the field value
                 field.value = user_value  # type: ignore
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
     if not run_response.is_paused:
         pprint.pprint_run_response(run_response)
         break
@@ -120,7 +123,11 @@ while run_response.is_paused:
                 # Update the field value
                 field.value = user_value  # type: ignore
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
+
     if not run_response.is_paused:
         pprint.pprint_run_response(run_response)
         break

@@ -83,11 +83,16 @@ for requirement in run_response.active_requirements:
         else:
             requirement.confirm()
 
-run_response = agent.continue_run(run_response=run_response)
-# Or
-# run_response = agent.continue_run(run_id=run_response.run_id, updated_tools=run_response.tools)
+
+run_response = agent.continue_run(
+    run_id=run_response.run_id,
+    requirements=run_response.requirements,
+)
+
+# You can also pass the updated tools when continuing the run:
+# run_response = agent.continue_run(
+#     run_id=run_response.run_id,
+#     updated_tools=run_response.tools,
+# )
 
 pprint.pprint_run_response(run_response)
-
-# Or for simple debug flow
-# agent.print_response("Fetch the top 2 hackernews stories")

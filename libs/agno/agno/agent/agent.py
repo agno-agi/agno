@@ -58,6 +58,7 @@ from agno.run.agent import (
     RunInput,
     RunOutput,
     RunOutputEvent,
+    RunRequirement,
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
@@ -2766,6 +2767,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2785,6 +2787,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2803,6 +2806,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2821,7 +2825,8 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            updated_tools: The updated tools to use for the run. This or requirements is required with `run_id`.
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
@@ -2926,16 +2931,32 @@ class Agent:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id, one of updated_tools or requirements is required.
+            if updated_tools is None and requirements is None:
+                raise ValueError(
+                    "To continue a run from a given run_id, either updated_tools or requirements must be provided."
+                )
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool for req in requirements if req.tool is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3338,6 +3359,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -3357,6 +3379,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -3372,6 +3395,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -3391,7 +3415,8 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            updated_tools: The updated tools to use for the run. This or requirements is required with `run_id`.
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
@@ -3488,6 +3513,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         session_id=session_id,
@@ -3503,6 +3529,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         response_format=response_format,
@@ -3552,6 +3579,7 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3603,15 +3631,29 @@ class Agent:
             input = run_response.messages or []
         elif run_id is not None:
             # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool for req in requirements if req.tool is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3761,6 +3803,7 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3809,17 +3852,32 @@ class Agent:
         if run_response is not None:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
+
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id. This requires the updated tools or requirements to be passed.
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool for req in requirements if req.tool is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 

@@ -93,7 +93,10 @@ if run_response.is_paused:
                 f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.duration:.2f}[/] seconds."  # type: ignore
             )
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
     pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow

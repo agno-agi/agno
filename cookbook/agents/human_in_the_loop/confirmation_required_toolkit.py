@@ -16,7 +16,6 @@ Run `pip install openai httpx rich agno` to install dependencies.
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools import tool
 from agno.tools.yfinance import YFinanceTools
 from agno.utils import pprint
 from rich.console import Console
@@ -49,5 +48,8 @@ if run_response.is_paused:  # Or agent.run_response.is_paused
             else:
                 requirement.confirm()
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
     pprint.pprint_run_response(run_response)

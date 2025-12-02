@@ -54,7 +54,10 @@ if run_response.is_paused:  # Or agent.run_response.is_paused
                 # Update the field value
                 field.value = user_value
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
     pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow
