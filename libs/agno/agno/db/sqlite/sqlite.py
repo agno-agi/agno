@@ -162,7 +162,7 @@ class SqliteDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type)
+            table_schema = get_table_schema_definition(table_type).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -186,7 +186,12 @@ class SqliteDb(BaseDb):
 
                 # Handle foreign key constraint
                 if "foreign_key" in col_config:
-                    column_args.append(ForeignKey(col_config["foreign_key"]))
+                    fk_ref = col_config["foreign_key"]
+                    # For spans table, dynamically replace the traces table reference
+                    # with the actual trace table name configured for this db instance
+                    if table_type == "spans" and "trace_id" in fk_ref:
+                        fk_ref = f"{self.trace_table_name}.trace_id"
+                    column_args.append(ForeignKey(fk_ref))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 

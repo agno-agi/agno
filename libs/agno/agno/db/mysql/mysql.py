@@ -165,7 +165,12 @@ class MySQLDb(BaseDb):
 
                 # Handle foreign key constraint
                 if "foreign_key" in col_config:
-                    column_args.append(ForeignKey(col_config["foreign_key"]))
+                    fk_ref = col_config["foreign_key"]
+                    # For spans table, dynamically replace the traces table reference
+                    # with the actual trace table name configured for this db instance
+                    if table_type == "spans" and "trace_id" in fk_ref:
+                        fk_ref = f"{self.db_schema}.{self.trace_table_name}.trace_id"
+                    column_args.append(ForeignKey(fk_ref))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
