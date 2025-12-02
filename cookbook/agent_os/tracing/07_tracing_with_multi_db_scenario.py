@@ -19,7 +19,7 @@ db2 = SqliteDb(db_file="tmp/db2.db", id="db2")
 # Dedicated traces database
 tracing_db = SqliteDb(db_file="tmp/traces.db", id="traces")
 
-setup_tracing(db=tracing_db)
+setup_tracing(db=tracing_db, batch_processing=True, max_queue_size=1024, max_export_batch_size=256)
 
 agent = Agent(
     name="HackerNews Agent",
@@ -49,4 +49,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="07_tracing_with_multi-db-scenario:app", reload=True)
+    agent_os.serve(app="07_tracing_with_multi_db_scenario:app", reload=True)
