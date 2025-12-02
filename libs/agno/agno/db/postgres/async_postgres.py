@@ -796,7 +796,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return None
 
     # -- Memory methods --
-    async def delete_user_memory(self, memory_id: str):
+    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Returns:
@@ -810,6 +810,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
                 success = result.rowcount > 0  # type: ignore
@@ -849,8 +851,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    async def get_all_memory_topics(self) -> List[str]:
+    async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -860,6 +865,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
 
@@ -870,13 +877,17 @@ class AsyncPostgresDb(AsyncBaseDb):
             return []
 
     async def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -891,6 +902,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = await sess.execute(stmt)
                 row = result.fetchone()

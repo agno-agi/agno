@@ -399,7 +399,7 @@ class AsyncBaseDb(ABC):
     @abstractmethod
     async def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -603,22 +603,27 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
+    async def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
     async def get_all_cultural_knowledge(
         self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalKnowledge]]:
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+    async def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         raise NotImplementedError
