@@ -114,6 +114,7 @@ class AgentOS:
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
         tracing: bool = False,
+        tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
     ):
         """Initialize AgentOS.
@@ -137,6 +138,8 @@ class AgentOS:
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
+            tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
+                       If not provided and tracing=True, the first available db from agents/teams/workflows is used.
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -176,6 +179,7 @@ class AgentOS:
 
         self.telemetry = telemetry
         self.tracing = tracing
+        self.tracing_db = tracing_db
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
@@ -381,8 +385,17 @@ class AgentOS:
                 workflow.store_events = True
 
     def _setup_tracing(self) -> None:
-        """Set up OpenTelemetry tracing for this AgentOS."""
-        # Find the first available database
+        """Set up OpenTelemetry tracing for this AgentOS.
+
+        Uses tracing_db if provided, otherwise falls back to the first available
+        database from agents/teams/workflows.
+        """
+        # Use tracing_db if explicitly provided
+        if self.tracing_db is not None:
+            setup_tracing_for_os(db=self.tracing_db)
+            return
+
+        # Fall back to finding the first available database
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
         for agent in self.agents or []:
@@ -404,8 +417,8 @@ class AgentOS:
 
         if db is None:
             log_warning(
-                "tracing=True but no database found in any agent, team, or workflow. "
-                "Tracing requires a database. Provide 'db' parameter to at least one component."
+                "tracing=True but no database found. "
+                "Provide 'tracing_db' parameter or 'db' parameter to at least one agent/team/workflow."
             )
             return
 
@@ -633,6 +646,10 @@ class AgentOS:
                 self._register_db_with_validation(dbs, interface.agent.db)
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
+
+        # Register tracing_db if provided (for traces reading)
+        if self.tracing_db is not None:
+            self._register_db_with_validation(dbs, self.tracing_db)
 
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
@@ -872,14 +889,25 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in traces_config.dbs]
 
-        for db_id in self.dbs.keys():
-            if db_id not in dbs_with_specific_config:
+        # If tracing_db is explicitly set, only use that database for traces
+        if self.tracing_db is not None:
+            if self.tracing_db.id not in dbs_with_specific_config:
                 traces_config.dbs.append(
                     DatabaseConfig(
-                        db_id=db_id,
-                        domain_config=TracesDomainConfig(display_name=db_id),
+                        db_id=self.tracing_db.id,
+                        domain_config=TracesDomainConfig(display_name=self.tracing_db.id),
                     )
                 )
+        else:
+            # Fall back to all discovered databases
+            for db_id in self.dbs.keys():
+                if db_id not in dbs_with_specific_config:
+                    traces_config.dbs.append(
+                        DatabaseConfig(
+                            db_id=db_id,
+                            domain_config=TracesDomainConfig(display_name=db_id),
+                        )
+                    )
 
         return traces_config
 
