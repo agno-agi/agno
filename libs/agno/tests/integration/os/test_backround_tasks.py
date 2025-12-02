@@ -9,6 +9,9 @@ shutdown. Therefore, we cannot test timing/non-blocking behavior directly.
 Instead, we use mocking to verify that hooks are properly added to FastAPI's
 BackgroundTasks when run_hooks_in_background=True, which proves they will run
 in the background in production environments.
+
+Note: run_hooks_in_background is configured at the AgentOS level (default=False)
+and propagated to agents/teams, rather than being set on individual agents.
 """
 
 import asyncio
@@ -39,8 +42,8 @@ def execution_tracker() -> Dict[str, bool]:
 
 
 @pytest.fixture
-def agent_with_background_hooks(shared_db, execution_tracker):
-    """Create an agent with background hooks enabled."""
+def agent_with_hooks(shared_db, execution_tracker):
+    """Create an agent with hooks (background mode is set by AgentOS)."""
 
     async def pre_hook_log(run_input, agent):
         """Pre-hook that logs request."""
@@ -63,26 +66,25 @@ def agent_with_background_hooks(shared_db, execution_tracker):
         db=shared_db,
         pre_hooks=[pre_hook_log],
         post_hooks=[post_hook_log, async_post_hook_log],
-        run_hooks_in_background=True,
     )
 
 
 @pytest.fixture
-def test_app_with_background(agent_with_background_hooks):
-    """Create a FastAPI app with background hooks agent."""
-    agent_os = AgentOS(agents=[agent_with_background_hooks])
+def test_app_with_background(agent_with_hooks):
+    """Create a FastAPI app with background hooks enabled."""
+    agent_os = AgentOS(agents=[agent_with_hooks], run_hooks_in_background=True)
     return agent_os.get_app()
 
 
 @pytest.mark.asyncio
-async def test_background_hooks_non_streaming(test_app_with_background, agent_with_background_hooks, execution_tracker):
+async def test_background_hooks_non_streaming(test_app_with_background, agent_with_hooks, execution_tracker):
     """Test that post-hooks run in background for non-streaming responses."""
 
     async with httpx.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         response = await client.post(
-            f"/agents/{agent_with_background_hooks.id}/runs",
+            f"/agents/{agent_with_hooks.id}/runs",
             data={"message": "Hello, world!", "stream": "false"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -91,7 +93,7 @@ async def test_background_hooks_non_streaming(test_app_with_background, agent_wi
         assert response.status_code == 200
         response_json = response.json()
         assert response_json["run_id"] is not None
-        assert response_json["agent_id"] == agent_with_background_hooks.id
+        assert response_json["agent_id"] == agent_with_hooks.id
 
         # Mark that response was returned
         execution_tracker["response_returned"] = True
@@ -109,7 +111,7 @@ async def test_background_hooks_non_streaming(test_app_with_background, agent_wi
 
 
 @pytest.mark.asyncio
-async def test_background_hooks_streaming(test_app_with_background, agent_with_background_hooks, execution_tracker):
+async def test_background_hooks_streaming(test_app_with_background, agent_with_hooks, execution_tracker):
     """Test that post-hooks run in background for streaming responses."""
 
     async with httpx.AsyncClient(
@@ -117,7 +119,7 @@ async def test_background_hooks_streaming(test_app_with_background, agent_with_b
     ) as client:
         async with client.stream(
             "POST",
-            f"/agents/{agent_with_background_hooks.id}/runs",
+            f"/agents/{agent_with_hooks.id}/runs",
             data={"message": "Hello, world!", "stream": "true"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         ) as response:
@@ -150,7 +152,7 @@ async def test_background_hooks_streaming(test_app_with_background, agent_with_b
 
 
 @pytest.mark.asyncio
-async def test_background_hooks_are_added_as_background_tasks(agent_with_background_hooks):
+async def test_background_hooks_are_added_as_background_tasks(agent_with_hooks):
     """Test that hooks are added to FastAPI background tasks when run_hooks_in_background=True."""
 
     tasks_added = []
@@ -160,7 +162,7 @@ async def test_background_hooks_are_added_as_background_tasks(agent_with_backgro
         tasks_added.append("tracked_post_hook")
 
     # Replace post_hooks with our tracked hook
-    agent_with_background_hooks.post_hooks = [tracked_post_hook]
+    agent_with_hooks.post_hooks = [tracked_post_hook]
 
     # Mock BackgroundTasks at the FastAPI level
     original_add_task = None
@@ -178,13 +180,13 @@ async def test_background_hooks_are_added_as_background_tasks(agent_with_backgro
     original_add_task = BackgroundTasks.add_task
 
     with patch.object(BackgroundTasks, "add_task", mock_add_task):
-        # Create app after patching
-        agent_os = AgentOS(agents=[agent_with_background_hooks])
+        # Create app after patching with background hooks enabled
+        agent_os = AgentOS(agents=[agent_with_hooks], run_hooks_in_background=True)
         app = agent_os.get_app()
 
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
-                f"/agents/{agent_with_background_hooks.id}/runs",
+                f"/agents/{agent_with_hooks.id}/runs",
                 data={"message": "Hello!", "stream": "false"},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
@@ -199,7 +201,7 @@ async def test_background_hooks_are_added_as_background_tasks(agent_with_backgro
 
 
 @pytest.mark.asyncio
-async def test_background_hooks_with_hook_parameters(test_app_with_background, agent_with_background_hooks):
+async def test_background_hooks_with_hook_parameters(test_app_with_background, agent_with_hooks):
     """Test that background hooks receive correct parameters."""
 
     received_params = {}
@@ -212,13 +214,13 @@ async def test_background_hooks_with_hook_parameters(test_app_with_background, a
         received_params["user_id"] = user_id
         received_params["run_context"] = run_context is not None
 
-    agent_with_background_hooks.post_hooks = [param_checking_hook]
+    agent_with_hooks.post_hooks = [param_checking_hook]
 
     async with httpx.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         response = await client.post(
-            f"/agents/{agent_with_background_hooks.id}/runs",
+            f"/agents/{agent_with_hooks.id}/runs",
             data={
                 "message": "Test parameters",
                 "user_id": "test-user-123",
@@ -242,7 +244,7 @@ async def test_background_hooks_with_hook_parameters(test_app_with_background, a
 
 @pytest.mark.asyncio
 async def test_agent_without_background_mode(shared_db):
-    """Test that hooks execute synchronously when background mode is disabled."""
+    """Test that hooks execute synchronously when background mode is disabled on AgentOS."""
 
     execution_tracker = {"hook_executed": False}
     tasks_added = []
@@ -257,7 +259,6 @@ async def test_agent_without_background_mode(shared_db):
         model=OpenAIChat(id="gpt-4o"),
         db=shared_db,
         post_hooks=[blocking_post_hook],
-        run_hooks_in_background=False,  # Disabled
     )
 
     # Mock add_task to track if hooks are added as background tasks
@@ -274,7 +275,8 @@ async def test_agent_without_background_mode(shared_db):
     original_add_task = BackgroundTasks.add_task
 
     with patch.object(BackgroundTasks, "add_task", mock_add_task):
-        agent_os = AgentOS(agents=[agent])
+        # Disable background hooks at the AgentOS level
+        agent_os = AgentOS(agents=[agent], run_hooks_in_background=False)
         app = agent_os.get_app()
 
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -291,12 +293,12 @@ async def test_agent_without_background_mode(shared_db):
             assert execution_tracker["hook_executed"] is True
 
             # Verify that our post hook was NOT added to background tasks
-            # When run_hooks_in_background=False, hooks execute synchronously
+            # When run_hooks_in_background=False on AgentOS, hooks execute synchronously
             assert "blocking_post_hook" not in tasks_added, "Hook should not be added as background task when disabled"
 
 
 @pytest.mark.asyncio
-async def test_background_hooks_with_multiple_hooks(test_app_with_background, agent_with_background_hooks):
+async def test_background_hooks_with_multiple_hooks(test_app_with_background, agent_with_hooks):
     """Test that multiple background hooks all execute."""
 
     execution_count = {"count": 0}
@@ -313,13 +315,13 @@ async def test_background_hooks_with_multiple_hooks(test_app_with_background, ag
         await asyncio.sleep(0.3)
         execution_count["count"] += 1
 
-    agent_with_background_hooks.post_hooks = [hook1, hook2, hook3]
+    agent_with_hooks.post_hooks = [hook1, hook2, hook3]
 
     async with httpx.AsyncClient(
         transport=ASGITransport(app=test_app_with_background), base_url="http://test"
     ) as client:
         response = await client.post(
-            f"/agents/{agent_with_background_hooks.id}/runs",
+            f"/agents/{agent_with_hooks.id}/runs",
             data={"message": "Test multiple hooks", "stream": "false"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -331,3 +333,44 @@ async def test_background_hooks_with_multiple_hooks(test_app_with_background, ag
 
         # All three hooks should have executed
         assert execution_count["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_agentos_propagates_background_setting_to_agents(shared_db):
+    """Test that AgentOS correctly propagates run_hooks_in_background to agents."""
+
+    agent = Agent(
+        name="test-agent",
+        id="test-agent-id",
+        model=OpenAIChat(id="gpt-4o"),
+        db=shared_db,
+    )
+
+    # By default, _run_hooks_in_background should be False on the agent
+    assert agent._run_hooks_in_background is False
+
+    # When AgentOS is created with run_hooks_in_background=True (default)
+    agent_os = AgentOS(agents=[agent], run_hooks_in_background=True)
+    agent_os.get_app()
+
+    # The agent's _run_hooks_in_background should now be True
+    assert agent._run_hooks_in_background is True
+
+
+@pytest.mark.asyncio
+async def test_agentos_propagates_background_setting_disabled(shared_db):
+    """Test that AgentOS correctly propagates run_hooks_in_background=False to agents."""
+
+    agent = Agent(
+        name="test-agent",
+        id="test-agent-id",
+        model=OpenAIChat(id="gpt-4o"),
+        db=shared_db,
+    )
+
+    # When AgentOS is created with run_hooks_in_background=False
+    agent_os = AgentOS(agents=[agent], run_hooks_in_background=False)
+    agent_os.get_app()
+
+    # The agent's _run_hooks_in_background should remain False
+    assert agent._run_hooks_in_background is False

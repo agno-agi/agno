@@ -83,7 +83,7 @@ from agno.utils.agent import (
     aget_session_state_util,
     aset_session_name_util,
     aupdate_session_state_util,
-    await_for_thread_tasks,
+    await_for_open_threads,
     await_for_thread_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
@@ -103,7 +103,7 @@ from agno.utils.agent import (
     store_media_util,
     update_session_state_util,
     validate_media_object_id,
-    wait_for_thread_tasks,
+    wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
@@ -131,7 +131,7 @@ from agno.utils.events import (
     create_tool_call_started_event,
     handle_event,
 )
-from agno.utils.hooks import filter_hook_args, normalize_hooks
+from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -273,8 +273,8 @@ class Agent:
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
-    # If True, run post_hooks as FastAPI background tasks (non-blocking)
-    run_hooks_in_background: bool = False
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: bool = False
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -478,7 +478,6 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
-        run_hooks_in_background: bool = False,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -599,8 +598,6 @@ class Agent:
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
-        # Requires AgentOS or any FastAPI app with background tasks
-        self.run_hooks_in_background = run_hooks_in_background
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
@@ -1111,7 +1108,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                wait_for_thread_tasks(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
+                wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
@@ -1140,7 +1137,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation and cultural knowledge creation
-            wait_for_thread_tasks(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
+            wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
@@ -2004,7 +2001,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                await await_for_thread_tasks(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
+                await await_for_open_threads(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
                 return await self._ahandle_agent_run_paused(
                     run_response=run_response, session=agent_session, user_id=user_id
                 )
@@ -2034,7 +2031,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 14. Wait for background memory creation
-            await await_for_thread_tasks(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
+            await await_for_open_threads(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
 
             # 15. Create session summary
             if self.session_summary_manager is not None:
@@ -4109,34 +4106,7 @@ class Agent:
         """Execute multiple pre-hook functions in succession."""
         if hooks is None:
             return
-
-        # Check if background_tasks is available and background mode is enabled
-        # Note: Pre-hooks running in background may not be able to modify run_input
-        if self.run_hooks_in_background and background_tasks is not None:
-            # Schedule pre_hooks as background tasks
-            for hook in hooks:
-                # Prepare arguments for this hook
-                all_args = {
-                    "run_input": run_input,
-                    "run_context": run_context,
-                    "agent": self,
-                    "session": session,
-                    "session_state": run_context.session_state,
-                    "dependencies": run_context.dependencies,
-                    "metadata": run_context.metadata,
-                    "user_id": user_id,
-                    "debug_mode": debug_mode or self.debug_mode,
-                }
-
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                # Add to background tasks
-                background_tasks.add_task(hook, **filtered_args)
-            return
-
-        # Execute pre_hooks normally (blocking)
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_input": run_input,
             "run_context": run_context,
@@ -4148,9 +4118,33 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -4208,34 +4202,7 @@ class Agent:
         """Execute multiple pre-hook functions in succession (async version)."""
         if hooks is None:
             return
-
-        # Check if background_tasks is available and background mode is enabled
-        # Note: Pre-hooks running in background may not be able to modify run_input
-        if self.run_hooks_in_background and background_tasks is not None:
-            # Schedule pre_hooks as background tasks
-            for hook in hooks:
-                # Prepare arguments for this hook
-                all_args = {
-                    "run_input": run_input,
-                    "agent": self,
-                    "session": session,
-                    "run_context": run_context,
-                    "session_state": run_context.session_state,
-                    "dependencies": run_context.dependencies,
-                    "metadata": run_context.metadata,
-                    "user_id": user_id,
-                    "debug_mode": debug_mode or self.debug_mode,
-                }
-
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                # Add to background tasks (both sync and async hooks supported)
-                background_tasks.add_task(hook, **filtered_args)
-            return
-
-        # Execute pre_hooks normally (blocking)
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_input": run_input,
             "agent": self,
@@ -4247,9 +4214,33 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -4310,33 +4301,8 @@ class Agent:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
-
-        # Check if background_tasks is available and background mode is enabled
-        if self.run_hooks_in_background and background_tasks is not None:
-            # Schedule post_hooks as background tasks
-            for hook in hooks:
-                # Prepare arguments for this hook
-                all_args = {
-                    "run_output": run_output,
-                    "agent": self,
-                    "session": session,
-                    "session_state": run_context.session_state,
-                    "dependencies": run_context.dependencies,
-                    "metadata": run_context.metadata,
-                    "user_id": user_id,
-                    "run_context": run_context,
-                    "debug_mode": debug_mode or self.debug_mode,
-                }
-
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                # Add to background tasks
-                background_tasks.add_task(hook, **filtered_args)
-            return
-
-        # Execute post_hooks normally (blocking)
-        # Prepare all possible arguments once
+        
+        # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
             "agent": self,
@@ -4348,9 +4314,31 @@ class Agent:
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background and background_tasks is not None:
+            # Schedule ALL post_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -4402,31 +4390,7 @@ class Agent:
         if hooks is None:
             return
 
-        # Check if background_tasks is available and background mode is enabled
-        if self.run_hooks_in_background and background_tasks is not None:
-            for hook in hooks:
-                # Prepare arguments for this hook
-                all_args = {
-                    "run_output": run_output,
-                    "agent": self,
-                    "session": session,
-                    "run_context": run_context,
-                    "session_state": run_context.session_state,
-                    "dependencies": run_context.dependencies,
-                    "metadata": run_context.metadata,
-                    "user_id": user_id,
-                    "debug_mode": debug_mode or self.debug_mode,
-                }
-
-                # Filter arguments to only include those that the hook accepts
-                filtered_args = filter_hook_args(hook, all_args)
-
-                # Add to background tasks (both sync and async hooks supported)
-                background_tasks.add_task(hook, **filtered_args)
-            return
-
-        # Execute post_hooks normally (blocking)
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
             "agent": self,
@@ -4438,9 +4402,29 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background and background_tasks is not None:
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,

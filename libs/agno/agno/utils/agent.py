@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 
-async def await_for_thread_tasks(
+async def await_for_open_threads(
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
 ) -> None:
@@ -41,7 +41,7 @@ async def await_for_thread_tasks(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-def wait_for_thread_tasks(
+def wait_for_open_threads(
     memory_future: Optional[Future] = None, cultural_knowledge_future: Optional[Future] = None
 ) -> None:
     if memory_future is not None:
