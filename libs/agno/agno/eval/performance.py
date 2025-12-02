@@ -8,7 +8,10 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
+from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.run.agent import RunInput, RunOutput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -177,7 +180,7 @@ class PerformanceResult:
 
 
 @dataclass
-class PerformanceEval:
+class PerformanceEval(BaseEval):
     """
     Evaluate the performance of a function by measuring run time and peak memory usage.
 
@@ -498,13 +501,16 @@ class PerformanceEval:
         from rich.live import Live
         from rich.status import Status
 
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         run_times = []
         memory_usages = []
         previous_snapshot = None
 
         self._set_log_level()
 
-        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
+        log_debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -594,7 +600,7 @@ class PerformanceEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
@@ -610,12 +616,10 @@ class PerformanceEval:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
-                ),
+                eval_run=EvalRunCreate(run_id=run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
             )
 
-        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun(
@@ -641,13 +645,16 @@ class PerformanceEval:
         from rich.live import Live
         from rich.status import Status
 
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         run_times = []
         memory_usages = []
         previous_snapshot = None
 
         self._set_log_level()
 
-        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
+        log_debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -737,7 +744,7 @@ class PerformanceEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
@@ -753,12 +760,10 @@ class PerformanceEval:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
-                ),
+                eval_run=EvalRunCreate(run_id=run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
             )
 
-        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
@@ -771,3 +776,34 @@ class PerformanceEval:
             "measure_memory": self.measure_memory,
             "measure_runtime": self.measure_runtime,
         }
+
+    # Hook methods for using PerformanceEval as a pre/post hook
+    def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        """Perform sync pre-evals check"""
+        pass
+
+    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        """Perform async pre-evals check"""
+        pass
+
+    def post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
+        """Perform sync post-evals check."""
+        # Set agent context for DB logging if available
+        if agent is not None and hasattr(agent, "id"):
+            self.agent_id = agent.id
+            if hasattr(agent, "model") and agent.model:
+                self.model_id = agent.model.id
+                self.model_provider = agent.model.provider
+
+        self.run(print_summary=self.print_summary, print_results=self.print_results)
+
+    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
+        """Perform async post-evals check."""
+        # Set agent context for DB logging if available
+        if agent is not None and hasattr(agent, "id"):
+            self.agent_id = agent.id
+            if hasattr(agent, "model") and agent.model:
+                self.model_id = agent.model.id
+                self.model_provider = agent.model.provider
+
+        await self.arun(print_summary=self.print_summary, print_results=self.print_results)

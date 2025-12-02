@@ -2011,9 +2011,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
+                self.pre_hooks = normalize_hooks(self.pre_hooks, hook_mode="pre")  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
+                self.post_hooks = normalize_hooks(self.post_hooks, hook_mode="post")  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -2910,9 +2910,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
+                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True, hook_mode="pre")  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
+                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True, hook_mode="post")  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)

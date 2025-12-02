@@ -10,8 +10,10 @@ if TYPE_CHECKING:
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
+from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
-from agno.run.team import TeamRunOutput
+from agno.run.agent import RunInput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.utils.log import logger
 
 
@@ -39,7 +41,7 @@ class ReliabilityResult:
 
 
 @dataclass
-class ReliabilityEval:
+class ReliabilityEval(BaseEval):
     """Evaluate the reliability of a model by checking the tool calls"""
 
     # Evaluation name
@@ -86,6 +88,9 @@ class ReliabilityEval:
         from rich.live import Live
         from rich.status import Status
 
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         # Add a spinner while running the evaluations
         console = Console()
         with Live(console=console, transient=True) as live_log:
@@ -118,7 +123,7 @@ class ReliabilityEval:
                     if not tool_name:
                         continue
                     else:
-                        if tool_name not in self.expected_tool_calls:  # type: ignore
+                        if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
                             failed_tool_calls.append(tool_call.get("function", {}).get("name"))
                         else:
                             passed_tool_calls.append(tool_call.get("function", {}).get("name"))
@@ -134,7 +139,7 @@ class ReliabilityEval:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
+                eval_id=run_id,
                 result=self.result,
             )
 
@@ -161,7 +166,7 @@ class ReliabilityEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
@@ -177,13 +182,13 @@ class ReliabilityEval:
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=run_id,
                     eval_type=EvalType.RELIABILITY,
                     data=self._get_telemetry_data(),
                 ),
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
@@ -198,6 +203,9 @@ class ReliabilityEval:
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
+
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -223,15 +231,18 @@ class ReliabilityEval:
 
             failed_tool_calls = []
             passed_tool_calls = []
-            for tool_call in actual_tool_calls:  # type: ignore
-                tool_name = tool_call.get("function", {}).get("name")
-                if not tool_name:
-                    continue
-                else:
-                    if tool_name not in self.expected_tool_calls:  # type: ignore
-                        failed_tool_calls.append(tool_call.get("function", {}).get("name"))
+            if not actual_tool_calls:
+                failed_tool_calls = self.expected_tool_calls or []
+            else:
+                for tool_call in actual_tool_calls:  # type: ignore
+                    tool_name = tool_call.get("function", {}).get("name")
+                    if not tool_name:
+                        continue
                     else:
-                        passed_tool_calls.append(tool_call.get("function", {}).get("name"))
+                        if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
+                            failed_tool_calls.append(tool_call.get("function", {}).get("name"))
+                        else:
+                            passed_tool_calls.append(tool_call.get("function", {}).get("name"))
 
             self.result = ReliabilityResult(
                 eval_status="PASSED" if len(failed_tool_calls) == 0 else "FAILED",
@@ -244,7 +255,7 @@ class ReliabilityEval:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
+                eval_id=run_id,
                 result=self.result,
             )
 
@@ -271,7 +282,7 @@ class ReliabilityEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
@@ -287,13 +298,13 @@ class ReliabilityEval:
 
             await async_create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=run_id,
                     eval_type=EvalType.RELIABILITY,
                     data=self._get_telemetry_data(),
                 ),
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
@@ -304,3 +315,34 @@ class ReliabilityEval:
             "model_id": self.agent_response.model if self.agent_response else None,
             "model_provider": self.agent_response.model_provider if self.agent_response else None,
         }
+
+    # Hook methods for using ReliabilityEval as a pre/post hook
+    def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        """Perform sync pre-evals check"""
+        pass
+
+    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        """Perform async pre-evals check"""
+        pass
+
+    def post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
+        """Perform sync post-evals check."""
+        if isinstance(run_output, RunOutput):
+            self.agent_response = run_output
+            self.team_response = None
+        elif isinstance(run_output, TeamRunOutput):
+            self.team_response = run_output
+            self.agent_response = None
+
+        self.run(print_results=self.print_results)
+
+    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
+        """Perform async post-evals check."""
+        if isinstance(run_output, RunOutput):
+            self.agent_response = run_output
+            self.team_response = None
+        elif isinstance(run_output, TeamRunOutput):
+            self.team_response = run_output
+            self.agent_response = None
+
+        await self.arun(print_results=self.print_results)

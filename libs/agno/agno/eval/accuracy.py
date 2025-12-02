@@ -9,9 +9,12 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
+from agno.eval.base import BaseEval
 from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
+from agno.run.agent import RunInput, RunOutput
+from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team.team import Team
 from agno.utils.log import log_error, logger, set_log_level_to_debug, set_log_level_to_info
 
@@ -137,7 +140,7 @@ class AccuracyResult:
 
 
 @dataclass
-class AccuracyEval:
+class AccuracyEval(BaseEval):
     """Interface to evaluate the accuracy of an Agent or Team, given a prompt and expected answer"""
 
     # Input to evaluate
@@ -612,11 +615,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
         self.result = AccuracyResult()
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         evaluator_agent = self.get_evaluator_agent()
         eval_input = self.get_eval_input()
@@ -659,7 +665,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 store_result_in_file(
                     file_path=self.file_path_to_save_results,
                     name=self.name,
-                    eval_id=self.eval_id,
+                    eval_id=run_id,
                     result=self.result,
                 )
         # Log results to the Agno DB if requested
@@ -697,7 +703,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
                 log_eval_run(
                     db=self.db,
-                    run_id=self.eval_id,  # type: ignore
+                    run_id=run_id,  # type: ignore
                     run_data=asdict(self.result),
                     eval_type=EvalType.ACCURACY,
                     name=self.name if self.name is not None else None,
@@ -715,13 +721,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=run_id,
                     eval_type=EvalType.ACCURACY,
                     data=self._get_telemetry_data(),
                 ),
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun_with_output(
@@ -732,11 +738,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
         self.result = AccuracyResult()
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         evaluator_agent = self.get_evaluator_agent()
         eval_input = self.get_eval_input()
@@ -779,7 +788,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 store_result_in_file(
                     file_path=self.file_path_to_save_results,
                     name=self.name,
-                    eval_id=self.eval_id,
+                    eval_id=run_id,
                     result=self.result,
                 )
         # Log results to the Agno DB if requested
@@ -807,7 +816,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
                 name=self.name if self.name is not None else None,
@@ -820,7 +829,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 eval_input=log_eval_input,
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
@@ -832,3 +841,32 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             "model_provider": self.agent.model.provider if self.agent and self.agent.model else None,
             "num_iterations": self.num_iterations,
         }
+
+    # Hook methods for using AccuracyEval as a pre/post hook
+    def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        """Perform sync pre-evals check"""
+        pass
+
+    async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
+        """Perform async pre-evals check"""
+        pass
+
+    def post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
+        """Perform sync post-evals check."""
+        output = run_output.content if run_output.content else ""
+
+        # Set agent context for DB logging if available
+        if agent is not None and hasattr(agent, "id"):
+            self.agent = agent
+
+        self.run_with_output(output=output, print_results=self.print_results, print_summary=self.print_summary)
+
+    async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput], agent=None, **kwargs) -> None:
+        """Perform async post-evals check."""
+        output = run_output.content if run_output.content else ""
+
+        # Set agent context for DB logging if available
+        if agent is not None and hasattr(agent, "id"):
+            self.agent = agent
+
+        await self.arun_with_output(output=output, print_results=self.print_results, print_summary=self.print_summary)
