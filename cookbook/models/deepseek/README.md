@@ -49,3 +49,10 @@ python cookbook/models/deepseek/tool_use.py
 python cookbook/models/deepseek/structured_output.py
 ```
 
+### 7. Run Agent with Thinking Mode + Tools
+
+```shell
+python cookbook/models/deepseek/thinking_with_tools.py
+```
+
+

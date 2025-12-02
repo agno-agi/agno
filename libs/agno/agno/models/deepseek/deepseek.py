@@ -1,9 +1,19 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
+from agno.models.response import ModelResponse
+from agno.utils.log import log_debug
+
+try:
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
+except (ImportError, ModuleNotFoundError):
+    pass  # Will be handled by parent class
 
 
 @dataclass
@@ -59,3 +69,46 @@ class DeepSeek(OpenAILike):
         if self.client_params:
             client_params.update(self.client_params)
         return client_params
+
+    def _parse_provider_response(
+        self,
+        response: "ChatCompletion",
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
+        model_response = super()._parse_provider_response(response, response_format)
+
+        # Store reasoning_content in provider_data for thinking mode with tool calls
+        if model_response.reasoning_content is not None:
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["reasoning_content"] = model_response.reasoning_content
+            log_debug(f"Stored reasoning_content in provider_data ({len(model_response.reasoning_content)} chars)")
+
+        return model_response
+
+    def _parse_provider_response_delta(self, response_delta: "ChatCompletionChunk") -> ModelResponse:
+        model_response = super()._parse_provider_response_delta(response_delta)
+
+        # Store reasoning_content in provider_data for thinking mode with tool calls
+        if model_response.reasoning_content is not None:
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["reasoning_content"] = model_response.reasoning_content
+            log_debug(f"Stored reasoning_content in provider_data ({len(model_response.reasoning_content)} chars)")
+
+        return model_response
+
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
+        message_dict = super()._format_message(message, compress_tool_results)
+
+        # Include reasoning_content from provider_data for thinking mode with tool calls
+        if (
+            message.role == "assistant"
+            and message.provider_data is not None
+            and message.provider_data.get("reasoning_content") is not None
+        ):
+            reasoning_content = message.provider_data["reasoning_content"]
+            message_dict["reasoning_content"] = reasoning_content
+            log_debug(f"Including reasoning_content in message ({len(reasoning_content)} chars)")
+
+        return message_dict
