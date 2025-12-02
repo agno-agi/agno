@@ -102,9 +102,8 @@ class AwsBedrock(Model):
             self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
         else:
             if not self.aws_access_key_id or not self.aws_secret_access_key:
-                raise AgnoError(
-                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                    status_code=400,
+                log_error(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
             self.client = AwsClient(

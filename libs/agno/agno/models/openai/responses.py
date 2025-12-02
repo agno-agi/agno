@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
@@ -839,7 +839,7 @@ class OpenAIResponses(Model):
         model_response = ModelResponse()
 
         if response.error:
-            raise ModelProviderError(
+            raise ModelAuthenticationError(
                 message=response.error.message,
                 model_name=self.name,
                 model_id=self.id,

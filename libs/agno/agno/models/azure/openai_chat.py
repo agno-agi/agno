@@ -4,9 +4,10 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_warning
+from agno.utils.log import log_error, log_warning
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
@@ -63,6 +64,18 @@ class AzureOpenAI(OpenAILike):
         self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
+
+        if not self.api_key:
+            raise ModelAuthenticationError(
+                message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
+                model_name=self.name,
+            )
+        if not self.azure_endpoint:
+            raise ModelAuthenticationError(
+                message="AZURE_OPENAI_ENDPOINT not set. Please set the AZURE_OPENAI_ENDPOINT environment variable.",
+                model_name=self.name,
+            )
+
         params_mapping = {
             "api_key": self.api_key,
             "api_version": self.api_version,
