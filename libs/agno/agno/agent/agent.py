@@ -980,87 +980,87 @@ class Agent:
         12. Create session summary
         13. Cleanup and store the run response and session
         """
+        try:
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
+            # 1. Execute pre-hooks
+            run_input = cast(RunInput, run_response.input)
+            self.model = cast(Model, self.model)
+            if self.pre_hooks is not None:
+                # Can modify the run input
+                pre_hook_iterator = self._execute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_input=run_input,
+                    run_context=run_context,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+                # Consume the generator without yielding
+                deque(pre_hook_iterator, maxlen=0)
 
-        # 1. Execute pre-hooks
-        run_input = cast(RunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            # Can modify the run input
-            pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
+            # 2. Determine tools for model
+            processed_tools = self.get_tools(
                 run_response=run_response,
-                run_input=run_input,
                 run_context=run_context,
                 session=session,
                 user_id=user_id,
-                debug_mode=debug_mode,
+            )
+            _tools = self._determine_tools_for_model(
+                model=self.model,
+                processed_tools=processed_tools,
+                run_response=run_response,
+                session=session,
+                run_context=run_context,
+            )
+
+            # 3. Prepare run messages
+            run_messages: RunMessages = self._get_run_messages(
+                run_response=run_response,
+                run_context=run_context,
+                input=run_input.input_content,
+                session=session,
+                user_id=user_id,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
                 **kwargs,
             )
-            # Consume the generator without yielding
-            deque(pre_hook_iterator, maxlen=0)
+            if len(run_messages.messages) == 0:
+                log_error("No messages to be sent to the model.")
 
-        # 2. Determine tools for model
-        processed_tools = self.get_tools(
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-        )
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            processed_tools=processed_tools,
-            run_response=run_response,
-            session=session,
-            run_context=run_context,
-        )
+            log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # 3. Prepare run messages
-        run_messages: RunMessages = self._get_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            input=run_input.input_content,
-            session=session,
-            user_id=user_id,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
+            # Start memory creation on a separate thread (runs concurrently with the main execution loop)
+            memory_future = None
+            # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background thread.")
+                memory_future = self.background_executor.submit(
+                    self._make_memories, run_messages=run_messages, user_id=user_id
+                )
 
-        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+            # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
+            cultural_knowledge_future = None
+            if (
+                run_messages.user_message is not None
+                and self.culture_manager is not None
+                and self.update_cultural_knowledge
+            ):
+                log_debug("Starting cultural knowledge creation in background thread.")
+                cultural_knowledge_future = self.background_executor.submit(
+                    self._make_cultural_knowledge, run_messages=run_messages
+                )
 
-        # Start memory creation on a separate thread (runs concurrently with the main execution loop)
-        memory_future = None
-        # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background thread.")
-            memory_future = self.background_executor.submit(
-                self._make_memories, run_messages=run_messages, user_id=user_id
-            )
 
-        # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
-        cultural_knowledge_future = None
-        if (
-            run_messages.user_message is not None
-            and self.culture_manager is not None
-            and self.update_cultural_knowledge
-        ):
-            log_debug("Starting cultural knowledge creation in background thread.")
-            cultural_knowledge_future = self.background_executor.submit(
-                self._make_cultural_knowledge, run_messages=run_messages
-            )
-
-        try:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 5. Reason about the task
@@ -1213,8 +1213,8 @@ class Agent:
         10. Cleanup and store the run response and session
         """
 
-        # Register run for cancellation tracking
         try:
+        # Register run for cancellation tracking
             register_run(run_response.run_id)  # type: ignore
             # 1. Execute pre-hooks
             run_input = cast(RunInput, run_response.input)
@@ -2121,6 +2121,8 @@ class Agent:
 
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
+
+        return run_response
 
     async def _arun_stream(
         self,
