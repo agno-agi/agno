@@ -2822,7 +2822,7 @@ class Agent:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         **kwargs,
-    ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
         Args:
