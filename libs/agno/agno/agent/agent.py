@@ -1398,7 +1398,7 @@ class Agent:
 
             # 7. Parse response with parser model if provided
             yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                session=session, run_response=run_response, run_messages=run_messages, stream_events=stream_events, run_context=run_context
             )
 
             # We should break out of the run function
@@ -2342,7 +2342,7 @@ class Agent:
 
             # 10. Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                session=agent_session, run_response=run_response, run_messages=run_messages, stream_events=stream_events, run_context=run_context
             ):
                 yield event
 
@@ -3316,7 +3316,7 @@ class Agent:
 
             # Parse response with parser model if provided
             yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events
+                session=session, run_response=run_response, run_messages=run_messages, stream_events=stream_events
             )
 
             # Yield RunContentCompletedEvent
@@ -4087,7 +4087,7 @@ class Agent:
 
             # Parse response with parser model if provided
             async for event in self._aparse_response_with_parser_model_stream(
-                session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                session=agent_session, run_response=run_response, run_messages=run_messages, stream_events=stream_events, run_context=run_context
             ):
                 yield event
 
@@ -5106,6 +5106,7 @@ class Agent:
         # Update the RunOutput metrics
         output_model_messages = getattr(run_messages, 'output_model_messages', None)
         reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        parser_model_messages = getattr(run_messages, 'parser_model_messages', None)
         # Also check run_response.reasoning_messages if reasoning_model_messages is not set
         if reasoning_model_messages is None and run_response.reasoning_messages:
             reasoning_model_messages = run_response.reasoning_messages
@@ -5113,6 +5114,7 @@ class Agent:
             model_messages=messages_for_run_response,
             output_model_messages=output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
+            parser_model_messages=parser_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -5283,6 +5285,7 @@ class Agent:
         # Update the RunOutput metrics
         output_model_messages = getattr(run_messages, 'output_model_messages', None)
         reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        parser_model_messages = getattr(run_messages, 'parser_model_messages', None)
         # Also check run_response.reasoning_messages if reasoning_model_messages is not set
         if reasoning_model_messages is None and run_response.reasoning_messages:
             reasoning_model_messages = run_response.reasoning_messages
@@ -5290,6 +5293,7 @@ class Agent:
             model_messages=messages_for_run_response,
             output_model_messages=output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
+            parser_model_messages=parser_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -5380,6 +5384,7 @@ class Agent:
         # Update the RunOutput metrics
         output_model_messages = getattr(run_messages, 'output_model_messages', None)
         reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        parser_model_messages = getattr(run_messages, 'parser_model_messages', None)
         # Also check run_response.reasoning_messages if reasoning_model_messages is not set
         if reasoning_model_messages is None and run_response.reasoning_messages:
             reasoning_model_messages = run_response.reasoning_messages
@@ -5387,6 +5392,7 @@ class Agent:
             model_messages=messages_for_run_response,
             output_model_messages=output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
+            parser_model_messages=parser_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -8830,21 +8836,24 @@ class Agent:
 
     def _get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
         """Get the messages for the output model."""
+        # Create a copy to avoid mutating the original list
+        messages_copy = messages.copy()
 
         if self.output_model_prompt is not None:
             system_message_exists = False
-            for message in messages:
+            for message in messages_copy:
                 if message.role == "system":
                     system_message_exists = True
                     message.content = self.output_model_prompt
                     break
             if not system_message_exists:
-                messages.insert(0, Message(role="system", content=self.output_model_prompt))
+                messages_copy.insert(0, Message(role="system", content=self.output_model_prompt))
 
         # Remove the last assistant message from the messages list
-        messages.pop(-1)
+        if messages_copy:
+            messages_copy.pop(-1)
 
-        return messages
+        return messages_copy
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -9195,6 +9204,7 @@ class Agent:
         model_messages: Optional[List[Message]] = None,
         output_model_messages: Optional[List[Message]] = None,
         reasoning_model_messages: Optional[List[Message]] = None,
+        parser_model_messages: Optional[List[Message]] = None,
         messages: Optional[List[Message]] = None,  # For backward compatibility
         current_run_metrics: Optional[Metrics] = None,
     ) -> Metrics:
@@ -9204,6 +9214,7 @@ class Agent:
             model_messages: Messages from the main model (assistant messages)
             output_model_messages: Messages from the output_model (assistant messages)
             reasoning_model_messages: Messages from the reasoning_model (assistant messages)
+            parser_model_messages: Messages from the parser_model (assistant messages)
             messages: Legacy parameter - if provided, treated as model_messages
             current_run_metrics: Existing metrics to update (preserves timing)
         """
@@ -9317,6 +9328,40 @@ class Agent:
                     time_to_first_token=first_time_to_first_token,
                 )
                 details["reasoning_model"] = [model_metrics]
+        
+        # Track parser_model metrics
+        if parser_model_messages and self.parser_model is not None:
+            parser_assistant_role = self.parser_model.assistant_message_role
+            parser_model_assistant_messages = [
+                m for m in parser_model_messages
+                if m.role == parser_assistant_role and m.metrics is not None
+            ]
+            
+            if parser_model_assistant_messages:
+                # Aggregate metrics from all parser_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in parser_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = self.parser_model.id
+                model_provider = self.parser_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["parser_model"] = [model_metrics]
         
         # Set details if we have any model metrics
         if details:
@@ -9569,6 +9614,8 @@ class Agent:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(reasoning_message)
+                # Track reasoning_model messages separately for metrics
+                run_messages.reasoning_model_messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 update_run_output_with_reasoning(
                     run_response=run_response,
@@ -9862,6 +9909,8 @@ class Agent:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(reasoning_message)
+                # Track reasoning_model messages separately for metrics
+                run_messages.reasoning_model_messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 update_run_output_with_reasoning(
                     run_response=run_response,
@@ -10036,6 +10085,8 @@ class Agent:
 
         if parser_model_response_message is not None:
             run_messages.messages.append(parser_model_response_message)
+            # Track parser_model messages separately for metrics
+            run_messages.parser_model_messages.append(parser_model_response_message)
             model_response.parsed = parser_model_response.parsed
             model_response.content = parser_model_response.content
         else:
@@ -10101,6 +10152,7 @@ class Agent:
         self,
         session: AgentSession,
         run_response: RunOutput,
+        run_messages: RunMessages,
         stream_events: bool = True,
         run_context: Optional[RunContext] = None,
     ):
@@ -10146,6 +10198,8 @@ class Agent:
                 if parser_model_response_message is not None:
                     if run_response.messages is not None:
                         run_response.messages.append(parser_model_response_message)
+                    # Track parser_model messages separately for metrics
+                    run_messages.parser_model_messages.append(parser_model_response_message)
                 else:
                     log_warning("Unable to parse response with parser model")
 
@@ -10164,6 +10218,7 @@ class Agent:
         self,
         session: AgentSession,
         run_response: RunOutput,
+        run_messages: RunMessages,
         stream_events: bool = True,
         run_context: Optional[RunContext] = None,
     ):
@@ -10211,6 +10266,8 @@ class Agent:
                 if parser_model_response_message is not None:
                     if run_response.messages is not None:
                         run_response.messages.append(parser_model_response_message)
+                    # Track parser_model messages separately for metrics
+                    run_messages.parser_model_messages.append(parser_model_response_message)
                 else:
                     log_warning("Unable to parse response with parser model")
 
@@ -10303,6 +10360,7 @@ class Agent:
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics - pass model-specific messages
         reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        parser_model_messages = getattr(run_messages, 'parser_model_messages', None)
         # Also check run_response.reasoning_messages if reasoning_model_messages is not set
         if reasoning_model_messages is None and run_response.reasoning_messages:
             reasoning_model_messages = run_response.reasoning_messages
@@ -10310,6 +10368,7 @@ class Agent:
             model_messages=messages_for_run_response,
             output_model_messages=run_messages.output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
+            parser_model_messages=parser_model_messages,
             current_run_metrics=run_response.metrics
         )
 
@@ -10319,8 +10378,17 @@ class Agent:
             return
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+        initial_output_model_messages_count = len(messages_for_output_model)
         output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
         model_response.content = output_model_response.content
+        
+        # Extract output_model assistant messages
+        output_model_assistant_role = self.output_model.assistant_message_role if self.output_model else "assistant"
+        output_model_messages = [
+            m for m in messages_for_output_model[initial_output_model_messages_count:]
+            if m.role == output_model_assistant_role and m.metrics is not None
+        ]
+        run_messages.output_model_messages.extend(output_model_messages)
 
     async def _agenerate_response_with_output_model_stream(
         self,
@@ -10386,6 +10454,7 @@ class Agent:
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics - pass model-specific messages
         reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        parser_model_messages = getattr(run_messages, 'parser_model_messages', None)
         # Also check run_response.reasoning_messages if reasoning_model_messages is not set
         if reasoning_model_messages is None and run_response.reasoning_messages:
             reasoning_model_messages = run_response.reasoning_messages
@@ -10393,6 +10462,7 @@ class Agent:
             model_messages=messages_for_run_response,
             output_model_messages=run_messages.output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
+            parser_model_messages=parser_model_messages,
             current_run_metrics=run_response.metrics
         )
 

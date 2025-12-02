@@ -51,9 +51,21 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
         else:
             reasoning_content = content
 
-    return Message(
+    # Extract metrics from reasoning agent's assistant messages
+    reasoning_metrics = None
+    if reasoning_agent_response.messages is not None:
+        for msg in reversed(reasoning_agent_response.messages):
+            if msg.role == "assistant" and msg.metrics is not None:
+                reasoning_metrics = msg.metrics
+                break
+
+    reasoning_message = Message(
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
     )
+    if reasoning_metrics is not None:
+        reasoning_message.metrics = reasoning_metrics
+    
+    return reasoning_message
 
 
 async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
@@ -81,6 +93,18 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
         else:
             reasoning_content = content
 
-    return Message(
+    # Extract metrics from reasoning agent's assistant messages
+    reasoning_metrics = None
+    if reasoning_agent_response.messages is not None:
+        for msg in reversed(reasoning_agent_response.messages):
+            if msg.role == "assistant" and msg.metrics is not None:
+                reasoning_metrics = msg.metrics
+                break
+
+    reasoning_message = Message(
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
     )
+    if reasoning_metrics is not None:
+        reasoning_message.metrics = reasoning_metrics
+    
+    return reasoning_message
