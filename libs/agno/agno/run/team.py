@@ -10,8 +10,9 @@ from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, RunRequirement, run_output_event_from_dict
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
     reconstruct_audio_list,

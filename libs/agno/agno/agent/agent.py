@@ -58,7 +58,6 @@ from agno.run.agent import (
     RunInput,
     RunOutput,
     RunOutputEvent,
-    RunRequirement,
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
@@ -69,6 +68,7 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -2828,7 +2828,6 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. This or requirements is required with `run_id`.
             requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
@@ -2841,6 +2840,7 @@ class Agent:
             metadata: The metadata to use for the run.
             debug_mode: Whether to enable debug mode.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -2934,11 +2934,9 @@ class Agent:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
         elif run_id is not None:
-            # The run is continued from a run_id, one of updated_tools or requirements is required.
+            # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
             if updated_tools is None and requirements is None:
-                raise ValueError(
-                    "To continue a run from a given run_id, either updated_tools or requirements must be provided."
-                )
+                raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -2949,12 +2947,17 @@ class Agent:
 
             # If we have updated_tools, set them in the run_response
             if updated_tools is not None:
+                warnings.warn(
+                    "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
                 run_response.tools = updated_tools
 
             # If we have requirements, get the updated tools and set them in the run_response
             elif requirements is not None:
                 run_response.requirements = requirements
-                updated_tools = [req.tool for req in requirements if req.tool is not None]
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                 if updated_tools and run_response.tools:
                     updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
                     run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
@@ -3423,7 +3426,7 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. This or requirements is required with `run_id`.
+
             requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
@@ -3437,12 +3440,20 @@ class Agent:
             debug_mode: Whether to enable debug mode.
             yield_run_output: Whether to yield the run response.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
+
+        if updated_tools is not None:
+            warnings.warn(
+                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         session_id, user_id = self._initialize_session(
             session_id=session_id,
@@ -3656,7 +3667,7 @@ class Agent:
             # If we have requirements, get the updated tools and set them in the run_response
             elif requirements is not None:
                 run_response.requirements = requirements
-                updated_tools = [req.tool for req in requirements if req.tool is not None]
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                 if updated_tools and run_response.tools:
                     updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
                     run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
@@ -3880,7 +3891,7 @@ class Agent:
             # If we have requirements, get the updated tools and set them in the run_response
             elif requirements is not None:
                 run_response.requirements = requirements
-                updated_tools = [req.tool for req in requirements if req.tool is not None]
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                 if updated_tools and run_response.tools:
                     updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
                     run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]

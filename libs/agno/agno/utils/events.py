@@ -29,13 +29,13 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
     RunPausedEvent,
-    RunRequirement,
     RunStartedEvent,
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.requirement import RunRequirement
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent

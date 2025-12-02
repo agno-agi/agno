@@ -78,7 +78,7 @@ def test_run_requirement_confirm_method(shared_db):
 
     # Verify the requirement was confirmed and the tool was updated
     assert requirement.confirmation is True
-    assert requirement.tool.confirmed is True
+    assert requirement.tool_execution and requirement.tool_execution.confirmed is True
     assert requirement.is_resolved() is True
 
 
@@ -109,7 +109,7 @@ def test_run_requirement_reject_method(shared_db):
 
     # Verify the requirement was rejected and the tool was updated
     assert requirement.confirmation is False
-    assert requirement.tool.confirmed is False
+    assert requirement.tool_execution and requirement.tool_execution.confirmed is False
     assert requirement.is_resolved() is True
 
 
@@ -164,32 +164,6 @@ def test_run_requirement_reject_raises_error_when_not_needed(shared_db):
     # Calling reject() should raise ValueError
     with pytest.raises(ValueError, match="This requirement does not require confirmation"):
         requirement.reject()
-
-
-def test_run_requirement_answer_raises_error_when_not_needed(shared_db):
-    """Test that calling answer() on a requirement that doesn't need user input raises ValueError"""
-
-    @tool(requires_confirmation=True)
-    def get_the_weather(city: str):
-        return f"It is currently 70 degrees and cloudy in {city}"
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[get_the_weather],
-        db=shared_db,
-        telemetry=False,
-    )
-
-    response = agent.run("What is the weather in Tokyo?")
-    assert response.is_paused
-    assert len(response.active_requirements) == 1
-
-    requirement = response.active_requirements[0]
-    assert requirement.needs_user_input is False
-
-    # Calling answer() should raise ValueError
-    with pytest.raises(ValueError, match="This requirement does not require user input"):
-        requirement.answer("some answer")
 
 
 @pytest.mark.asyncio

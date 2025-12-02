@@ -22,15 +22,18 @@ def test_tool_call_requires_user_input():
     response = agent.run("What is the weather in Tokyo?")
 
     assert response.is_paused
+    assert response.tools is not None
     assert response.tools[0].requires_user_input
     assert response.tools[0].tool_name == "get_the_weather"
     assert response.tools[0].tool_args == {"city": "Tokyo"}
+    assert response.tools[0].user_input_schema is not None
 
     # Provide user input
     response.tools[0].user_input_schema[0].value = "Tokyo"
 
     response = agent.continue_run(response)
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -47,11 +50,12 @@ def test_tool_call_requires_user_input_specific_fields():
     )
 
     response = agent.run("What is the weather in Tokyo?")
-
+    assert response.tools is not None
     assert response.is_paused
     assert response.tools[0].requires_user_input
     assert response.tools[0].tool_name == "get_the_weather"
     assert response.tools[0].tool_args == {"city": "Tokyo"}
+    assert response.tools[0].user_input_schema is not None
 
     # Provide user input
     assert response.tools[0].user_input_schema[0].name == "city"
@@ -62,6 +66,7 @@ def test_tool_call_requires_user_input_specific_fields():
 
     response = agent.continue_run(response)
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -81,13 +86,16 @@ def test_tool_call_requires_user_input_stream(shared_db):
     found_user_input = False
     for response in agent.run("What is the weather in Tokyo?", stream=True):
         if response.is_paused:
+            assert response.tools is not None
             assert response.tools[0].requires_user_input
             assert response.tools[0].tool_name == "get_the_weather"
             assert response.tools[0].tool_args == {"city": "Tokyo"}
+            assert response.tools[0].user_input_schema is not None
 
             # Provide user input
             response.tools[0].user_input_schema[0].value = "Tokyo"
             found_user_input = True
+
     assert found_user_input, "No tools were found to require user input"
 
     found_user_input = False
@@ -98,7 +106,6 @@ def test_tool_call_requires_user_input_stream(shared_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Async makes this test flaky")
 async def test_tool_call_requires_user_input_async(shared_db):
     @tool(requires_user_input=True)
     async def get_the_weather(city: str):
@@ -115,6 +122,7 @@ async def test_tool_call_requires_user_input_async(shared_db):
     response = await agent.arun("What is the weather in Tokyo?")
 
     assert response.is_paused
+    assert response.tools is not None
     assert response.tools[0].requires_user_input
     assert response.tools[0].tool_name == "get_the_weather"
     assert response.tools[0].tool_args == {"city": "Tokyo"}
@@ -122,11 +130,13 @@ async def test_tool_call_requires_user_input_async(shared_db):
     # Provide user input
     for tool_response in response.tools:
         if tool_response.requires_user_input:
+            assert tool_response.user_input_schema is not None
             tool_response.user_input_schema[0].value = "Tokyo"
 
     response = await agent.acontinue_run(response)
     await asyncio.sleep(1)
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -147,9 +157,11 @@ async def test_tool_call_requires_user_input_stream_async(shared_db):
     found_user_input = False
     async for response in agent.arun("What is the weather in Tokyo?", stream=True):
         if response.is_paused:
+            assert response.tools is not None
             assert response.tools[0].requires_user_input
             assert response.tools[0].tool_name == "get_the_weather"
             assert response.tools[0].tool_args == {"city": "Tokyo"}
+            assert response.tools[0].user_input_schema is not None
 
             # Provide user input
             response.tools[0].user_input_schema[0].value = "Tokyo"
@@ -180,11 +192,13 @@ def test_tool_call_requires_user_input_continue_with_run_id(shared_db):
     response = agent.run("What is the weather in Tokyo?", session_id=session_id)
 
     assert response.is_paused
+    assert response.tools is not None
     assert response.tools[0].requires_user_input
     assert response.tools[0].tool_name == "get_the_weather"
     assert response.tools[0].tool_args == {"city": "Tokyo"}
 
     # Provide user input
+    assert response.tools[0].user_input_schema is not None
     response.tools[0].user_input_schema[0].value = "Tokyo"
 
     # Create a completely new agent instance
@@ -197,6 +211,7 @@ def test_tool_call_requires_user_input_continue_with_run_id(shared_db):
 
     response = agent.continue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -219,11 +234,13 @@ def test_tool_call_multiple_requires_user_input():
 
     assert response.is_paused
     tool_found = False
+    assert response.tools is not None
     for _t in response.tools:
         if _t.requires_user_input:
             tool_found = True
             assert _t.tool_name == "get_the_weather"
             assert _t.tool_args == {"city": "Tokyo"}
+            assert _t.user_input_schema is not None
             _t.user_input_schema[0].value = "Tokyo"
 
     assert tool_found, "No tool was found to require user input"
@@ -258,7 +275,7 @@ def test_run_requirement_user_input(shared_db):
     # Get the requirement and verify it needs user input
     requirement = response.active_requirements[0]
     assert requirement.needs_user_input
-    assert requirement.tool.tool_name == "get_the_weather"
+    assert requirement.tool_execution and requirement.tool_execution.tool_name == "get_the_weather"
 
     input_schema = requirement.user_input_schema
     assert input_schema is not None
@@ -276,6 +293,7 @@ def test_run_requirement_user_input(shared_db):
 
     # Verify the run completed successfully
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -322,6 +340,7 @@ def test_run_requirement_user_input_multiple_fields(shared_db):
 
     # Verify completion
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
@@ -365,6 +384,7 @@ async def test_async_user_input(shared_db):
 
     # Verify completion
     assert response.is_paused is False
+    assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 

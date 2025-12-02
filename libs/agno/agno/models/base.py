@@ -29,7 +29,8 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent, RunRequirement
+from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent

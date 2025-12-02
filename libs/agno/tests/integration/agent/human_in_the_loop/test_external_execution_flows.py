@@ -197,17 +197,11 @@ def test_tool_call_multiple_requires_external_execution(shared_db):
     assert response.content
 
 
-# ============================================================================
-# New DX Tests using active_requirements and requirement.set_external_execution_result()
-# ============================================================================
-
-
 def test_run_requirement_external_execution(shared_db):
-    """Test the new DX for external execution using active_requirements"""
+    """Test a HITL external execution flow using RunRequirements"""
 
     @tool(external_execution=True)
     def send_email(to: str, subject: str, body: str):
-        # This function body won't be executed by the agent
         pass
 
     session_id = "test_session_external_execution"
@@ -231,22 +225,24 @@ def test_run_requirement_external_execution(shared_db):
     # Get the requirement and verify it needs external execution
     requirement = response.active_requirements[0]
     assert requirement.needs_external_execution
-    assert requirement.tool.tool_name == "send_email"
-    assert requirement.tool.tool_args == {"to": "john@doe.com", "subject": "Test", "body": "Hello, how are you?"}
+    assert requirement.tool_execution and requirement.tool_execution.tool_name == "send_email"
+    assert requirement.tool_execution and requirement.tool_execution.tool_args == {
+        "to": "john@doe.com",
+        "subject": "Test",
+        "body": "Hello, how are you?",
+    }
 
     # Use the new DX to set external execution result
-    tool_args = requirement.tool.tool_args
+    tool_args = requirement.tool_execution and requirement.tool_execution.tool_args
     assert tool_args is not None
     result = f"Email sent to {tool_args['to']} with subject {tool_args['subject']}"
     requirement.set_external_execution_result(result)
 
     # Verify the result was set
-    assert requirement.tool.result == result
+    assert requirement.tool_execution and requirement.tool_execution.result == result
 
     # Continue the run with run_id and requirements
-    response = agent.continue_run(
-        run_id=response.run_id, requirements=response.requirements, session_id=session_id
-    )
+    response = agent.continue_run(run_id=response.run_id, requirements=response.requirements, session_id=session_id)
 
     # Verify the run completed successfully
     assert response.is_paused is False
@@ -255,7 +251,7 @@ def test_run_requirement_external_execution(shared_db):
 
 
 def test_run_requirement_external_execution_with_entrypoint(shared_db):
-    """Test external execution by calling the tool entrypoint directly"""
+    """Test a HITL external execution flow by calling the tool entrypoint directly"""
 
     @tool(external_execution=True)
     def execute_shell_command(command: str) -> str:
@@ -283,19 +279,17 @@ def test_run_requirement_external_execution_with_entrypoint(shared_db):
     # Get the requirement
     requirement = response.active_requirements[0]
     assert requirement.needs_external_execution
-    assert requirement.tool.tool_name == "execute_shell_command"
+    assert requirement.tool_execution and requirement.tool_execution.tool_name == "execute_shell_command"
 
     # Execute the tool externally using the entrypoint
-    tool_args = requirement.tool.tool_args
+    tool_args = requirement.tool_execution and requirement.tool_execution.tool_args
     assert tool_args is not None
     assert execute_shell_command.entrypoint is not None
     result = execute_shell_command.entrypoint(**tool_args)  # type: ignore
     requirement.set_external_execution_result(result)
 
     # Continue the run
-    response = agent.continue_run(
-        run_id=response.run_id, requirements=response.requirements, session_id=session_id
-    )
+    response = agent.continue_run(run_id=response.run_id, requirements=response.requirements, session_id=session_id)
 
     # Verify completion
     assert response.is_paused is False
@@ -306,7 +300,7 @@ def test_run_requirement_external_execution_with_entrypoint(shared_db):
 
 @pytest.mark.asyncio
 async def test_async_external_execution(shared_db):
-    """Test the new DX for async external execution using active_requirements"""
+    """Test a HITL async external execution flow using RunRequirements"""
 
     @tool(external_execution=True)
     def send_email(to: str, subject: str, body: str):
@@ -334,7 +328,7 @@ async def test_async_external_execution(shared_db):
     assert requirement.needs_external_execution
 
     # Use the new DX to set external execution result
-    tool_args = requirement.tool.tool_args
+    tool_args = requirement.tool_execution and requirement.tool_execution.tool_args
     assert tool_args is not None
     result = f"Email sent to {tool_args['to']}"
     requirement.set_external_execution_result(result)
@@ -351,7 +345,7 @@ async def test_async_external_execution(shared_db):
 
 
 def test_streaming_external_execution(shared_db):
-    """Test the new DX for streaming external execution using active_requirements"""
+    """Test a HITL streaming external execution flow using RunRequirements"""
 
     @tool(external_execution=True)
     def send_email(to: str, subject: str, body: str):
@@ -389,7 +383,7 @@ def test_streaming_external_execution(shared_db):
     assert requirement.needs_external_execution
 
     # Set external execution result
-    tool_args = requirement.tool.tool_args
+    tool_args = requirement.tool_execution and requirement.tool_execution.tool_args
     assert tool_args is not None
     result = f"Email sent to {tool_args['to']}"
     requirement.set_external_execution_result(result)

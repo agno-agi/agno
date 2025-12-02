@@ -1,9 +1,7 @@
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
-from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -13,7 +11,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
-from agno.tools.function import UserInputField
+from agno.run.requirement import RunRequirement
 from agno.utils.log import logger
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -276,14 +274,14 @@ class RunCompletedEvent(BaseAgentRunEvent):
 class RunPausedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
-    requirements: Optional[List["RunRequirement"]] = None
+    requirements: Optional[List[RunRequirement]] = None
 
     @property
     def is_paused(self):
         return True
 
     @property
-    def active_requirements(self) -> List["RunRequirement"]:
+    def active_requirements(self) -> List[RunRequirement]:
         if not self.requirements:
             return []
         return [requirement for requirement in self.requirements if not requirement.is_resolved()]
@@ -497,70 +495,6 @@ def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
     if not cls:
         raise ValueError(f"Unknown event type: {event_type}")
     return cls.from_dict(data)  # type: ignore
-
-
-@dataclass
-class RunRequirement:
-    """Requirement to complete a paused run (used in HITL flows)"""
-
-    tool_execution: Optional[ToolExecution] = None
-    created_at: datetime = datetime.now(timezone.utc)
-
-    # User confirmation
-    needs_confirmation: bool = False
-    confirmation_note: Optional[str] = None
-    confirmation: Optional[bool] = None
-
-    # User input
-    needs_user_input: bool = False
-    user_input_schema: Optional[List[UserInputField]] = None
-    user_input: Optional[str] = None
-
-    # External execution
-    needs_external_execution: bool = False
-    external_execution_result: Optional[str] = None
-
-    def __init__(self, tool_execution: ToolExecution):
-        self.id = str(uuid4())
-        self.tool = tool_execution
-        self.needs_confirmation = tool_execution.requires_confirmation or False
-        self.needs_user_input = tool_execution.requires_user_input or False
-        self.user_input_schema = tool_execution.user_input_schema
-        self.needs_external_execution = tool_execution.external_execution_required or False
-
-    def confirm(self):
-        if not self.needs_confirmation:
-            raise ValueError("This requirement does not require confirmation")
-        self.confirmation = True
-        self.tool.confirmed = True
-
-    def reject(self):
-        if not self.needs_confirmation:
-            raise ValueError("This requirement does not require confirmation")
-        self.confirmation = False
-        self.tool.confirmed = False
-
-    def set_external_execution_result(self, result: str):
-        if not self.needs_external_execution:
-            raise ValueError("This requirement does not require external execution")
-        self.external_execution_result = result
-        self.tool.result = result
-
-    def update_tools(self, tools: List[ToolExecution]):
-        if self.confirmation is True:
-            self.tool.confirmed = True
-        elif self.confirmation is False:
-            self.tool.confirmed = False
-        elif self.user_input is not None:
-            self.tool.answered = True
-        else:
-            raise ValueError("This requirement does not require confirmation or user input")
-
-    def is_resolved(self) -> bool:
-        """Return True if the requirement has been resolved"""
-        return bool(
-            self.confirmation is not None or self.user_input is not None or self.external_execution_result is not None
-        )
 
 
 @dataclass
