@@ -752,8 +752,13 @@ class Team:
             self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
+        # Get the debug level from the environment variable or the default debug level
+        debug_level: Literal[1, 2] = (
+            cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+        )
+        # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            set_log_level_to_debug(source_type="team", level=self.debug_level)
+            set_log_level_to_debug(source_type="team", level=debug_level)
         else:
             set_log_level_to_info(source_type="team")
 
@@ -3047,7 +3052,9 @@ class Team:
         run_response.messages = messages_for_run_response
 
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if model_response.tool_executions:
             for tool_call in model_response.tool_executions:
@@ -3141,7 +3148,9 @@ class Team:
         # Update the TeamRunOutput messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Update the run_response audio if streaming
         if full_model_response.audio is not None:
@@ -3225,7 +3234,9 @@ class Team:
         # Update the TeamRunOutput messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -3600,7 +3611,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session)
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
         self.save_session(session=session)
@@ -3617,7 +3628,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session)
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
         await self.asave_session(session=session)
@@ -3957,7 +3968,9 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     async def _agenerate_response_with_output_model(
         self, model_response: ModelResponse, run_messages: RunMessages
@@ -4022,7 +4035,9 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     def _handle_event(
         self,
@@ -4458,42 +4473,41 @@ class Team:
             async for item in reason_generator:
                 yield item
 
-    def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
-        """Sum the metrics of the given messages into a Metrics object"""
-        session_metrics = Metrics()
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-
-        # Get metrics of the team leader's messages
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
-                session_metrics += m.metrics
-
-        return session_metrics
-
-    def _calculate_metrics(self, messages: List[Message]) -> Metrics:
-        metrics = Metrics()
+    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
+        metrics = current_run_metrics or Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
 
+        # If the run metrics were already initialized, keep the time related metrics
+        if current_run_metrics is not None:
+            metrics.timer = current_run_metrics.timer
+            metrics.duration = current_run_metrics.duration
+            metrics.time_to_first_token = current_run_metrics.time_to_first_token
+
         return metrics
 
-    def _update_session_metrics(self, session: TeamSession):
+    def _get_session_metrics(self, session: TeamSession) -> Metrics:
+        # Get the session_metrics from the database
+        if session.session_data is not None and "session_metrics" in session.session_data:
+            session_metrics_from_db = session.session_data.get("session_metrics")
+            if session_metrics_from_db is not None:
+                if isinstance(session_metrics_from_db, dict):
+                    return Metrics(**session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, Metrics):
+                    return session_metrics_from_db
+
+        return Metrics()
+
+    def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         """Calculate session metrics"""
-
-        session_messages: List[Message] = []
-        for run in session.runs or []:
-            if run.messages is not None:
-                for m in run.messages:
-                    # Skipping messages from history to avoid duplicates
-                    if not m.from_history:
-                        session_messages.append(m)
-
-        # Calculate initial metrics
-        session_metrics = self._calculate_session_metrics(session_messages)
-
+        session_metrics = self._get_session_metrics(session=session)
+        # Add the metrics for the current run to the session metrics
+        if run_response.metrics is not None:
+            session_metrics += run_response.metrics
+        session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
 
