@@ -6,7 +6,7 @@ This example demonstrates fine-grained control over which hooks run in backgroun
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 from agno.models.openai import OpenAIChat
@@ -14,13 +14,13 @@ from agno.os import AgentOS
 from agno.tools.calculator import CalculatorTools
 
 # Setup database
-db = SqliteDb(db_file="tmp/evals.db")
+db = AsyncSqliteDb(db_file="tmp/evals.db")
 
 
 # Function to benchmark
 async def count_to_100():
     import asyncio
-    await asyncio.sleep(3)  
+    await asyncio.sleep(2)  
     total = 0
     for i in range(1, 101):
         total += i
