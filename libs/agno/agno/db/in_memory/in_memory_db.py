@@ -38,8 +38,15 @@ class InMemoryDb(BaseDb):
         """In-memory implementation, always returns True."""
         return True
 
-    # -- Session methods --
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
 
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
+    # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
         """Delete a session from in-memory storage.
 
@@ -513,13 +520,14 @@ class InMemoryDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics.
 
         Args:
             limit (Optional[int]): Maximum number of stats to return.
             page (Optional[int]): Page number for pagination.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: List of user memory statistics and total count.
@@ -532,7 +540,9 @@ class InMemoryDb(BaseDb):
 
             for memory in self._memories:
                 memory_user_id = memory.get("user_id")
-
+                # filter by user_id if provided
+                if user_id is not None and memory_user_id != user_id:
+                    continue
                 if memory_user_id:
                     if memory_user_id not in user_stats:
                         user_stats[memory_user_id] = {

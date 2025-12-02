@@ -28,7 +28,7 @@ from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
 
 
@@ -116,23 +116,43 @@ class EventBuffer:
 
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
     """Convert AG-UI messages to Agno messages."""
-    result = []
+    # First pass: collect all tool_call_ids that have results
+    tool_call_ids_with_results: Set[str] = set()
+    for msg in messages:
+        if msg.role == "tool" and msg.tool_call_id:
+            tool_call_ids_with_results.add(msg.tool_call_id)
+
+    # Second pass: convert messages
+    result: List[Message] = []
+    seen_tool_call_ids: Set[str] = set()
+
     for msg in messages:
         if msg.role == "tool":
+            # Deduplicate tool results - keep only first occurrence
+            if msg.tool_call_id in seen_tool_call_ids:
+                log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
+                continue
+            seen_tool_call_ids.add(msg.tool_call_id)
             result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
+
         elif msg.role == "assistant":
             tool_calls = None
             if msg.tool_calls:
-                tool_calls = [call.model_dump() for call in msg.tool_calls]
-            result.append(
-                Message(
-                    role="assistant",
-                    content=msg.content,
-                    tool_calls=tool_calls,
-                )
-            )
+                # Filter tool_calls to only those with results in this message sequence
+                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
+                if filtered_calls:
+                    tool_calls = [call.model_dump() for call in filtered_calls]
+            result.append(Message(role="assistant", content=msg.content, tool_calls=tool_calls))
+
         elif msg.role == "user":
             result.append(Message(role="user", content=msg.content))
+
+        elif msg.role == "system":
+            pass  # Skip - agent builds its own system message from configuration
+
+        else:
+            log_warning(f"Unknown AGUI message role: {msg.role}")
+
     return result
 
 
@@ -250,7 +270,25 @@ def _create_events_from_chunk(
             parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
 
             if not parent_message_id:
-                parent_message_id = current_message_id
+                # Create parent message for tool calls without preceding assistant message
+                parent_message_id = str(uuid.uuid4())
+
+                # Emit a text message to serve as the parent
+                text_start = TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START,
+                    message_id=parent_message_id,
+                    role="assistant",
+                )
+                events_to_emit.append(text_start)
+
+                text_end = TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    message_id=parent_message_id,
+                )
+                events_to_emit.append(text_end)
+
+                # Set this as the pending parent for subsequent tool calls in this batch
+                event_buffer.set_pending_tool_calls_parent_id(parent_message_id)
 
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
@@ -341,58 +379,60 @@ def _create_completion_events(
         end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
         events_to_emit.append(end_message_event)
 
-    # emit frontend tool calls, i.e. external_execution=True
-    if isinstance(chunk, RunPausedEvent) and chunk.tools is not None:
-        # First, emit an assistant message for external tool calls
-        assistant_message_id = str(uuid.uuid4())
-        assistant_start_event = TextMessageStartEvent(
-            type=EventType.TEXT_MESSAGE_START,
-            message_id=assistant_message_id,
-            role="assistant",
-        )
-        events_to_emit.append(assistant_start_event)
-
-        # Add any text content if present for the assistant message
-        if chunk.content:
-            content_event = TextMessageContentEvent(
-                type=EventType.TEXT_MESSAGE_CONTENT,
+    # Emit external execution tools
+    if isinstance(chunk, RunPausedEvent):
+        external_tools = chunk.tools_awaiting_external_execution
+        if external_tools:
+            # First, emit an assistant message for external tool calls
+            assistant_message_id = str(uuid.uuid4())
+            assistant_start_event = TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
                 message_id=assistant_message_id,
-                delta=str(chunk.content),
+                role="assistant",
             )
-            events_to_emit.append(content_event)
+            events_to_emit.append(assistant_start_event)
 
-        # End the assistant message
-        assistant_end_event = TextMessageEndEvent(
-            type=EventType.TEXT_MESSAGE_END,
-            message_id=assistant_message_id,
-        )
-        events_to_emit.append(assistant_end_event)
+            # Add any text content if present for the assistant message
+            if chunk.content:
+                content_event = TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
+                    message_id=assistant_message_id,
+                    delta=str(chunk.content),
+                )
+                events_to_emit.append(content_event)
 
-        # Now emit the tool call events with the assistant message as parent
-        for tool in chunk.tools:
-            if tool.tool_call_id is None or tool.tool_name is None:
-                continue
-
-            start_event = ToolCallStartEvent(
-                type=EventType.TOOL_CALL_START,
-                tool_call_id=tool.tool_call_id,
-                tool_call_name=tool.tool_name,
-                parent_message_id=assistant_message_id,  # Use the assistant message as parent
+            # End the assistant message
+            assistant_end_event = TextMessageEndEvent(
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=assistant_message_id,
             )
-            events_to_emit.append(start_event)
+            events_to_emit.append(assistant_end_event)
 
-            args_event = ToolCallArgsEvent(
-                type=EventType.TOOL_CALL_ARGS,
-                tool_call_id=tool.tool_call_id,
-                delta=json.dumps(tool.tool_args),
-            )
-            events_to_emit.append(args_event)
+            # Emit tool call events for external execution
+            for tool in external_tools:
+                if tool.tool_call_id is None or tool.tool_name is None:
+                    continue
 
-            end_event = ToolCallEndEvent(
-                type=EventType.TOOL_CALL_END,
-                tool_call_id=tool.tool_call_id,
-            )
-            events_to_emit.append(end_event)
+                start_event = ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=tool.tool_call_id,
+                    tool_call_name=tool.tool_name,
+                    parent_message_id=assistant_message_id,  # Use the assistant message as parent
+                )
+                events_to_emit.append(start_event)
+
+                args_event = ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool.tool_call_id,
+                    delta=json.dumps(tool.tool_args),
+                )
+                events_to_emit.append(args_event)
+
+                end_event = ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=tool.tool_call_id,
+                )
+                events_to_emit.append(end_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)

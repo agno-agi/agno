@@ -254,6 +254,14 @@ class RedisDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {e}")
             return []
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     # -- Session methods --
 
     def delete_session(self, session_id: str) -> bool:
@@ -833,12 +841,14 @@ class RedisDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory stats from Redis.
 
         Args:
             limit (Optional[int]): The maximum number of stats to return.
             page (Optional[int]): The page number to return.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the list of stats and the total number of stats.
@@ -853,6 +863,9 @@ class RedisDb(BaseDb):
             user_stats = {}
             for memory in all_memories:
                 memory_user_id = memory.get("user_id")
+                # filter by user_id if provided
+                if user_id is not None and memory_user_id != user_id:
+                    continue
                 if memory_user_id is None:
                     continue
 
@@ -905,6 +918,9 @@ class RedisDb(BaseDb):
                 "memory_id": memory.memory_id,
                 "memory": memory.memory,
                 "topics": memory.topics,
+                "input": memory.input,
+                "feedback": memory.feedback,
+                "created_at": memory.created_at,
                 "updated_at": int(time.time()),
             }
 
