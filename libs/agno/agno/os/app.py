@@ -355,18 +355,14 @@ class AgentOS:
                 if isinstance(member, Agent):
                     member.team_id = None
                     member.initialize_agent()
-                    # Propagate run_hooks_in_background to member agents
-                    member._run_hooks_in_background = self.run_hooks_in_background
                 elif isinstance(member, Team):
                     member.initialize_team()
-                    # Propagate run_hooks_in_background to nested teams
-                    member._run_hooks_in_background = self.run_hooks_in_background
 
             # Required for the built-in routes to work
             team.store_events = True
 
-            # Propagate run_hooks_in_background setting from AgentOS to teams
-            team._run_hooks_in_background = self.run_hooks_in_background
+            # Propagate run_hooks_in_background setting to team and all nested members
+            team.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
@@ -383,6 +379,9 @@ class AgentOS:
 
                 # Required for the built-in routes to work
                 workflow.store_events = True
+
+                # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+                workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def get_app(self) -> FastAPI:
         if self.base_app:

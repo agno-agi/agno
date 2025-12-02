@@ -1,5 +1,4 @@
 from copy import deepcopy
-from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.guardrails.base import BaseGuardrail
@@ -63,7 +62,6 @@ def normalize_hooks(
     Args:
         hooks: List of hook functions or hook instances
         async_mode: Whether to use async versions of methods
-        hook_mode: Either "pre" or "post" to determine which method to extract
     """
 
     result_hooks: List[Callable[..., Any]] = []

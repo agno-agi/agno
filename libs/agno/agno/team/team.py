@@ -841,6 +841,26 @@ class Team:
             for sub_member in member.members:
                 member._initialize_member(sub_member, debug_mode=debug_mode)
 
+    def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_hooks_in_background setting to this team and all nested members recursively.
+
+        This method sets _run_hooks_in_background on the team and all its members (agents and nested teams).
+        For nested teams, it recursively propagates the setting to their members as well.
+
+        Args:
+            run_in_background: Whether hooks should run in background. Defaults to True.
+        """
+        self._run_hooks_in_background = run_in_background
+
+        for member in self.members:
+            if hasattr(member, "_run_hooks_in_background"):
+                member._run_hooks_in_background = run_in_background
+
+            # If it's a nested team, recursively propagate to its members
+            if isinstance(member, Team):
+                member.propagate_run_hooks_in_background(run_in_background)
+
     def _set_default_model(self) -> None:
         # Set the default model
         if self.model is None:
@@ -2002,7 +2022,7 @@ class Team:
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
-            background_tasks: BackgroundTasks = background_tasks
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -2901,7 +2921,7 @@ class Team:
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
-            background_tasks: BackgroundTasks = background_tasks
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Create a run_id for this specific run
         run_id = str(uuid4())

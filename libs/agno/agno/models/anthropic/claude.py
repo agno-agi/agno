@@ -930,8 +930,8 @@ class Claude(Model):
         elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
-                tool_name = tool_use.name
-                tool_input = tool_use.input
+                tool_name = tool_use.name  # type: ignore
+                tool_input = tool_use.input  # type: ignore
 
                 function_def = {"name": tool_name}
                 if tool_input:
@@ -941,7 +941,7 @@ class Claude(Model):
 
                 model_response.tool_calls = [
                     {
-                        "id": tool_use.id,
+                        "id": tool_use.id,  # type: ignore
                         "type": "function",
                         "function": function_def,
                     }
@@ -962,7 +962,7 @@ class Claude(Model):
             for block in response.message.content:  # type: ignore
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
-                    accumulated_text += block.text
+                    accumulated_text += block.text  # type: ignore
 
                 # Handle citations
                 citations = getattr(block, "citations", None)

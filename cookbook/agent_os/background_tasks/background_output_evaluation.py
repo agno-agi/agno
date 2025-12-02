@@ -71,7 +71,7 @@ async def evaluate_output_quality(run_output: RunOutput, agent: Agent) -> None:
     """
     # Skip if no content to evaluate
     if not run_output.content or len(str(run_output.content).strip()) < 10:
-        print(f"[Evaluator] Skipping evaluation - response too short")
+        print("[Evaluator] Skipping evaluation - response too short")
         return
 
     print(f"[Evaluator] Starting background evaluation for run: {run_output.run_id}")
@@ -102,12 +102,12 @@ async def evaluate_output_quality(run_output: RunOutput, agent: Agent) -> None:
     print(f"Well-Structured: {evaluation.is_well_structured}")
 
     if evaluation.strengths:
-        print(f"\nStrengths:")
+        print("\nStrengths:")
         for strength in evaluation.strengths:
             print(f"  - {strength}")
 
     if evaluation.areas_for_improvement:
-        print(f"\nAreas for Improvement:")
+        print("\nAreas for Improvement:")
         for area in evaluation.areas_for_improvement:
             print(f"  - {area}")
 
@@ -143,7 +143,7 @@ async def check_response_safety(run_output: RunOutput, agent: Agent) -> None:
     if len(safety_flags) > 0:
         print(f"[Safety Check] Flags found: {safety_flags}")
     else:
-        print(f"[Safety Check] No safety concerns detected")
+        print("[Safety Check] No safety concerns detected")
 
 
 # Setup database for agent storage

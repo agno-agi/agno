@@ -1606,7 +1606,7 @@ class Agent:
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
-            background_tasks: BackgroundTasks = background_tasks
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -2570,7 +2570,7 @@ class Agent:
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
-            background_tasks: BackgroundTasks = background_tasks
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -2868,7 +2868,7 @@ class Agent:
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
-            background_tasks: BackgroundTasks = background_tasks
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         session_id = run_response.session_id if run_response else session_id
         run_id: str = run_response.run_id if run_response else run_id  # type: ignore
@@ -3450,7 +3450,7 @@ class Agent:
         if background_tasks is not None:
             from fastapi import BackgroundTasks
 
-            background_tasks: BackgroundTasks = background_tasks
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         session_id, user_id = self._initialize_session(
             session_id=session_id,
