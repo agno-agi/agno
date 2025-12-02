@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 

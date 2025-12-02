@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgnoError, ModelProviderError
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics

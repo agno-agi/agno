@@ -7,7 +7,7 @@ import httpx
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_warning
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
