@@ -274,7 +274,7 @@ class Agent:
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
-    _run_hooks_in_background: bool = False
+    _run_hooks_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -4121,7 +4121,7 @@ class Agent:
 
         # Check if background_tasks is available and ALL hooks should run in background
         # Note: Pre-hooks running in background may not be able to modify run_input
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL pre_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
@@ -4216,7 +4216,7 @@ class Agent:
 
         # Check if background_tasks is available and ALL hooks should run in background
         # Note: Pre-hooks running in background may not be able to modify run_input
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL pre_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
@@ -4314,7 +4314,7 @@ class Agent:
         }
 
         # Check if background_tasks is available and ALL hooks should run in background
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL post_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
@@ -4401,7 +4401,7 @@ class Agent:
             "debug_mode": debug_mode or self.debug_mode,
         }
         # Check if background_tasks is available and ALL hooks should run in background
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             for hook in hooks:
@@ -8805,6 +8805,7 @@ class Agent:
         # Update fields if provided
         if update:
             fields_for_new_agent.update(update)
+
         # Create a new Agent
         new_agent = self.__class__(**fields_for_new_agent)
         log_debug(f"Created new {self.__class__.__name__}")

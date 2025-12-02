@@ -347,7 +347,7 @@ class Team:
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
-    _run_hooks_in_background: bool = False
+    _run_hooks_in_background: Optional[bool] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -1083,7 +1083,7 @@ class Team:
 
         # Check if background_tasks is available and ALL hooks should run in background
         # Note: Pre-hooks running in background may not be able to modify run_input
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL pre_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
@@ -1175,7 +1175,7 @@ class Team:
 
         # Check if background_tasks is available and ALL hooks should run in background
         # Note: Pre-hooks running in background may not be able to modify run_input
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL pre_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
@@ -1271,7 +1271,7 @@ class Team:
         }
 
         # Check if background_tasks is available and ALL hooks should run in background
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL post_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
@@ -1357,7 +1357,7 @@ class Team:
         }
 
         # Check if background_tasks is available and ALL hooks should run in background
-        if self._run_hooks_in_background and background_tasks is not None:
+        if self._run_hooks_in_background is True and background_tasks is not None:
             # Schedule ALL post_hooks as background tasks
             # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
