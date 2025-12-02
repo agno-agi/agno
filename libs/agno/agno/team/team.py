@@ -1928,6 +1928,18 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
+        # Validate member_delegation_function compatibility early
+        if self.member_delegation_function is not None:
+            import inspect
+
+            if inspect.isasyncgenfunction(self.member_delegation_function) or inspect.iscoroutinefunction(
+                self.member_delegation_function
+            ):
+                raise ValueError(
+                    "member_delegation_function is an async function, but run() requires a sync function. "
+                    "Use arun() for async execution, or provide a sync generator function."
+                )
+
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
@@ -2815,6 +2827,19 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
+
+        # Validate member_delegation_function compatibility early
+        if self.member_delegation_function is not None:
+            import inspect
+
+            if not (
+                inspect.isasyncgenfunction(self.member_delegation_function)
+                or inspect.iscoroutinefunction(self.member_delegation_function)
+            ):
+                raise ValueError(
+                    "member_delegation_function is a sync function, but arun() requires an async function. "
+                    "Use run() for sync execution, or provide an async generator function."
+                )
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
@@ -7675,15 +7700,6 @@ class Team:
 
             # Use custom delegation function if provided, otherwise use default
             if self.member_delegation_function is not None:
-                import inspect
-
-                if inspect.isasyncgenfunction(self.member_delegation_function) or inspect.iscoroutinefunction(
-                    self.member_delegation_function
-                ):
-                    raise ValueError(
-                        "member_delegation_function is an async function, but run() requires a sync function. "
-                        "Use arun() for async execution, or provide a sync generator function."
-                    )
                 delegation_fn = self.member_delegation_function
             else:
                 delegation_fn = self._run_member_delegation
@@ -7764,16 +7780,6 @@ class Team:
 
             # Use custom delegation function if provided, otherwise use default
             if self.member_delegation_function is not None:
-                import inspect
-
-                if not (
-                    inspect.isasyncgenfunction(self.member_delegation_function)
-                    or inspect.iscoroutinefunction(self.member_delegation_function)
-                ):
-                    raise ValueError(
-                        "member_delegation_function is a sync function, but arun() requires an async function. "
-                        "Use run() for sync execution, or provide an async generator function."
-                    )
                 delegation_fn = self.member_delegation_function
             else:
                 delegation_fn = self._arun_member_delegation
@@ -7807,18 +7813,6 @@ class Team:
             Returns:
                 str: The result of the delegated task.
             """
-
-            # Validate custom delegation function if provided
-            if self.member_delegation_function is not None:
-                import inspect
-
-                if inspect.isasyncgenfunction(self.member_delegation_function) or inspect.iscoroutinefunction(
-                    self.member_delegation_function
-                ):
-                    raise ValueError(
-                        "member_delegation_function is an async function, but run() requires a sync function. "
-                        "Use arun() for async execution, or provide a sync generator function."
-                    )
 
             # Run all the members sequentially
             for _, member_agent in enumerate(self.members):
@@ -7889,19 +7883,6 @@ class Team:
             Returns:
                 str: The result of the delegated task.
             """
-
-            # Validate custom delegation function if provided
-            if self.member_delegation_function is not None:
-                import inspect
-
-                if not (
-                    inspect.isasyncgenfunction(self.member_delegation_function)
-                    or inspect.iscoroutinefunction(self.member_delegation_function)
-                ):
-                    raise ValueError(
-                        "member_delegation_function is a sync function, but arun() requires an async function. "
-                        "Use run() for sync execution, or provide an async generator function."
-                    )
 
             if stream:
                 # Concurrent streaming: launch each member as a streaming worker and merge events
