@@ -276,6 +276,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
 class RunPausedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List["RunRequirement"]] = None
 
     @property
     def is_paused(self):
