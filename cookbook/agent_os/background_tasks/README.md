@@ -56,6 +56,8 @@ See: `background_hooks_decorator.py`
 |------|-------------|
 | `background_hooks_example.py` | Basic example using global `run_hooks_in_background=True` |
 | `background_hooks_decorator.py` | Per-hook control using `@hook(run_in_background=True)` |
+| `background_hooks_team.py` | Background hooks with a Team |
+| `background_hooks_workflow.py` | Background hooks with a Workflow |
 | `background_output_evaluation.py` | Agent-as-judge pattern for quality monitoring |
 
 ## Running the Examples
