@@ -40,7 +40,6 @@ class CometAPI(OpenAILike):
                 raise ModelAuthenticationError(
                     message="COMETAPI_KEY not set. Please set the COMETAPI_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()
 

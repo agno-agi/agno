@@ -70,11 +70,6 @@ class AzureOpenAI(OpenAILike):
                 message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
                 model_name=self.name,
             )
-        if not self.azure_endpoint:
-            raise ModelAuthenticationError(
-                message="AZURE_OPENAI_ENDPOINT not set. Please set the AZURE_OPENAI_ENDPOINT environment variable.",
-                model_name=self.name,
-            )
 
         params_mapping = {
             "api_key": self.api_key,
