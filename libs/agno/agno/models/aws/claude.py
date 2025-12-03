@@ -1,11 +1,15 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
+from agno.tools.function import Function
+
+if TYPE_CHECKING:
+    from agno.models.message import Message
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
@@ -50,6 +54,27 @@ class Claude(AnthropicClaude):
         # Overwrite output schema support for AWS Bedrock Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
+
+    def count_tokens(
+        self,
+        messages: List["Message"],
+        tools: Optional[List[Union[Function, dict]]] = None,
+    ) -> int:
+        """Count tokens for messages and tools.
+
+        AWS Bedrock does not support token counting via API, so we use
+        the base class estimation method.
+
+        Args:
+            messages: List of messages to count tokens for.
+            tools: Optional list of tools to include in count.
+
+        Returns:
+            Estimated token count.
+        """
+        from agno.utils.tokens import estimate_context_tokens
+
+        return estimate_context_tokens(messages, tools)
 
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:

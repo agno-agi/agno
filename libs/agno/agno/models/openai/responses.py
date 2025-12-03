@@ -520,6 +520,66 @@ class OpenAIResponses(Model):
                         formatted_messages.append(reasoning_output)
         return formatted_messages
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """
+        Count tokens using OpenAI's native input_tokens API.
+
+        Args:
+            messages: List of messages to count tokens for.
+            tools: Optional list of tools to include in the count.
+
+        Returns:
+            The number of input tokens.
+        """
+        try:
+            formatted_input = self._format_messages(messages)
+            formatted_tools = self._format_tool_params(messages, tools) if tools else None
+
+            response = self.get_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return super().count_tokens(messages, tools)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """
+        Async count tokens using OpenAI's native input_tokens API.
+
+        Args:
+            messages: List of messages to count tokens for.
+            tools: Optional list of tools to include in the count.
+
+        Returns:
+            The number of input tokens.
+        """
+        try:
+            formatted_input = self._format_messages(messages)
+            formatted_tools = self._format_tool_params(messages, tools) if tools else None
+
+            response = await self.get_async_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return super().count_tokens(messages, tools)
+
     def invoke(
         self,
         messages: List[Message],

@@ -49,6 +49,7 @@ class CompressionManager:
     model: Optional[Model] = None
     compress_tool_results: bool = True
     compress_tool_results_limit: int = 3
+    token_threshold: Optional[int] = None  # Compress when token count >= threshold
     compress_tool_call_instructions: Optional[str] = None
 
     stats: Dict[str, Any] = field(default_factory=dict)
@@ -56,19 +57,24 @@ class CompressionManager:
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
 
-    def should_compress(self, messages: List[Message]) -> bool:
+    def should_compress(self, messages: List[Message], tools: Optional[List] = None) -> bool:
         if not self.compress_tool_results:
             return False
 
-        uncompressed_tools_count = len(
-            [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
-        )
-        should_compress = uncompressed_tools_count >= self.compress_tool_results_limit
+        # Token-based threshold (when configured)
+        if self.token_threshold is not None and self.model is not None:
+            tokens = self.model.count_tokens(messages, tools)
+            if tokens >= self.token_threshold:
+                log_info(f"Token threshold hit: {tokens} >= {self.token_threshold}")
+                return True
+            return False
 
-        if should_compress:
-            log_info(f"Tool call compression threshold hit. Compressing {uncompressed_tools_count} tool results")
-
-        return should_compress
+        # Count-based threshold (fallback)
+        uncompressed = len([m for m in messages if m.role == "tool" and not m.compressed_content])
+        if uncompressed >= self.compress_tool_results_limit:
+            log_info(f"Tool count threshold hit: {uncompressed} >= {self.compress_tool_results_limit}")
+            return True
+        return False
 
     def _compress_tool_result(self, tool_result: Message) -> Optional[str]:
         if not tool_result:

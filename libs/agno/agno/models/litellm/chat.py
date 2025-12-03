@@ -476,3 +476,29 @@ class LiteLLM(Model):
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """
+        Count tokens using LiteLLM's token_counter utility.
+
+        LiteLLM uses tiktoken for OpenAI models and HuggingFace tokenizers for
+        other providers (Cohere, Llama, etc.), falling back to cl100k_base encoding
+        for unknown models.
+
+        Args:
+            messages: List of messages to count tokens for.
+            tools: Optional list of tools to include in the count.
+
+        Returns:
+            The estimated number of input tokens.
+        """
+        formatted_messages = self._format_messages(messages)
+        return litellm.token_counter(
+            model=self.id,
+            messages=formatted_messages,
+            tools=tools,
+        )

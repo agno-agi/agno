@@ -18,6 +18,7 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -305,6 +306,33 @@ class Gemini(Model):
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, dict]]] = None,
+    ) -> int:
+        """Count tokens using Gemini's count_tokens API."""
+        contents, system_instruction = self._format_messages(messages)
+
+        config: Optional[Dict[str, Any]] = None
+        if self.vertexai:
+            config = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
+            config = config or None
+
+        response = self.get_client().models.count_tokens(
+            model=self.id,
+            contents=contents,
+            config=config,
+        )
+        return response.total_tokens or 0
 
     def invoke(
         self,

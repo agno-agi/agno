@@ -303,6 +303,33 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, dict]]] = None,
+    ) -> int:
+        """Count tokens for messages and tools.
+
+        Uses tiktoken if available for accurate counting, otherwise
+        falls back to character-based estimation.
+
+        Override in provider-specific classes for native API counting
+        (e.g., OpenAI, Anthropic, Gemini).
+
+        Args:
+            messages: List of messages to count tokens for.
+            tools: Optional list of tools to include in count.
+
+        Returns:
+            Token count (accurate with tiktoken, estimated otherwise).
+        """
+        from agno.utils.tokens import count_tokens_with_tiktoken, estimate_context_tokens
+
+        result = count_tokens_with_tiktoken(messages, tools, self.id)
+        if result is not None:
+            return result
+        return estimate_context_tokens(messages, tools)
+
     def response(
         self,
         messages: List[Message],
@@ -439,7 +466,7 @@ class Model(ABC):
 
                     all_messages = messages + function_call_results
                     # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
+                    if compression_manager and compression_manager.should_compress(all_messages, tools):
                         compression_manager.compress(all_messages)
 
                     # Format and add results to messages
@@ -627,7 +654,7 @@ class Model(ABC):
 
                     all_messages = messages + function_call_results
                     # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
+                    if compression_manager and compression_manager.should_compress(all_messages, tools):
                         await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
@@ -721,6 +748,13 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
+        # Log token comparison if we have actual usage data
+        if provider_response.response_usage is not None and provider_response.response_usage.input_tokens > 0:
+            from agno.utils.tokens import log_token_comparison
+
+            model_estimated = self.count_tokens(messages, tools)
+            log_token_comparison(model_estimated, provider_response.response_usage.input_tokens)
+
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -777,6 +811,13 @@ class Model(ABC):
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
+
+        # Log token comparison if we have actual usage data
+        if provider_response.response_usage is not None and provider_response.response_usage.input_tokens > 0:
+            from agno.utils.tokens import log_token_comparison
+
+            model_estimated = self.count_tokens(messages, tools)
+            log_token_comparison(model_estimated, provider_response.response_usage.input_tokens)
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -907,6 +948,13 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
+        # Log token comparison if we have actual usage data
+        if stream_data.response_metrics is not None and stream_data.response_metrics.input_tokens > 0:
+            from agno.utils.tokens import log_token_comparison
+
+            model_estimated = self.count_tokens(messages, tools)
+            log_token_comparison(model_estimated, stream_data.response_metrics.input_tokens)
+
     def response_stream(
         self,
         messages: List[Message],
@@ -1018,7 +1066,7 @@ class Model(ABC):
 
                     all_messages = messages + function_call_results
                     # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
+                    if compression_manager and compression_manager.should_compress(all_messages, tools):
                         compression_manager.compress(all_messages)
 
                     # Format and add results to messages
@@ -1124,6 +1172,13 @@ class Model(ABC):
 
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
+
+        # Log token comparison if we have actual usage data
+        if stream_data.response_metrics is not None and stream_data.response_metrics.input_tokens > 0:
+            from agno.utils.tokens import log_token_comparison
+
+            model_estimated = self.count_tokens(messages, tools)
+            log_token_comparison(model_estimated, stream_data.response_metrics.input_tokens)
 
     async def aresponse_stream(
         self,
@@ -1236,7 +1291,7 @@ class Model(ABC):
 
                     all_messages = messages + function_call_results
                     # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
+                    if compression_manager and compression_manager.should_compress(all_messages, tools):
                         await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
