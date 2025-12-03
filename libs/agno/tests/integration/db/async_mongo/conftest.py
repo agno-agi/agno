@@ -7,17 +7,47 @@ import pytest_asyncio
 
 from agno.db.mongo import AsyncMongoDb
 
+# Try to import Motor
 try:
     from motor.motor_asyncio import AsyncIOMotorClient
+
+    MOTOR_AVAILABLE = True
 except ImportError:
-    pytest.skip("motor not installed", allow_module_level=True)
+    MOTOR_AVAILABLE = False
+    AsyncIOMotorClient = None  # type: ignore
+
+# Try to import PyMongo async
+try:
+    from pymongo import AsyncMongoClient
+
+    PYMONGO_ASYNC_AVAILABLE = True
+except ImportError:
+    PYMONGO_ASYNC_AVAILABLE = False
+    AsyncMongoClient = None  # type: ignore
+
+# Require at least one library
+if not MOTOR_AVAILABLE and not PYMONGO_ASYNC_AVAILABLE:
+    pytest.skip("Neither motor nor pymongo async installed", allow_module_level=True)
 
 
 @pytest.fixture
 def mock_async_mongo_client():
-    """Create a mock async MongoDB client"""
-    client = Mock(spec=AsyncIOMotorClient)
-    return client
+    """Create a mock async MongoDB client (Motor)"""
+    if MOTOR_AVAILABLE:
+        client = Mock(spec=AsyncIOMotorClient)
+        return client
+    else:
+        pytest.skip("Motor not available for mock client")
+
+
+@pytest.fixture
+def mock_pymongo_async_client():
+    """Create a mock async MongoDB client (PyMongo async)"""
+    if PYMONGO_ASYNC_AVAILABLE:
+        client = Mock(spec=AsyncMongoClient)
+        return client
+    else:
+        pytest.skip("PyMongo async not available for mock client")
 
 
 @pytest.fixture
@@ -41,9 +71,13 @@ async def async_mongo_db_real():
 
     This fixture connects to a real MongoDB instance running on localhost:27017.
     Make sure MongoDB is running before running these integration tests.
+    These tests assume:
+    - Username=mongoadmin
+    - Password=secret
+    Uses auto-selected client type (prefers PyMongo async if available).
     """
     # Use local MongoDB
-    db_url = "mongodb://localhost:27017"
+    db_url = "mongodb://mongoadmin:secret@localhost:27017"
 
     db = AsyncMongoDb(
         db_url=db_url,
@@ -64,6 +98,9 @@ async def async_mongo_db_real():
     except Exception:
         pass  # Ignore cleanup errors
 
-    # Close the client
+    # Close the client (handle both Motor and PyMongo async)
     if db._client:
-        db._client.close()
+        if db._client_type == AsyncMongoDb.CLIENT_TYPE_PYMONGO_ASYNC:
+            await db._client.close()
+        else:
+            db._client.close()

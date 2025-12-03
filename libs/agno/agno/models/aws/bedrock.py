@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgnoError, ModelProviderError
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -102,9 +102,8 @@ class AwsBedrock(Model):
             self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
         else:
             if not self.aws_access_key_id or not self.aws_secret_access_key:
-                raise AgnoError(
-                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                    status_code=400,
+                log_error(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
             self.client = AwsClient(
@@ -219,21 +218,35 @@ class AwsBedrock(Model):
 
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
-    def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    def _format_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Format the messages for the request.
+
+        Args:
+            messages: List of messages to format
+            compress_tool_results: Whether to compress tool results
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
         """
+
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
         for message in messages:
             if message.role == "system":
                 system_message = [{"text": message.content}]
+            elif message.role == "tool":
+                content = message.get_content(use_compressed_content=compress_tool_results)
+                tool_result = {
+                    "toolUseId": message.tool_call_id,
+                    "content": [{"json": {"result": content}}],
+                }
+                formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                formatted_messages.append(formatted_message)
             else:
-                formatted_message: Dict[str, Any] = {"role": message.role, "content": []}
-                # Handle tool results
+                formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
@@ -352,12 +365,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -400,12 +414,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -452,12 +467,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Async invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -503,12 +519,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Async invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -549,30 +566,34 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
-        Handle the results of function calls.
+        Handle the results of function calls for Bedrock.
+        Uses compressed_content if compress_tool_results is True.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
+            compress_tool_results: Whether to compress tool results.
             **kwargs: Additional arguments including tool_ids.
         """
+
         if function_call_results:
             tool_ids = kwargs.get("tool_ids", [])
-            tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 # Use tool_call_id from message if tool_ids list is insufficient
                 tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
-                tool_result = {
-                    "toolUseId": tool_id,
-                    "content": [{"json": {"result": _fc_message.content}}],
-                }
-                tool_result_content.append({"toolResult": tool_result})
+                if not _fc_message.tool_call_id:
+                    _fc_message.tool_call_id = tool_id
 
-            messages.append(Message(role="user", content=tool_result_content))
+                # Append as standard role="tool" message
+                messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         """

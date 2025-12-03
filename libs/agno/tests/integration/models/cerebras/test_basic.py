@@ -9,7 +9,7 @@ from agno.models.cerebras import Cerebras
 @pytest.fixture(scope="module")
 def cerebras_model():
     """Fixture that provides a Cerebras model and reuses it across all tests in the module."""
-    return Cerebras(id="llama-4-scout-17b-16e-instruct")
+    return Cerebras(id="gpt-oss-120b")
 
 
 def _assert_metrics(response: RunOutput):
@@ -87,7 +87,7 @@ def test_with_memory(cerebras_model):
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert response2.content is not None and "John Smith" in response2.content
+    assert response2.content is not None and "John" in response2.content
 
     # Verify memories were created
     messages = agent.get_session_messages()

@@ -1,4 +1,11 @@
-"""Integration tests for the setup and main methods of the AsyncMongoDb class"""
+"""Integration tests for the setup and main methods of the AsyncMongoDb class
+
+Required to have a running MongoDB instance to run these tests.
+
+These tests assume:
+- Username=mongoadmin
+- Password=secret
+"""
 
 from datetime import datetime, timezone
 
@@ -7,13 +14,15 @@ import pytest
 try:
     from agno.db.mongo import AsyncMongoDb
 except ImportError:
-    pytest.skip("motor not installed, skipping AsyncMongoDb integration tests", allow_module_level=True)
+    pytest.skip(
+        "Neither motor nor pymongo async installed, skipping AsyncMongoDb integration tests", allow_module_level=True
+    )
 
 
 @pytest.mark.asyncio
 async def test_init_with_db_url():
     """Test initialization with actual database URL format"""
-    db_url = "mongodb://localhost:27017"
+    db_url = "mongodb://mongoadmin:secret@localhost:27017"
 
     db = AsyncMongoDb(db_url=db_url, db_name="test_init_db", session_collection="test_async_mongo_sessions")
     assert db.db_url == db_url
