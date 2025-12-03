@@ -147,7 +147,6 @@ class RedshiftTools(Toolkit):
             return self.connect()
         return self._connection
 
-
     def _get_connection_kwargs(self) -> Dict[str, Any]:
         """Build connection kwargs from instance."""
         connection_kwargs: Dict[str, Any] = {}

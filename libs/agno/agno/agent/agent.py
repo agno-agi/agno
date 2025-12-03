@@ -930,15 +930,17 @@ class Agent:
                 if (
                     hasattr(tool, "requires_connect")
                     and tool.requires_connect
+                    and hasattr(tool, "connect")
                     and tool not in self._connectable_tools_initialized_on_run
                 ):
-                    tool.connect()
+                    tool.connect() # type: ignore
                     self._connectable_tools_initialized_on_run.append(tool)
 
     def _disconnect_connectable_tools(self) -> None:
         """Disconnect tools that require connection management."""
         for tool in self._connectable_tools_initialized_on_run:
-            tool.close()
+            if hasattr(tool, "close"):
+                tool.close() # type: ignore
         self._connectable_tools_initialized_on_run = []
 
     def _initialize_session(

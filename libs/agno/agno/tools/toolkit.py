@@ -142,7 +142,7 @@ class Toolkit:
         except Exception as e:
             logger.warning(f"Failed to create Function for: {function.__name__}")
             raise e
-        
+
     @property
     def requires_connect(self) -> bool:
         """Whether the toolkit requires connection management."""
