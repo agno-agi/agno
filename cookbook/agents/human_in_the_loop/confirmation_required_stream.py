@@ -70,10 +70,12 @@ for run_event in agent.run("Fetch the top 2 hackernews stories", stream=True):
             if requirement.needs_confirmation:
                 # Ask for confirmation
                 console.print(
-                    f"Tool name [bold blue]{requirement.tool.tool_name}({requirement.tool.tool_args})[/] requires confirmation."
+                    f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] requires confirmation."
                 )
                 message = (
-                    Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+                    Prompt.ask(
+                        "Do you want to continue?", choices=["y", "n"], default="y"
+                    )
                     .strip()
                     .lower()
                 )

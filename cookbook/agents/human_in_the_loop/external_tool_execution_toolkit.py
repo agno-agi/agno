@@ -51,12 +51,12 @@ run_response = agent.run("What files do I have in my current directory?")
 if run_response.is_paused:
     for requirement in run_response.active_requirements:
         if requirement.needs_external_execution:
-            if requirement.tool.tool_name == "list_dir":
+            if requirement.tool_execution.tool_name == "list_dir":
                 print(
-                    f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally"
+                    f"Executing {requirement.tool_execution.tool_name} with args {requirement.tool_execution.tool_args} externally"
                 )
                 # We execute the tool ourselves. You can also execute something completely external here.
-                result = tools.list_dir(**requirement.tool.tool_args)  # type: ignore
+                result = tools.list_dir(**requirement.tool_execution.tool_args)  # type: ignore
                 # We have to set the result on the tool execution object so that the agent can continue
                 requirement.set_external_execution_result(result)
 

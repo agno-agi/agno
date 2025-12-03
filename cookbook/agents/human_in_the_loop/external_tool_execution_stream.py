@@ -46,13 +46,13 @@ for run_event in agent.run(
     if run_event.is_paused:
         for requirement in run_event.active_requirements:  # type: ignore
             if requirement.needs_external_execution:
-                if requirement.tool.tool_name == execute_shell_command.name:
+                if requirement.tool_execution.tool_name == execute_shell_command.name:
                     print(
-                        f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally"
+                        f"Executing {requirement.tool_execution.tool_name} with args {requirement.tool_execution.tool_args} externally"
                     )
                     # We execute the tool ourselves. You can also execute something completely external here.
                     result = execute_shell_command.entrypoint(
-                        **requirement.tool.tool_args  # type: ignore
+                        **requirement.tool_execution.tool_args  # type: ignore
                     )  # type: ignore
                     # We have to set the result on the tool execution object so that the agent can continue
                     requirement.set_external_execution_result(result)

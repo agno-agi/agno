@@ -50,14 +50,18 @@ run_response = asyncio.run(agent.arun("What files do I have in my current direct
 # Keep executing externally-required tools until the run completes
 for requirement in run_response.active_requirements:
     if requirement.needs_external_execution:
-        if requirement.tool.tool_name == execute_shell_command.name:
+        if requirement.tool_execution.tool_name == execute_shell_command.name:
             print(
-                f"Executing {requirement.tool.tool_name} with args {requirement.tool.tool_args} externally"
+                f"Executing {requirement.tool_execution.tool_name} with args {requirement.tool_execution.tool_args} externally"
             )
-            result = execute_shell_command.entrypoint(**requirement.tool.tool_args)  # type: ignore
+            result = execute_shell_command.entrypoint(
+                **requirement.tool_execution.tool_args
+            )  # type: ignore
             requirement.set_external_execution_result(result)
         else:
-            print(f"Skipping unsupported external tool: {requirement.tool.tool_name}")
+            print(
+                f"Skipping unsupported external tool: {requirement.tool_execution.tool_name}"
+            )
 
 run_response = asyncio.run(
     agent.acontinue_run(
