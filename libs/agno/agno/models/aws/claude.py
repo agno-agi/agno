@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.utils.http import get_default_async_client, get_default_sync_client
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import format_tools_for_model
 
 try:
@@ -79,6 +79,10 @@ class Claude(AnthropicClaude):
                     "aws_access_key": self.aws_access_key,
                     "aws_region": self.aws_region,
                 }
+        if not (self.aws_access_key or (self.aws_access_key and self.aws_secret_key)):
+            log_error(
+                "AWS credentials not found. Please either set the AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables."
+            )
 
         if self.timeout is not None:
             client_params["timeout"] = self.timeout
