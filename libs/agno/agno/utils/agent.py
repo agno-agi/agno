@@ -843,7 +843,7 @@ def execute_instructions(
 
     # Check for session_state parameter
     if "session_state" in signature.parameters:
-        instruction_args["session_state"] = session_state or {}
+        instruction_args["session_state"] = session_state if session_state is not None else {}
 
     # Check for run_context parameter
     if "run_context" in signature.parameters:
@@ -902,7 +902,7 @@ async def aexecute_instructions(
 
     # Check for session_state parameter
     if "session_state" in signature.parameters:
-        instruction_args["session_state"] = session_state or {}
+        instruction_args["session_state"] = session_state if session_state is not None else {}
 
     # Check for run_context parameter
     if "run_context" in signature.parameters:

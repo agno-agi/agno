@@ -2060,7 +2060,10 @@ class Team:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)
@@ -2293,7 +2296,7 @@ class Team:
         self._update_metadata(session=team_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2533,7 +2536,7 @@ class Team:
         self._update_metadata(session=team_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -6877,7 +6880,7 @@ class Team:
             return message
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
-            session_state or {},
+            session_state if session_state is not None else {},
             dependencies or {},
             metadata or {},
             {"user_id": user_id} if user_id is not None else {},
