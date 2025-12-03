@@ -47,15 +47,34 @@ def generate_rsa_keys():
 
     return private_pem.decode("utf-8"), public_pem.decode("utf-8")
 
-PUBLIC_KEY = os.getenv("JWT_VERIFICATION_KEY", None)
-PRIVATE_KEY = os.getenv("JWT_SIGNING_KEY", None)
+# Keys file path for persistence across reloads
+_KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
-if not PUBLIC_KEY:
-    # Generate keys for this example (in production, use your auth provider's public key)
-    PRIVATE_KEY, PUBLIC_KEY = generate_rsa_keys()
+def _load_or_generate_keys():
+    """Load keys from file or generate new ones. Persists keys for reload consistency."""
+    import json
+    
+    # First check environment variables
+    public_key = os.getenv("JWT_VERIFICATION_KEY", None)
+    private_key = os.getenv("JWT_SIGNING_KEY", None)
+    
+    if public_key and private_key:
+        return private_key, public_key
+    
+    # Try to load from file (for reload consistency)
+    if os.path.exists(_KEYS_FILE):
+        with open(_KEYS_FILE, "r") as f:
+            keys = json.load(f)
+            return keys["private_key"], keys["public_key"]
+    
+    # Generate new keys and save them
+    private_key, public_key = generate_rsa_keys()
+    with open(_KEYS_FILE, "w") as f:
+        json.dump({"private_key": private_key, "public_key": public_key}, f)
+    
+    return private_key, public_key
 
-# In production, load the public key from environment variable:
-# PUBLIC_KEY = os.getenv("JWT_VERIFICATION_KEY")
+PRIVATE_KEY, PUBLIC_KEY = _load_or_generate_keys()
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -128,18 +147,13 @@ if __name__ == "__main__":
         print("\n" + "=" * 60)
         print("RBAC Test Tokens (RS256 Asymmetric)")
         print("=" * 60)
-        print("\nUser Token (agents:read, agents:run):")
-        print(user_token)
-        print("\nAdmin Token (admin - full access):")
+        print(f"\nKeys loaded from: {_KEYS_FILE if os.path.exists(_KEYS_FILE) else 'environment variables'}")
+        print("To generate fresh keys, delete: " + _KEYS_FILE)
+        
+        print(f"Public Key: \n{PUBLIC_KEY}")
+        
+        print(f"\nAdmin Token (admin - full access):")
         print(admin_token)
-        print("\n" + "=" * 60)
-        print("\nTest commands:")
-        print(
-            f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
-        )
-        print(
-            f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
-        )
         print("\n" + "=" * 60 + "\n")
 
     agent_os.serve(app="basic_asymmetric:app", port=7777, reload=True)
