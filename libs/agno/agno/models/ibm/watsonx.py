@@ -59,11 +59,7 @@ class WatsonX(Model):
         # Fetch API key and project ID from env if not already set
         self.api_key = self.api_key or getenv("IBM_WATSONX_API_KEY")
         if not self.api_key:
-            raise ModelProviderError(
-                message="IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable.",
-                model_name=self.name,
-                model_id=self.id,
-            )
+            log_error("IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable.")
 
         self.project_id = self.project_id or getenv("IBM_WATSONX_PROJECT_ID")
         if not self.project_id:
