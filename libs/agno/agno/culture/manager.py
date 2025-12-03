@@ -118,7 +118,7 @@ class CultureManager:
 
         self.db = cast(AsyncBaseDb, self.db)
 
-        return await self.db.get_cultural_knowledge(id=id)
+        return await self.db.get_cultural_knowledge(id=id)  # type: ignore
 
     def get_all_knowledge(self, name: Optional[str] = None) -> Optional[List[CulturalKnowledge]]:
         """Get all cultural knowledge in the database"""
@@ -135,7 +135,7 @@ class CultureManager:
             return None
 
         if isinstance(self.db, AsyncBaseDb):
-            return await self.db.get_all_cultural_knowledge(name=name)
+            return await self.db.get_all_cultural_knowledge(name=name)  # type: ignore
         else:
             return self.db.get_all_cultural_knowledge(name=name)
 
