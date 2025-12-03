@@ -1454,9 +1454,6 @@ class Team:
         13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
         """
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
@@ -1660,8 +1657,6 @@ class Team:
         9. Create session summary
         10. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
@@ -2008,6 +2003,10 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
@@ -2028,9 +2027,6 @@ class Team:
             from fastapi import BackgroundTasks
 
             background_tasks: BackgroundTasks = background_tasks  # type: ignore
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -2064,7 +2060,10 @@ class Team:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)
@@ -2284,8 +2283,6 @@ class Team:
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        register_run(run_response.run_id)  # type: ignore
-
         if run_context.dependencies is not None:
             await self._aresolve_run_dependencies(run_context=run_context)
 
@@ -2299,7 +2296,7 @@ class Team:
         self._update_metadata(session=team_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2379,9 +2376,6 @@ class Team:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         try:
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2542,7 +2536,7 @@ class Team:
         self._update_metadata(session=team_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2618,9 +2612,6 @@ class Team:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         try:
             # Considering both stream_events and stream_intermediate_steps (deprecated)
@@ -2910,6 +2901,10 @@ class Team:
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
@@ -2927,9 +2922,6 @@ class Team:
             from fastapi import BackgroundTasks
 
             background_tasks: BackgroundTasks = background_tasks  # type: ignore
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -6888,7 +6880,7 @@ class Team:
             return message
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
-            session_state or {},
+            session_state if session_state is not None else {},
             dependencies or {},
             metadata or {},
             {"user_id": user_id} if user_id is not None else {},

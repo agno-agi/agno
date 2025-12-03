@@ -1297,8 +1297,6 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -1472,10 +1470,6 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -1843,7 +1837,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        _session_state = session_state or {}
+        _session_state = session_state if session_state is not None else {}
         _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
         return workflow_session, _session_state
@@ -1867,10 +1861,6 @@ class Workflow:
         )
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -2057,10 +2047,6 @@ class Workflow:
         )
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -3517,13 +3503,15 @@ class Workflow:
         if self._has_async_db():
             raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         input = self._validate_input(input)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
         self._set_debug()
-
-        run_id = str(uuid4())
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3534,7 +3522,10 @@ class Workflow:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
@@ -3739,7 +3730,9 @@ class Workflow:
 
         self._set_debug()
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
         run_id = str(uuid4())
+        register_run(run_id)
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)

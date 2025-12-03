@@ -589,6 +589,7 @@ class RunOutput:
             and k
             not in [
                 "messages",
+                "metrics",
                 "tools",
                 "metadata",
                 "images",
