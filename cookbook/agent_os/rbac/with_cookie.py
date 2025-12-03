@@ -2,7 +2,11 @@
 Basic RBAC Example with AgentOS
 
 This example demonstrates how to enable RBAC (Role-Based Access Control)
-with JWT token authentication in AgentOS using middleware.
+with JWT token authentication in AgentOS using middleware with cookie-based tokens.
+
+Audience Verification:
+- The `aud` claim in JWT tokens should contain the AgentOS ID
+- This is verified automatically when authorization=True
 
 Prerequisites:
 - Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
@@ -23,6 +27,9 @@ from fastapi import FastAPI, Response
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
+# AgentOS ID - used for audience verification
+AGENT_OS_ID = "my-agent-os"
+
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -40,6 +47,9 @@ research_agent = Agent(
 
 app = FastAPI()
 
+# Store AgentOS ID in app state for middleware
+app.state.agent_os_id = AGENT_OS_ID
+
 
 # Add a simple endpoint to set the JWT authentication cookie
 @app.get("/set-auth-cookie")
@@ -48,10 +58,11 @@ async def set_auth_cookie(response: Response):
     Endpoint to set the JWT authentication cookie.
     In a real application, this would be done after successful login.
     """
-    # Create a test JWT token
+    # Create a test JWT token with aud claim
     payload = {
         "sub": "user_123",
         "session_id": "cookie_session_123",
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agents:read", "agents:run", "sessions:read", "sessions:write"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
@@ -91,6 +102,7 @@ app.add_middleware(
     JWTMiddleware,
     verification_key=JWT_SECRET,
     algorithm="HS256",
+    authorization=True,
     excluded_route_paths=[
         "/set-auth-cookie",
         "/clear-auth-cookie",
@@ -100,12 +112,12 @@ app.add_middleware(
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
     scopes_claim="scopes",  # Extract scopes from 'scopes' claim
-    cors_allowed_origins=["http://localhost:3000"],
 )
 
 
 # Create AgentOS
 agent_os = AgentOS(
+    id=AGENT_OS_ID,  # Important: Set ID for audience verification
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     base_app=app,
@@ -119,6 +131,10 @@ if __name__ == "__main__":
     """
     Run your AgentOS with RBAC enabled.
     
+    Audience Verification:
+    - Tokens must include `aud` claim matching the AgentOS ID
+    - Tokens with wrong audience will be rejected
+    
     Default scope mappings protect all endpoints:
     - GET /agents/{agent_id}: requires "agents:read"
     - POST /agents/{agent_id}/runs: requires "agents:run"
@@ -126,16 +142,20 @@ if __name__ == "__main__":
     - GET /memory: requires "memory:read"
     - etc.
     
-    Special scopes:
-    - "admin": grants access to all endpoints
-    - "agents:*": grants all agent permissions
+    Scope format:
+    - "agents:read" - List all agents
+    - "agents:research-agent:run" - Run specific agent
+    - "agents:*:run" - Run any agent
+    - "agent_os:admin" - Full access to everything
     
     Test with a JWT token that includes scopes:
     """
     # Create test tokens with different scopes
+    # Note: Include `aud` claim with AgentOS ID
     user_token_payload = {
         "sub": "user_123",
         "session_id": "session_456",
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agents:read", "agents:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
@@ -145,7 +165,8 @@ if __name__ == "__main__":
     admin_token_payload = {
         "sub": "admin_789",
         "session_id": "admin_session_123",
-        "scopes": ["admin"],  # Admin has access to everything
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
+        "scopes": ["agent_os:admin"],  # Admin has access to everything
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
     }
@@ -156,15 +177,15 @@ if __name__ == "__main__":
     print("=" * 60)
     print("\nUser Token (agents:read, agents:run):")
     print(user_token)
-    print("\nAdmin Token (admin - full access):")
+    print("\nAdmin Token (agent_os:admin - full access):")
     print(admin_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print(
-        f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
+        '\ncurl -H "Authorization: Bearer ' + user_token + '" http://localhost:7777/agents'
     )
     print(
-        f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
+        '\ncurl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/sessions'
     )
     print("\n" + "=" * 60 + "\n")
 

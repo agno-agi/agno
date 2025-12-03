@@ -1,10 +1,12 @@
 """Integration tests for JWT middleware with RBAC (scope-based authorization).
 
-This test suite validates the AgentOS RBAC system using namespaced scopes:
-- Format: agent-os:<os-id>:resource:action
-- Per-resource: agent-os:<os-id>:resource:<resource-id>:action
-- Wildcards: agent-os:*:... or agent-os:<os-id>:agents:*:run
-- Admin: Full access to everything
+This test suite validates the AgentOS RBAC system using simplified scopes:
+- Global resource: resource:action
+- Per-resource: resource:<resource-id>:action
+- Wildcards: resource:*:action
+- Admin: agent_os:admin - Full access to everything
+
+The AgentOS ID is verified via the JWT `aud` (audience) claim.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -111,11 +113,13 @@ def create_jwt_token(
     user_id: str = "test_user",
     session_id: str | None = None,
     extra_claims: dict | None = None,
+    audience: str = TEST_OS_ID,
 ) -> str:
-    """Helper to create a JWT token with specific scopes and claims."""
+    """Helper to create a JWT token with specific scopes, claims, and audience."""
     payload = {
         "sub": user_id,
         "session_id": session_id or f"session_{user_id}",
+        "aud": audience,  # Audience claim for OS ID verification
         "scopes": scopes,
         "exp": datetime.now(UTC) + timedelta(hours=1),
         "iat": datetime.now(UTC),
@@ -126,7 +130,7 @@ def create_jwt_token(
 
 
 def test_valid_scope_grants_access(test_agent):
-    """Test that having the correct namespaced scope grants access."""
+    """Test that having the correct scope grants access."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
@@ -138,8 +142,8 @@ def test_valid_scope_grants_access(test_agent):
 
     client = TestClient(app)
 
-    # Create token with correct namespaced scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:read"])
+    # Create token with correct scope and audience
+    token = create_jwt_token(scopes=["agents:read"])
 
     response = client.get(
         "/agents",
@@ -163,7 +167,7 @@ def test_missing_scope_denies_access(test_agent):
     client = TestClient(app)
 
     # Create token WITHOUT the required scope (has sessions but not agents)
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:sessions:read"])
+    token = create_jwt_token(scopes=["sessions:read"])
 
     response = client.get(
         "/agents",
@@ -189,7 +193,7 @@ def test_admin_scope_grants_full_access(test_agent):
     client = TestClient(app)
 
     # Admin token with only admin scope
-    token = create_jwt_token(scopes=["admin"])
+    token = create_jwt_token(scopes=["agent_os:admin"])
 
     # Should access all endpoints
     response = client.get(
@@ -222,8 +226,8 @@ def test_wildcard_resource_grants_all_agents(test_agent):
     # Token with wildcard resource scope for agents
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:*:read",
-            f"agent-os:{TEST_OS_ID}:agents:*:run",
+            "agents:*:read",
+            "agents:*:run",
         ]
     )
 
@@ -242,8 +246,8 @@ def test_wildcard_resource_grants_all_agents(test_agent):
     assert response.status_code in [200, 201]
 
 
-def test_wildcard_os_grants_cross_os_access(test_agent):
-    """Test that wildcard OS scope grants access across different OS instances."""
+def test_audience_verification(test_agent):
+    """Test that audience claim is verified against AgentOS ID."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
@@ -255,15 +259,12 @@ def test_wildcard_os_grants_cross_os_access(test_agent):
 
     client = TestClient(app)
 
-    # Token with wildcard OS scope
+    # Token with correct audience should work
     token = create_jwt_token(
-        scopes=[
-            "agent-os:*:agents:read",
-            "agent-os:*:agents:*:run",
-        ]
+        scopes=["agents:read", "agents:*:run"],
+        audience=TEST_OS_ID,
     )
 
-    # Should work even though token doesn't specify specific OS ID
     response = client.get(
         "/agents",
         headers={"Authorization": f"Bearer {token}"},
@@ -294,8 +295,8 @@ def test_per_resource_scope(test_agent, second_agent):
     # Token with scope for only test-agent, not second-agent
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-            f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
+            "agents:test-agent:read",
+            "agents:test-agent:run",
         ]
     )
 
@@ -332,8 +333,8 @@ def test_global_resource_scope(test_agent, second_agent):
     # Token with global agents scope (no resource ID specified)
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:read",
-            f"agent-os:{TEST_OS_ID}:agents:run",
+            "agents:read",
+            "agents:run",
         ]
     )
 
@@ -412,7 +413,8 @@ def test_expired_token_rejected(test_agent):
     payload = {
         "sub": "test_user",
         "session_id": "test_session",
-        "scopes": [f"agent-os:{TEST_OS_ID}:agents:read"],
+        "aud": TEST_OS_ID,
+        "scopes": ["agents:read"],
         "exp": datetime.now(UTC) - timedelta(hours=1),  # Expired 1 hour ago
         "iat": datetime.now(UTC) - timedelta(hours=2),
     }
@@ -490,7 +492,7 @@ def test_token_from_cookie(test_agent):
     client = TestClient(app)
 
     # Create valid token
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:read"])
+    token = create_jwt_token(scopes=["agents:read"])
 
     # Set token as cookie
     client.cookies.set("access_token", token)
@@ -586,7 +588,7 @@ def test_system_scope(test_agent):
     client = TestClient(app)
 
     # Token with system read scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:system:read"])
+    token = create_jwt_token(scopes=["system:read"])
 
     response = client.get(
         "/config",
@@ -596,8 +598,8 @@ def test_system_scope(test_agent):
     assert response.status_code == 200
 
 
-def test_different_os_id_blocks_access(test_agent):
-    """Test that scopes for different OS ID don't grant access."""
+def test_different_audience_blocks_access(test_agent):
+    """Test that tokens with different audience (OS ID) don't grant access."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
@@ -609,15 +611,16 @@ def test_different_os_id_blocks_access(test_agent):
 
     client = TestClient(app)
 
-    # Token with scope for DIFFERENT OS ID
-    token = create_jwt_token(scopes=["agent-os:different-os:agents:read"])
+    # Token with DIFFERENT audience (OS ID)
+    token = create_jwt_token(scopes=["agents:read"], audience="different-os")
 
     response = client.get(
         "/agents",
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 403
+    # Should be rejected due to audience mismatch
+    assert response.status_code == 401
 
 
 def test_agent_filtering_with_global_scope(test_agent, second_agent, third_agent):
@@ -634,7 +637,7 @@ def test_agent_filtering_with_global_scope(test_agent, second_agent, third_agent
     client = TestClient(app)
 
     # Token with global agents scope (no resource ID)
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:read"])
+    token = create_jwt_token(scopes=["agents:read"])
 
     response = client.get(
         "/agents",
@@ -662,7 +665,7 @@ def test_agent_filtering_with_wildcard_scope(test_agent, second_agent, third_age
     client = TestClient(app)
 
     # Token with wildcard resource scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:*:read"])
+    token = create_jwt_token(scopes=["agents:*:read"])
 
     response = client.get(
         "/agents",
@@ -690,7 +693,7 @@ def test_agent_filtering_with_specific_scope(test_agent, second_agent, third_age
     client = TestClient(app)
 
     # Token with scope for only test-agent
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:agents:test-agent:read"])
+    token = create_jwt_token(scopes=["agents:test-agent:read"])
 
     response = client.get(
         "/agents",
@@ -719,8 +722,8 @@ def test_agent_filtering_with_multiple_specific_scopes(test_agent, second_agent,
     # Token with scopes for test-agent and second-agent only
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-            f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
+            "agents:test-agent:read",
+            "agents:second-agent:read",
         ]
     )
 
@@ -752,9 +755,9 @@ def test_agent_run_blocked_without_specific_scope(test_agent, second_agent):
     # Token with run scope for test-agent only
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-            f"agent-os:{TEST_OS_ID}:agents:test-agent:run",
-            f"agent-os:{TEST_OS_ID}:agents:second-agent:read",
+            "agents:test-agent:read",
+            "agents:test-agent:run",
+            "agents:second-agent:read",
             # Note: No run scope for second-agent
         ]
     )
@@ -792,8 +795,8 @@ def test_agent_run_with_wildcard_scope(test_agent, second_agent):
     # Token with wildcard run scope
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:*:read",
-            f"agent-os:{TEST_OS_ID}:agents:*:run",
+            "agents:*:read",
+            "agents:*:run",
         ]
     )
 
@@ -829,8 +832,8 @@ def test_agent_run_with_global_scope(test_agent, second_agent):
     # Token with global run scope (no resource ID)
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:read",
-            f"agent-os:{TEST_OS_ID}:agents:run",
+            "agents:read",
+            "agents:run",
         ]
     )
 
@@ -869,7 +872,7 @@ def test_team_filtering_with_global_scope(test_team, second_team):
     client = TestClient(app)
 
     # Token with global teams scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:teams:read"])
+    token = create_jwt_token(scopes=["teams:read"])
 
     response = client.get(
         "/teams",
@@ -897,7 +900,7 @@ def test_team_filtering_with_wildcard_scope(test_team, second_team):
     client = TestClient(app)
 
     # Token with wildcard resource scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:teams:*:read"])
+    token = create_jwt_token(scopes=["teams:*:read"])
 
     response = client.get(
         "/teams",
@@ -925,7 +928,7 @@ def test_team_filtering_with_specific_scope(test_team, second_team):
     client = TestClient(app)
 
     # Token with scope for only test-team
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:teams:test-team:read"])
+    token = create_jwt_token(scopes=["teams:test-team:read"])
 
     response = client.get(
         "/teams",
@@ -954,9 +957,9 @@ def test_team_run_blocked_without_specific_scope(test_team, second_team):
     # Token with run scope for test-team only
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:teams:test-team:read",
-            f"agent-os:{TEST_OS_ID}:teams:test-team:run",
-            f"agent-os:{TEST_OS_ID}:teams:second-team:read",
+            "teams:test-team:read",
+            "teams:test-team:run",
+            "teams:second-team:read",
             # Note: No run scope for second-team
         ]
     )
@@ -994,8 +997,8 @@ def test_team_run_with_wildcard_scope(test_team, second_team):
     # Token with wildcard run scope
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:teams:*:read",
-            f"agent-os:{TEST_OS_ID}:teams:*:run",
+            "teams:*:read",
+            "teams:*:run",
         ]
     )
 
@@ -1031,8 +1034,8 @@ def test_team_run_with_global_scope(test_team, second_team):
     # Token with global run scope
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:teams:read",
-            f"agent-os:{TEST_OS_ID}:teams:run",
+            "teams:read",
+            "teams:run",
         ]
     )
 
@@ -1071,7 +1074,7 @@ def test_workflow_filtering_with_global_scope(test_workflow, second_workflow):
     client = TestClient(app)
 
     # Token with global workflows scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:workflows:read"])
+    token = create_jwt_token(scopes=["workflows:read"])
 
     response = client.get(
         "/workflows",
@@ -1099,7 +1102,7 @@ def test_workflow_filtering_with_wildcard_scope(test_workflow, second_workflow):
     client = TestClient(app)
 
     # Token with wildcard resource scope
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:workflows:*:read"])
+    token = create_jwt_token(scopes=["workflows:*:read"])
 
     response = client.get(
         "/workflows",
@@ -1127,7 +1130,7 @@ def test_workflow_filtering_with_specific_scope(test_workflow, second_workflow):
     client = TestClient(app)
 
     # Token with scope for only test-workflow
-    token = create_jwt_token(scopes=[f"agent-os:{TEST_OS_ID}:workflows:test-workflow:read"])
+    token = create_jwt_token(scopes=["workflows:test-workflow:read"])
 
     response = client.get(
         "/workflows",
@@ -1156,9 +1159,9 @@ def test_workflow_run_blocked_without_specific_scope(test_workflow, second_workf
     # Token with run scope for test-workflow only
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:workflows:test-workflow:read",
-            f"agent-os:{TEST_OS_ID}:workflows:test-workflow:run",
-            f"agent-os:{TEST_OS_ID}:workflows:second-workflow:read",
+            "workflows:test-workflow:read",
+            "workflows:test-workflow:run",
+            "workflows:second-workflow:read",
             # Note: No run scope for second-workflow
         ]
     )
@@ -1196,8 +1199,8 @@ def test_workflow_run_with_wildcard_scope(test_workflow, second_workflow):
     # Token with wildcard run scope
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:workflows:*:read",
-            f"agent-os:{TEST_OS_ID}:workflows:*:run",
+            "workflows:*:read",
+            "workflows:*:run",
         ]
     )
 
@@ -1233,8 +1236,8 @@ def test_workflow_run_with_global_scope(test_workflow, second_workflow):
     # Token with global run scope
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:workflows:read",
-            f"agent-os:{TEST_OS_ID}:workflows:run",
+            "workflows:read",
+            "workflows:run",
         ]
     )
 
@@ -1280,9 +1283,9 @@ def test_mixed_resource_filtering(test_agent, second_agent, test_team, second_te
     # - Wildcard access to all workflows
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:test-agent:read",
-            f"agent-os:{TEST_OS_ID}:teams:read",
-            f"agent-os:{TEST_OS_ID}:workflows:*:read",
+            "agents:test-agent:read",
+            "teams:read",
+            "workflows:*:read",
         ]
     )
 
@@ -1337,7 +1340,7 @@ def test_no_access_to_resource_type(test_agent, test_team, test_workflow):
     # Token with only agents scope, no teams or workflows scope
     token = create_jwt_token(
         scopes=[
-            f"agent-os:{TEST_OS_ID}:agents:read",
+            "agents:read",
         ]
     )
 
@@ -1382,7 +1385,7 @@ def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_work
     client = TestClient(app)
 
     # Admin token
-    token = create_jwt_token(scopes=["admin"])
+    token = create_jwt_token(scopes=["agent_os:admin"])
 
     # Should see all agents
     response = client.get(

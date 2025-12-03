@@ -35,20 +35,25 @@ class JWTMiddleware(BaseHTTPMiddleware):
     This middleware:
     1. Extracts JWT token from Authorization header or cookies
     2. Decodes and validates the token
-    3. Stores JWT claims (user_id, session_id, scopes) in request.state
-    4. Optionally checks if the request path requires specific scopes (if scope_mappings provided)
-    5. Validates that the authenticated user has the required scopes
-    6. Returns 401 for invalid tokens, 403 for insufficient scopes
+    3. Validates the `aud` (audience) claim matches the AgentOS ID (if configured)
+    4. Stores JWT claims (user_id, session_id, scopes) in request.state
+    5. Optionally checks if the request path requires specific scopes (if scope_mappings provided)
+    6. Validates that the authenticated user has the required scopes
+    7. Returns 401 for invalid tokens, 403 for insufficient scopes
 
     RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
     Without authorization enabled, the middleware only extracts and validates JWT tokens.
 
-    Scope Resolution (when RBAC enabled):
-    - Supports wildcard scopes (e.g., "agents:*" matches "agents:read", "agents:run")
-    - Supports hierarchical scopes (e.g., "admin" grants all permissions)
-    - Custom scope mappings are ADDITIVE to defaults (override on conflict)
-    - Empty list [] means "no scopes required" for that route
-    - Use AgentOSScope enum for type-safe scope definitions
+    Audience Verification:
+    - The `aud` claim in JWT tokens should contain the AgentOS ID
+    - This is verified against the AgentOS instance ID from app.state.agent_os_id
+    - Tokens with mismatched audience will be rejected with 401
+
+    Scope Format (simplified):
+    - Global resource scopes: `resource:action` (e.g., "agents:read")
+    - Per-resource scopes: `resource:<resource-id>:action` (e.g., "agents:web-agent:run")
+    - Wildcards: `resource:*:action` (e.g., "agents:*:run")
+    - Admin scope: `admin` (grants all permissions)
 
     Token Sources:
     - "header": Extract from Authorization header (default)
@@ -59,16 +64,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
         from agno.os.middleware import JWTMiddleware
         from agno.os.scopes import AgentOSScope
 
-        # Additive scope mappings (adds to defaults)
         app.add_middleware(
             JWTMiddleware,
             verification_key="your-secret",
             authorization=True,
+            verify_audience=True,  # Verify aud claim matches AgentOS ID
             scope_mappings={
                 # Override default scope for this endpoint
-                "GET /agents": [AgentOSScope.AGENTS_READ.value],
+                "GET /agents": ["agents:read"],
                 # Add new endpoint mapping
-                "POST /custom/endpoint": [AgentOSScope.AGENTS_RUN.value],
+                "POST /custom/endpoint": ["agents:run"],
                 # Allow access without scopes
                 "GET /public/stats": [],
             }
@@ -86,6 +91,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scopes_claim: str = "scopes",
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
+        audience_claim: str = "aud",
+        verify_audience: bool = True,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         authorization: Optional[bool] = None,
@@ -105,10 +112,12 @@ class JWTMiddleware(BaseHTTPMiddleware):
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
             cookie_name: Cookie name for JWT token (default: "access_token")
-            authorization: Whether to add validation/authorization checks to the request
             scopes_claim: JWT claim name for scopes (default: "scopes")
             user_id_claim: JWT claim name for user ID (default: "sub")
             session_id_claim: JWT claim name for session ID (default: "session_id")
+            audience_claim: JWT claim name for audience/OS ID (default: "aud")
+            verify_audience: Whether to verify the audience claim matches AgentOS ID (default: True)
+            authorization: Whether to add validation/authorization checks to the request (i.e. validation of scopes)
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
             scope_mappings: Optional dictionary mapping route patterns to required scopes.
@@ -117,7 +126,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                            Use empty list [] to explicitly allow access without scopes for a route.
                            Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
             excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
-            admin_scope: The scope that grants admin access (default: "admin")
+            admin_scope: The scope that grants admin access (default: "agent_os:admin")
 
         Note:
             CORS allowed origins are read from app.state.cors_allowed_origins (set by AgentOS).
@@ -138,6 +147,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.scopes_claim = scopes_claim
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
+        self.audience_claim = audience_claim
+        self.verify_audience = verify_audience
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 
@@ -241,8 +252,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             normalized_pattern = pattern_path
             if "{" in normalized_pattern:
                 # Replace {param} with * for pattern matching
-                import re
-
                 normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
 
             if fnmatch.fnmatch(path, normalized_pattern):
@@ -263,31 +272,42 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     def _extract_token_from_cookie(self, request: Request) -> Optional[str]:
         """Extract JWT token from cookie."""
-        return request.cookies.get(self.cookie_name).strip()
-
-    def _extract_token(self, request: Request) -> Optional[str]:
-        """Extract JWT token based on configured source."""
-        if self.token_source == TokenSource.HEADER:
-            return self._extract_token_from_header(request)
-        elif self.token_source == TokenSource.COOKIE:
-            return self._extract_token_from_cookie(request)
-        elif self.token_source == TokenSource.BOTH:
-            # Try header first, then cookie
-            token = self._extract_token_from_header(request)
-            if token:
-                return token
-            return self._extract_token_from_cookie(request)
+        cookie_value = request.cookies.get(self.cookie_name)
+        if cookie_value:
+            return cookie_value.strip()
         return None
 
-    def _validate(self, token: str) -> Dict[str, Any]:
+    def _validate(self, token: str, expected_audience: Optional[str] = None) -> Dict[str, Any]:
         """
         Validate JWT token and extract claims.
 
+        Args:
+            token: The JWT token to validate
+            expected_audience: The expected audience (AgentOS ID) to verify
+
         Returns:
-            Dictionary of claims if valid, None otherwise
+            Dictionary of claims if valid
+
+        Raises:
+            jwt.InvalidAudienceError: If audience claim doesn't match expected
+            jwt.ExpiredSignatureError: If token has expired
+            jwt.InvalidTokenError: If token is invalid
         """
-        print(f"Validating token: {token} with algorithm: {self.algorithm} and verification key: {self.verification_key}")
-        payload = jwt.decode(token, self.verification_key, algorithms=[self.algorithm])  # type: ignore
+        decode_options = {}
+        decode_kwargs: Dict[str, Any] = {
+            "algorithms": [self.algorithm],
+        }
+
+        # Configure audience verification
+        if self.verify_audience and expected_audience:
+            decode_kwargs["audience"] = expected_audience
+        else:
+            decode_options["verify_aud"] = False
+
+        if decode_options:
+            decode_kwargs["options"] = decode_options
+
+        payload = jwt.decode(token, self.verification_key, **decode_kwargs)
         return payload
 
     def _get_missing_token_error_message(self) -> str:
@@ -347,6 +367,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
         origin = request.headers.get("origin")
         cors_allowed_origins = getattr(request.app.state, "cors_allowed_origins", None)
 
+        # Get agent_os_id from app state for audience verification
+        agent_os_id = getattr(request.app.state, "agent_os_id", None)
+
         # Extract JWT token
         token = self._extract_token(request)
         if not token:
@@ -355,13 +378,15 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
         try:
-            # Validate token and extract claims
-            payload: Dict[str, Any] = self._validate(token)  # type: ignore
+            # Validate token and extract claims (with audience verification if configured)
+            expected_audience = agent_os_id if self.verify_audience else None
+            payload: Dict[str, Any] = self._validate(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
             user_id = payload.get(self.user_id_claim)
             session_id = payload.get(self.session_id_claim)
             scopes = payload.get(self.scopes_claim, [])
+            audience = payload.get(self.audience_claim)
 
             # Ensure scopes is a list
             if isinstance(scopes, str):
@@ -374,6 +399,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
+            request.state.audience = audience
 
             # Extract dependencies claims
             dependencies = {}
@@ -397,9 +423,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
             # RBAC scope checking (only if enabled)
             if self.authorization:
-                # Get agent_os_id from app state
-                agent_os_id = getattr(request.app.state, "agent_os_id", None)
-
                 # Extract resource type and ID from path
                 resource_type = None
                 resource_id = None
@@ -411,17 +434,17 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 elif "/workflows" in path:
                     resource_type = "workflows"
 
-                resource_id = self._extract_resource_id_from_path(path, resource_type)
+                if resource_type:
+                    resource_id = self._extract_resource_id_from_path(path, resource_type)
 
                 required_scopes = self._get_required_scopes(method, path)
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
-                    # Use the new scope validation system
+                    # Use the scope validation system
                     has_access = has_required_scopes(
                         scopes,
                         required_scopes,
-                        agent_os_id=agent_os_id,
                         resource_type=resource_type,
                         resource_id=resource_id,
                     )
@@ -430,7 +453,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
                         # This allows endpoints to return filtered results (including empty list) instead of 403
-                        accessible_ids = get_accessible_resource_ids(scopes, resource_type, agent_os_id)
+                        accessible_ids = get_accessible_resource_ids(scopes, resource_type)
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
 
@@ -456,6 +479,15 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
 
+        except jwt.InvalidAudienceError:
+            if self.authorization:
+                log_warning(f"Invalid audience - expected: {agent_os_id}")
+                return self._create_error_response(
+                    401, f"Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
+                )
+            request.state.authenticated = False
+            request.state.token = token
+
         except jwt.ExpiredSignatureError:
             if self.authorization:
                 log_warning("Token has expired")
@@ -477,3 +509,17 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.token = token
 
         return await call_next(request)
+
+    def _extract_token(self, request: Request) -> Optional[str]:
+        """Extract JWT token based on configured source."""
+        if self.token_source == TokenSource.HEADER:
+            return self._extract_token_from_header(request)
+        elif self.token_source == TokenSource.COOKIE:
+            return self._extract_token_from_cookie(request)
+        elif self.token_source == TokenSource.BOTH:
+            # Try header first, then cookie
+            token = self._extract_token_from_header(request)
+            if token:
+                return token
+            return self._extract_token_from_cookie(request)
+        return None

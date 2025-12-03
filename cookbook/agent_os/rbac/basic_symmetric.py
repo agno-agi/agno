@@ -4,6 +4,10 @@ Basic RBAC Example with AgentOS
 This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
+Audience Verification:
+- The `aud` claim in JWT tokens should contain the AgentOS ID
+- This is verified automatically when authorization=True
+
 Prerequisites:
 - Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
@@ -17,10 +21,14 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.config import JWTConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
+
+# AgentOS ID - used for audience verification
+AGENT_OS_ID = "my-agent-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -38,11 +46,14 @@ research_agent = Agent(
 
 # Create AgentOS
 agent_os = AgentOS(
+    id=AGENT_OS_ID,  # Important: Set ID for audience verification
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
-    jwt_verification_key=JWT_SECRET,
-    jwt_algorithm="HS256",  # Use HS256 for symmetric key
+    jwt_config=JWTConfig(
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+    ),
 )
 
 # Get the app and add RBAC middleware
@@ -53,6 +64,10 @@ if __name__ == "__main__":
     """
     Run your AgentOS with RBAC enabled.
     
+    Audience Verification:
+    - Tokens must include `aud` claim matching the AgentOS ID
+    - Tokens with wrong audience will be rejected
+    
     Default scope mappings protect all endpoints:
     - GET /agents/{agent_id}: requires "agents:read"
     - POST /agents/{agent_id}/runs: requires "agents:run"
@@ -60,16 +75,20 @@ if __name__ == "__main__":
     - GET /memory: requires "memory:read"
     - etc.
     
-    Special scopes:
-    - "admin": grants access to all endpoints
-    - "agents:*": grants all agent permissions
+    Scope format:
+    - "agents:read" - List all agents
+    - "agents:research-agent:run" - Run specific agent
+    - "agents:*:run" - Run any agent
+    - "agent_os:admin" - Full access to everything
     
     Test with a JWT token that includes scopes:
     """
     # Create test tokens with different scopes
+    # Note: Include `aud` claim with AgentOS ID
     user_token_payload = {
         "sub": "user_123",
         "session_id": "session_456",
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agents:read", "agents:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
@@ -79,7 +98,8 @@ if __name__ == "__main__":
     admin_token_payload = {
         "sub": "admin_789",
         "session_id": "admin_session_123",
-        "scopes": ["admin"],  # Admin has access to everything
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
+        "scopes": ["agent_os:admin"],  # Admin has access to everything
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
     }
@@ -90,15 +110,15 @@ if __name__ == "__main__":
     print("=" * 60)
     print("\nUser Token (agents:read, agents:run):")
     print(user_token)
-    print("\nAdmin Token (admin - full access):")
+    print("\nAdmin Token (agent_os:admin - full access):")
     print(admin_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print(
-        f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
+        '\ncurl -H "Authorization: Bearer ' + user_token + '" http://localhost:7777/agents'
     )
     print(
-        f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
+        '\ncurl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/sessions'
     )
     print("\n" + "=" * 60 + "\n")
 

@@ -8,6 +8,10 @@ RS256 uses:
 - Private key: Used by your auth server to SIGN tokens
 - Public key: Used by AgentOS to VERIFY token signatures
 
+Audience Verification:
+- The `aud` claim in JWT tokens should contain the AgentOS ID
+- This is verified automatically when authorization=True
+
 Prerequisites:
 - Set JWT_VERIFICATION_KEY and JWT_SIGNING_KEY environment variables with your public and private keys (PEM format)
 - Or generate keys at runtime for testing (as shown below)
@@ -26,6 +30,10 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import JWTConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
+
+
+# AgentOS ID - used for audience verification
+AGENT_OS_ID = "my-agent-os"
 
 
 def generate_rsa_keys():
@@ -92,6 +100,7 @@ research_agent = Agent(
 
 # Create AgentOS with RS256 (default algorithm)
 agent_os = AgentOS(
+    id=AGENT_OS_ID,  # Important: Set ID for audience verification
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
@@ -113,6 +122,10 @@ if __name__ == "__main__":
     - Private key: Keep secret on your auth server (signs tokens)
     - Public key: Share with AgentOS (verifies tokens)
     
+    Audience Verification:
+    - Tokens must include `aud` claim matching the AgentOS ID
+    - Tokens with wrong audience will be rejected
+    
     Default scope mappings protect all endpoints:
     - GET /agents/{agent_id}: requires "agents:read"
     - POST /agents/{agent_id}/runs: requires "agents:run"
@@ -120,15 +133,19 @@ if __name__ == "__main__":
     - GET /memory: requires "memory:read"
     - etc.
     
-    Special scopes:
-    - "admin": grants access to all endpoints
-    - "agents:*": grants all agent permissions
+    Scope format:
+    - "agents:read" - List all agents
+    - "agents:research-agent:run" - Run specific agent
+    - "agents:*:run" - Run any agent
+    - "agent_os:admin" - Full access to everything
     """
     if PRIVATE_KEY:
         # Create test tokens signed with the PRIVATE key
+        # Note: Include `aud` claim with AgentOS ID
         user_token_payload = {
             "sub": "user_123",
             "session_id": "session_456",
+            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["agents:read", "agents:run"],
             "exp": datetime.now(UTC) + timedelta(hours=24),
             "iat": datetime.now(UTC),
@@ -138,7 +155,8 @@ if __name__ == "__main__":
         admin_token_payload = {
             "sub": "admin_789",
             "session_id": "admin_session_123",
-            "scopes": ["admin"],  # Admin has access to everything
+            "aud": AGENT_OS_ID,  # Must match AgentOS ID
+            "scopes": ["agent_os:admin"],  # Admin has access to everything
             "exp": datetime.now(UTC) + timedelta(hours=24),
             "iat": datetime.now(UTC),
         }
@@ -147,12 +165,12 @@ if __name__ == "__main__":
         print("\n" + "=" * 60)
         print("RBAC Test Tokens (RS256 Asymmetric)")
         print("=" * 60)
-        print(f"\nKeys loaded from: {_KEYS_FILE if os.path.exists(_KEYS_FILE) else 'environment variables'}")
+        print("Keys loaded from: " + (_KEYS_FILE if os.path.exists(_KEYS_FILE) else "environment variables"))
         print("To generate fresh keys, delete: " + _KEYS_FILE)
         
-        print(f"Public Key: \n{PUBLIC_KEY}")
+        print("Public Key: \n" + PUBLIC_KEY)
         
-        print(f"\nAdmin Token (admin - full access):")
+        print("\nAdmin Token (agent_os:admin - full access):")
         print(admin_token)
         print("\n" + "=" * 60 + "\n")
 

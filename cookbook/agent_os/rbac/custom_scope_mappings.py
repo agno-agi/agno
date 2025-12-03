@@ -4,6 +4,10 @@ Custom Scope Mappings Example
 This example demonstrates how to define custom scope mappings for your AgentOS endpoints.
 You can specify exactly which scopes are required for each endpoint.
 
+Audience Verification:
+- The `aud` claim in JWT tokens should contain the AgentOS ID
+- This is verified automatically when authorization=True
+
 Pre-requisites:
 - Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
@@ -21,6 +25,9 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
+
+# AgentOS ID - used for audience verification
+AGENT_OS_ID = "my-agent-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -53,25 +60,32 @@ custom_scopes = {
 
 # Create AgentOS
 agent_os = AgentOS(
+    id=AGENT_OS_ID,  # Important: Set ID for audience verification
     description="Custom Scope Mappings AgentOS",
     agents=[research_agent],
 )
 
 app = agent_os.get_app()
 
+# Store AgentOS ID in app state for middleware
+app.state.agent_os_id = AGENT_OS_ID
+
 # Add JWT middleware with RBAC enabled using custom scope mappings
 app.add_middleware(
     JWTMiddleware,
     verification_key=JWT_SECRET,
-    algorithm="HS256", # Use HS256 for symmetric key
+    algorithm="HS256",  # Use HS256 for symmetric key
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
-    admin_scope="admin",  # Admin can bypass all checks
-    cors_allowed_origins=["http://localhost:3000"],
+    admin_scope="agent_os:admin",  # Admin can bypass all checks
 )
 
 if __name__ == "__main__":
     """
     Run your AgentOS with custom scope mappings.
+    
+    Audience Verification:
+    - Tokens must include `aud` claim matching the AgentOS ID
+    - Tokens with wrong audience will be rejected
     
     This example shows how to:
     1. Define custom scopes for your application
@@ -80,9 +94,11 @@ if __name__ == "__main__":
     """
 
     # Create tokens with different permission levels
+    # Note: Include `aud` claim with AgentOS ID
     basic_user_token = jwt.encode(
         {
             "sub": "user_123",
+            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["app:read"],  # Can only read, not execute
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
@@ -93,6 +109,7 @@ if __name__ == "__main__":
     power_user_token = jwt.encode(
         {
             "sub": "user_456",
+            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["app:read", "app:run", "app:execute"],  # Can read and execute
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
@@ -103,7 +120,8 @@ if __name__ == "__main__":
     admin_token = jwt.encode(
         {
             "sub": "admin_789",
-            "scopes": ["admin"],  # Admin bypasses all checks
+            "aud": AGENT_OS_ID,  # Must match AgentOS ID
+            "scopes": ["agent_os:admin"],  # Admin bypasses all checks
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
         JWT_SECRET,
@@ -117,27 +135,27 @@ if __name__ == "__main__":
     print(basic_user_token)
     print("\nPower User Token (app:read, app:run, app:execute):")
     print(power_user_token)
-    print("\nAdmin Token (admin - bypasses all checks):")
+    print("\nAdmin Token (agent_os:admin - bypasses all checks):")
     print(admin_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print("\n# Basic user can read agents:")
     print(
-        f'curl -H "Authorization: Bearer {basic_user_token}" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer ' + basic_user_token + '" http://localhost:7777/agents'
     )
     print("\n# But cannot run them (missing app:run and app:execute):")
     print(
-        f'curl -X POST -H "Authorization: Bearer {basic_user_token}" '
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"message": "test"}}\' '
-        f"http://localhost:7777/agents/research-agent/runs"
+        'curl -X POST -H "Authorization: Bearer ' + basic_user_token + '" '
+        '-H "Content-Type: application/json" '
+        '-d \'{"message": "test"}\' '
+        "http://localhost:7777/agents/research-agent/runs"
     )
     print("\n# Power user can do both:")
     print(
-        f'curl -X POST -H "Authorization: Bearer {power_user_token}" '
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"message": "test"}}\' '
-        f"http://localhost:7777/agents/research-agent/runs"
+        'curl -X POST -H "Authorization: Bearer ' + power_user_token + '" '
+        '-H "Content-Type: application/json" '
+        '-d \'{"message": "test"}\' '
+        "http://localhost:7777/agents/research-agent/runs"
     )
     print("\n" + "=" * 60 + "\n")
 

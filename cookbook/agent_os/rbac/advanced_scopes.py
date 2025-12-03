@@ -1,21 +1,25 @@
 """
-Advanced RBAC Example with AgentOS - ALL Scopes Namespaced
+Advanced RBAC Example with AgentOS - Simplified Scopes with Audience Verification
 
-This example demonstrates the AgentOS RBAC system where ALL scopes use agent-os namespace:
+This example demonstrates the AgentOS RBAC system with simplified scope format:
 
-Scope Format (ALL use agent-os namespace):
-1. Global resource scopes: agent-os:<os-id>:resource:action
-2. Per-resource scopes: agent-os:<os-id>:resource:<resource-id>:action
-3. Wildcard support: agent-os:*:... or agent-os:<os-id>:agents:*:run
+Scope Format:
+1. Global resource scopes: resource:action
+2. Per-resource scopes: resource:<resource-id>:action
+3. Wildcard support: resource:*:action
+
+Audience Verification:
+- The `aud` claim in JWT tokens should contain the AgentOS ID
+- This is verified automatically when authorization=True
+- Tokens with mismatched audience will be rejected with 401
 
 Scope Examples:
-- agent-os:my-os:system:read - Read system config
-- agent-os:my-os:agents:read - List all agents in this OS
-- agent-os:my-os:agents:web-agent:read - Read specific agent
-- agent-os:my-os:agents:web-agent:run - Run specific agent
-- agent-os:*:agents:read - Read agents from ANY OS (wildcard)
-- agent-os:my-os:agents:*:run - Run ANY agent in this OS (wildcard)
-- admin - Full access to everything
+- system:read - Read system config
+- agents:read - List all agents
+- agents:web-agent:read - Read specific agent
+- agents:web-agent:run - Run specific agent
+- agents:*:run - Run ANY agent (wildcard)
+- agent_os:admin - Full access to everything
 
 Prerequisites:
 - Set JWT_VERIFICATION_KEY environment variable
@@ -30,10 +34,14 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.config import JWTConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
+
+# AgentOS ID - used for audience verification
+AGENT_OS_ID = "my-production-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -67,13 +75,17 @@ admin_agent = Agent(
 )
 
 
-# Create AgentOS with specific ID for namespacing
+# Create AgentOS with specific ID for audience verification
 agent_os = AgentOS(
-    id="my-production-os",
+    id=AGENT_OS_ID,
     name="Production AgentOS",
-    description="RBAC Protected AgentOS with Namespaced Scopes",
+    description="RBAC Protected AgentOS with Simplified Scopes",
     agents=[web_search_agent, analyst_agent, admin_agent],
     authorization=True,  # Enable RBAC
+    jwt_config=JWTConfig(
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+    ),  
 )
 
 # Get the app
@@ -81,9 +93,10 @@ app = agent_os.get_app()
 
 
 def create_token(user_id: str, scopes: list[str], hours: int = 24) -> str:
-    """Helper function to create JWT tokens with scopes."""
+    """Helper function to create JWT tokens with scopes and audience."""
     payload = {
         "sub": user_id,
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": scopes,
         "exp": datetime.now(UTC) + timedelta(hours=hours),
         "iat": datetime.now(UTC),
@@ -93,38 +106,41 @@ def create_token(user_id: str, scopes: list[str], hours: int = 24) -> str:
 
 if __name__ == "__main__":
     """
-    Scope Hierarchy and Examples (ALL use agent-os namespace):
+    Scope Hierarchy and Examples:
     
     1. ADMIN SCOPE (highest privilege):
-       - "admin" grants full access to all endpoints
+       - "agent_os:admin" grants full access to all endpoints
     
-    2. GLOBAL RESOURCE SCOPES (OS-wide permissions):
-       - "agent-os:my-production-os:system:read" - Read system configuration
-       - "agent-os:my-production-os:agents:read" - List all agents in this OS
-       - "agent-os:*:agents:read" - List agents from ANY AgentOS instance (wildcard OS)
+    2. GLOBAL RESOURCE SCOPES:
+       - "system:read" - Read system configuration
+       - "agents:read" - List all agents
+       - "agents:run" - Run any agent
     
-    3. PER-RESOURCE SCOPES (granular permissions - still use agent-os namespace):
-       - "agent-os:my-production-os:agents:web-search-agent:read" - Read specific agent
-       - "agent-os:my-production-os:agents:web-search-agent:run" - Run specific agent
-       - "agent-os:my-production-os:agents:*:run" - Run ANY agent in this OS (wildcard resource)
-       - "agent-os:*:agents:*:run" - Run ANY agent in ANY OS (double wildcard)
+    3. PER-RESOURCE SCOPES (granular permissions):
+       - "agents:web-search-agent:read" - Read specific agent
+       - "agents:web-search-agent:run" - Run specific agent
+       - "agents:*:run" - Run ANY agent (wildcard)
+    
+    AUDIENCE VERIFICATION:
+       - All tokens must include `aud` claim matching the AgentOS ID
+       - Tokens for other AgentOS instances will be rejected
     """
 
     # EXAMPLE 1: Admin user - full access
     admin_token = create_token(
         user_id="admin_user",
-        scopes=["admin"],
+        scopes=["agent_os:admin"],
     )
 
-    # EXAMPLE 2: Power user - can list and run all agents in this OS
+    # EXAMPLE 2: Power user - can list and run all agents
     power_user_token = create_token(
         user_id="power_user",
         scopes=[
-            "agent-os:my-production-os:system:read",
-            "agent-os:my-production-os:agents:read",
-            "agent-os:my-production-os:agents:run",
-            "agent-os:my-production-os:sessions:read",
-            "agent-os:my-production-os:sessions:write",
+            "system:read",
+            "agents:read",
+            "agents:run",
+            "sessions:read",
+            "sessions:write",
         ],
     )
 
@@ -132,10 +148,10 @@ if __name__ == "__main__":
     limited_user_token = create_token(
         user_id="limited_user",
         scopes=[
-            "agent-os:my-production-os:agents:web-search-agent:read",
-            "agent-os:my-production-os:agents:web-search-agent:run",
-            "agent-os:my-production-os:agents:analyst-agent:read",
-            "agent-os:my-production-os:agents:analyst-agent:run",
+            "agents:web-search-agent:read",
+            "agents:web-search-agent:run",
+            "agents:analyst-agent:read",
+            "agents:analyst-agent:run",
             # Note: This user won't see admin-agent in GET /agents
         ],
     )
@@ -144,29 +160,18 @@ if __name__ == "__main__":
     readonly_user_token = create_token(
         user_id="readonly_user",
         scopes=[
-            "agent-os:my-production-os:agents:*:read",  # Can read all agents in this OS
-            "agent-os:my-production-os:system:read",  # Can read system info
+            "agents:*:read",  # Can read all agents
+            "system:read",  # Can read system info
             # Cannot run any agents
         ],
     )
 
-    # EXAMPLE 5: Wildcard user - can run any agent across all OS instances
+    # EXAMPLE 5: Wildcard user - can run any agent
     wildcard_user_token = create_token(
         user_id="wildcard_user",
         scopes=[
-            "agent-os:*:agents:read",  # Read agents from any OS
-            "agent-os:*:agents:*:run",  # Run any agent in any OS
-        ],
-    )
-
-    # EXAMPLE 6: Multi-OS user - access to multiple OS instances
-    multi_os_user_token = create_token(
-        user_id="multi_os_user",
-        scopes=[
-            "agent-os:my-production-os:agents:read",
-            "agent-os:my-production-os:agents:run",
-            "agent-os:staging-os:agents:read",
-            "agent-os:staging-os:agents:run",
+            "agents:read",  # Read all agents
+            "agents:*:run",  # Run any agent (wildcard)
         ],
     )
 
@@ -175,71 +180,69 @@ if __name__ == "__main__":
     print("=" * 80)
 
     print("\n1. ADMIN USER (full access):")
-    print("   Scopes: ['admin']")
-    print(f"   Token: {admin_token[:50]}...")
+    print("   Scopes: ['agent_os:admin']")
+    print("   Token: " + admin_token[:50] + "...")
 
-    print("\n2. POWER USER (OS-wide access):")
-    print("   Scopes: ['agent-os:my-production-os:system:read', ...]")
-    print(f"   Token: {power_user_token[:50]}...")
+    print("\n2. POWER USER (global access):")
+    print("   Scopes: ['system:read', 'agents:read', 'agents:run', ...]")
+    print("   Token: " + power_user_token[:50] + "...")
 
     print("\n3. LIMITED USER (specific agents only):")
-    print("   Scopes: ['agent-os:my-production-os:agents:web-search-agent:read', ...]")
-    print(f"   Token: {limited_user_token[:50]}...")
+    print("   Scopes: ['agents:web-search-agent:read', 'agents:web-search-agent:run', ...]")
+    print("   Token: " + limited_user_token[:50] + "...")
 
     print("\n4. READ-ONLY USER (view only):")
-    print(
-        "   Scopes: ['agent-os:my-production-os:agents:*:read', 'agent-os:my-production-os:system:read']"
-    )
-    print(f"   Token: {readonly_user_token[:50]}...")
+    print("   Scopes: ['agents:*:read', 'system:read']")
+    print("   Token: " + readonly_user_token[:50] + "...")
 
-    print("\n5. WILDCARD USER (any agent, any OS):")
-    print("   Scopes: ['agent-os:*:agents:read', 'agent-os:*:agents:*:run']")
-    print(f"   Token: {wildcard_user_token[:50]}...")
+    print("\n5. WILDCARD USER (run any agent):")
+    print("   Scopes: ['agents:read', 'agents:*:run']")
+    print("   Token: " + wildcard_user_token[:50] + "...")
 
     print("\n" + "=" * 80)
     print("TEST COMMANDS")
     print("=" * 80)
 
     print("\n# Test admin access (should work for all endpoints):")
-    print(f'curl -H "Authorization: Bearer {admin_token}" http://localhost:7777/agents')
-    print(f'curl -H "Authorization: Bearer {admin_token}" http://localhost:7777/config')
+    print('curl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/agents')
+    print('curl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/config')
 
     print("\n# Test power user (should see all agents and run any):")
     print(
-        f'curl -H "Authorization: Bearer {power_user_token}" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer ' + power_user_token + '" http://localhost:7777/agents'
     )
     print(
-        f'curl -X POST -H "Authorization: Bearer {power_user_token}" \\\n'
-        f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs'
+        'curl -X POST -H "Authorization: Bearer ' + power_user_token + '" \\\n'
+        '  -F "message=test" http://localhost:7777/agents/web-search-agent/runs'
     )
 
     print(
         "\n# Test limited user (should only see 2 agents: web-search-agent and analyst-agent):"
     )
     print(
-        f'curl -H "Authorization: Bearer {limited_user_token}" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer ' + limited_user_token + '" http://localhost:7777/agents'
     )
     print(
-        f'curl -X POST -H "Authorization: Bearer {limited_user_token}" \\\n'
-        f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs'
+        'curl -X POST -H "Authorization: Bearer ' + limited_user_token + '" \\\n'
+        '  -F "message=test" http://localhost:7777/agents/web-search-agent/runs'
     )
 
     print("\n# Test read-only user (should see all agents but cannot run):")
     print(
-        f'curl -H "Authorization: Bearer {readonly_user_token}" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer ' + readonly_user_token + '" http://localhost:7777/agents'
     )
     print(
-        f'curl -X POST -H "Authorization: Bearer {readonly_user_token}" \\\n'
-        f'  -F "message=test" http://localhost:7777/agents/web-search-agent/runs  # Should fail'
+        'curl -X POST -H "Authorization: Bearer ' + readonly_user_token + '" \\\n'
+        '  -F "message=test" http://localhost:7777/agents/web-search-agent/runs  # Should fail'
     )
 
-    print("\n# Test wildcard user (should work across any OS and any agent):")
+    print("\n# Test wildcard user (should work for any agent):")
     print(
-        f'curl -H "Authorization: Bearer {wildcard_user_token}" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer ' + wildcard_user_token + '" http://localhost:7777/agents'
     )
     print(
-        f'curl -X POST -H "Authorization: Bearer {wildcard_user_token}" \\\n'
-        f'  -F "message=test" http://localhost:7777/agents/admin-agent/runs'
+        'curl -X POST -H "Authorization: Bearer ' + wildcard_user_token + '" \\\n'
+        '  -F "message=test" http://localhost:7777/agents/admin-agent/runs'
     )
 
     print("\n" + "=" * 80)
@@ -248,20 +251,21 @@ if __name__ == "__main__":
     print("""
 For GET /agents:
 - Filters the agent list based on user's scopes
-- 'agent-os:my-production-os:agents:web-search-agent:read' → only see web-search-agent
-- 'agent-os:my-production-os:agents:*:read' → see all agents in this OS
-- 'agent-os:my-production-os:agents:read' → see all agents in this OS (global scope)
-- 'agent-os:*:agents:read' → see all agents in ANY OS
+- 'agents:web-search-agent:read' -> only see web-search-agent
+- 'agents:*:read' -> see all agents (wildcard)
+- 'agents:read' -> see all agents (global scope)
 
 For POST /agents/{agent_id}/runs:
 - Checks for matching scopes with resource ID
 - Requires either:
-  * 'agent-os:my-production-os:agents:<agent_id>:run' (specific agent)
-  * 'agent-os:my-production-os:agents:*:run' (any agent in this OS - wildcard)
-  * 'agent-os:*:agents:*:run' (any agent in any OS - double wildcard)
-  * 'admin' (full access)
+  * 'agents:<agent_id>:run' (specific agent)
+  * 'agents:*:run' (any agent - wildcard)
+  * 'agents:run' (global scope)
+  * 'agent_os:admin' (full access)
 
-All scopes MUST use the agent-os namespace format!
+AUDIENCE VERIFICATION:
+- All tokens must have 'aud' claim matching the AgentOS ID
+- Invalid audience returns 401 Unauthorized
     """)
 
     print("\n" + "=" * 80 + "\n")

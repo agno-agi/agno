@@ -1,8 +1,12 @@
 """
-Basic RBAC Example with AgentOS
+Per-Agent Permissions Example with AgentOS
 
-This example demonstrates how to enable RBAC (Role-Based Access Control)
-with JWT token authentication in AgentOS using middleware.
+This example demonstrates how to define per-agent permission scopes
+to control which users can run which specific agents.
+
+Audience Verification:
+- The `aud` claim in JWT tokens should contain the AgentOS ID
+- This is verified automatically when authorization=True
 
 Prerequisites:
 - Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
@@ -23,6 +27,9 @@ from agno.tools.mcp import MCPTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
+
+# AgentOS ID - used for audience verification
+AGENT_OS_ID = "my-agent-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -50,6 +57,7 @@ agno_agent = Agent(
 
 # Create AgentOS
 agent_os = AgentOS(
+    id=AGENT_OS_ID,  # Important: Set ID for audience verification
     description="RBAC Protected AgentOS",
     agents=[web_search_agent, agno_agent],
 )
@@ -57,24 +65,31 @@ agent_os = AgentOS(
 # Get the app and add RBAC middleware
 app = agent_os.get_app()
 
+# Store AgentOS ID in app state for middleware
+app.state.agent_os_id = AGENT_OS_ID
+
 # Add JWT middleware with RBAC enabled using custom scope mappings
 app.add_middleware(
     JWTMiddleware,
     verification_key=JWT_SECRET,
-    algorithm="HS256", # Use HS256 for symmetric key
+    algorithm="HS256",  # Use HS256 for symmetric key
+    verify_audience=True,  # Verify aud claim matches AgentOS ID
     scope_mappings={
         # Define the scopes for the agents
         # Other scopes will remain the same
-        "POST /agents/web-search-agent/runs": ["agents:web-search-agent"],
-        "POST /agents/agno-agent/runs": ["agents:agno-agent"],
+        "POST /agents/web-search-agent/runs": ["agents:web-search-agent:run"],
+        "POST /agents/agno-agent/runs": ["agents:agno-agent:run"],
         "POST /agents/*/runs": [],
     },
-    admin_scope="admin",  # Admin can bypass all checks
 )
 
 if __name__ == "__main__":
     """
     Run your AgentOS with RBAC enabled.
+    
+    Audience Verification:
+    - Tokens must include `aud` claim matching the AgentOS ID
+    - Tokens with wrong audience will be rejected
     
     Default scope mappings protect all endpoints:
     - GET /agents/{agent_id}: requires "agents:read"
@@ -83,16 +98,20 @@ if __name__ == "__main__":
     - GET /memory: requires "memory:read"
     - etc.
     
-    Special scopes:
-    - "admin": grants access to all endpoints
-    - "agents:*": grants all agent permissions
+    Per-agent scope format:
+    - "agents:web-search-agent:run" - Run only the web-search-agent
+    - "agents:agno-agent:run" - Run only the agno-agent
+    - "agents:*:run" - Run any agent
+    - "agent_os:admin" - Full access to everything
     
     Test with a JWT token that includes scopes:
     """
     # Create test tokens with different scopes
+    # Note: Include `aud` claim with AgentOS ID
     web_search_user_token_payload = {
         "sub": "user_123",
-        "scopes": ["agents:web-search-agent"],
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
+        "scopes": ["agents:web-search-agent:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
     }
@@ -102,7 +121,8 @@ if __name__ == "__main__":
 
     agno_user_token_payload = {
         "sub": "user_456",
-        "scopes": ["agents:agno-agent"],
+        "aud": AGENT_OS_ID,  # Must match AgentOS ID
+        "scopes": ["agents:agno-agent:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
     }
@@ -111,17 +131,17 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("RBAC Test Tokens")
     print("=" * 60)
-    print("\nWeb Search User Token (agents:web-search-agent):")
+    print("\nWeb Search User Token (agents:web-search-agent:run):")
     print(web_search_user_token)
-    print("\nAgno User Token (agents:agno-agent):")
+    print("\nAgno User Token (agents:agno-agent:run):")
     print(agno_user_token)
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print(
-        f'\ncurl -H "Authorization: Bearer {web_search_user_token}" http://localhost:7777/agents/web-search-agent/runs'
+        '\ncurl -H "Authorization: Bearer ' + web_search_user_token + '" http://localhost:7777/agents/web-search-agent/runs'
     )
     print(
-        f'\ncurl -H "Authorization: Bearer {agno_user_token}" http://localhost:7777/agents/agno-agent/runs'
+        '\ncurl -H "Authorization: Bearer ' + agno_user_token + '" http://localhost:7777/agents/agno-agent/runs'
     )
     print("\n" + "=" * 60 + "\n")
 

@@ -3,20 +3,19 @@
 This module defines all available permission scopes for AgentOS RBAC (Role-Based Access Control).
 
 Scope Format:
-ALL scopes use the agent-os namespace:
-- Global resource scopes: `agent-os:<os-id>:resource:action`
-- Per-resource scopes: `agent-os:<os-id>:resource:<resource-id>:action`
-- Wildcards supported at any level: `agent-os:*:...` or `agent-os:<os-id>:agents:*:run`
+- Global resource scopes: `resource:action`
+- Per-resource scopes: `resource:<resource-id>:action`
+- Wildcards: `resource:*:action` for any resource
+
+The AgentOS ID is verified via the JWT `aud` (audience) claim.
 
 Examples:
-- `agent-os:my-os:system:read` - Read system config for specific AgentOS instance
-- `agent-os:my-os:agents:read` - List all agents in my-os
-- `agent-os:my-os:agents:web-agent:read` - Read specific agent in my-os
-- `agent-os:my-os:agents:web-agent:run` - Run specific agent in my-os
-- `agent-os:*:agents:read` - List agents from any AgentOS instance
-- `agent-os:my-os:agents:*:run` - Run any agent in my-os
-- `agent-os:*:agents:*:run` - Run any agent in any AgentOS instance
-- `admin` - Full access to everything
+- `system:read` - Read system config
+- `agents:read` - List all agents
+- `agents:web-agent:read` - Read specific agent
+- `agents:web-agent:run` - Run specific agent
+- `agents:*:run` - Run any agent (wildcard)
+- `agent_os:admin` - Full access to everything
 """
 
 from dataclasses import dataclass
@@ -29,46 +28,45 @@ class AgentOSScope(str, Enum):
     Enum of all available AgentOS permission scopes.
 
     Special Scopes:
-    - ADMIN: Grants full access to all endpoints
+    - ADMIN: Grants full access to all endpoints (agent_os:admin)
 
-    ALL scopes use agent-os namespace format:
+    Scope format:
 
     Global Resource Scopes:
-    - agent-os:<id>:system:read - System configuration and model information
-    - agent-os:<id>:agents:read - List all agents
-    - agent-os:<id>:teams:read - List all teams
-    - agent-os:<id>:workflows:read - List all workflows
-    - agent-os:<id>:sessions:read - View session data
-    - agent-os:<id>:sessions:write - Create and update sessions
-    - agent-os:<id>:sessions:delete - Delete sessions
-    - agent-os:<id>:memories:read - View memories
-    - agent-os:<id>:memories:write - Create and update memories
-    - agent-os:<id>:memories:delete - Delete memories
-    - agent-os:<id>:knowledge:read - View and search knowledge
-    - agent-os:<id>:knowledge:write - Add and update knowledge
-    - agent-os:<id>:knowledge:delete - Delete knowledge
-    - agent-os:<id>:metrics:read - View metrics
-    - agent-os:<id>:metrics:write - Refresh metrics
-    - agent-os:<id>:evals:read - View evaluation runs
-    - agent-os:<id>:evals:write - Create and update evaluation runs
-    - agent-os:<id>:evals:delete - Delete evaluation runs
+    - system:read - System configuration and model information
+    - agents:read - List all agents
+    - teams:read - List all teams
+    - workflows:read - List all workflows
+    - sessions:read - View session data
+    - sessions:write - Create and update sessions
+    - sessions:delete - Delete sessions
+    - memories:read - View memories
+    - memories:write - Create and update memories
+    - memories:delete - Delete memories
+    - knowledge:read - View and search knowledge
+    - knowledge:write - Add and update knowledge
+    - knowledge:delete - Delete knowledge
+    - metrics:read - View metrics
+    - metrics:write - Refresh metrics
+    - evals:read - View evaluation runs
+    - evals:write - Create and update evaluation runs
+    - evals:delete - Delete evaluation runs
 
     Per-Resource Scopes (with resource ID):
-    - agent-os:<id>:agents:<agent-id>:read - Read specific agent
-    - agent-os:<id>:agents:<agent-id>:run - Run specific agent
-    - agent-os:<id>:teams:<team-id>:read - Read specific team
-    - agent-os:<id>:teams:<team-id>:run - Run specific team
-    - agent-os:<id>:workflows:<workflow-id>:read - Read specific workflow
-    - agent-os:<id>:workflows:<workflow-id>:run - Run specific workflow
+    - agents:<agent-id>:read - Read specific agent
+    - agents:<agent-id>:run - Run specific agent
+    - teams:<team-id>:read - Read specific team
+    - teams:<team-id>:run - Run specific team
+    - workflows:<workflow-id>:read - Read specific workflow
+    - workflows:<workflow-id>:run - Run specific workflow
 
     Wildcards:
-    - agent-os:*:agents:read - List agents from any OS
-    - agent-os:<id>:agents:*:run - Run any agent in this OS
-    - agent-os:*:agents:*:run - Run any agent in any OS
+    - agents:*:run - Run any agent
+    - teams:*:run - Run any team
     """
 
     # Special scopes
-    ADMIN = "admin"
+    ADMIN = "agent_os:admin"
 
 
 @dataclass
@@ -76,28 +74,21 @@ class ParsedScope:
     """Represents a parsed scope with its components."""
 
     raw: str
-    scope_type: str  # "admin" or "agent-os"
-    agent_os_id: Optional[str] = None
+    scope_type: str  # "admin", "global", "per_resource", or "unknown"
     resource: Optional[str] = None
     resource_id: Optional[str] = None
     action: Optional[str] = None
-    is_wildcard_os: bool = False
     is_wildcard_resource: bool = False
-
-    @property
-    def is_agent_os_scope(self) -> bool:
-        """Check if this is an agent-os scoped permission."""
-        return self.scope_type == "agent-os"
-
-    @property
-    def is_per_resource_scope(self) -> bool:
-        """Check if this scope targets a specific resource (has resource_id)."""
-        return self.resource_id is not None
 
     @property
     def is_global_resource_scope(self) -> bool:
         """Check if this scope targets all resources of a type (no resource_id)."""
-        return self.resource is not None and self.resource_id is None
+        return self.scope_type == "global"
+
+    @property
+    def is_per_resource_scope(self) -> bool:
+        """Check if this scope targets a specific resource (has resource_id)."""
+        return self.scope_type == "per_resource"
 
 
 def parse_scope(scope: str) -> ParsedScope:
@@ -111,58 +102,43 @@ def parse_scope(scope: str) -> ParsedScope:
         ParsedScope object with parsed components
 
     Examples:
-        >>> parse_scope("admin")
-        ParsedScope(raw="admin", scope_type="admin")
+        >>> parse_scope("agent_os:admin")
+        ParsedScope(raw="agent_os:admin", scope_type="admin")
 
-        >>> parse_scope("agent-os:my-os:system:read")
-        ParsedScope(raw="...", scope_type="agent-os", agent_os_id="my-os", resource="system", action="read")
+        >>> parse_scope("system:read")
+        ParsedScope(raw="system:read", scope_type="global", resource="system", action="read")
 
-        >>> parse_scope("agent-os:*:agents:read")
-        ParsedScope(raw="...", scope_type="agent-os", agent_os_id="*", resource="agents", action="read", is_wildcard_os=True)
+        >>> parse_scope("agents:web-agent:read")
+        ParsedScope(raw="...", scope_type="per_resource", resource="agents", resource_id="web-agent", action="read")
 
-        >>> parse_scope("agent-os:my-os:agents:web-agent:read")
-        ParsedScope(raw="...", scope_type="agent-os", agent_os_id="my-os", resource="agents", resource_id="web-agent", action="read")
-
-        >>> parse_scope("agent-os:my-os:agents:*:run")
-        ParsedScope(raw="...", scope_type="agent-os", agent_os_id="my-os", resource="agents", resource_id="*", action="run", is_wildcard_resource=True)
+        >>> parse_scope("agents:*:run")
+        ParsedScope(raw="...", scope_type="per_resource", resource="agents", resource_id="*", action="run", is_wildcard_resource=True)
     """
-    if scope == "admin":
+    if scope == "agent_os:admin":
         return ParsedScope(raw=scope, scope_type="admin")
 
     parts = scope.split(":")
 
-    # All valid scopes must start with "agent-os"
-    if len(parts) < 4 or parts[0] != "agent-os":
-        # Invalid format
-        return ParsedScope(raw=scope, scope_type="unknown")
-
-    agent_os_id = parts[1]
-    is_wildcard_os = agent_os_id == "*"
-
-    # Global resource scope: agent-os:<id>:resource:action (4 parts)
-    if len(parts) == 4:
+    # Global resource scope: resource:action (2 parts)
+    if len(parts) == 2:
         return ParsedScope(
             raw=scope,
-            scope_type="agent-os",
-            agent_os_id=agent_os_id,
-            resource=parts[2],
-            action=parts[3],
-            is_wildcard_os=is_wildcard_os,
+            scope_type="global",
+            resource=parts[0],
+            action=parts[1],
         )
 
-    # Per-resource scope: agent-os:<id>:resource:<resource-id>:action (5 parts)
-    if len(parts) == 5:
-        resource_id = parts[3]
+    # Per-resource scope: resource:<resource-id>:action (3 parts)
+    if len(parts) == 3:
+        resource_id = parts[1]
         is_wildcard_resource = resource_id == "*"
 
         return ParsedScope(
             raw=scope,
-            scope_type="agent-os",
-            agent_os_id=agent_os_id,
-            resource=parts[2],
+            scope_type="per_resource",
+            resource=parts[0],
             resource_id=resource_id,
-            action=parts[4],
-            is_wildcard_os=is_wildcard_os,
+            action=parts[2],
             is_wildcard_resource=is_wildcard_resource,
         )
 
@@ -173,7 +149,6 @@ def parse_scope(scope: str) -> ParsedScope:
 def matches_scope(
     user_scope: ParsedScope,
     required_scope: ParsedScope,
-    agent_os_id: Optional[str] = None,
     resource_id: Optional[str] = None,
 ) -> bool:
     """
@@ -182,43 +157,33 @@ def matches_scope(
     Args:
         user_scope: The user's parsed scope
         required_scope: The required parsed scope
-        agent_os_id: The current AgentOS instance ID
         resource_id: The specific resource ID being accessed
 
     Returns:
         True if the user's scope satisfies the required scope
 
     Examples:
-        >>> user = parse_scope("agent-os:my-os:system:read")
-        >>> required = parse_scope("agent-os:my-os:system:read")
-        >>> matches_scope(user, required, agent_os_id="my-os")
+        >>> user = parse_scope("system:read")
+        >>> required = parse_scope("system:read")
+        >>> matches_scope(user, required)
         True
 
-        >>> user = parse_scope("agent-os:*:agents:read")
-        >>> required = parse_scope("agent-os:my-os:agents:read")
-        >>> matches_scope(user, required, agent_os_id="my-os")
+        >>> user = parse_scope("agents:web-agent:run")
+        >>> required = parse_scope("agents:<id>:run")
+        >>> matches_scope(user, required, resource_id="web-agent")
         True
 
-        >>> user = parse_scope("agent-os:my-os:agents:web-agent:run")
-        >>> required = parse_scope("agent-os:my-os:agents:<id>:run")
-        >>> matches_scope(user, required, agent_os_id="my-os", resource_id="web-agent")
-        True
-
-        >>> user = parse_scope("agent-os:my-os:agents:*:run")
-        >>> required = parse_scope("agent-os:my-os:agents:<id>:run")
-        >>> matches_scope(user, required, agent_os_id="my-os", resource_id="web-agent")
+        >>> user = parse_scope("agents:*:run")
+        >>> required = parse_scope("agents:<id>:run")
+        >>> matches_scope(user, required, resource_id="web-agent")
         True
     """
     # Admin always matches
     if user_scope.scope_type == "admin":
         return True
 
-    # Both must be agent-os scopes
-    if not user_scope.is_agent_os_scope or not required_scope.is_agent_os_scope:
-        return False
-
-    # Check agent-os ID matches (or wildcard)
-    if not user_scope.is_wildcard_os and user_scope.agent_os_id != agent_os_id:
+    # Unknown scopes don't match anything
+    if user_scope.scope_type == "unknown" or required_scope.scope_type == "unknown":
         return False
 
     # Resource type must match
@@ -249,7 +214,6 @@ def matches_scope(
 def has_required_scopes(
     user_scopes: List[str],
     required_scopes: List[str],
-    agent_os_id: Optional[str] = None,
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
 ) -> bool:
@@ -258,8 +222,7 @@ def has_required_scopes(
 
     Args:
         user_scopes: List of scope strings the user has
-        required_scopes: List of scope strings required (with <id> placeholders)
-        agent_os_id: Current AgentOS instance ID
+        required_scopes: List of scope strings required
         resource_type: Type of resource being accessed ("agents", "teams", "workflows")
         resource_id: Specific resource ID being accessed
 
@@ -268,25 +231,22 @@ def has_required_scopes(
 
     Examples:
         >>> has_required_scopes(
-        ...     ["agent-os:my-os:agents:read"],
-        ...     ["agents:read"],  # Template
-        ...     agent_os_id="my-os"
+        ...     ["agents:read"],
+        ...     ["agents:read"],
         ... )
         True
 
         >>> has_required_scopes(
-        ...     ["agent-os:my-os:agents:web-agent:run"],
-        ...     ["agents:run"],  # Template
-        ...     agent_os_id="my-os",
+        ...     ["agents:web-agent:run"],
+        ...     ["agents:run"],
         ...     resource_type="agents",
         ...     resource_id="web-agent"
         ... )
         True
 
         >>> has_required_scopes(
-        ...     ["agent-os:*:agents:*:run"],
-        ...     ["agents:run"],  # Template
-        ...     agent_os_id="any-os",
+        ...     ["agents:*:run"],
+        ...     ["agents:run"],
         ...     resource_type="agents",
         ...     resource_id="any-agent"
         ... )
@@ -304,20 +264,16 @@ def has_required_scopes(
 
     # Check each required scope
     for required_scope_str in required_scopes:
-        # Convert template scope to full scope
-        # E.g., "agents:read" -> "agent-os:<id>:agents:read"
-        # E.g., "agents:run" -> "agent-os:<id>:agents:<resource-id>:run" (for resource-specific)
-
         parts = required_scope_str.split(":")
         if len(parts) == 2:
             resource, action = parts
             # Build the required scope based on context
             if resource_id and resource_type:
                 # Per-resource scope required
-                full_required_scope = f"agent-os:<id>:{resource_type}:<resource-id>:{action}"
+                full_required_scope = f"{resource_type}:<resource-id>:{action}"
             else:
                 # Global resource scope required
-                full_required_scope = f"agent-os:<id>:{resource}:{action}"
+                full_required_scope = required_scope_str
 
             required = parse_scope(full_required_scope)
         else:
@@ -325,7 +281,7 @@ def has_required_scopes(
 
         scope_matched = False
         for user_scope in parsed_user_scopes:
-            if matches_scope(user_scope, required, agent_os_id=agent_os_id, resource_id=resource_id):
+            if matches_scope(user_scope, required, resource_id=resource_id):
                 scope_matched = True
                 break
 
@@ -336,7 +292,7 @@ def has_required_scopes(
 
 
 def get_accessible_resource_ids(
-    user_scopes: List[str], resource_type: str, agent_os_id: Optional[str] = None
+    user_scopes: List[str], resource_type: str
 ) -> Set[str]:
     """
     Get the set of resource IDs the user has access to.
@@ -344,23 +300,21 @@ def get_accessible_resource_ids(
     Args:
         user_scopes: List of scope strings the user has
         resource_type: Type of resource ("agents", "teams", "workflows")
-        agent_os_id: Current AgentOS instance ID
 
     Returns:
         Set of resource IDs the user can access. Returns {"*"} for wildcard access.
 
     Examples:
         >>> get_accessible_resource_ids(
-        ...     ["agent-os:my-os:agents:agent-1:read", "agent-os:my-os:agents:agent-2:read"],
-        ...     "agents",
-        ...     "my-os"
+        ...     ["agents:agent-1:read", "agents:agent-2:read"],
+        ...     "agents"
         ... )
         {'agent-1', 'agent-2'}
 
-        >>> get_accessible_resource_ids(["agent-os:my-os:agents:*:read"], "agents", "my-os")
+        >>> get_accessible_resource_ids(["agents:*:read"], "agents")
         {'*'}
 
-        >>> get_accessible_resource_ids(["agent-os:my-os:agents:read"], "agents", "my-os")
+        >>> get_accessible_resource_ids(["agents:read"], "agents")
         {'*'}
 
         >>> get_accessible_resource_ids(["admin"], "agents")
@@ -373,29 +327,23 @@ def get_accessible_resource_ids(
         if scope.scope_type == "admin":
             return {"*"}
 
-        if scope.is_agent_os_scope:
-            # Check if OS ID matches (or is wildcard)
-            if scope.is_wildcard_os or scope.agent_os_id == agent_os_id:
-                # Check if resource type matches
-                if scope.resource == resource_type:
-                    # Global resource scope (no resource_id) grants access to all
-                    if not scope.resource_id and scope.action in ["read", "run"]:
-                        return {"*"}
-                    # Wildcard resource scope grants access to all
-                    if scope.is_wildcard_resource and scope.action in ["read", "run"]:
-                        return {"*"}
+        # Check if resource type matches
+        if scope.resource == resource_type:
+            # Global resource scope (no resource_id) grants access to all
+            if not scope.resource_id and scope.action in ["read", "run"]:
+                return {"*"}
+            # Wildcard resource scope grants access to all
+            if scope.is_wildcard_resource and scope.action in ["read", "run"]:
+                return {"*"}
 
     # Collect specific resource IDs
     accessible_ids: Set[str] = set()
     for scope in parsed_scopes:
-        if scope.is_agent_os_scope:
-            # Check if OS ID matches (or is wildcard)
-            if scope.is_wildcard_os or scope.agent_os_id == agent_os_id:
-                # Check if resource type matches
-                if scope.resource == resource_type:
-                    # Specific resource ID
-                    if scope.resource_id and not scope.is_wildcard_resource and scope.action in ["read", "run"]:
-                        accessible_ids.add(scope.resource_id)
+        # Check if resource type matches
+        if scope.resource == resource_type:
+            # Specific resource ID
+            if scope.resource_id and not scope.is_wildcard_resource and scope.action in ["read", "run"]:
+                accessible_ids.add(scope.resource_id)
 
     return accessible_ids
 
@@ -406,11 +354,6 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
 
     Returns a dictionary mapping route patterns (with HTTP methods) to required scope templates.
     Format: "METHOD /path/pattern": ["resource:action"]
-
-    Note: These are template scopes in simplified format (resource:action).
-    The has_required_scopes() function converts them to full agent-os namespaced format:
-    - "agents:read" → "agent-os:<os-id>:agents:read"
-    - "agents:run" → "agent-os:<os-id>:agents:<agent-id>:run" (when resource_id provided)
     """
     return {
         # System endpoints
