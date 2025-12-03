@@ -16,7 +16,7 @@ Run `pip install openai httpx rich agno` to install dependencies.
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
@@ -25,7 +25,7 @@ console = Console()
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[YFinanceTools(requires_confirmation_tools=["get_current_stock_price"])],
+    tools=[DuckDuckGoTools(requires_confirmation_tools=["duckduckgo_search"])],
     markdown=True,
 )
 

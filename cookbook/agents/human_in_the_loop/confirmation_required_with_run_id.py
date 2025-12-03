@@ -81,11 +81,10 @@ if run_response.is_paused:
             else:
                 requirement.confirm()
 
-updated_tools = run_response.tools
 
 run_response = agent.continue_run(
     run_id=run_response.run_id,
-    updated_tools=updated_tools,
+    requirements=run_response.requirements,
 )
 
 pprint.pprint_run_response(run_response)
