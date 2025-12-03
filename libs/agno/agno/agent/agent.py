@@ -1583,6 +1583,10 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
@@ -1594,11 +1598,6 @@ class Agent:
                 DeprecationWarning,
                 stacklevel=2,
             )
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
-        register_run(run_id)
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -2531,6 +2530,10 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
@@ -2542,11 +2545,6 @@ class Agent:
                 DeprecationWarning,
                 stacklevel=2,
             )
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
-        register_run(run_id)
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)

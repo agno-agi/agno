@@ -1879,6 +1879,10 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
@@ -1893,11 +1897,6 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
-        register_run(run_id)
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -2761,6 +2760,10 @@ class Team:
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
@@ -2772,11 +2775,6 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
-        register_run(run_id)
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
