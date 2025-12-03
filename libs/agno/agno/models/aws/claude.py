@@ -1,15 +1,11 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.tools.function import Function
-
-if TYPE_CHECKING:
-    from agno.models.message import Message
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model

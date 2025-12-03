@@ -1032,10 +1032,8 @@ class Claude(Model):
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
 
-            # Capture usage only from MessageStopEvent to avoid double-counting
-            # (RawMessageStartEvent also has message.usage but we should only count once at the end)
-            if hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
-                model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
+        if hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
+            model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
 
         # Capture the Beta response
         try:

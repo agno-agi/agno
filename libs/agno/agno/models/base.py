@@ -15,6 +15,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -306,11 +307,11 @@ class Model(ABC):
     def count_tokens(
         self,
         messages: List[Message],
-        tools: Optional[List[Union[Function, dict]]] = None,
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
     ) -> int:
         from agno.utils.tokens import count_tokens
 
-        return count_tokens(messages, tools=tools, model=self.id)
+        return count_tokens(messages, tools=list(tools) if tools else None, model=self.id)
 
     def response(
         self,

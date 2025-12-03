@@ -363,49 +363,12 @@ class AwsBedrock(Model):
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
-        """
-        Count tokens using AWS Bedrock's native count_tokens API.
-
-        Args:
-            messages: List of messages to count tokens for.
-            tools: Optional list of tools (not used for token counting in Bedrock).
-
-        Returns:
-            The number of input tokens.
-        """
         try:
             formatted_messages, system_message = self._format_messages(messages)
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
             response = self.get_client().count_tokens(modelId=self.id, input={"converse": converse_input})
-            return response.get("inputTokens", 0)
-        except Exception as e:
-            log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return super().count_tokens(messages, tools)
-
-    async def acount_tokens(
-        self,
-        messages: List[Message],
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> int:
-        """
-        Async count tokens using AWS Bedrock's native count_tokens API.
-
-        Args:
-            messages: List of messages to count tokens for.
-            tools: Optional list of tools (not used for token counting in Bedrock).
-
-        Returns:
-            The number of input tokens.
-        """
-        try:
-            formatted_messages, system_message = self._format_messages(messages)
-            converse_input: Dict[str, Any] = {"messages": formatted_messages}
-            if system_message:
-                converse_input["system"] = system_message
-            async with self.get_async_client() as client:
-                response = await client.count_tokens(modelId=self.id, input={"converse": converse_input})
             return response.get("inputTokens", 0)
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")

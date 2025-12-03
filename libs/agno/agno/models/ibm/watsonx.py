@@ -10,7 +10,6 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.watsonx import format_images_for_message
 
@@ -97,69 +96,6 @@ class WatsonX(Model):
         self.model_client = ModelInference(model_id=self.id, **client_params)
 
         return self.model_client
-
-    def count_tokens(
-        self,
-        messages: List[Message],
-        tools: Optional[List[Union[Function, dict]]] = None,
-    ) -> int:
-        """
-        Count tokens for messages and tools using WatsonX's tokenize API.
-
-        Note: This makes an API call to WatsonX for accurate token counting.
-        The tokenize endpoint is only available for base models, not deployments.
-
-        Warning: WatsonX tokenize only supports text content. Multi-modal content
-        (images, audio, video, files) will NOT be counted and the result will be
-        an underestimate for multi-modal messages.
-
-        Args:
-            messages: List of messages to count tokens for.
-            tools: Optional list of tools to include in the count.
-
-        Returns:
-            The estimated number of input tokens (text only).
-        """
-        import json
-
-        has_multimodal = False
-        prompt_parts = []
-        for message in messages:
-            if message.images or message.audio or message.videos or message.files:
-                has_multimodal = True
-
-            role = message.role or "user"
-            content = message.get_content_string() or ""
-            prompt_parts.append(f"{role}: {content}")
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    if isinstance(tool_call, dict):
-                        prompt_parts.append(f"tool_call: {json.dumps(tool_call)}")
-
-        if tools:
-            for tool in tools:
-                if isinstance(tool, Function):
-                    prompt_parts.append(f"tool: {tool.name} - {tool.description}")
-                    if tool.parameters:
-                        prompt_parts.append(f"parameters: {json.dumps(tool.parameters)}")
-                elif isinstance(tool, dict):
-                    prompt_parts.append(f"tool: {json.dumps(tool)}")
-
-        prompt = "\n".join(prompt_parts)
-
-        if has_multimodal:
-            log_warning(
-                "WatsonX tokenize only supports text. Multi-modal content (images, audio, video, files) "
-                "is not counted - token count will be an underestimate."
-            )
-
-        try:
-            client = self.get_client()
-            response = client.tokenize(prompt=prompt, return_tokens=False)
-            return response.get("result", {}).get("token_count", 0)
-        except Exception as e:
-            log_warning(f"WatsonX tokenize API call failed: {e}. Falling back to estimation.")
-            return len(prompt) // 4
 
     def get_request_params(
         self,

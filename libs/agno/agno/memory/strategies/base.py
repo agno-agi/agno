@@ -3,6 +3,7 @@ from typing import List
 
 from agno.db.schemas import UserMemory
 from agno.models.base import Model
+from agno.utils.tokens import count_text_tokens
 
 
 class MemoryOptimizationStrategy(ABC):
@@ -55,7 +56,11 @@ class MemoryOptimizationStrategy(ABC):
         raise NotImplementedError
 
     def count_tokens(self, memories: List[UserMemory]) -> int:
-        """Count total tokens across all memories."""
-        from agno.utils.tokens import count_text_tokens
+        """Count total tokens across all memories.
 
+        Args:
+            memories: List of UserMemory objects
+        Returns:
+            Total token count
+        """
         return sum(count_text_tokens(m.memory or "") for m in memories)

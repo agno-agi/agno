@@ -312,25 +312,24 @@ class Gemini(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, dict]]] = None,
     ) -> int:
-        """Count tokens using Gemini's count_tokens API."""
+        if not self.vertexai:
+            return super().count_tokens(messages, tools)
+
         contents, system_instruction = self._format_messages(messages)
 
-        config: Optional[Dict[str, Any]] = None
-        if self.vertexai:
-            config = {}
-            if system_instruction:
-                config["system_instruction"] = system_instruction
-            if tools:
-                formatted_tools = self._format_tools(tools)
-                gemini_tools = format_function_definitions(formatted_tools)
-                if gemini_tools:
-                    config["tools"] = [gemini_tools]
-            config = config or None
+        config: Dict[str, Any] = {}
+        if system_instruction:
+            config["system_instruction"] = system_instruction
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            gemini_tools = format_function_definitions(formatted_tools)
+            if gemini_tools:
+                config["tools"] = [gemini_tools]
 
         response = self.get_client().models.count_tokens(
             model=self.id,
             contents=contents,
-            config=config,
+            config=config if config else None,  # type: ignore
         )
         return response.total_tokens or 0
 

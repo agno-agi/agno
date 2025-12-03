@@ -154,7 +154,7 @@ def _get_image_type(data: bytes) -> Optional[str]:
     return None
 
 
-def _get_image_dimensions(data: bytes) -> Tuple[int, int]:
+def _parse_image_dimensions_from_bytes(data: bytes) -> Tuple[int, int]:
     import io
     import struct
 
@@ -213,7 +213,7 @@ def _get_image_dimensions(image: Image) -> Tuple[int, int]:
         else:
             return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
 
-        return _get_image_dimensions(data)
+        return _parse_image_dimensions_from_bytes(data)
     except Exception:
         return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
 
