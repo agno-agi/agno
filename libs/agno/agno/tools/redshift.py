@@ -128,7 +128,10 @@ class RedshiftTools(Toolkit):
         """
         if self._connection is not None:
             log_info("Closing Redshift connection")
-            self._connection.close()
+            try:
+                self._connection.close()
+            except Exception:
+                pass  # Connection might already be closed
             self._connection = None
 
     @property
@@ -218,6 +221,11 @@ class RedshiftTools(Toolkit):
 
         except redshift_connector.Error as e:
             log_error(f"Database error: {e}")
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass  # Connection might be closed
             return f"Error executing query: {e}"
         except Exception as e:
             log_error(f"An unexpected error occurred: {e}")
@@ -378,6 +386,11 @@ class RedshiftTools(Toolkit):
 
             return f"Successfully exported table '{table}' to '{path}'."
         except (redshift_connector.Error, IOError) as e:
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass  # Connection might be closed
             return f"Error exporting table: {e}"
 
     def run_query(self, query: str) -> str:

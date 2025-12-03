@@ -14,6 +14,19 @@ from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
+    """
+    A toolkit for interacting with PostgreSQL databases.
+
+    Args:
+        connection (Optional[PgConnection[DictRow]]): Existing database connection to reuse.
+        db_name (Optional[str]): Database name to connect to.
+        user (Optional[str]): Username for authentication.
+        password (Optional[str]): Password for authentication.
+        host (Optional[str]): PostgreSQL server hostname.
+        port (Optional[int]): PostgreSQL server port number.
+        table_schema (str): Default schema for table operations. Default is "public".
+    """
+
     _requires_connect: bool = True
 
     def __init__(
@@ -103,7 +116,7 @@ class PostgresTools(Toolkit):
         try:
             connection = self._ensure_connection()
             with connection.cursor() as cursor:
-                log_debug(f"Running PostgreSQL Query: {query} with Params: {params}")
+                log_debug("Running PostgreSQL query")
                 cursor.execute(query, params)
 
                 if cursor.description is None:
@@ -263,6 +276,8 @@ class PostgresTools(Toolkit):
 
             return f"Successfully exported table '{table}' to '{path}'."
         except (psycopg.Error, IOError) as e:
+            if self._connection and not self._connection.closed:
+                self._connection.rollback()
             return f"Error exporting table: {e}"
 
     def run_query(self, query: str) -> str:
