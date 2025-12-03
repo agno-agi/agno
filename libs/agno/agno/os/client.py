@@ -7,14 +7,31 @@ including discovery, configuration inspection, and execution operations.
 from os import getenv
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
+from agno.db.base import SessionType
+from agno.os.routers.memory.schemas import (
+    UserMemoryCreateSchema,
+    UserMemorySchema,
+    UserStatsSchema,
+)
 from agno.os.schema import (
     AgentResponse,
+    AgentSessionDetailSchema,
     AgentSummaryResponse,
     ConfigResponse,
+    CreateSessionRequest,
+    DeleteSessionRequest,
     Model,
+    PaginatedResponse,
+    RunSchema,
+    SessionSchema,
     TeamResponse,
+    TeamRunSchema,
+    TeamSessionDetailSchema,
     TeamSummaryResponse,
+    UpdateSessionRequest,
     WorkflowResponse,
+    WorkflowRunSchema,
+    WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
 from agno.run.agent import RunOutput
@@ -125,6 +142,131 @@ class AgentOSClient:
         response.raise_for_status()
         return response.json()
 
+    async def _post_form_data(self, endpoint: str, data: Dict[str, Any]) -> Any:
+        """Execute POST request with form data (for runs endpoints).
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            data: Form data dictionary
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        response = await self._http_client.post(url, data=data, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    async def _stream_post_form_data(
+        self, endpoint: str, data: Dict[str, Any]
+    ) -> AsyncIterator[str]:
+        """Stream POST request with form data.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            data: Form data dictionary
+
+        Yields:
+            str: Lines from the streaming response
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        async with self._http_client.stream("POST", url, data=data, headers=headers) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                yield line
+
+    async def _post_empty(self, endpoint: str) -> bool:
+        """Execute POST request with no body (for cancel endpoints).
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+
+        Returns:
+            bool: True if successful
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        async with self._http_client.stream("POST", url, headers=headers) as response:
+            response.raise_for_status()
+            return True
+
+    async def _patch(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Any:
+        """Execute PATCH request.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            data: Request body data
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        response = await self._http_client.patch(url, json=data, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    async def _delete(self, endpoint: str) -> None:
+        """Execute DELETE request.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        response = await self._http_client.delete(url, headers=headers)
+        response.raise_for_status()
+
+    async def _delete_with_body(self, endpoint: str, data: Dict[str, Any]) -> None:
+        """Execute DELETE request with JSON body.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            data: Request body data
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        response = await self._http_client.request("DELETE", url, json=data, headers=headers)
+        response.raise_for_status()
+
     # Discovery & Configuration Operations
 
     async def get_config(self) -> ConfigResponse:
@@ -145,7 +287,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         data = await self._get("/config")
-        return ConfigResponse(**data)
+        return ConfigResponse.model_validate(data)
 
     async def get_models(self) -> List[Model]:
         """Get list of all models used by agents and teams.
@@ -157,7 +299,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         data = await self._get("/models")
-        return [Model(**item) for item in data]
+        return [Model.model_validate(item) for item in data]
 
     # Agent Operations
 
@@ -176,7 +318,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         data = await self._get("/agents")
-        return [AgentSummaryResponse(**item) for item in data]
+        return [AgentSummaryResponse.model_validate(item) for item in data]
 
     async def get_agent(self, agent_id: str) -> AgentResponse:
         """Get detailed configuration for a specific agent.
@@ -191,7 +333,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if agent not found)
         """
         data = await self._get(f"/agents/{agent_id}")
-        return AgentResponse(**data)
+        return AgentResponse.model_validate(data)
 
     def agent(self, agent_id: str) -> AgentOSRunner:
         """Get or create an AgentOSRunner for the specified agent.
@@ -257,7 +399,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         data = await self._get("/teams")
-        return [TeamSummaryResponse(**item) for item in data]
+        return [TeamSummaryResponse.model_validate(item) for item in data]
 
     async def get_team(self, team_id: str) -> TeamResponse:
         """Get detailed configuration for a specific team.
@@ -272,7 +414,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if team not found)
         """
         data = await self._get(f"/teams/{team_id}")
-        return TeamResponse(**data)
+        return TeamResponse.model_validate(data)
 
     def team(self, team_id: str) -> AgentOSRunner:
         """Get or create an AgentOSRunner for the specified team.
@@ -332,7 +474,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         data = await self._get("/workflows")
-        return [WorkflowSummaryResponse(**item) for item in data]
+        return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
     async def get_workflow(self, workflow_id: str) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
@@ -347,7 +489,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
         data = await self._get(f"/workflows/{workflow_id}")
-        return WorkflowResponse(**data)
+        return WorkflowResponse.model_validate(data)
 
     def workflow(self, workflow_id: str) -> AgentOSRunner:
         """Get or create an AgentOSRunner for the specified workflow.
@@ -390,3 +532,743 @@ class AgentOSClient:
         """
         runner = self.workflow(workflow_id)
         return await runner.arun(input, **kwargs)
+
+    # Memory Operations
+
+    async def create_memory(
+        self,
+        memory: str,
+        user_id: str,
+        topics: Optional[List[str]] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> UserMemorySchema:
+        """Create a new user memory.
+
+        Args:
+            memory: The memory content to store
+            user_id: User ID to associate with the memory
+            topics: Optional list of topics to categorize the memory
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            UserMemorySchema: The created memory
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/memories"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload: Dict[str, Any] = {"memory": memory, "user_id": user_id}
+        if topics:
+            payload["topics"] = topics
+
+        data = await self._post(endpoint, payload)
+        return UserMemorySchema.model_validate(data)
+
+    async def get_memory(
+        self,
+        memory_id: str,
+        user_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> UserMemorySchema:
+        """Get a specific memory by ID.
+
+        Args:
+            memory_id: ID of the memory to retrieve
+            user_id: Optional user ID filter
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            UserMemorySchema: The requested memory
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params = {}
+        if user_id:
+            params["user_id"] = user_id
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/memories/{memory_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+        return UserMemorySchema.model_validate(data)
+
+    async def list_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        topics: Optional[List[str]] = None,
+        search_content: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "updated_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> PaginatedResponse[UserMemorySchema]:
+        """List user memories with filtering and pagination.
+
+        Args:
+            user_id: Filter by user ID
+            agent_id: Filter by agent ID
+            team_id: Filter by team ID
+            topics: Filter by topics
+            search_content: Search within memory content
+            limit: Number of memories per page
+            page: Page number
+            sort_by: Field to sort by
+            sort_order: Sort order (asc or desc)
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            PaginatedResponse[UserMemorySchema]: Paginated list of memories
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {
+            "limit": str(limit),
+            "page": str(page),
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        if user_id:
+            params["user_id"] = user_id
+        if agent_id:
+            params["agent_id"] = agent_id
+        if team_id:
+            params["team_id"] = team_id
+        if topics:
+            params["topics"] = ",".join(topics)
+        if search_content:
+            params["search_content"] = search_content
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/memories?" + "&".join(f"{k}={v}" for k, v in params.items())
+        data = await self._get(endpoint)
+        return PaginatedResponse[UserMemorySchema].model_validate(data)
+
+    async def update_memory(
+        self,
+        memory_id: str,
+        memory: str,
+        user_id: str,
+        topics: Optional[List[str]] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> UserMemorySchema:
+        """Update an existing memory.
+
+        Args:
+            memory_id: ID of the memory to update
+            memory: New memory content
+            user_id: User ID associated with the memory
+            topics: Optional new list of topics
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            UserMemorySchema: The updated memory
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/memories/{memory_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload: Dict[str, Any] = {"memory": memory, "user_id": user_id}
+        if topics:
+            payload["topics"] = topics
+
+        data = await self._patch(endpoint, payload)
+        return UserMemorySchema.model_validate(data)
+
+    async def delete_memory(
+        self,
+        memory_id: str,
+        user_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> None:
+        """Delete a specific memory.
+
+        Args:
+            memory_id: ID of the memory to delete
+            user_id: Optional user ID filter
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if user_id:
+            params["user_id"] = user_id
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/memories/{memory_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        await self._delete(endpoint)
+
+    async def delete_memories(
+        self,
+        memory_ids: List[str],
+        user_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> None:
+        """Delete multiple memories.
+
+        Args:
+            memory_ids: List of memory IDs to delete
+            user_id: Optional user ID filter
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/memories"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload: Dict[str, Any] = {"memory_ids": memory_ids}
+        if user_id:
+            payload["user_id"] = user_id
+
+        await self._delete_with_body(endpoint, payload)
+
+    async def get_memory_topics(
+        self,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> List[str]:
+        """Get all unique memory topics.
+
+        Args:
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            List[str]: List of unique topic names
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/memory_topics"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        return await self._get(endpoint)
+
+    async def get_user_memory_stats(
+        self,
+        limit: int = 20,
+        page: int = 1,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> PaginatedResponse[UserStatsSchema]:
+        """Get user memory statistics.
+
+        Args:
+            limit: Number of stats per page
+            page: Page number
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            PaginatedResponse[UserStatsSchema]: Paginated user statistics
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {"limit": str(limit), "page": str(page)}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/user_memory_stats?" + "&".join(f"{k}={v}" for k, v in params.items())
+        data = await self._get(endpoint)
+        return PaginatedResponse[UserStatsSchema].model_validate(data)
+
+    # Session Operations
+
+    async def list_sessions(
+        self,
+        session_type: SessionType = SessionType.AGENT,
+        component_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> PaginatedResponse[SessionSchema]:
+        """List sessions with filtering and pagination.
+
+        Args:
+            session_type: Type of sessions to retrieve (agent, team, or workflow)
+            component_id: Filter by component ID (agent/team/workflow ID)
+            user_id: Filter by user ID
+            session_name: Filter by session name (partial match)
+            limit: Number of sessions per page
+            page: Page number
+            sort_by: Field to sort by
+            sort_order: Sort order (asc or desc)
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            PaginatedResponse[SessionSchema]: Paginated list of sessions
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {
+            "type": session_type.value,
+            "limit": str(limit),
+            "page": str(page),
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        if component_id:
+            params["component_id"] = component_id
+        if user_id:
+            params["user_id"] = user_id
+        if session_name:
+            params["session_name"] = session_name
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/sessions?" + "&".join(f"{k}={v}" for k, v in params.items())
+        data = await self._get(endpoint)
+        return PaginatedResponse[SessionSchema].model_validate(data)
+
+    async def create_session(
+        self,
+        session_type: SessionType = SessionType.AGENT,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        """Create a new session.
+
+        Args:
+            session_type: Type of session to create (agent, team, or workflow)
+            session_id: Optional session ID (auto-generated if not provided)
+            user_id: User ID to associate with the session
+            session_name: Optional session name
+            session_state: Optional initial session state
+            metadata: Optional session metadata
+            agent_id: Agent ID (for agent sessions)
+            team_id: Team ID (for team sessions)
+            workflow_id: Workflow ID (for workflow sessions)
+            db_id: Optional database ID to use
+
+        Returns:
+            AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = "/sessions"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload: Dict[str, Any] = {}
+        if session_id:
+            payload["session_id"] = session_id
+        if user_id:
+            payload["user_id"] = user_id
+        if session_name:
+            payload["session_name"] = session_name
+        if session_state:
+            payload["session_state"] = session_state
+        if metadata:
+            payload["metadata"] = metadata
+        if agent_id:
+            payload["agent_id"] = agent_id
+        if team_id:
+            payload["team_id"] = team_id
+        if workflow_id:
+            payload["workflow_id"] = workflow_id
+
+        data = await self._post(endpoint, payload)
+
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.model_validate(data)
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.model_validate(data)
+        else:
+            return WorkflowSessionDetailSchema.model_validate(data)
+
+    async def get_session(
+        self,
+        session_id: str,
+        session_type: SessionType = SessionType.AGENT,
+        user_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        """Get a specific session by ID.
+
+        Args:
+            session_id: ID of the session to retrieve
+            session_type: Type of session (agent, team, or workflow)
+            user_id: Optional user ID filter
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if user_id:
+            params["user_id"] = user_id
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/sessions/{session_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.model_validate(data)
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.model_validate(data)
+        else:
+            return WorkflowSessionDetailSchema.model_validate(data)
+
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: SessionType = SessionType.AGENT,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
+        """Get all runs for a specific session.
+
+        Args:
+            session_id: ID of the session
+            session_type: Type of session (agent, team, or workflow)
+            user_id: Optional user ID filter
+            created_after: Filter runs created after this Unix timestamp
+            created_before: Filter runs created before this Unix timestamp
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            List of runs (RunSchema, TeamRunSchema, or WorkflowRunSchema)
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if user_id:
+            params["user_id"] = user_id
+        if created_after:
+            params["created_after"] = str(created_after)
+        if created_before:
+            params["created_before"] = str(created_before)
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/sessions/{session_id}/runs"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+
+        # Parse runs based on session type and run content
+        runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
+        for run in data:
+            if run.get("workflow_id") is not None:
+                runs.append(WorkflowRunSchema.model_validate(run))
+            elif run.get("team_id") is not None:
+                runs.append(TeamRunSchema.model_validate(run))
+            else:
+                runs.append(RunSchema.model_validate(run))
+        return runs
+
+    async def get_session_run(
+        self,
+        session_id: str,
+        run_id: str,
+        session_type: SessionType = SessionType.AGENT,
+        user_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+    ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
+        """Get a specific run from a session.
+
+        Args:
+            session_id: ID of the session
+            run_id: ID of the run to retrieve
+            session_type: Type of session (agent, team, or workflow)
+            user_id: Optional user ID filter
+            db_id: Optional database ID to use
+
+        Returns:
+            RunSchema, TeamRunSchema, or WorkflowRunSchema
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if user_id:
+            params["user_id"] = user_id
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = f"/sessions/{session_id}/runs/{run_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+
+        # Return appropriate schema based on run type
+        if data.get("workflow_id") is not None:
+            return WorkflowRunSchema.model_validate(data)
+        elif data.get("team_id") is not None:
+            return TeamRunSchema.model_validate(data)
+        else:
+            return RunSchema.model_validate(data)
+
+    async def delete_session(
+        self,
+        session_id: str,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> None:
+        """Delete a specific session.
+
+        Args:
+            session_id: ID of the session to delete
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/sessions/{session_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        await self._delete(endpoint)
+
+    async def delete_sessions(
+        self,
+        session_ids: List[str],
+        session_types: List[SessionType],
+        session_type: SessionType = SessionType.AGENT,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> None:
+        """Delete multiple sessions.
+
+        Args:
+            session_ids: List of session IDs to delete
+            session_types: List of session types corresponding to each session ID
+            session_type: Default session type filter
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/sessions"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload = {
+            "session_ids": session_ids,
+            "session_types": [st.value for st in session_types],
+        }
+
+        await self._delete_with_body(endpoint, payload)
+
+    async def rename_session(
+        self,
+        session_id: str,
+        session_name: str,
+        session_type: SessionType = SessionType.AGENT,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        """Rename a session.
+
+        Args:
+            session_id: ID of the session to rename
+            session_name: New name for the session
+            session_type: Type of session (agent, team, or workflow)
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/sessions/{session_id}/rename"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload = {"session_name": session_name}
+        data = await self._post(endpoint, payload)
+
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.model_validate(data)
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.model_validate(data)
+        else:
+            return WorkflowSessionDetailSchema.model_validate(data)
+
+    async def update_session(
+        self,
+        session_id: str,
+        session_type: SessionType = SessionType.AGENT,
+        session_name: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        summary: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        """Update session properties.
+
+        Args:
+            session_id: ID of the session to update
+            session_type: Type of session (agent, team, or workflow)
+            session_name: Optional new session name
+            session_state: Optional new session state
+            metadata: Optional new metadata
+            summary: Optional new summary
+            user_id: Optional user ID
+            db_id: Optional database ID to use
+
+        Returns:
+            AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params: Dict[str, str] = {"type": session_type.value}
+        if user_id:
+            params["user_id"] = user_id
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = f"/sessions/{session_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload: Dict[str, Any] = {}
+        if session_name is not None:
+            payload["session_name"] = session_name
+        if session_state is not None:
+            payload["session_state"] = session_state
+        if metadata is not None:
+            payload["metadata"] = metadata
+        if summary is not None:
+            payload["summary"] = summary
+
+        data = await self._patch(endpoint, payload)
+
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.model_validate(data)
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.model_validate(data)
+        else:
+            return WorkflowSessionDetailSchema.model_validate(data)

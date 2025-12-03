@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
 
 from pydantic import BaseModel
 
@@ -12,10 +12,8 @@ from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_eve
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.runner.base import BaseRunner
 
-try:
-    from httpx import AsyncClient
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+if TYPE_CHECKING:
+    from agno.os.client import AgentOSClient
 
 
 class AgentOSRunner(BaseRunner):
@@ -45,62 +43,56 @@ class AgentOSRunner(BaseRunner):
 
         self.api_key: Optional[str] = api_key or getenv("AGNO_API_KEY")
         self.timeout: float = timeout
+        self._client: Optional["AgentOSClient"] = None
 
     def get_client(self) -> "AgentOSClient":
-        """Get an AgentOSClient for fetching remote configuration.
+        """Get an AgentOSClient for HTTP operations.
 
-        This is used internally by AgentOS to fetch configuration from remote
-        AgentOS instances when this runner represents a remote resource.
+        Returns a cached client instance if available, otherwise creates a new one.
 
         Returns:
             AgentOSClient: Client configured for this remote resource's base URL
         """
-        from agno.os.client import AgentOSClient
+        if self._client is None:
+            from agno.os.client import AgentOSClient
 
-        return AgentOSClient(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=30.0,
-        )
-
-
-    def _get_headers(self) -> Dict[str, str]:
-        """Get HTTP headers for remote requests."""
-        headers: Dict[str, str] = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+            self._client = AgentOSClient(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                timeout=self.timeout,
+            )
+        return self._client
 
     def _get_runs_endpoint(self) -> str:
-        """Get the API endpoint for the configured resource."""
+        """Get the API endpoint path (relative) for the configured resource."""
         if self.agent_id:
-            return f"{self.base_url}/agents/{self.agent_id}/runs"
+            return f"/agents/{self.agent_id}/runs"
         elif self.team_id:
-            return f"{self.base_url}/teams/{self.team_id}/runs"
+            return f"/teams/{self.team_id}/runs"
         elif self.workflow_id:
-            return f"{self.base_url}/workflows/{self.workflow_id}/runs"
+            return f"/workflows/{self.workflow_id}/runs"
         else:
             raise ValueError("No remote resource ID configured")
 
     def _get_continue_run_endpoint(self, run_id: str) -> str:
-        """Get the API endpoint for the configured resource."""
+        """Get the API endpoint path (relative) for continuing a run."""
         if self.agent_id:
-            return f"{self.base_url}/agents/{self.agent_id}/runs/{run_id}/continue"
+            return f"/agents/{self.agent_id}/runs/{run_id}/continue"
         elif self.team_id:
-            return f"{self.base_url}/teams/{self.team_id}/runs/{run_id}/continue"
+            return f"/teams/{self.team_id}/runs/{run_id}/continue"
         elif self.workflow_id:
-            return f"{self.base_url}/workflows/{self.workflow_id}/runs/{run_id}/continue"
+            return f"/workflows/{self.workflow_id}/runs/{run_id}/continue"
         else:
             raise ValueError("No remote resource ID configured")
 
     def _get_cancel_run_endpoint(self, run_id: str) -> str:
-        """Get the API endpoint for the configured resource."""
+        """Get the API endpoint path (relative) for canceling a run."""
         if self.agent_id:
-            return f"{self.base_url}/agents/{self.agent_id}/runs/{run_id}/cancel"
+            return f"/agents/{self.agent_id}/runs/{run_id}/cancel"
         elif self.team_id:
-            return f"{self.base_url}/teams/{self.team_id}/runs/{run_id}/cancel"
+            return f"/teams/{self.team_id}/runs/{run_id}/cancel"
         elif self.workflow_id:
-            return f"{self.base_url}/workflows/{self.workflow_id}/runs/{run_id}/cancel"
+            return f"/workflows/{self.workflow_id}/runs/{run_id}/cancel"
         else:
             raise ValueError("No remote resource ID configured")
 
@@ -213,21 +205,17 @@ class AgentOSRunner(BaseRunner):
         body: Dict[str, Any],
     ) -> Union[RunOutput, TeamRunOutput, WorkflowRunOutput]:
         """Execute remote agent/team/workflow via HTTP API."""
-        headers = self._get_headers()
+        client = self.get_client()
+        data = await client._post_form_data(endpoint, body)
 
-        async with AsyncClient(timeout=self.timeout) as client:
-            # Handle non-streaming response - use data for URL-encoded form
-            response = await client.post(endpoint, data=body, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            if self.agent_id:
-                return RunOutput.from_dict(data)
-            elif self.team_id:
-                return TeamRunOutput.from_dict(data)
-            elif self.workflow_id:
-                return WorkflowRunOutput.from_dict(data)
-            else:
-                raise ValueError("No remote resource ID configured")
+        if self.agent_id:
+            return RunOutput.from_dict(data)
+        elif self.team_id:
+            return TeamRunOutput.from_dict(data)
+        elif self.workflow_id:
+            return WorkflowRunOutput.from_dict(data)
+        else:
+            raise ValueError("No remote resource ID configured")
 
     async def _stream_remote_arun(
         self,
@@ -235,28 +223,25 @@ class AgentOSRunner(BaseRunner):
         body: Dict[str, Any],
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]]:
         """Stream response from remote API."""
-        headers = self._get_headers()
+        client = self.get_client()
 
-        async with AsyncClient(timeout=self.timeout) as client:
-            # Use data instead of json for URL-encoded form data
-            async with client.stream("POST", endpoint, data=body, headers=headers) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        # Parse SSE format if used
-                        if line.startswith("data: "):
-                            line = line[6:]
-                        try:
-                            data = json.loads(line)
-                            if self.agent_id:
-                                yield run_output_event_from_dict(data)  # type: ignore
-                            elif self.team_id:
-                                yield team_run_output_event_from_dict(data)  # type: ignore
-                            elif self.workflow_id:
-                                yield workflow_run_output_event_from_dict(data)  # type: ignore
-                        except Exception:
-                            # Skip unparseable lines
-                            continue
+        async for line in client._stream_post_form_data(endpoint, body):
+            if line.strip():
+                # Parse SSE format if used
+                parsed_line = line
+                if line.startswith("data: "):
+                    parsed_line = line[6:]
+                try:
+                    data = json.loads(parsed_line)
+                    if self.agent_id:
+                        yield run_output_event_from_dict(data)  # type: ignore
+                    elif self.team_id:
+                        yield team_run_output_event_from_dict(data)  # type: ignore
+                    elif self.workflow_id:
+                        yield workflow_run_output_event_from_dict(data)  # type: ignore
+                except Exception:
+                    # Skip unparseable lines
+                    continue
 
     @overload
     async def arun(
@@ -427,9 +412,5 @@ class AgentOSRunner(BaseRunner):
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         endpoint = self._get_cancel_run_endpoint(run_id)
-        headers = self._get_headers()
-        async with AsyncClient(timeout=self.timeout) as client:
-            # Use data instead of json for URL-encoded form data
-            async with client.stream("POST", endpoint, headers=headers) as response:
-                response.raise_for_status()
-                return True
+        client = self.get_client()
+        return await client._post_empty(endpoint)
