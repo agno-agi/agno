@@ -126,6 +126,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -159,6 +160,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -221,6 +223,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -291,6 +294,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -372,6 +376,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -405,6 +410,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -466,6 +472,7 @@ class Steps:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -536,6 +543,7 @@ class Steps:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)

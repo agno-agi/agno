@@ -186,6 +186,9 @@ class Workflow:
     # Deprecated. Use stream_events instead.
     stream_intermediate_steps: bool = False
 
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: bool = False
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -198,6 +201,7 @@ class Workflow:
         session_state: Optional[Dict[str, Any]] = None,
         overwrite_db_session_state: bool = False,
         user_id: Optional[str] = None,
+        debug_level: Literal[1, 2] = 1,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
@@ -223,6 +227,7 @@ class Workflow:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
+        self.debug_level = debug_level
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
         self.stream = stream
@@ -1105,9 +1110,12 @@ class Workflow:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             use_workflow_logger()
+            debug_level: Literal[1, 2] = (
+                cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+            )
 
             self.debug_mode = True
-            set_log_level_to_debug(source_type="workflow")
+            set_log_level_to_debug(source_type="workflow", level=debug_level)
 
             # Propagate to steps - only if steps is iterable (not callable)
             if self.steps and not callable(self.steps):
@@ -1282,6 +1290,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
@@ -1355,6 +1364,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation after step execution
@@ -1455,6 +1465,7 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -1552,6 +1563,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -1843,6 +1855,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
@@ -1931,6 +1944,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation after step execution
@@ -2031,6 +2045,7 @@ class Workflow:
         run_context: RunContext,
         stream_events: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -2141,6 +2156,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
                             raise_if_cancelled(workflow_run_response.run_id)
@@ -3457,6 +3473,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3475,6 +3492,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3492,6 +3510,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3592,6 +3611,7 @@ class Workflow:
                 workflow_run_response=workflow_run_response,
                 stream_events=stream_events,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
@@ -3600,6 +3620,7 @@ class Workflow:
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -3620,6 +3641,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3639,6 +3661,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -3657,6 +3680,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3793,6 +3817,7 @@ class Workflow:
                 files=files,
                 session_state=session_state,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
@@ -3805,6 +3830,7 @@ class Workflow:
                 files=files,
                 session_state=session_state,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -4152,6 +4178,56 @@ class Workflow:
                         for member in active_executor.members:  # type: ignore
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.id
+
+    def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_hooks_in_background setting to this workflow and all agents/teams in steps.
+
+        This method sets _run_hooks_in_background on the workflow and all agents/teams
+        within its steps, including nested teams and their members.
+
+        Args:
+            run_in_background: Whether hooks should run in background. Defaults to True.
+        """
+        self._run_hooks_in_background = run_in_background
+
+        if not self.steps or callable(self.steps):
+            return
+
+        steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+
+        for step in steps_list:
+            self._propagate_hooks_to_step(step, run_in_background)
+
+    def _propagate_hooks_to_step(self, step: Any, run_in_background: bool) -> None:
+        """Recursively propagate _run_hooks_in_background to a step and its nested content."""
+        # Handle Step objects with active executor
+        if hasattr(step, "active_executor") and step.active_executor:
+            executor = step.active_executor
+            # If it's a team, use its propagation method
+            if hasattr(executor, "propagate_run_hooks_in_background"):
+                executor.propagate_run_hooks_in_background(run_in_background)
+            elif hasattr(executor, "_run_hooks_in_background"):
+                executor._run_hooks_in_background = run_in_background
+
+        # Handle agent/team directly on step
+        if hasattr(step, "agent") and step.agent:
+            if hasattr(step.agent, "_run_hooks_in_background"):
+                step.agent._run_hooks_in_background = run_in_background
+        if hasattr(step, "team") and step.team:
+            # Use team's method to propagate to all nested members
+            if hasattr(step.team, "propagate_run_hooks_in_background"):
+                step.team.propagate_run_hooks_in_background(run_in_background)
+            elif hasattr(step.team, "_run_hooks_in_background"):
+                step.team._run_hooks_in_background = run_in_background
+
+        # Handle nested primitives - check 'steps' and 'choices' attributes
+        for attr_name in ["steps", "choices"]:
+            if hasattr(step, attr_name):
+                attr_value = getattr(step, attr_name)
+                if attr_value and isinstance(attr_value, list):
+                    for nested_step in attr_value:
+                        self._propagate_hooks_to_step(nested_step, run_in_background)
 
     ###########################################################################
     # Telemetry functions

@@ -10,7 +10,7 @@ Prerequisites:
 """
 
 from datetime import UTC, datetime, timedelta
-
+import os
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -21,7 +21,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from fastapi import FastAPI, Response
 
 # JWT Secret (use environment variable in production)
-JWT_SECRET = "your-secret-key-at-least-256-bits-long"
+JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-at-least-256-bits-long")
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")

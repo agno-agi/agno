@@ -146,8 +146,14 @@ class Gemini(Model):
         else:
             log_info("Using Vertex AI API")
             client_params["vertexai"] = True
-            client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-            client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
+            project_id = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
+            if not project_id:
+                log_error("GOOGLE_CLOUD_PROJECT not set. Please set the GOOGLE_CLOUD_PROJECT environment variable.")
+            location = self.location or getenv("GOOGLE_CLOUD_LOCATION")
+            if not location:
+                log_error("GOOGLE_CLOUD_LOCATION not set. Please set the GOOGLE_CLOUD_LOCATION environment variable.")
+            client_params["project"] = project_id
+            client_params["location"] = location
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 

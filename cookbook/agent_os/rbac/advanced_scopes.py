@@ -18,11 +18,12 @@ Scope Examples:
 - admin - Full access to everything
 
 Prerequisites:
-- Set JWT_SECRET_KEY environment variable or pass it to middleware
+- Set JWT_SECRET environment variable or pass it to middleware
 - Endpoints automatically filter based on user scopes
 """
 
 from datetime import UTC, datetime, timedelta
+import os
 
 import jwt
 from agno.agent import Agent
@@ -32,7 +33,7 @@ from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
-JWT_SECRET = "your-secret-key-at-least-256-bits-long"
+JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-at-least-256-bits-long")
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
