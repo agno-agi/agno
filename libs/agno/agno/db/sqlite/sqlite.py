@@ -245,9 +245,9 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
-            from traceback import format_exc
+            from traceback import print_exc
 
-            print(format_exc())
+            print_exc()
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 

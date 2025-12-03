@@ -307,6 +307,7 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
+    "grpcio==1.74.0",
 ]
 
 # Models integration test dependencies
