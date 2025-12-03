@@ -20,7 +20,7 @@ from openinference.instrumentation import dangerously_using_project
 from pydantic import BaseModel
 
 os.environ["PHOENIX_API_KEY"] = os.getenv("PHOENIX_API_KEY")
-os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "https://app.phoenix.arize.com/s/kaustubh"
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "https://app.phoenix.arize.com/"  # Add the suffix for your organization
 
 # Register a single tracer provider (project name here is the default)
 tracer_provider = register(
