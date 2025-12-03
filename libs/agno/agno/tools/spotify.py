@@ -1,5 +1,5 @@
 """
-Spotify Toolkit for Agno
+Spotify Toolkit for Agno SDK
 
 A toolkit for searching songs, creating playlists, and updating playlists on Spotify.
 Requires a valid Spotify access token with appropriate scopes.
@@ -53,6 +53,8 @@ class SpotifyTools(Toolkit):
             self.get_track_recommendations,
             self.get_artist_top_tracks,
             self.get_album_tracks,
+            self.get_my_top_tracks,
+            self.get_my_top_artists,
             self.create_playlist,
             self.add_tracks_to_playlist,
             self.get_playlist,
@@ -105,6 +107,100 @@ class SpotifyTools(Toolkit):
         log_debug("Fetching current Spotify user profile")
         result = self._make_request("me")
         return json.dumps(result, indent=2)
+
+    def get_my_top_tracks(
+        self,
+        time_range: str = "medium_term",
+        limit: int = 20,
+    ) -> str:
+        """Get the current user's most played tracks.
+
+        Requires the 'user-top-read' scope.
+
+        Args:
+            time_range: Time period for top tracks:
+                - "short_term": Last 4 weeks
+                - "medium_term": Last 6 months (default)
+                - "long_term": All time (several years)
+            limit: Number of tracks to return (default 20, max 50).
+
+        Returns:
+            JSON string containing list of user's top tracks with id, name, artists, album, and uri.
+        """
+        log_debug(f"Fetching user's top tracks: {time_range}")
+
+        params = {
+            "time_range": time_range,
+            "limit": min(limit, 50),
+        }
+
+        result = self._make_request("me/top/tracks", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        tracks = result.get("items", [])
+        simplified_tracks = [
+            {
+                "rank": i + 1,
+                "id": track["id"],
+                "name": track["name"],
+                "artists": [artist["name"] for artist in track["artists"]],
+                "album": track["album"]["name"],
+                "uri": track["uri"],
+                "popularity": track.get("popularity"),
+            }
+            for i, track in enumerate(tracks)
+        ]
+
+        return json.dumps(simplified_tracks, indent=2)
+
+    def get_my_top_artists(
+        self,
+        time_range: str = "medium_term",
+        limit: int = 20,
+    ) -> str:
+        """Get the current user's most played artists.
+
+        Requires the 'user-top-read' scope.
+
+        Args:
+            time_range: Time period for top artists:
+                - "short_term": Last 4 weeks
+                - "medium_term": Last 6 months (default)
+                - "long_term": All time (several years)
+            limit: Number of artists to return (default 20, max 50).
+
+        Returns:
+            JSON string containing list of user's top artists with id, name, genres, and uri.
+        """
+        log_debug(f"Fetching user's top artists: {time_range}")
+
+        params = {
+            "time_range": time_range,
+            "limit": min(limit, 50),
+        }
+
+        result = self._make_request("me/top/artists", params=params)
+
+        if "error" in result:
+            return json.dumps(result, indent=2)
+
+        artists = result.get("items", [])
+        simplified_artists = [
+            {
+                "rank": i + 1,
+                "id": artist["id"],
+                "name": artist["name"],
+                "genres": artist.get("genres", []),
+                "uri": artist["uri"],
+                "popularity": artist.get("popularity"),
+                "followers": artist.get("followers", {}).get("total"),
+            }
+            for i, artist in enumerate(artists)
+        ]
+
+        return json.dumps(simplified_artists, indent=2)
 
     def search_playlists(
         self,
@@ -807,7 +903,7 @@ class SpotifyTools(Toolkit):
         """
         log_debug(f"Updating playlist details: {playlist_id}")
 
-        body = {}
+        body: dict[str, Any] = {}
         if name is not None:
             body["name"] = name
         if description is not None:
