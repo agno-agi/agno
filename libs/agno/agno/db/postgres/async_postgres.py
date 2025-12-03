@@ -1,8 +1,11 @@
 import time
 import warnings
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
@@ -24,7 +27,6 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.tracing.schemas import Span, Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -337,10 +339,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 session=sess, table_name=table_name, db_schema=self.db_schema
             )
 
-        if not table_is_available:
-            if not create_table_if_not_found:
-                return None
-
+        if (not table_is_available) and create_table_if_not_found:
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
@@ -367,7 +366,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return "2.0.0"
 
@@ -386,7 +385,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
         current_datetime = datetime.now().isoformat()
@@ -699,7 +698,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):

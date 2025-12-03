@@ -8,8 +8,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.hackernews import HackerNewsTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
 
 # Set up databases - each agent has its own db
 db1 = SqliteDb(db_file="tmp/db1.db", id="db1")
@@ -42,7 +42,7 @@ agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent, agent2],
     tracing=True,
-    tracing_db=tracing_db, # Dedicated database for traces
+    tracing_db=tracing_db,  # Dedicated database for traces
 )
 app = agent_os.get_app()
 

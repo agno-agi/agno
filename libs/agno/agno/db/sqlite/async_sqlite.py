@@ -1,8 +1,11 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
@@ -24,7 +27,6 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.tracing.schemas import Span, Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
@@ -347,10 +349,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
-        if not table_is_available:
-            if not create_table_if_not_found:
-                return None
-
+        if (not table_is_available) and create_table_if_not_found:
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -373,7 +372,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return "2.0.0"
         async with self.async_session_factory() as sess:
@@ -390,7 +389,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
         current_datetime = datetime.now().isoformat()
@@ -424,7 +423,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            table = await self._get_table(table_type="sessions")
             if table is None:
                 return False
 
@@ -688,7 +687,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during upserting.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -834,7 +833,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return []
 
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 log_info("Sessions table not available, falling back to individual upserts")
                 return [

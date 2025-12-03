@@ -470,18 +470,19 @@ class Cerebras(Model):
                 if choice_delta.content:
                     model_response.content = choice_delta.content
 
-                # Add tool calls
+                # Add tool calls - preserve index for proper aggregation in parse_tool_calls
                 if choice_delta.tool_calls:
                     model_response.tool_calls = [
                         {
+                            "index": tool_call.index if hasattr(tool_call, "index") else idx,
                             "id": tool_call.id,
                             "type": tool_call.type,
                             "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
+                                "name": tool_call.function.name if tool_call.function else None,
+                                "arguments": tool_call.function.arguments if tool_call.function else None,
                             },
                         }
-                        for tool_call in choice_delta.tool_calls
+                        for idx, tool_call in enumerate(choice_delta.tool_calls)
                     ]
 
         # Add usage metrics
@@ -489,6 +490,62 @@ class Cerebras(Model):
             model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
+
+    def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Build complete tool calls from streamed tool call delta data.
+
+        Cerebras streams tool calls incrementally with partial data in each chunk.
+        This method aggregates those chunks by index to produce complete tool calls.
+
+        Args:
+            tool_calls_data: List of tool call deltas from streaming chunks.
+
+        Returns:
+            List[Dict[str, Any]]: List of fully-formed tool call dicts.
+        """
+        tool_calls: List[Dict[str, Any]] = []
+
+        for tool_call_delta in tool_calls_data:
+            # Get the index for this tool call (default to 0 if not present)
+            index = tool_call_delta.get("index", 0)
+
+            # Extend the list if needed
+            while len(tool_calls) <= index:
+                tool_calls.append({
+                    "id": None,
+                    "type": None,
+                    "function": {
+                        "name": "",
+                        "arguments": "",
+                    },
+                })
+
+            tool_call_entry = tool_calls[index]
+
+            # Update id if present
+            if tool_call_delta.get("id"):
+                tool_call_entry["id"] = tool_call_delta["id"]
+
+            # Update type if present
+            if tool_call_delta.get("type"):
+                tool_call_entry["type"] = tool_call_delta["type"]
+
+            # Update function name and arguments (concatenate for streaming)
+            if tool_call_delta.get("function"):
+                func_delta = tool_call_delta["function"]
+                if func_delta.get("name"):
+                    tool_call_entry["function"]["name"] += func_delta["name"]
+                if func_delta.get("arguments"):
+                    tool_call_entry["function"]["arguments"] += func_delta["arguments"]
+
+        # Filter out any incomplete tool calls (missing id or function name)
+        complete_tool_calls = [
+            tc for tc in tool_calls
+            if tc.get("id") and tc.get("function", {}).get("name")
+        ]
+
+        return complete_tool_calls
 
     def _get_metrics(self, response_usage: Union[ChatCompletionResponseUsage, ChatChunkResponseUsage]) -> Metrics:
         """
