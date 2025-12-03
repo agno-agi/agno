@@ -742,10 +742,11 @@ class SessionSchema(BaseModel):
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         session_name = get_session_name(session)
+        session_data = session.get("session_data", {}) or {}
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
-            session_state=session.get("session_data", {}).get("session_state", None),
+            session_state=session_data.get("session_state", None),
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
