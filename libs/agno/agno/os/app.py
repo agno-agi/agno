@@ -925,4 +925,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, lifespan="on", **kwargs)

@@ -3,6 +3,10 @@ Custom Scope Mappings Example
 
 This example demonstrates how to define custom scope mappings for your AgentOS endpoints.
 You can specify exactly which scopes are required for each endpoint.
+
+Pre-requisites:
+- Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
+- Endpoints are automatically protected with default scope mappings
 """
 
 from datetime import UTC, datetime, timedelta
@@ -16,7 +20,7 @@ from agno.os.middleware import JWTMiddleware
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-at-least-256-bits-long")
+JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -59,7 +63,7 @@ app = agent_os.get_app()
 app.add_middleware(
     JWTMiddleware,
     verification_key=JWT_SECRET,
-    algorithm="HS256",
+    algorithm="HS256", # Use HS256 for symmetric key
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="admin",  # Admin can bypass all checks
     cors_allowed_origins=["http://localhost:3000"],

@@ -22,7 +22,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
 
 # JWT Secret (use environment variable in production)
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-at-least-256-bits-long")
+JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -61,7 +61,7 @@ app = agent_os.get_app()
 app.add_middleware(
     JWTMiddleware,
     verification_key=JWT_SECRET,
-    algorithm="HS256",
+    algorithm="HS256", # Use HS256 for symmetric key
     scope_mappings={
         # Define the scopes for the agents
         # Other scopes will remain the same

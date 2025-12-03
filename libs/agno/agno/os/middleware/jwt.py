@@ -263,7 +263,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     def _extract_token_from_cookie(self, request: Request) -> Optional[str]:
         """Extract JWT token from cookie."""
-        return request.cookies.get(self.cookie_name)
+        return request.cookies.get(self.cookie_name).strip()
 
     def _extract_token(self, request: Request) -> Optional[str]:
         """Extract JWT token based on configured source."""
@@ -286,6 +286,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         Returns:
             Dictionary of claims if valid, None otherwise
         """
+        print(f"Validating token: {token} with algorithm: {self.algorithm} and verification key: {self.verification_key}")
         payload = jwt.decode(token, self.verification_key, algorithms=[self.algorithm])  # type: ignore
         return payload
 
@@ -457,17 +458,20 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         except jwt.ExpiredSignatureError:
             if self.authorization:
+                log_warning("Token has expired")
                 return self._create_error_response(401, "Token has expired", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
 
         except jwt.InvalidTokenError as e:
             if self.authorization:
+                log_warning(f"Invalid token: {str(e)}")
                 return self._create_error_response(401, f"Invalid token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
         except Exception as e:
             if self.authorization:
+                log_warning(f"Error decoding token: {str(e)}")
                 return self._create_error_response(401, f"Error decoding token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token

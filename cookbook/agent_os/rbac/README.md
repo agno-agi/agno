@@ -12,6 +12,22 @@ The system supports:
 2. **Per-Resource Scopes** - Granular agent/team/workflow permissions
 3. **Wildcard Support** - Flexible permission patterns at OS and resource level
 
+## JWT Signing Algorithms
+
+AgentOS supports both symmetric and asymmetric JWT signing:
+
+| Algorithm | Type | Use Case |
+|-----------|------|----------|
+| **RS256** (default) | Asymmetric | Production - uses public/private key pairs |
+| **HS256** | Symmetric | Development/testing - uses shared secret |
+
+**Most examples in this directory use HS256 (symmetric) for simplicity.** This allows running examples without setting up key pairs. For production deployments, we recommend RS256 asymmetric keys.
+
+For an asymmetric key example, see `basic_asymmetric.py` which demonstrates:
+- RSA key pair generation
+- Using private key to sign tokens (auth server)
+- Using public key to verify tokens (AgentOS)
+
 ## Scope Format
 
 **ALL scopes use the agent-os namespace:**
@@ -104,8 +120,11 @@ Run endpoints check for matching scopes with resource context:
 
 ## Examples
 
-### Basic RBAC
-See `basic.py` for a simple example with default scope mappings.
+### Basic RBAC (Symmetric)
+See `basic_symmetric.py` for a simple example using HS256 symmetric keys.
+
+### Basic RBAC (Asymmetric) 
+See `basic_asymmetric.py` for RS256 asymmetric key example (recommended for production).
 
 ### Per-Agent Permissions
 See `agent_permissions.py` for custom scope mappings per agent.
@@ -242,14 +261,15 @@ app.add_middleware(
 
 ## Security Best Practices
 
-1. **Use environment variables** for JWT secrets
-2. **Use PostgreSQL in production** (not SQLite)
-3. **Set appropriate token expiration** (exp claim)
-4. **Use HTTPS** in production
-5. **Rotate secrets regularly**
-6. **Follow principle of least privilege** - Grant minimum required scopes
-7. **Monitor access logs** for suspicious activity
-8. **Use agent-os namespacing** for multi-tenant deployments
+1. **Use RS256 asymmetric keys in production** - Only share the public key with AgentOS
+2. **Use environment variables** for keys and secrets
+3. **Use PostgreSQL in production** (not SQLite)
+4. **Set appropriate token expiration** (exp claim)
+5. **Use HTTPS** in production
+6. **Rotate keys regularly**
+7. **Follow principle of least privilege** - Grant minimum required scopes
+8. **Monitor access logs** for suspicious activity
+9. **Use agent-os namespacing** for multi-tenant deployments
 
 ## Troubleshooting
 
