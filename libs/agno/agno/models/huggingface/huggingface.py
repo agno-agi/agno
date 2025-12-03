@@ -73,11 +73,7 @@ class HuggingFace(Model):
     def get_client_params(self) -> Dict[str, Any]:
         self.api_key = self.api_key or getenv("HF_TOKEN")
         if not self.api_key:
-            raise ModelProviderError(
-                message="HF_TOKEN not set. Please set the HF_TOKEN environment variable.",
-                model_name=self.name,
-                model_id=self.id,
-            )
+            log_error("HF_TOKEN not set. Please set the HF_TOKEN environment variable.")
 
         _client_params: Dict[str, Any] = {}
         if self.api_key is not None:

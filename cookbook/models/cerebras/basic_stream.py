@@ -2,7 +2,7 @@ from agno.agent import Agent  # noqa
 from agno.models.cerebras import Cerebras
 
 agent = Agent(
-    model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+    model=Cerebras(id="llama-3.3-70b"),
     markdown=True,
 )
 
