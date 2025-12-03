@@ -87,15 +87,15 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         return False
 
 
-def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str] = None) -> bool:
+def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
     """
     Check if the existing table has the expected column names.
-    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
     Args:
         db_engine (Engine): Database engine
         table_name (str): Name of the table to validate
         table_type (str): Type of table to get expected schema
-        db_schema (Optional[str]): Database schema name (ignored in SQLite)
+
     Returns:
         bool: True if table has all expected columns, False otherwise
     """
@@ -120,17 +120,15 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         return False
 
 
-async def ais_valid_table(
-    db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: Optional[str] = None
-) -> bool:
+async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str) -> bool:
     """
     Check if the existing table has the expected column names.
-    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
     Args:
         db_engine (Engine): Database engine
         table_name (str): Name of the table to validate
         table_type (str): Type of table to get expected schema
-        db_schema (Optional[str]): Database schema name (ignored in SQLite)
+
     Returns:
         bool: True if table has all expected columns, False otherwise
     """
