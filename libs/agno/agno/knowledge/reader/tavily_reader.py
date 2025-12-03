@@ -140,7 +140,6 @@ class TavilyReader(Reader):
                 documents.extend(self.chunk_document(Document(name=name or url, id=url, content=content)))
             else:
                 documents.append(Document(name=name or url, id=url, content=content))
-
             return documents
 
         except Exception as e:

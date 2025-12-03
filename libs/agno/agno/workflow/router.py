@@ -179,6 +179,7 @@ class Router:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -220,6 +221,7 @@ class Router:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput]
@@ -285,6 +287,7 @@ class Router:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the router with streaming support"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -364,6 +367,7 @@ class Router:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -449,6 +453,7 @@ class Router:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Async execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -491,6 +496,7 @@ class Router:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
@@ -558,6 +564,7 @@ class Router:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the router with streaming support"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -639,6 +646,7 @@ class Router:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)

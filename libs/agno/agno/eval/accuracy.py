@@ -612,11 +612,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
         self.result = AccuracyResult()
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         evaluator_agent = self.get_evaluator_agent()
         eval_input = self.get_eval_input()
@@ -721,7 +724,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 ),
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun_with_output(
@@ -732,11 +735,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
         self.result = AccuracyResult()
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         evaluator_agent = self.get_evaluator_agent()
         eval_input = self.get_eval_input()
@@ -820,7 +826,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 eval_input=log_eval_input,
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:

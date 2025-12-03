@@ -74,6 +74,8 @@ from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
     aget_last_run_output_util,
     aget_run_output_util,
     aget_session_metrics_util,
@@ -81,12 +83,14 @@ from agno.utils.agent import (
     aget_session_state_util,
     aset_session_name_util,
     aupdate_session_state_util,
-    await_for_background_tasks,
-    await_for_background_tasks_stream,
+    await_for_open_threads,
+    await_for_thread_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
     collect_joint_videos,
+    execute_instructions,
+    execute_system_message,
     get_last_run_output_util,
     get_run_output_util,
     get_session_metrics_util,
@@ -99,8 +103,8 @@ from agno.utils.agent import (
     store_media_util,
     update_session_state_util,
     validate_media_object_id,
-    wait_for_background_tasks,
-    wait_for_background_tasks_stream,
+    wait_for_open_threads,
+    wait_for_thread_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -128,7 +132,7 @@ from agno.utils.events import (
     handle_event,
     add_error_event,
 )
-from agno.utils.hooks import filter_hook_args, normalize_hooks
+from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -270,6 +274,8 @@ class Agent:
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -367,7 +373,7 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # If `output_schema` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -591,7 +597,6 @@ class Agent:
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
 
-        # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
@@ -707,9 +712,13 @@ class Agent:
             self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
+        # Get the debug level from the environment variable or the default debug level
+        debug_level: Literal[1, 2] = (
+            cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+        )
         # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            set_log_level_to_debug(level=self.debug_level)
+            set_log_level_to_debug(level=debug_level)
         else:
             set_log_level_to_info()
 
@@ -898,10 +907,15 @@ class Agent:
         """Connect the MCP tools to the agent."""
         if self.tools:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"] and not tool.initialized:  # type: ignore
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if (
+                    hasattr(type(tool), "__mro__")
+                    and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                    and not tool.initialized  # type: ignore
+                ):
                     # Connect the MCP server
                     await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
@@ -959,6 +973,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> RunOutput:
         """Run the Agent and return the RunOutput.
@@ -982,7 +997,7 @@ class Agent:
             # Register run for cancellation tracking
             register_run(run_response.run_id)  # type: ignore
 
-            # 1. Execute pre-hooks
+        # 1. Execute pre-hooks
             run_input = cast(RunInput, run_response.input)
             self.model = cast(Model, self.model)
             if self.pre_hooks is not None:
@@ -995,6 +1010,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 # Consume the generator without yielding
@@ -1097,9 +1113,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                wait_for_background_tasks(
-                    memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
-                )
+                wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
@@ -1119,6 +1133,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 deque(post_hook_iterator, maxlen=0)
@@ -1127,7 +1142,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation and cultural knowledge creation
-            wait_for_background_tasks(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
+            wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
@@ -1195,6 +1210,7 @@ class Agent:
         stream_events: bool = False,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
@@ -1212,41 +1228,43 @@ class Agent:
         10. Cleanup and store the run response and session
         """
 
-        try:
         # Register run for cancellation tracking
-            register_run(run_response.run_id)  # type: ignore
-            # 1. Execute pre-hooks
-            run_input = cast(RunInput, run_response.input)
-            self.model = cast(Model, self.model)
-            if self.pre_hooks is not None:
-                # Can modify the run input
-                pre_hook_iterator = self._execute_pre_hooks(
-                        hooks=self.pre_hooks,  # type: ignore
-                        run_response=run_response,
-                        run_input=run_input,
-                        run_context=run_context,
-                        session=session,
-                        user_id=user_id,
-                        debug_mode=debug_mode,
-                        stream_events=stream_events,
-                        **kwargs,
-                    )
-                for event in pre_hook_iterator:
-                        yield event
-            # 2. Determine tools for model
-            processed_tools = self.get_tools(
+        register_run(run_response.run_id)  # type: ignore
+
+        # 1. Execute pre-hooks
+        run_input = cast(RunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._execute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
                 run_response=run_response,
+                run_input=run_input,
                 run_context=run_context,
                 session=session,
                 user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
             )
-            _tools = self._determine_tools_for_model(
-                model=self.model,
-                processed_tools=processed_tools,
-                run_response=run_response,
-                session=session,
-                run_context=run_context,
-            )
+            for event in pre_hook_iterator:
+                yield event
+
+        # 2. Determine tools for model
+        processed_tools = self.get_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+        )
+        _tools = self._determine_tools_for_model(
+            model=self.model,
+            processed_tools=processed_tools,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+        )
 
             # 3. Prepare run messages
             run_messages: RunMessages = self._get_run_messages(
@@ -1368,16 +1386,16 @@ class Agent:
                     session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
                 )
 
-                # We should break out of the run function
-                if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    yield from wait_for_background_tasks_stream(
-                        memory_future=memory_future,
-                        cultural_knowledge_future=cultural_knowledge_future,
-                        stream_events=stream_events,
-                        run_response=run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                yield from wait_for_thread_tasks_stream(
+                    memory_future=memory_future,
+                    cultural_knowledge_future=cultural_knowledge_future,
+                    stream_events=stream_events,
+                    run_response=run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
 
                     # Handle the paused run
                     yield from self._handle_agent_run_paused_stream(
@@ -1394,26 +1412,27 @@ class Agent:
                         store_events=self.store_events,
                     )
 
-                # Execute post-hooks after output is generated but before response is returned
-                if self.post_hooks is not None:
-                    yield from self._execute_post_hooks(
-                        hooks=self.post_hooks,  # type: ignore
-                        run_output=run_response,
-                        run_context=run_context,
-                        session=session,
-                        user_id=user_id,
-                        debug_mode=debug_mode,
-                        stream_events=stream_events,
-                        **kwargs,
-                    )
-
-                # 8. Wait for background memory creation and cultural knowledge creation
-                yield from wait_for_background_tasks_stream(
-                    memory_future=memory_future,
-                    cultural_knowledge_future=cultural_knowledge_future,
+            # Execute post-hooks after output is generated but before response is returned
+            if self.post_hooks is not None:
+                yield from self._execute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    run_context=run_context,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
                     stream_events=stream_events,
-                    run_response=run_response,
+                    background_tasks=background_tasks,
+                    **kwargs,
                 )
+
+            # 8. Wait for background memory creation and cultural knowledge creation
+            yield from wait_for_thread_tasks_stream(
+                memory_future=memory_future,
+                cultural_knowledge_future=cultural_knowledge_future,
+                stream_events=stream_events,
+                run_response=run_response,
+            )
 
                 # 9. Create session summary
                 if self.session_summary_manager is not None:
@@ -1611,8 +1630,9 @@ class Agent:
         # Initialize session early for error handling
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
-        # Create a run_id for this specific run
+        # Create a run_id for this specific run and register immediately for cancellation tracking
         run_id = str(uuid4())
+        register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
@@ -1625,6 +1645,12 @@ class Agent:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -1774,6 +1800,7 @@ class Agent:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response_iterator
@@ -1788,6 +1815,7 @@ class Agent:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response
@@ -1843,6 +1871,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> RunOutput:
         """Run the Agent and return the RunOutput.
@@ -1910,6 +1939,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
             # Consume the async iterator without yielding
@@ -2007,14 +2037,14 @@ class Agent:
                     run_context=run_context,
                 )
 
-                # We should break out of the run function
-                if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    await await_for_background_tasks(
-                        memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
-                    )
-                    return await self._ahandle_agent_run_paused(
-                        run_response=run_response, session=agent_session, user_id=user_id
-                    )
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                await await_for_open_threads(
+                    memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
+                )
+                return await self._ahandle_agent_run_paused(
+                    run_response=run_response, session=agent_session, user_id=user_id
+                )
 
                 # 11. Convert the response to the structured format if needed
                 self._convert_response_to_structured_format(run_response, run_context=run_context)
@@ -2023,24 +2053,25 @@ class Agent:
                 if self.store_media:
                     store_media_util(run_response, model_response)
 
-                # 13. Execute post-hooks (after output is generated but before response is returned)
-                if self.post_hooks is not None:
-                    async for _ in self._aexecute_post_hooks(
-                        hooks=self.post_hooks,  # type: ignore
-                        run_output=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        debug_mode=debug_mode,
-                        **kwargs,
-                    ):
-                        pass
+            # 13. Execute post-hooks (after output is generated but before response is returned)
+            if self.post_hooks is not None:
+                async for _ in self._aexecute_post_hooks(
+                    hooks=self.post_hooks,  # type: ignore
+                    run_output=run_response,
+                    run_context=run_context,
+                    session=agent_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                ):
+                    pass
 
                 # Check for cancellation
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 14. Wait for background memory creation
-                await await_for_background_tasks(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
+            # 14. Wait for background memory creation
+            await await_for_open_threads(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
 
                 # 15. Create session summary
                 if self.session_summary_manager is not None:
@@ -2140,6 +2171,7 @@ class Agent:
         stream_events: bool = False,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
@@ -2197,23 +2229,25 @@ class Agent:
             if run_context.dependencies is not None:
                 await self._aresolve_run_dependencies(run_context=run_context)
 
-            # 4. Execute pre-hooks
-            run_input = cast(RunInput, run_response.input)
-            self.model = cast(Model, self.model)
-            if self.pre_hooks is not None:
-                pre_hook_iterator = self._aexecute_pre_hooks(
-                    hooks=self.pre_hooks,  # type: ignore
-                    run_response=run_response,
-                    run_context=run_context,
-                    run_input=run_input,
-                    session=agent_session,
-                    user_id=user_id,
-                    debug_mode=debug_mode,
-                    stream_events=stream_events,
-                    **kwargs,
-                )
-                async for _ in pre_hook_iterator:
-                    pass
+        # 4. Execute pre-hooks
+        run_input = cast(RunInput, run_response.input)
+        self.model = cast(Model, self.model)
+        if self.pre_hooks is not None:
+            # Can modify the run input
+            pre_hook_iterator = self._aexecute_pre_hooks(
+                hooks=self.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                run_input=run_input,
+                session=agent_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            async for event in pre_hook_iterator:
+                yield event
 
             # 5. Determine tools for model
             self.model = cast(Model, self.model)
@@ -2349,7 +2383,7 @@ class Agent:
 
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                async for item in await_for_background_tasks_stream(
+                async for item in await_for_thread_tasks_stream(
                     memory_task=memory_task,
                     cultural_knowledge_task=cultural_knowledge_task,
                     stream_events=stream_events,
@@ -2373,12 +2407,13 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     yield event
 
             # 11. Wait for background memory creation
-            async for item in await_for_background_tasks_stream(
+            async for item in await_for_thread_tasks_stream(
                 memory_task=memory_task,
                 cultural_knowledge_task=cultural_knowledge_task,
                 stream_events=stream_events,
@@ -2604,11 +2639,6 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
@@ -2620,6 +2650,12 @@ class Agent:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -2761,6 +2797,7 @@ class Agent:
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )  # type: ignore[assignment]
                 else:
@@ -2774,6 +2811,7 @@ class Agent:
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -2901,6 +2939,12 @@ class Agent:
 
         if self._has_async_db():
             raise Exception("continue_run() is not supported with an async DB. Please use acontinue_arun() instead.")
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         session_id = run_response.session_id if run_response else session_id
         run_id: str = run_response.run_id if run_response else run_id  # type: ignore
@@ -3045,6 +3089,7 @@ class Agent:
                         response_format=response_format,
                         stream_events=stream_events,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response_iterator
@@ -3058,6 +3103,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response
@@ -3108,6 +3154,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
@@ -3172,6 +3219,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 deque(post_hook_iterator, maxlen=0)
@@ -3227,6 +3275,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> Iterator[RunOutputEvent]:
         """Continue a previous run.
@@ -3303,6 +3352,7 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
 
@@ -3404,6 +3454,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> RunOutput: ...
 
     @overload
@@ -3423,6 +3474,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
     def acontinue_run(  # type: ignore
@@ -3469,6 +3521,12 @@ class Agent:
 
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         session_id, user_id = self._initialize_session(
             session_id=session_id,
@@ -3554,6 +3612,7 @@ class Agent:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                 else:
@@ -3566,6 +3625,7 @@ class Agent:
                         user_id=user_id,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
             except ModelProviderError as e:
@@ -3615,6 +3675,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
@@ -3757,6 +3818,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     pass
@@ -3826,6 +3888,7 @@ class Agent:
         stream_events: bool = False,
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
@@ -4011,6 +4074,7 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     yield event
@@ -4112,13 +4176,13 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
         if hooks is None:
             return
-
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_input": run_input,
             "run_context": run_context,
@@ -4130,9 +4194,32 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -4184,13 +4271,13 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
         if hooks is None:
             return
-
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_input": run_input,
             "agent": self,
@@ -4202,9 +4289,32 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -4259,13 +4369,14 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
             "agent": self,
@@ -4277,9 +4388,31 @@ class Agent:
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL post_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -4324,13 +4457,14 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
             "agent": self,
@@ -4342,9 +4476,29 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -5652,7 +5806,12 @@ class Agent:
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                )
+
+                if is_mcp_tool:
                     if tool.refresh_connection:  # type: ignore
                         try:
                             is_alive = await tool.is_alive()  # type: ignore
@@ -5672,9 +5831,8 @@ class Agent:
                     if check_mcp_tools and not tool.initialized:  # type: ignore
                         continue
 
-                    agent_tools.append(tool)
-                else:
-                    agent_tools.append(tool)
+                # Add the tool (MCP tools that passed checks, or any non-MCP tool)
+                agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -6970,7 +7128,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = execute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -6999,25 +7159,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                # Check for run_context parameter
-                if "run_context" in signature.parameters:
-                    instruction_args["run_context"] = run_context or None
-
-                # Run the instructions function
-                _instructions = self.instructions(**instruction_args)
+                _instructions = execute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -7327,7 +7471,9 @@ class Agent:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
+                sys_message_content = await aexecute_system_message(
+                    agent=self, system_message=self.system_message, session_state=session_state, run_context=run_context
+                )
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
@@ -7357,20 +7503,9 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                instruction_args: Dict[str, Any] = {}
-
-                # Check for agent parameter
-                if "agent" in signature.parameters:
-                    instruction_args["agent"] = self
-
-                # Check for session_state parameter
-                if "session_state" in signature.parameters:
-                    instruction_args["session_state"] = session_state or {}
-
-                _instructions = self.instructions(**instruction_args)
+                _instructions = await aexecute_instructions(
+                    agent=self, instructions=self.instructions, session_state=session_state, run_context=run_context
+                )
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -8746,6 +8881,7 @@ class Agent:
         # Update fields if provided
         if update:
             fields_for_new_agent.update(update)
+
         # Create a new Agent
         new_agent = self.__class__(**fields_for_new_agent)
         log_debug(f"Created new {self.__class__.__name__}")
@@ -10757,7 +10893,10 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
