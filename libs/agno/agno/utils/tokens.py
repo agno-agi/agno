@@ -2,234 +2,236 @@ import json
 import math
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.media import File
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.tools.function import Function
+
+DEFAULT_IMAGE_WIDTH = 1024
+DEFAULT_IMAGE_HEIGHT = 1024
 
 
 @lru_cache(maxsize=16)
 def _get_tiktoken_encoding(model: str):
-    """Get tiktoken encoding for a model. Returns None if unavailable."""
     try:
         import tiktoken
+
+        # Use o200k_base for gpt-4o models
+        if "gpt-4o" in model.lower():
+            return tiktoken.get_encoding("o200k_base")
 
         try:
             return tiktoken.encoding_for_model(model)
         except KeyError:
-            # Unknown model - use cl100k_base as fallback
             return tiktoken.get_encoding("cl100k_base")
     except ImportError:
         return None
 
 
-def count_text_tokens_tiktoken(text: str, model: str = "gpt-4o") -> Optional[int]:
-    """Count tokens in text using tiktoken.
+@lru_cache(maxsize=16)
+def _get_huggingface_tokenizer(model: str):
+    try:
+        from tokenizers import Tokenizer
 
-    Args:
-        text: The text to count tokens for.
-        model: Model name to determine encoding (default: gpt-4o).
+        model_lower = model.lower()
 
-    Returns:
-        Token count, or None if tiktoken is not available.
-    """
-    if not text:
-        return 0
+        # Llama-3 models
+        if "llama-3" in model_lower or "llama3" in model_lower:
+            return Tokenizer.from_pretrained("Xenova/llama-3-tokenizer")
 
-    enc = _get_tiktoken_encoding(model)
-    if enc is None:
+        # Llama-2 models and Replicate models (LiteLLM uses llama tokenizer for replicate)
+        if "llama-2" in model_lower or "llama2" in model_lower or "replicate" in model_lower:
+            return Tokenizer.from_pretrained("hf-internal-testing/llama-tokenizer")
+
+        # Cohere command-r models
+        if "command-r" in model_lower:
+            return Tokenizer.from_pretrained("Xenova/c4ai-command-r-v01-tokenizer")
+
+        return None
+    except ImportError:
+        return None
+    except Exception:
         return None
 
-    return len(enc.encode(text, disallowed_special=()))
+
+def _select_tokenizer(model: str) -> Tuple[str, Any]:
+    # Try HuggingFace tokenizer first for specific models
+    hf_tokenizer = _get_huggingface_tokenizer(model)
+    if hf_tokenizer is not None:
+        return ("huggingface", hf_tokenizer)
+
+    # Fall back to tiktoken
+    tiktoken_enc = _get_tiktoken_encoding(model)
+    if tiktoken_enc is not None:
+        return ("tiktoken", tiktoken_enc)
+
+    return ("none", None)
 
 
-def count_message_tokens_tiktoken(message: Message, model: str = "gpt-4o") -> Optional[int]:
-    """Count tokens in a Message using tiktoken for text, estimation for media.
+def _format_function_definitions(tools: List[Dict[str, Any]]) -> str:
+    lines = []
+    lines.append("namespace functions {")
+    lines.append("")
 
-    Args:
-        message: The message to count tokens for.
-        model: Model name to determine encoding.
-
-    Returns:
-        Token count, or None if tiktoken is not available.
-    """
-    enc = _get_tiktoken_encoding(model)
-    if enc is None:
-        return None
-
-    tokens = 4
-    content = message.compressed_content or message.content
-    if content:
-        if isinstance(content, str):
-            tokens += len(enc.encode(content, disallowed_special=()))
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, str):
-                    tokens += len(enc.encode(item, disallowed_special=()))
-                elif isinstance(item, dict):
-                    text = item.get("text")
-                    if text:
-                        tokens += len(enc.encode(str(text), disallowed_special=()))
-                    else:
-                        tokens += len(enc.encode(json.dumps(item), disallowed_special=()))
-        else:
-            tokens += len(enc.encode(str(content), disallowed_special=()))
-
-    if message.tool_calls:
-        tokens += len(enc.encode(json.dumps(message.tool_calls), disallowed_special=()))
-
-    if message.tool_call_id:
-        tokens += len(enc.encode(message.tool_call_id, disallowed_special=()))
-
-    if message.reasoning_content:
-        tokens += len(enc.encode(message.reasoning_content, disallowed_special=()))
-
-    if message.redacted_reasoning_content:
-        tokens += len(enc.encode(message.redacted_reasoning_content, disallowed_special=()))
-
-    if message.name:
-        tokens += len(enc.encode(message.name, disallowed_special=()))
-
-    tokens += _count_media_tokens(message)
-
-    return tokens
-
-
-def count_messages_tokens_tiktoken(messages: List[Message], model: str = "gpt-4o") -> Optional[int]:
-    """Count total tokens across messages using tiktoken.
-
-    Args:
-        messages: List of messages to count tokens for.
-        model: Model name to determine encoding.
-
-    Returns:
-        Token count, or None if tiktoken is not available.
-    """
-    if not messages:
-        return 0
-
-    enc = _get_tiktoken_encoding(model)
-    if enc is None:
-        return None
-
-    total = 0
-    for msg in messages:
-        msg_tokens = count_message_tokens_tiktoken(msg, model)
-        if msg_tokens is None:
-            return None
-        total += msg_tokens
-
-    return total + 3
-
-
-def count_tool_tokens_tiktoken(tools: List[Union[Function, Dict[str, Any]]], model: str = "gpt-4o") -> Optional[int]:
-    """Count tokens in tool definitions using tiktoken.
-
-    Args:
-        tools: List of tools/functions to count tokens for.
-        model: Model name to determine encoding.
-
-    Returns:
-        Token count, or None if tiktoken is not available.
-    """
-    if not tools:
-        return 0
-
-    enc = _get_tiktoken_encoding(model)
-    if enc is None:
-        return None
-
-    total = 0
     for tool in tools:
-        tool_dict = tool.to_dict() if hasattr(tool, "to_dict") else tool
-        total += len(enc.encode(json.dumps(tool_dict), disallowed_special=()))
+        function = tool.get("function", tool)
+        if function_description := function.get("description"):
+            lines.append(f"// {function_description}")
 
-    return total
+        function_name = function.get("name", "")
+        parameters = function.get("parameters", {})
+        properties = parameters.get("properties", {})
+
+        if properties:
+            lines.append(f"type {function_name} = (_: {{")
+            lines.append(_format_object_parameters(parameters, 0))
+            lines.append("}) => any;")
+        else:
+            lines.append(f"type {function_name} = () => any;")
+        lines.append("")
+
+    lines.append("} // namespace functions")
+    return "\n".join(lines)
 
 
-def count_tokens_with_tiktoken(
-    messages: List[Message],
-    tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
-    model: str = "gpt-4o",
-) -> Optional[int]:
-    """Count tokens for messages and tools using tiktoken.
+def _format_object_parameters(parameters: Dict[str, Any], indent: int) -> str:
+    properties = parameters.get("properties", {})
+    if not properties:
+        return ""
 
-    This is the main entry point for tiktoken-based counting.
-    Falls back to None if tiktoken is not available.
+    required_params = parameters.get("required", [])
+    lines = []
 
-    Args:
-        messages: List of messages to count tokens for.
-        tools: Optional list of tools to include in count.
-        model: Model name to determine encoding.
+    for key, props in properties.items():
+        description = props.get("description")
+        if description:
+            lines.append(f"// {description}")
 
-    Returns:
-        Token count, or None if tiktoken is not available.
-    """
-    msg_tokens = count_messages_tokens_tiktoken(messages, model)
-    if msg_tokens is None:
+        question = "" if required_params and key in required_params else "?"
+        lines.append(f"{key}{question}: {_format_type(props, indent)},")
+
+    return "\n".join([" " * max(0, indent) + line for line in lines])
+
+
+def _format_type(props: Dict[str, Any], indent: int) -> str:
+    type_name = props.get("type", "any")
+
+    if type_name == "string":
+        if "enum" in props:
+            return " | ".join([f'"{item}"' for item in props["enum"]])
+        return "string"
+    elif type_name == "array":
+        items = props.get("items", {})
+        return f"{_format_type(items, indent)}[]"
+    elif type_name == "object":
+        return f"{{\n{_format_object_parameters(props, indent + 2)}\n}}"
+    elif type_name in ["integer", "number"]:
+        if "enum" in props:
+            return " | ".join([f'"{item}"' for item in props["enum"]])
+        return "number"
+    elif type_name == "boolean":
+        return "boolean"
+    elif type_name == "null":
+        return "null"
+    else:
+        return "any"
+
+
+def _get_image_type(data: bytes) -> Optional[str]:
+    if len(data) < 12:
         return None
-
-    total = msg_tokens
-
-    if tools:
-        tool_tokens = count_tool_tokens_tiktoken(tools, model)
-        if tool_tokens is None:
-            return None
-        total += tool_tokens
-
-    return total
-
-
-def count_tokens(text: str) -> int:
-    """Estimate tokens in text (~4 chars per token)."""
-    if not text:
-        return 0
-    return len(text) // 4
+    if data[0:8] == b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a":
+        return "png"
+    if data[0:4] == b"GIF8" and data[5:6] == b"a":
+        return "gif"
+    if data[0:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[4:8] == b"ftyp":
+        return "heic"
+    if data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
 
 
-def count_image_tokens(width: int, height: int, detail: str = "auto") -> int:
-    """Estimate tokens for an image."""
-    if width <= 0 or height <= 0:
-        return 0
+def _get_image_dimensions(data: bytes) -> Tuple[int, int]:
+    import io
+    import struct
+
+    img_type = _get_image_type(data)
+
+    if img_type == "png":
+        return struct.unpack(">LL", data[16:24])
+    elif img_type == "gif":
+        return struct.unpack("<HH", data[6:10])
+    elif img_type == "jpeg":
+        with io.BytesIO(data) as f:
+            f.seek(0)
+            size = 2
+            ftype = 0
+            while not 0xC0 <= ftype <= 0xCF or ftype in (0xC4, 0xC8, 0xCC):
+                f.seek(size, 1)
+                byte = f.read(1)
+                while ord(byte) == 0xFF:
+                    byte = f.read(1)
+                ftype = ord(byte)
+                size = struct.unpack(">H", f.read(2))[0] - 2
+            f.seek(1, 1)
+            h, w = struct.unpack(">HH", f.read(4))
+        return w, h
+    elif img_type == "webp":
+        if data[12:16] == b"VP8X":
+            w = struct.unpack("<I", data[24:27] + b"\x00")[0] + 1
+            h = struct.unpack("<I", data[27:30] + b"\x00")[0] + 1
+            return w, h
+        elif data[12:16] == b"VP8 ":
+            w = struct.unpack("<H", data[26:28])[0] & 0x3FFF
+            h = struct.unpack("<H", data[28:30])[0] & 0x3FFF
+            return w, h
+        elif data[12:16] == b"VP8L":
+            bits = struct.unpack("<I", data[21:25])[0]
+            w = (bits & 0x3FFF) + 1
+            h = ((bits >> 14) & 0x3FFF) + 1
+            return w, h
+
+    return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
+
+
+def _get_image_dimensions(image: Image) -> Tuple[int, int]:
+    try:
+        # Get raw bytes
+        if image.content:
+            data = image.content
+        elif image.filepath:
+            with open(image.filepath, "rb") as f:
+                data = f.read(100)  # Only need header
+        elif image.url:
+            import httpx
+
+            response = httpx.get(image.url, timeout=5)
+            data = response.content
+        else:
+            return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
+
+        return _get_image_dimensions(data)
+    except Exception:
+        return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
+
+
+def _count_image_url_tokens(image_url: Union[str, Dict[str, Any]]) -> int:
+    if isinstance(image_url, dict):
+        detail = image_url.get("detail", "auto")
+    else:
+        detail = "auto"
 
     if detail == "low":
         return 85
 
-    if max(width, height) > 2048:
-        scale = 2048 / max(width, height)
-        width, height = int(width * scale), int(height * scale)
-
-    if min(width, height) > 768:
-        scale = 768 / min(width, height)
-        width, height = int(width * scale), int(height * scale)
-
-    tiles = math.ceil(width / 512) * math.ceil(height / 512)
-    return 85 + (170 * tiles)
-
-
-def count_audio_tokens(duration_seconds: float) -> int:
-    """Estimate tokens for audio."""
-    if duration_seconds <= 0:
-        return 0
-    return int(duration_seconds * 25)
-
-
-def count_video_tokens(
-    duration_seconds: float,
-    width: int = 512,
-    height: int = 512,
-    fps: float = 1.0,
-) -> int:
-    """Estimate tokens for video."""
-    if duration_seconds <= 0:
-        return 0
-    num_frames = max(int(duration_seconds * fps), 1)
-    return num_frames * count_image_tokens(width, height, "high")
+    # Default 1024x1024 high detail
+    return 765
 
 
 def count_file_tokens(file: File) -> int:
-    """Estimate tokens for a file from content, filepath, or URL."""
     content = getattr(file, "content", None)
     if content:
         if isinstance(content, str):
@@ -262,62 +264,125 @@ def count_file_tokens(file: File) -> int:
     return 0
 
 
-def count_message_tokens(message: Message) -> int:
-    """Count tokens in a Message."""
-    tokens = 4
-    content = message.compressed_content or message.content
-    if content:
-        if isinstance(content, str):
-            tokens += count_tokens(content)
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, str):
-                    tokens += count_tokens(item)
-                elif isinstance(item, dict):
-                    text = item.get("text")
-                    tokens += count_tokens(str(text)) if text else count_tokens(json.dumps(item))
+def _count_tool_tokens(
+    tools: List[Union[Function, Dict[str, Any]]],
+    model: str = "gpt-4o",
+    includes_system_message: bool = False,
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+) -> int:
+    if not tools:
+        return 0
+
+    # Convert tools to dict format
+    tool_dicts = []
+    for tool in tools:
+        if hasattr(tool, "to_dict"):
+            tool_dicts.append(tool.to_dict())
         else:
-            tokens += count_tokens(str(content))
+            tool_dicts.append(tool)
 
-    if message.tool_calls:
-        tokens += count_tokens(json.dumps(message.tool_calls))
-    if message.tool_call_id:
-        tokens += count_tokens(message.tool_call_id)
-    if message.reasoning_content:
-        tokens += count_tokens(message.reasoning_content)
-    if message.redacted_reasoning_content:
-        tokens += count_tokens(message.redacted_reasoning_content)
-    if message.name:
-        tokens += count_tokens(message.name)
+    # Format tools in TypeScript namespace format and count
+    formatted = _format_function_definitions(tool_dicts)
+    tokens = count_text_tokens(formatted, model) + 9
 
-    tokens += _count_media_tokens(message)
+    if includes_system_message:
+        tokens -= 4
+
+    # Handle tool_choice tokens
+    if tool_choice == "none":
+        tokens += 1
+    elif isinstance(tool_choice, dict):
+        tokens += 7
+        func_name = tool_choice.get("function", {}).get("name", "")
+        if func_name:
+            tokens += count_text_tokens(func_name, model)
 
     return tokens
+
+
+# Multi-modal token counting
+
+
+def count_text_tokens(text: str, model: str = "gpt-4o") -> int:
+    if not text:
+        return 0
+    tokenizer_type, tokenizer = _select_tokenizer(model)
+    if tokenizer_type == "huggingface":
+        return len(tokenizer.encode(text).ids)
+    elif tokenizer_type == "tiktoken":
+        return len(tokenizer.encode(text, disallowed_special=()))
+    else:
+        return len(text) // 4
+
+
+def count_image_tokens(image: Image) -> int:
+    width, height = _get_image_dimensions(image)
+    detail = image.detail or "auto"
+
+    if width <= 0 or height <= 0:
+        return 0
+
+    if detail == "low":
+        return 85
+
+    # For auto/high, calculate based on dimensions
+    if max(width, height) > 2000:
+        scale = 2000 / max(width, height)
+        width, height = int(width * scale), int(height * scale)
+
+    if min(width, height) > 768:
+        scale = 768 / min(width, height)
+        width, height = int(width * scale), int(height * scale)
+
+    tiles = math.ceil(width / 512) * math.ceil(height / 512)
+    return 85 + (170 * tiles)
+
+
+def count_audio_tokens(audio: Audio) -> int:
+    duration = audio.duration or 0
+    if duration <= 0:
+        return 0
+    return int(duration * 25)
+
+
+def count_video_tokens(video: Video) -> int:
+    duration = video.duration or 0
+    if duration <= 0:
+        return 0
+
+    width = video.width or 512
+    height = video.height or 512
+    fps = video.fps or 1.0
+
+    # Calculate tokens per frame (high detail)
+    w, h = width, height
+    if max(w, h) > 2000:
+        scale = 2000 / max(w, h)
+        w, h = int(w * scale), int(h * scale)
+    if min(w, h) > 768:
+        scale = 768 / min(w, h)
+        w, h = int(w * scale), int(h * scale)
+    tiles = math.ceil(w / 512) * math.ceil(h / 512)
+    tokens_per_frame = 85 + (170 * tiles)
+
+    num_frames = max(int(duration * fps), 1)
+    return num_frames * tokens_per_frame
 
 
 def _count_media_tokens(message: Message) -> int:
     tokens = 0
 
     if message.images:
-        for img in message.images:
-            tokens += count_image_tokens(
-                getattr(img, "width", None) or 512,
-                getattr(img, "height", None) or 512,
-                getattr(img, "detail", None) or "auto",
-            )
+        for image in message.images:
+            tokens += count_image_tokens(image)
 
     if message.audio:
-        for aud in message.audio:
-            tokens += count_audio_tokens(getattr(aud, "duration", None) or 0)
+        for audio in message.audio:
+            tokens += count_audio_tokens(audio)
 
     if message.videos:
-        for vid in message.videos:
-            tokens += count_video_tokens(
-                getattr(vid, "duration", None) or 0,
-                getattr(vid, "width", None) or 512,
-                getattr(vid, "height", None) or 512,
-                getattr(vid, "fps", None) or 1.0,
-            )
+        for video in message.videos:
+            tokens += count_video_tokens(video)
 
     if message.files:
         for file in message.files:
@@ -326,43 +391,85 @@ def _count_media_tokens(message: Message) -> int:
     return tokens
 
 
-def count_messages_tokens(messages: List[Message]) -> int:
-    """Count total tokens across a list of messages."""
-    if not messages:
-        return 0
-    total = sum(count_message_tokens(msg) for msg in messages)
-    return total + 3
+def _count_message_tokens(
+    message: Message,
+    model: str = "gpt-4o",
+    tokens_per_message: int = 3,
+    tokens_per_name: int = 1,
+) -> int:
+    tokens = tokens_per_message
+
+    if message.role:
+        tokens += count_text_tokens(message.role, model)
+
+    content = message.compressed_content or message.content
+    if content:
+        if isinstance(content, str):
+            tokens += count_text_tokens(content, model)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, str):
+                    tokens += count_text_tokens(item, model)
+                elif isinstance(item, dict):
+                    item_type = item.get("type", "")
+                    if item_type == "text":
+                        tokens += count_text_tokens(item.get("text", ""), model)
+                    elif item_type == "image_url":
+                        tokens += _count_image_url_tokens(item.get("image_url", {}))
+                    else:
+                        tokens += count_text_tokens(json.dumps(item), model)
+        else:
+            tokens += count_text_tokens(str(content), model)
+
+    if message.tool_calls:
+        for tool_call in message.tool_calls:
+            if isinstance(tool_call, dict) and "function" in tool_call:
+                args = tool_call["function"].get("arguments", "")
+                tokens += count_text_tokens(str(args), model)
+
+    if message.tool_call_id:
+        tokens += count_text_tokens(message.tool_call_id, model)
+
+    if message.reasoning_content:
+        tokens += count_text_tokens(message.reasoning_content, model)
+
+    if message.redacted_reasoning_content:
+        tokens += count_text_tokens(message.redacted_reasoning_content, model)
+
+    if message.name:
+        tokens += count_text_tokens(message.name, model)
+        tokens += tokens_per_name
+
+    tokens += _count_media_tokens(message)
+
+    return tokens
 
 
-def count_tool_tokens(tools: List[Union[Function, Dict[str, Any]]]) -> int:
-    """Count tokens in tool/function definitions."""
-    if not tools:
-        return 0
-    total = 0
-    for tool in tools:
-        tool_dict = tool.to_dict() if hasattr(tool, "to_dict") else tool
-        total += len(json.dumps(tool_dict)) // 6
-    return total
-
-
-def estimate_context_tokens(
+def count_tokens(
     messages: List[Message],
     tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+    model: str = "gpt-4o",
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> int:
-    """Estimate total tokens for messages and tools."""
-    total = count_messages_tokens(messages)
+    total = 0
+
+    # Count message tokens
+    if messages:
+        model_lower = model.lower()
+        if "gpt-3.5-turbo-0301" in model_lower:
+            tokens_per_message, tokens_per_name = 4, -1
+        else:
+            tokens_per_message, tokens_per_name = 3, 1
+
+        for msg in messages:
+            total += _count_message_tokens(msg, model, tokens_per_message, tokens_per_name)
+
+    # Add 3 tokens for reply priming
+    total += 3
+
+    # Count tool tokens
     if tools:
-        total += count_tool_tokens(tools)
+        includes_system = any(msg.role == "system" for msg in messages)
+        total += _count_tool_tokens(tools, model, includes_system, tool_choice)
+
     return total
-
-
-def log_token_comparison(estimated: int, actual: int) -> None:
-    """Log estimated vs actual token counts.
-
-    Args:
-        estimated: Token count from model's count_tokens method.
-        actual: Actual token count from provider response.
-    """
-    from agno.utils.log import log_debug
-
-    log_debug(f"Tokens - estimated: {estimated}, actual: {actual}")

@@ -78,7 +78,7 @@ openai = ["openai"]
 portkey = ["portkey-ai"]
 
 # Dependencies for Token Counting
-tokenizers = ["tiktoken"]
+tokenizers = ["tiktoken", "tokenizers"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
@@ -475,6 +475,7 @@ module = [
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
+  "tokenizers.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",

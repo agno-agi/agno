@@ -308,27 +308,9 @@ class Model(ABC):
         messages: List[Message],
         tools: Optional[List[Union[Function, dict]]] = None,
     ) -> int:
-        """Count tokens for messages and tools.
+        from agno.utils.tokens import count_tokens
 
-        Uses tiktoken if available for accurate counting, otherwise
-        falls back to character-based estimation.
-
-        Override in provider-specific classes for native API counting
-        (e.g., OpenAI, Anthropic, Gemini).
-
-        Args:
-            messages: List of messages to count tokens for.
-            tools: Optional list of tools to include in count.
-
-        Returns:
-            Token count (accurate with tiktoken, estimated otherwise).
-        """
-        from agno.utils.tokens import count_tokens_with_tiktoken, estimate_context_tokens
-
-        result = count_tokens_with_tiktoken(messages, tools, self.id)
-        if result is not None:
-            return result
-        return estimate_context_tokens(messages, tools)
+        return count_tokens(messages, tools=tools, model=self.id)
 
     def response(
         self,
@@ -750,10 +732,8 @@ class Model(ABC):
 
         # Log token comparison if we have actual usage data
         if provider_response.response_usage is not None and provider_response.response_usage.input_tokens > 0:
-            from agno.utils.tokens import log_token_comparison
-
             model_estimated = self.count_tokens(messages, tools)
-            log_token_comparison(model_estimated, provider_response.response_usage.input_tokens)
+            log_debug(f"Tokens - estimated: {model_estimated}, actual: {provider_response.response_usage.input_tokens}")
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -814,10 +794,8 @@ class Model(ABC):
 
         # Log token comparison if we have actual usage data
         if provider_response.response_usage is not None and provider_response.response_usage.input_tokens > 0:
-            from agno.utils.tokens import log_token_comparison
-
             model_estimated = self.count_tokens(messages, tools)
-            log_token_comparison(model_estimated, provider_response.response_usage.input_tokens)
+            log_debug(f"Tokens - estimated: {model_estimated}, actual: {provider_response.response_usage.input_tokens}")
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -950,10 +928,8 @@ class Model(ABC):
 
         # Log token comparison if we have actual usage data
         if stream_data.response_metrics is not None and stream_data.response_metrics.input_tokens > 0:
-            from agno.utils.tokens import log_token_comparison
-
             model_estimated = self.count_tokens(messages, tools)
-            log_token_comparison(model_estimated, stream_data.response_metrics.input_tokens)
+            log_debug(f"Tokens - estimated: {model_estimated}, actual: {stream_data.response_metrics.input_tokens}")
 
     def response_stream(
         self,
@@ -1175,10 +1151,8 @@ class Model(ABC):
 
         # Log token comparison if we have actual usage data
         if stream_data.response_metrics is not None and stream_data.response_metrics.input_tokens > 0:
-            from agno.utils.tokens import log_token_comparison
-
             model_estimated = self.count_tokens(messages, tools)
-            log_token_comparison(model_estimated, stream_data.response_metrics.input_tokens)
+            log_debug(f"Tokens - estimated: {model_estimated}, actual: {stream_data.response_metrics.input_tokens}")
 
     async def aresponse_stream(
         self,

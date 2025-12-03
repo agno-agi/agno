@@ -55,27 +55,6 @@ class Claude(AnthropicClaude):
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
 
-    def count_tokens(
-        self,
-        messages: List["Message"],
-        tools: Optional[List[Union[Function, dict]]] = None,
-    ) -> int:
-        """Count tokens for messages and tools.
-
-        AWS Bedrock does not support token counting via API, so we use
-        the base class estimation method.
-
-        Args:
-            messages: List of messages to count tokens for.
-            tools: Optional list of tools to include in count.
-
-        Returns:
-            Estimated token count.
-        """
-        from agno.utils.tokens import estimate_context_tokens
-
-        return estimate_context_tokens(messages, tools)
-
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:
             credentials = self.session.get_credentials()
