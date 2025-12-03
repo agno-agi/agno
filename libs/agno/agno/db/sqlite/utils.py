@@ -120,9 +120,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         return False
 
 
-async def ais_valid_table(
-    db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: Optional[str] = None
-) -> bool:
+async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str) -> bool:
     """
     Check if the existing table has the expected column names.
     Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
