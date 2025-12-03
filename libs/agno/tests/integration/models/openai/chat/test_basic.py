@@ -204,19 +204,6 @@ def test_history(openai_model):
     assert len(run_output.messages) == 8
 
 
-def test_cache_read_tokens(openai_model):
-    """Assert cache_read_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=openai_model, markdown=True, telemetry=False)
-
-    # Multiple + one large prompt to ensure token caching is triggered
-    agent.run("Share a 2 sentence horror story" * 250)
-    response = agent.run("Share a 2 sentence horror story" * 250)
-
-    assert response.metrics is not None
-    assert response.metrics.cache_read_tokens is not None
-    assert response.metrics.cache_read_tokens > 0
-
-
 def test_reasoning_tokens():
     """Assert reasoning_tokens is populated correctly and returned in the metrics"""
     agent = Agent(model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False)

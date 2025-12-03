@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -28,10 +28,9 @@ class Nebius(OpenAILike):
 
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:
-            raise ModelProviderError(
+            raise ModelAuthenticationError(
                 message="NEBIUS_API_KEY not set. Please set the NEBIUS_API_KEY environment variable.",
                 model_name=self.name,
-                model_id=self.id,
             )
 
         # Define base client params
