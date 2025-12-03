@@ -8,9 +8,9 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing.setup import setup_tracing
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Set up databases - each agent has its own db
 db1 = SqliteDb(db_file="tmp/db1.db", id="db1")
@@ -19,7 +19,9 @@ db2 = SqliteDb(db_file="tmp/db2.db", id="db2")
 # Dedicated traces database
 tracing_db = SqliteDb(db_file="tmp/traces.db", id="traces")
 
-setup_tracing(db=tracing_db, batch_processing=True, max_queue_size=1024, max_export_batch_size=256)
+setup_tracing(
+    db=tracing_db, batch_processing=True, max_queue_size=1024, max_export_batch_size=256
+)
 
 agent = Agent(
     name="HackerNews Agent",
@@ -44,7 +46,7 @@ agent2 = Agent(
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent, agent2],
-    tracing_db=tracing_db, # Dedicated database for traces
+    tracing_db=tracing_db,  # Dedicated database for traces
 )
 app = agent_os.get_app()
 
