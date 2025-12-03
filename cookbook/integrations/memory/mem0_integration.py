@@ -18,7 +18,7 @@ messages = [
     {"role": "user", "content": "I'm going to a concert tomorrow."},
 ]
 # Comment out the following line after running the script once
-client.add(messages, user_id=user_id)
+client.add(messages, user_id=user_id, async_mode=True)
 
 agent = Agent(
     model=OpenAIChat(),
@@ -30,4 +30,4 @@ run: RunOutput = agent.run("What do you know about me?")
 pprint_run_response(run)
 
 input = [{"role": i.role, "content": str(i.content)} for i in (run.messages or [])]
-client.add(messages, user_id=user_id)
+client.add(messages, user_id=user_id, async_mode=True)
