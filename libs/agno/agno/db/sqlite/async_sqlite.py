@@ -1114,7 +1114,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Select topics from all results
-                stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
+                stmt = select(table.c.topics)
                 result = (await sess.execute(stmt)).fetchall()
 
                 return list(set([record[0] for record in result]))
