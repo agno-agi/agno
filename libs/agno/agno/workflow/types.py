@@ -209,7 +209,7 @@ class StepInput:
         input_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.input is not None:
             if isinstance(self.input, BaseModel):
-                input_dict = self.input.model_dump(exclude_none=True)
+                input_dict = self.input.model_dump(exclude_none=True, mode="json")
             elif isinstance(self.input, (dict, list)):
                 input_dict = self.input
             else:
@@ -281,7 +281,7 @@ class StepOutput:
         content_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.content is not None:
             if isinstance(self.content, BaseModel):
-                content_dict = self.content.model_dump(exclude_none=True)
+                content_dict = self.content.model_dump(exclude_none=True, mode="json")
             elif isinstance(self.content, (dict, list)):
                 content_dict = self.content
             else:

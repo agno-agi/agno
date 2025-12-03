@@ -1,10 +1,11 @@
 from asyncio import Future, Task
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 
-async def await_for_background_tasks(
+async def await_for_open_threads(
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
 ) -> None:
@@ -40,7 +41,7 @@ async def await_for_background_tasks(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-def wait_for_background_tasks(
+def wait_for_open_threads(
     memory_future: Optional[Future] = None, cultural_knowledge_future: Optional[Future] = None
 ) -> None:
     if memory_future is not None:
@@ -57,7 +58,7 @@ def wait_for_background_tasks(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-async def await_for_background_tasks_stream(
+async def await_for_thread_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
@@ -108,7 +109,7 @@ async def await_for_background_tasks_stream(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-def wait_for_background_tasks_stream(
+def wait_for_thread_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
     cultural_knowledge_future: Optional[Future] = None,
@@ -818,3 +819,120 @@ async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str
         raise Exception("Session not found")
 
     return session.get_chat_history()  # type: ignore
+
+
+def execute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    # Run the instructions function, await if it's awaitable, otherwise run directly (in thread)
+    if inspect.iscoroutinefunction(instructions):
+        raise Exception("Instructions function is async, use `agent.arun()` instead")
+
+    # Run the instructions function
+    return instructions(**instruction_args)
+
+
+def execute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    """Execute the system message function."""
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+    if inspect.iscoroutinefunction(system_message):
+        raise ValueError("System message function is async, use `agent.arun()` instead")
+
+    return system_message(**system_message_args)
+
+
+async def aexecute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    if inspect.iscoroutinefunction(instructions):
+        return await instructions(**instruction_args)
+    else:
+        return instructions(**instruction_args)
+
+
+async def aexecute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+
+    if inspect.iscoroutinefunction(system_message):
+        return await system_message(**system_message_args)
+    else:
+        return system_message(**system_message_args)

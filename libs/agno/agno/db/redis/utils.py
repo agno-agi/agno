@@ -3,14 +3,14 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_warning
 
 try:
-    from redis import Redis
+    from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -51,7 +51,7 @@ def generate_index_key(prefix: str, table_type: str, index_field: str, index_val
     return f"{prefix}:{table_type}:index:{index_field}:{index_value}"
 
 
-def get_all_keys_for_table(redis_client: Redis, prefix: str, table_type: str) -> List[str]:
+def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str) -> List[str]:
     """Get all relevant keys for the given table type.
 
     Args:
@@ -130,7 +130,7 @@ def apply_filters(records: List[Dict[str, Any]], conditions: Dict[str, Any]) -> 
 
 
 def create_index_entries(
-    redis_client: Redis,
+    redis_client: Union[Redis, RedisCluster],
     prefix: str,
     table_type: str,
     record_id: str,
@@ -144,7 +144,7 @@ def create_index_entries(
 
 
 def remove_index_entries(
-    redis_client: Redis,
+    redis_client: Union[Redis, RedisCluster],
     prefix: str,
     table_type: str,
     record_id: str,

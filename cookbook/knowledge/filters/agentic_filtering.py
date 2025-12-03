@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.utils.media import (
@@ -13,8 +13,7 @@ downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
+# Initialize PgVector
 vector_db = PgVector(
     table_name="recipes",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -85,7 +84,6 @@ agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
-    debug_mode=True,
 )
 
 agent.print_response(
