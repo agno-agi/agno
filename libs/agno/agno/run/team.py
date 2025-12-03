@@ -555,7 +555,7 @@ class TeamRunOutput:
         }
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
-            
+
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
 
