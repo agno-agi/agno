@@ -47,6 +47,17 @@ agent_worklog = Agent(
     markdown=True,
 )
 
+agent_comment = Agent(
+    tools=[
+        JiraTools(
+            enable_search_issues=False,
+            enable_get_issue=True,
+            enable_create_issue=False,
+            enable_add_comment=True,
+        )
+    ]
+)
+
 # Example usage with all functions enabled
 print("=== Example 1: Using all Jira functions ===")
 agent_all.print_response(
@@ -72,4 +83,12 @@ agent_worklog.print_response(
 
 agent_worklog.print_response(
     "Add a worklog of 30 minutes to PROJ-456 for code review", markdown=True
+
+# Example usage with specific function
+print("\n=== Example 5: Specific function to get comments from a jira issue ===")
+agent_comment.print_response("Summarize the comments for issue PROJ-123", markdown=True)
+
+# Example usage with specific function
+print("\n=== Example 6: Specific function to write internal comments from a jira issue ===")
+agent_comment.print_response("Summarize the issue PROJ-123 and write it as an internal comment", markdown=True)
 )
