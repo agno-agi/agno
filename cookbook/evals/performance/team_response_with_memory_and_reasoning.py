@@ -1029,7 +1029,7 @@ team = Team(
     enable_user_memories=True,
     share_member_interactions=False,
     add_history_to_context=True,
-    read_team_history=False,
+    read_chat_history=False,
     stream=True,
     stream_events=True,
 )

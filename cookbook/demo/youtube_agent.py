@@ -3,7 +3,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.youtube import YouTubeTools
-from db import db
+from db import demo_db
 
 youtube_agent = Agent(
     name="YouTube Agent",
@@ -20,7 +20,7 @@ youtube_agent = Agent(
         3. If the answer isn't in the video, say so and ask for more details.
         4. Keep responses short, engaging, and focused on key insights.
         """),
-    db=db,
+    db=demo_db,
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,

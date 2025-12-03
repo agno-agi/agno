@@ -7,7 +7,7 @@ from agno.tools.exa import ExaTools
 from agno.workflow import WorkflowAgent
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
-from db import db
+from db import demo_db
 
 # =========================
 # CONFIG
@@ -84,7 +84,7 @@ competitive_brief = Workflow(
     description="Generate a competitive brief between two products. First plan the brief, then compare the products.",
     agent=workflow_agent,
     steps=[plan_step, compare_step],
-    db=db,
+    db=demo_db,
 )
 
 
@@ -101,7 +101,6 @@ async def main():
     await competitive_brief.aprint_response(
         "Create a competitive brief for Agno vs LangChain focusing on features and architecture.",
         stream=True,
-        stream_events=True,
     )
 
     # 2) Follow-up — should answer from history (no re-run)
@@ -111,7 +110,6 @@ async def main():
     await competitive_brief.aprint_response(
         "Which one would you recommend for a new project?",
         stream=True,
-        stream_events=True,  # stays True so the audience can see that nothing re-runs
     )
 
     # 3) Scope change — introduces new vendor; should trigger re-run
@@ -119,7 +117,6 @@ async def main():
     await competitive_brief.aprint_response(
         "Now add CrewAI to the comparison.",
         stream=True,
-        stream_events=True,
     )
 
 

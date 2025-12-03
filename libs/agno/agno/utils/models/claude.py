@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
@@ -68,6 +68,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        img_type = None
+
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
             content_bytes = image.content
@@ -80,7 +82,6 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             import os
             from urllib.parse import urlparse
 
-            img_type = None
             if image.url:
                 parsed_url = urlparse(image.url)
                 _, ext = os.path.splitext(parsed_url.path)
@@ -220,17 +221,20 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     return None
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def format_messages(
+    messages: List[Message], compress_tool_results: bool = False
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    chat_messages: List[Dict[str, str]] = []
+    chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
     for message in messages:
@@ -300,11 +304,15 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     )
         elif message.role == "tool":
             content = []
+
+            # Use compressed content for tool messages if compression is active
+            tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(message.content),
+                    "content": str(tool_result),
                 }
             )
 
@@ -319,6 +327,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
     """
     if not tools:
         return None
@@ -351,7 +360,14 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
                 "type": parameters.get("type", "object"),
                 "properties": input_properties,
                 "required": required_params,
+                "additionalProperties": False,
             },
         }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
         parsed_tools.append(tool)
     return parsed_tools

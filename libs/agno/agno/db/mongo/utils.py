@@ -34,6 +34,23 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
         log_warning(f"Error creating indexes for {collection_type} collection: {e}")
 
 
+async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
+    """Create all required indexes for a collection (async version for Motor)"""
+    try:
+        indexes = get_collection_indexes(collection_type)
+        for index_spec in indexes:
+            key = index_spec["key"]
+            unique = index_spec.get("unique", False)
+
+            if isinstance(key, list):
+                await collection.create_index(key, unique=unique)
+            else:
+                await collection.create_index([(key, 1)], unique=unique)
+
+    except Exception as e:
+        log_warning(f"Error creating indexes for {collection_type} collection: {e}")
+
+
 def apply_sorting(
     query_args: Dict[str, Any], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[tuple]:
@@ -89,14 +106,14 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
             if session.get("user_id"):
                 all_user_ids.add(session["user_id"])
-            runs = session.get("runs", []) or []
-            metrics[runs_count_key] += len(sessions)
+            runs = session.get("runs", [])
+            metrics[runs_count_key] += len(runs)
 
             if runs := session.get("runs", []):
                 if isinstance(runs, str):

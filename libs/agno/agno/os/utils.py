@@ -1,8 +1,9 @@
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.routing import APIRoute, APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
@@ -19,23 +20,69 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_db(dbs: dict[str, Union[BaseDb, AsyncBaseDb]], db_id: Optional[str] = None) -> Union[BaseDb, AsyncBaseDb]:
-    """Return the database with the given ID, or the first database if no ID is provided."""
+async def get_db(
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None
+) -> Union[BaseDb, AsyncBaseDb]:
+    """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
+
+    if table and not db_id:
+        raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
+
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+        """Check if this database has the specified table (configured and actually exists)."""
+        # First check if table name is configured
+        is_configured = (
+            hasattr(db, "session_table_name")
+            and db.session_table_name == table_name
+            or hasattr(db, "memory_table_name")
+            and db.memory_table_name == table_name
+            or hasattr(db, "metrics_table_name")
+            and db.metrics_table_name == table_name
+            or hasattr(db, "eval_table_name")
+            and db.eval_table_name == table_name
+            or hasattr(db, "knowledge_table_name")
+            and db.knowledge_table_name == table_name
+        )
+
+        if not is_configured:
+            return False
+
+        # Then check if table actually exists in the database
+        try:
+            if isinstance(db, AsyncBaseDb):
+                # For async databases, await the check
+                return await db.table_exists(table_name)
+            else:
+                # For sync databases, call directly
+                return db.table_exists(table_name)
+        except (NotImplementedError, AttributeError):
+            # If table_exists not implemented, fall back to configuration check
+            return is_configured
+
+    # If db_id is provided, first find the database with that ID
+    if db_id:
+        target_db_list = dbs.get(db_id)
+        if not target_db_list:
+            raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
+
+        # If table is also specified, search through all databases with this ID to find one with the table
+        if table:
+            for db in target_db_list:
+                if await _has_table(db, table):
+                    return db
+            raise HTTPException(status_code=404, detail=f"No database with id '{db_id}' has table '{table}'")
+
+        # If no table specified, return the first database with this ID
+        return target_db_list[0]
 
     # Raise if multiple databases are provided but no db_id is provided
-    if not db_id and len(dbs) > 1:
+    if len(dbs) > 1:
         raise HTTPException(
             status_code=400, detail="The db_id query parameter is required when using multiple databases"
         )
 
-    # Get and return the database with the given ID, or raise if not found
-    if db_id:
-        db = dbs.get(db_id)
-        if not db:
-            raise HTTPException(status_code=404, detail=f"Database with id '{db_id}' not found")
-    else:
-        db = next(iter(dbs.values()))
-    return db
+    # Return the first (and only) database
+    return next(db for dbs in dbs.values() for db in dbs)
 
 
 def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id: Optional[str] = None) -> Knowledge:
@@ -465,8 +512,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools:
         for tool in team.tools:
-            type_name = type(tool).__name__
-            if type_name in ("MCPTools", "MultiMCPTools"):
+            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+            ):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -476,8 +525,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools:
                     for tool in member.tools:
-                        type_name = type(tool).__name__
-                        if type_name in ("MCPTools", "MultiMCPTools"):
+                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                        if hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        ):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -521,8 +572,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools:
                 for tool in step.agent.tools:
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
+                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                    if hasattr(type(tool), "__mro__") and any(
+                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                    ):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -544,8 +597,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools:
             for tool in step.tools:
-                type_name = type(tool).__name__
-                if type_name in ("MCPTools", "MultiMCPTools"):
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
@@ -582,3 +637,175 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
         return str(input_content)
     else:
         return str(input_content)
+
+
+def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
+    """Map JSON schema type to Python type with recursive handling.
+
+    Args:
+        field_schema: JSON schema dictionary for a single field
+        field_name: Name of the field (used for nested model naming)
+
+    Returns:
+        Python type corresponding to the JSON schema type
+    """
+    if not isinstance(field_schema, dict):
+        return Any
+
+    json_type = field_schema.get("type")
+
+    # Handle basic types
+    if json_type == "string":
+        return str
+    elif json_type == "integer":
+        return int
+    elif json_type == "number":
+        return float
+    elif json_type == "boolean":
+        return bool
+    elif json_type == "null":
+        return type(None)
+    elif json_type == "array":
+        # Handle arrays with item type specification
+        items_schema = field_schema.get("items")
+        if items_schema and isinstance(items_schema, dict):
+            item_type = _get_python_type_from_json_schema(items_schema, f"{field_name}Item")
+            return List[item_type]  # type: ignore
+        else:
+            # No item type specified - use generic list
+            return List[Any]
+    elif json_type == "object":
+        # Recursively create nested Pydantic model
+        nested_properties = field_schema.get("properties", {})
+        nested_required = field_schema.get("required", [])
+        nested_title = field_schema.get("title", field_name)
+
+        # Build field definitions for nested model
+        nested_fields = {}
+        for nested_field_name, nested_field_schema in nested_properties.items():
+            nested_field_type = _get_python_type_from_json_schema(nested_field_schema, nested_field_name)
+
+            if nested_field_name in nested_required:
+                nested_fields[nested_field_name] = (nested_field_type, ...)
+            else:
+                nested_fields[nested_field_name] = (Optional[nested_field_type], None)  # type: ignore[assignment]
+
+        # Create nested model if it has fields
+        if nested_fields:
+            return create_model(nested_title, **nested_fields)  # type: ignore
+        else:
+            # Empty object schema - use generic dict
+            return Dict[str, Any]
+    else:
+        # Unknown or unspecified type - fallback to Any
+        if json_type:
+            logger.warning(f"Unknown JSON schema type '{json_type}' for field '{field_name}', using Any")
+        return Any
+
+
+def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
+    """Convert a JSON schema dictionary to a Pydantic BaseModel class.
+
+    This function dynamically creates a Pydantic model from a JSON schema specification,
+    handling nested objects, arrays, and optional fields.
+
+    Args:
+        schema: JSON schema dictionary with 'properties', 'required', 'type', etc.
+
+    Returns:
+        Dynamically created Pydantic BaseModel class
+    """
+    import copy
+
+    # Deep copy to avoid modifying the original schema
+    schema = copy.deepcopy(schema)
+
+    # Extract schema components
+    model_name = schema.get("title", "DynamicModel")
+    properties = schema.get("properties", {})
+    required_fields = schema.get("required", [])
+
+    # Validate schema has properties
+    if not properties:
+        logger.warning(f"JSON schema '{model_name}' has no properties, creating empty model")
+
+    # Build field definitions for create_model
+    field_definitions = {}
+    for field_name, field_schema in properties.items():
+        try:
+            field_type = _get_python_type_from_json_schema(field_schema, field_name)
+
+            if field_name in required_fields:
+                # Required field: (type, ...)
+                field_definitions[field_name] = (field_type, ...)
+            else:
+                # Optional field: (Optional[type], None)
+                field_definitions[field_name] = (Optional[field_type], None)  # type: ignore[assignment]
+        except Exception as e:
+            logger.warning(f"Failed to process field '{field_name}' in schema '{model_name}': {e}")
+            # Skip problematic fields rather than failing entirely
+            continue
+
+    # Create and return the dynamic model
+    try:
+        return create_model(model_name, **field_definitions)  # type: ignore
+    except Exception as e:
+        logger.error(f"Failed to create dynamic model '{model_name}': {e}")
+        # Return a minimal model as fallback
+        return create_model(model_name)
+
+
+def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb]) -> None:
+    """Set up OpenTelemetry tracing for this agent/team/workflow."""
+    try:
+        from agno.tracing import setup_tracing
+
+        setup_tracing(db=db)
+    except ImportError:
+        logger.warning(
+            "tracing=True but OpenTelemetry packages not installed. "
+            "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to enable tracing: {e}")
+
+
+def format_duration_ms(duration_ms: Optional[int]) -> str:
+    """Format a duration in milliseconds to a human-readable string.
+
+    Args:
+        duration_ms: Duration in milliseconds
+
+    Returns:
+        Formatted string like "150ms" or "1.50s"
+    """
+    if duration_ms is None or duration_ms < 1000:
+        return f"{duration_ms or 0}ms"
+    return f"{duration_ms / 1000:.2f}s"
+
+
+def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+    """Parse an ISO 8601 datetime string and convert to UTC.
+
+    Args:
+        datetime_str: ISO 8601 formatted datetime string (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T15:30:00+05:30')
+        param_name: Name of the parameter for error messages
+
+    Returns:
+        datetime object in UTC timezone
+
+    Raises:
+        HTTPException: If the datetime string is invalid
+    """
+    try:
+        dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+        # Convert to UTC if timezone-aware, otherwise assume UTC
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc)
+        else:
+            return dt.replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
+        )
