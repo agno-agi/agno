@@ -13,8 +13,7 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.spotify import SpotifyTools
 
-# Your Spotify access token (get one from https://developer.spotify.com/console/)
-# Required scopes: user-read-private, playlist-modify-public, playlist-modify-private
+# Your Spotify access token (get one from https://developer.spotify.com)
 SPOTIFY_TOKEN = getenv("SPOTIFY_TOKEN")
 
 # Initialize the Spotify toolkit
@@ -44,7 +43,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Example 1: Create a playlist with happy songs from specific artists
     response = agent.run(
-        "In the Good Vibes playlist, add 3 more upbeat songs by The Weeknd"
+        "Create a Good Vibes playlist, add 5 upbeat songs by The Weeknd and Coldplay in it."
     )
     print(response.content)
     print("\n" + "=" * 50 + "\n")
@@ -52,6 +51,6 @@ if __name__ == "__main__":
     # Example 2: Update the playlist
     # Note: You'd need the playlist_id from the previous response
     # response = agent.run(
-    #     "Add 3 more upbeat songs by The Weeknd to the Good Vibes playlist"
+    #     "Add 5 more upbeat songs by the Beatles to the Good Vibes playlist"
     # )
     # print(response.content)

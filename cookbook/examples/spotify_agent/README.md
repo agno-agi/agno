@@ -8,15 +8,6 @@ Set the `SPOTIFY_TOKEN` environment variable with your Spotify access token.
 
 To get a token for testing, go to https://developer.spotify.com/ and click "See it in action".
 
-Required scopes:
-
-- `user-read-private` - Read user profile
-- `user-top-read` - Access top tracks/artists
-- `playlist-modify-public` - Create/edit public playlists
-- `playlist-modify-private` - Create/edit private playlists
-- `user-modify-playback-state` - Control playback (optional)
-- `user-read-playback-state` - View playback state (optional)
-
 ## Features
 
 - **Top tracks & artists** - Get your most played songs and artists (last 4 weeks, 6 months, or all time)
@@ -25,7 +16,6 @@ Required scopes:
 - **Recommendations** - Get personalized track recommendations based on seeds and mood (energy, happiness, danceability)
 - **Artist top tracks** - Get any artist's most popular songs
 - **Album tracks** - Add entire albums to playlists
-- **Playback control** - Play tracks and check what's currently playing
 
 ## Getting Started
 
@@ -76,4 +66,3 @@ python spotify_agent.py
 - "Add the entire Abbey Road album to my playlist"
 - "Find me upbeat songs similar to Blinding Lights"
 - "Update my Good Vibes playlist with more chill tracks"
-- "Play my top track"
