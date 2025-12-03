@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -23,7 +23,7 @@ class Nvidia(OpenAILike):
     name: str = "Nvidia"
     provider: str = "Nvidia"
 
-    api_key: Optional[str] = field(default_factory=lambda: getenv("NVIDIA_API_KEY"))
+    api_key: Optional[str] = None
     base_url: str = "https://integrate.api.nvidia.com/v1"
 
     supports_native_structured_outputs: bool = False
@@ -38,9 +38,8 @@ class Nvidia(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("NVIDIA_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="NVIDIA_API_KEY not set. Please set the NVIDIA_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()
