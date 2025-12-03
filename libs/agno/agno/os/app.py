@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
+import os
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ from agno.os.config import (
     MetricsDomainConfig,
     SessionConfig,
     SessionDomainConfig,
+    JWTConfig
 )
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
@@ -104,7 +106,7 @@ class AgentOS:
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         authorization: bool = False,
-        authorization_secret: Optional[str] = None,
+        jwt_config: Optional[JWTConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
@@ -137,7 +139,10 @@ class AgentOS:
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
-            authorization_secret: The secret key for authorization
+            jwt_verification_key: Key used to verify JWT signatures. For asymmetric algorithms (RS256, ES256),
+                this should be the public key. For symmetric algorithms (HS256), this is the shared secret.
+            jwt_algorithm: JWT algorithm for signature verification (default: RS256).
+                Common options: RS256 (asymmetric, recommended), HS256 (symmetric).
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             telemetry: Whether to enable telemetry
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
@@ -185,22 +190,12 @@ class AgentOS:
 
         # RBAC
         self.authorization = authorization
-        self.authorization_secret = authorization_secret
+        self.jwt_config = jwt_config
 
         if self.authorization and not self.id:
             raise ValueError(
                 "Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS."
             )
-
-        if self.authorization and not self.authorization_secret:
-            log_info("No authorization secret provided, generating a new 256-bit authorization secret")
-
-            import secrets
-
-            # Generate 256 bits (32 bytes) of entropy, then encode as hex for JWT secret.
-            self.authorization_secret = secrets.token_hex(32)  # 32 bytes = 256 bits
-
-            log_info(f"Authorization secret generated (256-bit, hex): {self.authorization_secret}")
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -533,10 +528,13 @@ class AgentOS:
         if self.authorization:
             from agno.os.middleware.jwt import JWTMiddleware
 
-            log_info("Adding JWT middleware for authorization")
+            log_info(f"Adding JWT middleware for authorization (algorithm: {self.jwt_config.algorithm})")
+            algorithm = self.jwt_config.algorithm if self.jwt_config and self.jwt_config.algorithm else "RS256"
+            verification_key = self.jwt_config.verification_key if self.jwt_config and self.jwt_config.verification_key else None
             fastapi_app.add_middleware(
                 JWTMiddleware,
-                secret_key=self.authorization_secret,
+                verification_key=verification_key,
+                algorithm=algorithm,
                 authorization=self.authorization,
             )
 

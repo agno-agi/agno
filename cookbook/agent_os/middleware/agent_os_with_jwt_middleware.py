@@ -60,7 +60,7 @@ app = agent_os.get_app()
 # This is useful if you just want JWT extraction without RBAC
 app.add_middleware(
     JWTMiddleware,
-    secret_key=JWT_SECRET,
+    verification_key=JWT_SECRET,
     algorithm="HS256",
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim

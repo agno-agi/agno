@@ -62,7 +62,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # Additive scope mappings (adds to defaults)
         app.add_middleware(
             JWTMiddleware,
-            secret_key="your-secret",
+            verification_key="your-secret",
             authorization=True,
             scope_mappings={
                 # Override default scope for this endpoint
@@ -78,8 +78,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        secret_key: Optional[str] = None,
-        algorithm: str = "HS256",
+        verification_key: Optional[str] = None,
+        algorithm: str = "RS256",
         token_source: TokenSource = TokenSource.HEADER,
         token_header_key: str = "Authorization",
         cookie_name: str = "access_token",
@@ -98,8 +98,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         Args:
             app: The FastAPI app instance
-            secret_key: JWT secret key (will use JWT_SECRET_KEY env var if not provided)
-            algorithm: JWT algorithm (default: HS256)
+            verification_key: Key used to verify JWT signatures (will use JWT_VERIFICATION_KEY env var if not provided).
+                             For asymmetric algorithms (RS256, ES256), this should be the public key.
+                             For symmetric algorithms (HS256), this is the shared secret.
+            algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
             cookie_name: Cookie name for JWT token (default: "access_token")
@@ -124,10 +126,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
         # JWT configuration
-        self.secret_key = secret_key or getenv("JWT_SECRET_KEY", "")
-        if not self.secret_key:
+        self.verification_key = verification_key or getenv("JWT_VERIFICATION_KEY", "")
+        if not self.verification_key:
             raise ValueError(
-                "JWT secret key is required. Set via secret_key parameter or JWT_SECRET_KEY environment variable."
+                "JWT verification key is required. Set via verification_key parameter or JWT_VERIFICATION_KEY environment variable."
             )
         self.algorithm = algorithm
         self.token_source = token_source
@@ -284,7 +286,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         Returns:
             Dictionary of claims if valid, None otherwise
         """
-        payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])  # type: ignore
+        payload = jwt.decode(token, self.verification_key, algorithms=[self.algorithm])  # type: ignore
         return payload
 
     def _get_missing_token_error_message(self) -> str:

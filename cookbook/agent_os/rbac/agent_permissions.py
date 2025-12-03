@@ -5,7 +5,7 @@ This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
 Prerequisites:
-- Set JWT_SECRET_KEY environment variable or pass it to middleware
+- Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
 """
 
@@ -60,7 +60,7 @@ app = agent_os.get_app()
 # Add JWT middleware with RBAC enabled using custom scope mappings
 app.add_middleware(
     JWTMiddleware,
-    secret_key=JWT_SECRET,
+    verification_key=JWT_SECRET,
     algorithm="HS256",
     scope_mappings={
         # Define the scopes for the agents

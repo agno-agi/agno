@@ -5,7 +5,7 @@ This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
 Prerequisites:
-- Set JWT_SECRET_KEY environment variable or pass it to middleware
+- Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
 """
 
@@ -89,7 +89,7 @@ async def clear_auth_cookie(response: Response):
 # Add RBAC middleware configured for cookie-based authentication
 app.add_middleware(
     JWTMiddleware,
-    secret_key=JWT_SECRET,
+    verification_key=JWT_SECRET,
     algorithm="HS256",
     excluded_route_paths=[
         "/set-auth-cookie",

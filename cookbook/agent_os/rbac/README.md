@@ -128,7 +128,8 @@ agent_os = AgentOS(
     id="my-os",  # Important: Set ID for namespaced scopes
     agents=[agent1, agent2],
     authorization=True,  # Enable RBAC
-    authorization_secret="your-256-bit-secret",  # Or set JWT_SECRET_KEY env var
+    jwt_verification_key="your-public-key-or-secret",  # Or set JWT_VERIFICATION_KEY env var
+    jwt_algorithm="RS256",  # Default; use "HS256" for symmetric keys
 )
 
 app = agent_os.get_app()
@@ -223,7 +224,8 @@ from agno.os.middleware import JWTMiddleware
 
 app.add_middleware(
     JWTMiddleware,
-    secret_key="your-secret",
+    verification_key="your-public-key-or-secret",
+    algorithm="RS256",  # Default; use "HS256" for symmetric keys
     authorization=True,
     scope_mappings={
         # Override default

@@ -18,7 +18,7 @@ Scope Examples:
 - admin - Full access to everything
 
 Prerequisites:
-- Set JWT_SECRET environment variable or pass it to middleware
+- Set JWT_VERIFICATION_KEY environment variable
 - Endpoints automatically filter based on user scopes
 """
 
@@ -33,7 +33,7 @@ from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-at-least-256-bits-long")
+JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY")
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -74,7 +74,6 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS with Namespaced Scopes",
     agents=[web_search_agent, analyst_agent, admin_agent],
     authorization=True,  # Enable RBAC
-    authorization_secret=JWT_SECRET,
 )
 
 # Get the app

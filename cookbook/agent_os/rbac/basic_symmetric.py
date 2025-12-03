@@ -5,7 +5,7 @@ This example demonstrates how to enable RBAC (Role-Based Access Control)
 with JWT token authentication in AgentOS using middleware.
 
 Prerequisites:
-- Set JWT_SECRET environment variable or pass it to middleware
+- Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
 """
 
@@ -20,7 +20,7 @@ from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-at-least-256-bits-long")
+JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -41,7 +41,8 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
-    authorization_secret=JWT_SECRET,
+    jwt_verification_key=JWT_SECRET,
+    jwt_algorithm="HS256",  # Use HS256 for symmetric key
 )
 
 # Get the app and add RBAC middleware
@@ -101,4 +102,4 @@ if __name__ == "__main__":
     )
     print("\n" + "=" * 60 + "\n")
 
-    agent_os.serve(app="basic:app", port=7777, reload=True)
+    agent_os.serve(app="basic_symmetric:app", port=7777, reload=True)
