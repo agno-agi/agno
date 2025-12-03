@@ -4,11 +4,12 @@ from typing import Any, Dict, List, Optional
 
 try:
     import redshift_connector
+    from redshift_connector import Connection
 except ImportError:
     raise ImportError("`redshift_connector` not installed. Please install using `pip install redshift-connector`.")
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_info
 
 
 class RedshiftTools(Toolkit):
@@ -37,6 +38,8 @@ class RedshiftTools(Toolkit):
         ssl (bool): Enable SSL connection. Default is True.
         table_schema (str): Default schema for table operations. Default is "public".
     """
+
+    _requires_connect: bool = True
 
     def __init__(
         self,
@@ -87,6 +90,9 @@ class RedshiftTools(Toolkit):
         self.ssl: bool = ssl
         self.table_schema: str = table_schema
 
+        # Connection instance
+        self._connection: Optional[Connection] = None
+
         tools: List[Any] = [
             self.show_tables,
             self.describe_table,
@@ -97,6 +103,50 @@ class RedshiftTools(Toolkit):
         ]
 
         super().__init__(name="redshift_tools", tools=tools, **kwargs)
+
+    def connect(self) -> Connection:
+        """
+        Establish a connection to the Redshift database.
+
+        Returns:
+            The database connection object.
+
+        Raises:
+            redshift_connector.Error: If connection fails.
+        """
+        if self._connection is not None:
+            log_debug("Connection already established, reusing existing connection")
+            return self._connection
+
+        log_info("Establishing connection to Redshift")
+        self._connection = redshift_connector.connect(**self._get_connection_kwargs())
+        return self._connection
+
+    def close(self) -> None:
+        """
+        Close the database connection if it exists.
+        """
+        if self._connection is not None:
+            log_info("Closing Redshift connection")
+            self._connection.close()
+            self._connection = None
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if a connection is currently established."""
+        return self._connection is not None
+
+    def _ensure_connection(self) -> Connection:
+        """
+        Ensure a connection exists, creating one if necessary.
+
+        Returns:
+            The database connection object.
+        """
+        if self._connection is None:
+            return self.connect()
+        return self._connection
+
 
     def _get_connection_kwargs(self) -> Dict[str, Any]:
         """Build connection kwargs from instance."""
@@ -149,26 +199,23 @@ class RedshiftTools(Toolkit):
 
     def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
-            connection = redshift_connector.connect(**self._get_connection_kwargs())
-            try:
-                with connection.cursor() as cursor:
-                    log_debug("Running Redshift query")
-                    cursor.execute(query, params)
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
+                log_debug("Running Redshift query")
+                cursor.execute(query, params)
 
-                    if cursor.description is None:
-                        return "Query executed successfully."
+                if cursor.description is None:
+                    return "Query executed successfully."
 
-                    columns = [desc[0] for desc in cursor.description]
-                    rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
-                    if not rows:
-                        return f"Query returned no results.\nColumns: {', '.join(columns)}"
+                if not rows:
+                    return f"Query returned no results.\nColumns: {', '.join(columns)}"
 
-                    header = ",".join(columns)
-                    data_rows = [",".join(map(str, row)) for row in rows]
-                    return f"{header}\n" + "\n".join(data_rows)
-            finally:
-                connection.close()
+                header = ",".join(columns)
+                data_rows = [",".join(map(str, row)) for row in rows]
+                return f"{header}\n" + "\n".join(data_rows)
 
         except redshift_connector.Error as e:
             log_error(f"Database error: {e}")
@@ -211,81 +258,78 @@ class RedshiftTools(Toolkit):
             A string containing a summary of the table.
         """
         try:
-            connection = redshift_connector.connect(**self._get_connection_kwargs())
-            try:
-                with connection.cursor() as cursor:
-                    # First, get column information using a parameterized query
-                    schema_query = """
-                        SELECT column_name, data_type
-                        FROM information_schema.columns
-                        WHERE table_schema = %s AND table_name = %s;
-                    """
-                    cursor.execute(schema_query, (self.table_schema, table))
-                    columns = cursor.fetchall()
-                    if not columns:
-                        return f"Error: Table '{table}' not found in schema '{self.table_schema}'."
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
+                # First, get column information using a parameterized query
+                schema_query = """
+                    SELECT column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s;
+                """
+                cursor.execute(schema_query, (self.table_schema, table))
+                columns = cursor.fetchall()
+                if not columns:
+                    return f"Error: Table '{table}' not found in schema '{self.table_schema}'."
 
-                    summary_parts = [f"Summary for table: {table}\n"]
+                summary_parts = [f"Summary for table: {table}\n"]
 
-                    # Redshift uses schema.table format for fully qualified names
-                    full_table_name = f'"{self.table_schema}"."{table}"'
+                # Redshift uses schema.table format for fully qualified names
+                full_table_name = f'"{self.table_schema}"."{table}"'
 
-                    for col in columns:
-                        col_name = col[0]
-                        data_type = col[1]
+                for col in columns:
+                    col_name = col[0]
+                    data_type = col[1]
 
-                        query = None
-                        if any(
-                            t in data_type.lower()
-                            for t in [
-                                "integer",
-                                "int",
-                                "bigint",
-                                "smallint",
-                                "numeric",
-                                "decimal",
-                                "real",
-                                "double precision",
-                                "float",
-                            ]
-                        ):
-                            query = f"""
-                                SELECT
-                                    COUNT(*) AS total_rows,
-                                    COUNT("{col_name}") AS non_null_rows,
-                                    MIN("{col_name}") AS min,
-                                    MAX("{col_name}") AS max,
-                                    AVG("{col_name}") AS average,
-                                    STDDEV("{col_name}") AS std_deviation
-                                FROM {full_table_name};
-                            """
-                        elif any(t in data_type.lower() for t in ["char", "varchar", "text", "uuid"]):
-                            query = f"""
-                                SELECT
-                                    COUNT(*) AS total_rows,
-                                    COUNT("{col_name}") AS non_null_rows,
-                                    COUNT(DISTINCT "{col_name}") AS unique_values,
-                                    AVG(LEN("{col_name}")) as avg_length
-                                FROM {full_table_name};
-                            """
+                    query = None
+                    if any(
+                        t in data_type.lower()
+                        for t in [
+                            "integer",
+                            "int",
+                            "bigint",
+                            "smallint",
+                            "numeric",
+                            "decimal",
+                            "real",
+                            "double precision",
+                            "float",
+                        ]
+                    ):
+                        query = f"""
+                            SELECT
+                                COUNT(*) AS total_rows,
+                                COUNT("{col_name}") AS non_null_rows,
+                                MIN("{col_name}") AS min,
+                                MAX("{col_name}") AS max,
+                                AVG("{col_name}") AS average,
+                                STDDEV("{col_name}") AS std_deviation
+                            FROM {full_table_name};
+                        """
+                    elif any(t in data_type.lower() for t in ["char", "varchar", "text", "uuid"]):
+                        query = f"""
+                            SELECT
+                                COUNT(*) AS total_rows,
+                                COUNT("{col_name}") AS non_null_rows,
+                                COUNT(DISTINCT "{col_name}") AS unique_values,
+                                AVG(LEN("{col_name}")) as avg_length
+                            FROM {full_table_name};
+                        """
 
-                        if query:
-                            cursor.execute(query)
-                            stats = cursor.fetchone()
-                            summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
-                            if stats is not None:
-                                stats_dict = dict(zip([desc[0] for desc in cursor.description], stats))
-                                for key, value in stats_dict.items():
-                                    val_str = (
-                                        f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
-                                    )
-                                    summary_parts.append(f"  {key}: {val_str}")
-                            else:
-                                summary_parts.append("  No statistics available")
+                    if query:
+                        cursor.execute(query)
+                        stats = cursor.fetchone()
+                        summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
+                        if stats is not None:
+                            stats_dict = dict(zip([desc[0] for desc in cursor.description], stats))
+                            for key, value in stats_dict.items():
+                                val_str = (
+                                    f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
+                                )
+                                summary_parts.append(f"  {key}: {val_str}")
+                        else:
+                            summary_parts.append("  No statistics available")
 
-                    return "\n".join(summary_parts)
-            finally:
-                connection.close()
+                return "\n".join(summary_parts)
 
         except redshift_connector.Error as e:
             return f"Error summarizing table: {e}"
@@ -319,24 +363,21 @@ class RedshiftTools(Toolkit):
         stmt = f"SELECT * FROM {full_table_name};"
 
         try:
-            connection = redshift_connector.connect(**self._get_connection_kwargs())
-            try:
-                with connection.cursor() as cursor:
-                    cursor.execute(stmt)
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
+                cursor.execute(stmt)
 
-                    if cursor.description is None:
-                        return f"Error: Query returned no description for table '{table}'."
+                if cursor.description is None:
+                    return f"Error: Query returned no description for table '{table}'."
 
-                    columns = [desc[0] for desc in cursor.description]
+                columns = [desc[0] for desc in cursor.description]
 
-                    with open(path, "w", newline="", encoding="utf-8") as f:
-                        writer = csv.writer(f)
-                        writer.writerow(columns)
-                        writer.writerows(cursor)
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(columns)
+                    writer.writerows(cursor)
 
-                return f"Successfully exported table '{table}' to '{path}'."
-            finally:
-                connection.close()
+            return f"Successfully exported table '{table}' to '{path}'."
         except (redshift_connector.Error, IOError) as e:
             return f"Error exporting table: {e}"
 

@@ -723,6 +723,8 @@ class Team:
 
         # List of MCP tools that were initialized on the last run
         self._mcp_tools_initialized_on_run: List[Any] = []
+        # List of connectable tools that were initialized on the last run
+        self._connectable_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -1055,6 +1057,24 @@ class Team:
         for tool in self._mcp_tools_initialized_on_run:
             await tool.close()
         self._mcp_tools_initialized_on_run = []
+
+    def _connect_connectable_tools(self) -> None:
+        """Connect tools that require connection management (e.g., database connections)."""
+        if self.tools:
+            for tool in self.tools:
+                if (
+                    hasattr(tool, "requires_connect")
+                    and tool.requires_connect
+                    and tool not in self._connectable_tools_initialized_on_run
+                ):
+                    tool.connect()
+                    self._connectable_tools_initialized_on_run.append(tool)
+
+    def _disconnect_connectable_tools(self) -> None:
+        """Disconnect tools that require connection management."""
+        for tool in self._connectable_tools_initialized_on_run:
+            tool.close()
+        self._connectable_tools_initialized_on_run = []
 
     def _execute_pre_hooks(
         self,
@@ -1625,6 +1645,8 @@ class Team:
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             cleanup_run(run_response.run_id)  # type: ignore
 
     def _run_stream(
@@ -1911,6 +1933,8 @@ class Team:
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -2475,6 +2499,8 @@ class Team:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
@@ -2801,6 +2827,8 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
@@ -5333,6 +5361,9 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Function, dict]]:
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
+
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 

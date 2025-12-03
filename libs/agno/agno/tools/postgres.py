@@ -14,6 +14,8 @@ from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
+    _requires_connect: bool = True
+
     def __init__(
         self,
         connection: Optional[PgConnection[DictRow]] = None,
@@ -44,49 +46,63 @@ class PostgresTools(Toolkit):
 
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
-    @property
-    def connection(self) -> PgConnection[DictRow]:
+    def connect(self) -> PgConnection[DictRow]:
         """
-        Returns the Postgres psycopg connection.
-        :return psycopg.connection.Connection: psycopg connection
+        Establish a connection to the PostgreSQL database.
+
+        Returns:
+            The database connection object.
         """
-        if self._connection is None or self._connection.closed:
-            log_debug("Establishing new PostgreSQL connection.")
-            connection_kwargs: Dict[str, Any] = {"row_factory": dict_row}
-            if self.db_name:
-                connection_kwargs["dbname"] = self.db_name
-            if self.user:
-                connection_kwargs["user"] = self.user
-            if self.password:
-                connection_kwargs["password"] = self.password
-            if self.host:
-                connection_kwargs["host"] = self.host
-            if self.port:
-                connection_kwargs["port"] = self.port
+        if self._connection is not None and not self._connection.closed:
+            log_debug("Connection already established, reusing existing connection")
+            return self._connection
 
-            connection_kwargs["options"] = f"-c search_path={self.table_schema}"
+        log_debug("Establishing new PostgreSQL connection.")
+        connection_kwargs: Dict[str, Any] = {"row_factory": dict_row}
+        if self.db_name:
+            connection_kwargs["dbname"] = self.db_name
+        if self.user:
+            connection_kwargs["user"] = self.user
+        if self.password:
+            connection_kwargs["password"] = self.password
+        if self.host:
+            connection_kwargs["host"] = self.host
+        if self.port:
+            connection_kwargs["port"] = self.port
 
-            self._connection = psycopg.connect(**connection_kwargs)
-            self._connection.read_only = True
+        connection_kwargs["options"] = f"-c search_path={self.table_schema}"
 
+        self._connection = psycopg.connect(**connection_kwargs)
+        self._connection.read_only = True
         return self._connection
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def close(self):
+    def close(self) -> None:
         """Closes the database connection if it's open."""
         if self._connection and not self._connection.closed:
             log_debug("Closing PostgreSQL connection.")
             self._connection.close()
             self._connection = None
 
+    @property
+    def is_connected(self) -> bool:
+        """Check if a connection is currently established."""
+        return self._connection is not None and not self._connection.closed
+
+    def _ensure_connection(self) -> PgConnection[DictRow]:
+        """
+        Ensure a connection exists, creating one if necessary.
+
+        Returns:
+            The database connection object.
+        """
+        if self._connection is None or self._connection.closed:
+            return self.connect()
+        return self._connection
+
     def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
-            with self.connection.cursor() as cursor:
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
                 log_debug(f"Running PostgreSQL Query: {query} with Params: {params}")
                 cursor.execute(query, params)
 
@@ -105,8 +121,8 @@ class PostgresTools(Toolkit):
 
         except psycopg.Error as e:
             log_error(f"Database error: {e}")
-            if self.connection and not self.connection.closed:
-                self.connection.rollback()
+            if self._connection and not self._connection.closed:
+                self._connection.rollback()
             return f"Error executing query: {e}"
         except Exception as e:
             log_error(f"An unexpected error occurred: {e}")
@@ -146,7 +162,8 @@ class PostgresTools(Toolkit):
             A string containing a summary of the table.
         """
         try:
-            with self.connection.cursor() as cursor:
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
                 # First, get column information using a parameterized query
                 schema_query = """
                     SELECT column_name, data_type
@@ -230,7 +247,8 @@ class PostgresTools(Toolkit):
         stmt = sql.SQL("SELECT * FROM {tbl};").format(tbl=table_identifier)
 
         try:
-            with self.connection.cursor() as cursor:
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
                 cursor.execute(stmt)
 
                 if cursor.description is None:
