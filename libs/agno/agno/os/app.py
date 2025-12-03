@@ -116,6 +116,7 @@ class AgentOS:
         tracing: bool = False,
         tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
+        run_hooks_in_background: bool = False,
     ):
         """Initialize AgentOS.
 
@@ -140,6 +141,7 @@ class AgentOS:
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
                        If not provided and tracing=True, the first available db from agents/teams/workflows is used.
+            run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -183,6 +185,9 @@ class AgentOS:
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
+
+        # If True, run agent/team hooks as FastAPI background tasks
+        self.run_hooks_in_background = run_hooks_in_background
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -347,6 +352,9 @@ class AgentOS:
             # Required for the built-in routes to work
             agent.store_events = True
 
+            # Propagate run_hooks_in_background setting from AgentOS to agents
+            agent._run_hooks_in_background = self.run_hooks_in_background
+
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
         if not self.teams:
@@ -368,6 +376,9 @@ class AgentOS:
             # Required for the built-in routes to work
             team.store_events = True
 
+            # Propagate run_hooks_in_background setting to team and all nested members
+            team.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
         if not self.workflows:
@@ -384,6 +395,9 @@ class AgentOS:
                 # Required for the built-in routes to work
                 workflow.store_events = True
 
+                # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+                workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+                
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 

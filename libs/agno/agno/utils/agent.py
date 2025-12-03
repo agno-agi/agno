@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 
-async def await_for_background_tasks(
+async def await_for_open_threads(
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
 ) -> None:
@@ -41,7 +41,7 @@ async def await_for_background_tasks(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-def wait_for_background_tasks(
+def wait_for_open_threads(
     memory_future: Optional[Future] = None, cultural_knowledge_future: Optional[Future] = None
 ) -> None:
     if memory_future is not None:
@@ -58,7 +58,7 @@ def wait_for_background_tasks(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-async def await_for_background_tasks_stream(
+async def await_for_thread_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
@@ -109,7 +109,7 @@ async def await_for_background_tasks_stream(
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
 
-def wait_for_background_tasks_stream(
+def wait_for_thread_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
     cultural_knowledge_future: Optional[Future] = None,
