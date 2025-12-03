@@ -345,9 +345,7 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
-        if not table_is_available:
-            if not create_table_if_not_found:
-                return None
+        if (not table_is_available) and create_table_if_not_found:
             return self._create_table(table_name=table_name, table_type=table_type)
 
         if not is_valid_table(
