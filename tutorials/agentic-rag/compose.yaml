@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:7777"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DB_USER=ai
+      - DB_PASS=ai
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_DATABASE=ai
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: agnohq/pgvector:16
+    environment:
+      - POSTGRES_DB=ai
+      - POSTGRES_USER=ai
+      - POSTGRES_PASSWORD=ai
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5532:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai -d ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

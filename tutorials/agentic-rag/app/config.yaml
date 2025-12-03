@@ -1,0 +1,4 @@
+title: "Docs Assistant"
+description: "AI-powered documentation assistant using Agentic RAG"
+host: "0.0.0.0"
+port: 7777
