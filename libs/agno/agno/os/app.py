@@ -110,6 +110,7 @@ class AgentOS:
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
         auto_provision_dbs: bool = True,
+        run_hooks_in_background: bool = False,
     ):
         """Initialize AgentOS.
 
@@ -131,6 +132,7 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
+            run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -172,6 +174,9 @@ class AgentOS:
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
+
+        # If True, run agent/team hooks as FastAPI background tasks
+        self.run_hooks_in_background = run_hooks_in_background
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -332,6 +337,9 @@ class AgentOS:
             # Required for the built-in routes to work
             agent.store_events = True
 
+            # Propagate run_hooks_in_background setting from AgentOS to agents
+            agent._run_hooks_in_background = self.run_hooks_in_background
+
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
         if not self.teams:
@@ -353,6 +361,9 @@ class AgentOS:
             # Required for the built-in routes to work
             team.store_events = True
 
+            # Propagate run_hooks_in_background setting to team and all nested members
+            team.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
         if not self.workflows:
@@ -368,6 +379,9 @@ class AgentOS:
 
                 # Required for the built-in routes to work
                 workflow.store_events = True
+
+                # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+                workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def get_app(self) -> FastAPI:
         if self.base_app:

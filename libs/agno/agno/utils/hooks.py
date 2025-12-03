@@ -1,14 +1,69 @@
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.guardrails.base import BaseGuardrail
+from agno.hooks.decorator import HOOK_RUN_IN_BACKGROUND_ATTR
 from agno.utils.log import log_warning
+
+# Keys that should be deep copied for background hooks to prevent race conditions
+BACKGROUND_HOOK_COPY_KEYS = frozenset(
+    {"run_input", "run_context", "run_output", "session_state", "dependencies", "metadata"}
+)
+
+
+def copy_args_for_background(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Create a copy of hook arguments for background execution.
+
+    This deep copies run_input, run_context, run_output, session_state, dependencies,
+    and metadata to prevent race conditions when hooks run in the background.
+
+    Args:
+        args: The original arguments dictionary
+
+    Returns:
+        A new dictionary with copied values for sensitive keys
+    """
+    copied_args = {}
+    for key, value in args.items():
+        if key in BACKGROUND_HOOK_COPY_KEYS and value is not None:
+            try:
+                copied_args[key] = deepcopy(value)
+            except Exception:
+                # If deepcopy fails (e.g., for non-copyable objects), use the original
+                log_warning(f"Could not deepcopy {key} for background hook, using original reference")
+                copied_args[key] = value
+        else:
+            copied_args[key] = value
+    return copied_args
+
+
+def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
+    """
+    Check if a hook function should run in background.
+
+    This checks for the _agno_run_in_background attribute set by the @hook decorator.
+
+    Args:
+        hook: The hook function to check
+
+    Returns:
+        True if the hook is decorated with @hook(run_in_background=True)
+    """
+    return getattr(hook, HOOK_RUN_IN_BACKGROUND_ATTR, False)
 
 
 def normalize_hooks(
     hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
     async_mode: bool = False,
 ) -> Optional[List[Callable[..., Any]]]:
-    """Normalize hooks to a list format"""
+    """Normalize hooks to a list format
+
+    Args:
+        hooks: List of hook functions or hook instances
+        async_mode: Whether to use async versions of methods
+    """
+
     result_hooks: List[Callable[..., Any]] = []
 
     if hooks is not None:
