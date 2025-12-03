@@ -18,6 +18,7 @@ try:
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
 
+
 def setup_tracing(
     db: Union[BaseDb, AsyncBaseDb],
     batch_processing: bool = False,

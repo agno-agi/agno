@@ -1,8 +1,11 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import (
@@ -18,7 +21,6 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.tracing.schemas import Span, Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 

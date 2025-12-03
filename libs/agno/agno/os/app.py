@@ -397,7 +397,7 @@ class AgentOS:
 
                 # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
                 workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
-                
+
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
