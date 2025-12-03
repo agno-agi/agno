@@ -104,40 +104,41 @@ if __name__ == "__main__":
     - "admin": grants access to all endpoints
     - "agents:*": grants all agent permissions
     """
-    # Create test tokens signed with the PRIVATE key
-    user_token_payload = {
-        "sub": "user_123",
-        "session_id": "session_456",
-        "scopes": ["agents:read", "agents:run"],
-        "exp": datetime.now(UTC) + timedelta(hours=24),
-        "iat": datetime.now(UTC),
-    }
-    user_token = jwt.encode(user_token_payload, PRIVATE_KEY, algorithm="RS256")
+    if PRIVATE_KEY:
+        # Create test tokens signed with the PRIVATE key
+        user_token_payload = {
+            "sub": "user_123",
+            "session_id": "session_456",
+            "scopes": ["agents:read", "agents:run"],
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+            "iat": datetime.now(UTC),
+        }
+        user_token = jwt.encode(user_token_payload, PRIVATE_KEY, algorithm="RS256")
 
-    admin_token_payload = {
-        "sub": "admin_789",
-        "session_id": "admin_session_123",
-        "scopes": ["admin"],  # Admin has access to everything
-        "exp": datetime.now(UTC) + timedelta(hours=24),
-        "iat": datetime.now(UTC),
-    }
-    admin_token = jwt.encode(admin_token_payload, PRIVATE_KEY, algorithm="RS256")
+        admin_token_payload = {
+            "sub": "admin_789",
+            "session_id": "admin_session_123",
+            "scopes": ["admin"],  # Admin has access to everything
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+            "iat": datetime.now(UTC),
+        }
+        admin_token = jwt.encode(admin_token_payload, PRIVATE_KEY, algorithm="RS256")
 
-    print("\n" + "=" * 60)
-    print("RBAC Test Tokens (RS256 Asymmetric)")
-    print("=" * 60)
-    print("\nUser Token (agents:read, agents:run):")
-    print(user_token)
-    print("\nAdmin Token (admin - full access):")
-    print(admin_token)
-    print("\n" + "=" * 60)
-    print("\nTest commands:")
-    print(
-        f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
-    )
-    print(
-        f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
-    )
-    print("\n" + "=" * 60 + "\n")
+        print("\n" + "=" * 60)
+        print("RBAC Test Tokens (RS256 Asymmetric)")
+        print("=" * 60)
+        print("\nUser Token (agents:read, agents:run):")
+        print(user_token)
+        print("\nAdmin Token (admin - full access):")
+        print(admin_token)
+        print("\n" + "=" * 60)
+        print("\nTest commands:")
+        print(
+            f'\ncurl -H "Authorization: Bearer {user_token}" http://localhost:7777/agents'
+        )
+        print(
+            f'\ncurl -H "Authorization: Bearer {admin_token}" http://localhost:7777/sessions'
+        )
+        print("\n" + "=" * 60 + "\n")
 
     agent_os.serve(app="basic_asymmetric:app", port=7777, reload=True)

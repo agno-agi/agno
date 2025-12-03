@@ -528,9 +528,14 @@ class AgentOS:
         if self.authorization:
             from agno.os.middleware.jwt import JWTMiddleware
 
-            log_info(f"Adding JWT middleware for authorization (algorithm: {self.jwt_config.algorithm})")
-            algorithm = self.jwt_config.algorithm if self.jwt_config and self.jwt_config.algorithm else "RS256"
-            verification_key = self.jwt_config.verification_key if self.jwt_config and self.jwt_config.verification_key else None
+            algorithm = "RS256"
+            verification_key = None
+            if self.jwt_config:
+                algorithm = self.jwt_config.algorithm if self.jwt_config and self.jwt_config.algorithm else "RS256"
+                verification_key = self.jwt_config.verification_key if self.jwt_config and self.jwt_config.verification_key else None
+                
+            log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
+                
             fastapi_app.add_middleware(
                 JWTMiddleware,
                 verification_key=verification_key,
