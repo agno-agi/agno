@@ -133,13 +133,25 @@ EVAL_TABLE_SCHEMA = {
     "KeySchema": [{"AttributeName": "run_id", "KeyType": "HASH"}],
     "AttributeDefinitions": [
         {"AttributeName": "run_id", "AttributeType": "S"},
+        {"AttributeName": "eval_id", "AttributeType": "S"},
         {"AttributeName": "eval_type", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
+        {"AttributeName": "parent_run_id", "AttributeType": "S"},
+        {"AttributeName": "parent_session_id", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "eval_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "eval_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
         {
             "IndexName": "eval_type-created_at-index",
             "KeySchema": [
@@ -171,6 +183,24 @@ EVAL_TABLE_SCHEMA = {
             "IndexName": "workflow_id-created_at-index",
             "KeySchema": [
                 {"AttributeName": "workflow_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "parent_run_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "parent_run_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "parent_session_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "parent_session_id", "KeyType": "HASH"},
                 {"AttributeName": "created_at", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},

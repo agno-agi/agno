@@ -1223,10 +1223,10 @@ class SurrealDb(BaseDb):
         return deserialize_eval_run_record(result) if result else None
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from the database.
+        """Delete multiple eval runs from the database by their run_ids.
 
         Args:
-            eval_run_ids (List[str]): List of eval run IDs to delete.
+            eval_run_ids (List[str]): List of run IDs (not eval IDs) to delete.
         """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
@@ -1235,19 +1235,16 @@ class SurrealDb(BaseDb):
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        """Get an eval run from the database.
+        """Get a specific eval run from the database by its run_id.
 
         Args:
-            eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            eval_run_id (str): The run_id of the eval run to get.
+            deserialize (Optional[bool]): Whether to deserialize to EvalRunRecord. Defaults to True.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-                - When deserialize=True: EvalRunRecord object
-                - When deserialize=False: EvalRun dictionary
-
-        Raises:
-            Exception: If an error occurs during retrieval.
+                - When deserialize=True: EvalRunRecord object or None if not found
+                - When deserialize=False: Dictionary or None if not found
         """
         table = self._get_table("evals")
         record = RecordID(table, eval_run_id)
@@ -1268,30 +1265,36 @@ class SurrealDb(BaseDb):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
-            page (Optional[int]): The page number to return.
-            sort_by (Optional[str]): The field to sort by.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
-            eval_type (Optional[List[EvalType]]): The type of eval to filter by.
-            filter_type (Optional[EvalFilterType]): The type of filter to apply.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            eval_id (Optional[str]): The ID of the eval configuration to filter by. Returns all runs of this eval.
+            parent_run_id (Optional[str]): The parent run ID to filter by (for evals linked to agent/team runs).
+            parent_session_id (Optional[str]): The parent session ID to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of EvalRunRecord objects
-                - When deserialize=False: List of eval run dictionaries and the total count
+                - When deserialize=False: Tuple of (list of dictionaries, total count)
 
         Raises:
-            Exception: If there is an error getting the eval runs.
+            Exception: If an error occurs during retrieval.
         """
         table = self._get_table("evals")
 
@@ -1307,6 +1310,12 @@ class SurrealDb(BaseDb):
             where.and_("model_id", model_id)
         if eval_type is not None:
             where.and_("eval_type", eval_type)
+        if eval_id is not None:
+            where.and_("eval_id", eval_id)
+        if parent_run_id is not None:
+            where.and_("parent_run_id", parent_run_id)
+        if parent_session_id is not None:
+            where.and_("parent_session_id", parent_session_id)
         where_clause, where_vars = where.build()
 
         # Order

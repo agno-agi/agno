@@ -27,12 +27,15 @@ MEMORY_COLLECTION_SCHEMA = [
 
 EVAL_COLLECTION_SCHEMA = [
     {"key": "run_id", "unique": True},
+    {"key": "eval_id"},
     {"key": "eval_type"},
     {"key": "eval_input"},
     {"key": "agent_id"},
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "model_id"},
+    {"key": "parent_run_id"},
+    {"key": "parent_session_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
 ]

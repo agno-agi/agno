@@ -36,6 +36,7 @@ class EvalRunInput(BaseModel):
 
 class EvalSchema(BaseModel):
     id: str = Field(..., description="Unique identifier for the evaluation run")
+    eval_id: Optional[str] = Field(None, description="Eval configuration ID (groups multiple runs of the same eval)")
 
     agent_id: Optional[str] = Field(None, description="Agent ID that was evaluated")
     model_id: Optional[str] = Field(None, description="Model ID used in evaluation")
@@ -47,6 +48,8 @@ class EvalSchema(BaseModel):
     eval_type: EvalType = Field(..., description="Type of evaluation (accuracy, performance, or reliability)")
     eval_data: Dict[str, Any] = Field(..., description="Evaluation results and metrics")
     eval_input: Optional[Dict[str, Any]] = Field(None, description="Input parameters used for the evaluation")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this eval was run as a hook")
+    parent_session_id: Optional[str] = Field(None, description="Parent session ID if this eval was run as a hook")
     created_at: Optional[datetime] = Field(None, description="Timestamp when evaluation was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when evaluation was last updated")
 
@@ -54,6 +57,7 @@ class EvalSchema(BaseModel):
     def from_dict(cls, eval_run: Dict[str, Any]) -> "EvalSchema":
         return cls(
             id=eval_run["run_id"],
+            eval_id=eval_run.get("eval_id"),
             name=eval_run.get("name"),
             agent_id=eval_run.get("agent_id"),
             model_id=eval_run.get("model_id"),
@@ -64,6 +68,8 @@ class EvalSchema(BaseModel):
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
             eval_input=eval_run.get("eval_input"),
+            parent_run_id=eval_run.get("parent_run_id"),
+            parent_session_id=eval_run.get("parent_session_id"),
             created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
             updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
         )
@@ -78,7 +84,8 @@ class EvalSchema(BaseModel):
             else None
         )
         return cls(
-            id=accuracy_eval.eval_id,
+            id=accuracy_eval.run_id,
+            eval_id=accuracy_eval.eval_id,
             name=accuracy_eval.name,
             agent_id=accuracy_eval.agent.id if accuracy_eval.agent else None,
             team_id=accuracy_eval.team.id if accuracy_eval.team else None,
@@ -100,7 +107,8 @@ class EvalSchema(BaseModel):
         team_id: Optional[str] = None,
     ) -> "EvalSchema":
         return cls(
-            id=performance_eval.eval_id,
+            id=performance_eval.run_id,
+            eval_id=performance_eval.eval_id,
             name=performance_eval.name,
             agent_id=agent_id,
             team_id=team_id,
@@ -122,7 +130,8 @@ class EvalSchema(BaseModel):
         team_id: Optional[str] = None,
     ) -> "EvalSchema":
         return cls(
-            id=reliability_eval.eval_id,
+            id=reliability_eval.run_id,
+            eval_id=reliability_eval.eval_id,
             name=reliability_eval.name,
             agent_id=agent_id,
             team_id=team_id,

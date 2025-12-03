@@ -22,7 +22,6 @@ def test_accuracy_evals_telemetry():
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["eval_run"]
-        assert call_args.run_id == accuracy_eval.eval_id
         assert call_args.eval_type.value == "accuracy"
 
 
@@ -44,7 +43,6 @@ def test_performance_evals_telemetry():
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["eval_run"]
-        assert call_args.run_id == performance_eval.eval_id
         assert call_args.eval_type.value == "performance"
 
 
@@ -72,5 +70,4 @@ def test_reliability_evals_telemetry():
         # Verify API was called with correct parameters
         mock_create.assert_called_once()
         call_args = mock_create.call_args[1]["eval_run"]
-        assert call_args.run_id == reliability_eval.eval_id
         assert call_args.eval_type.value == "reliability"

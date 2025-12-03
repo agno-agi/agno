@@ -151,7 +151,7 @@ class RedisDb(BaseDb):
 
             if index_fields:
                 create_index_entries(
-                    redis_client=self.redis_client,
+                    redis_client=self.redis_client,  # type: ignore[arg-type]
                     prefix=self.db_prefix,
                     table_type=table_type,
                     record_id=record_id,
@@ -208,7 +208,7 @@ class RedisDb(BaseDb):
                 record_data = self._get_record(table_type, record_id)
                 if record_data:
                     remove_index_entries(
-                        redis_client=self.redis_client,
+                        redis_client=self.redis_client,  # type: ignore[arg-type]
                         prefix=self.db_prefix,
                         table_type=table_type,
                         record_id=record_id,
@@ -240,7 +240,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the records.
         """
         try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)  # type: ignore[arg-type]
 
             records = []
             for key in keys:
@@ -985,7 +985,7 @@ class RedisDb(BaseDb):
         """
         try:
             # Get all keys for memories table
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="memories")
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="memories")  # type: ignore[arg-type]
 
             if keys:
                 # Delete all memory keys in a single batch operation
@@ -1338,13 +1338,10 @@ class RedisDb(BaseDb):
             raise
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from Redis.
+        """Delete multiple eval runs from the database by their run_ids.
 
         Args:
-            eval_run_ids (List[str]): The IDs of the eval runs to delete.
-
-        Raises:
-            Exception: If any error occurs while deleting the eval runs.
+            eval_run_ids (List[str]): List of run IDs (not eval IDs) to delete.
         """
         try:
             deleted_count = 0
@@ -1366,16 +1363,16 @@ class RedisDb(BaseDb):
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        """Get an eval run from Redis.
+        """Get a specific eval run from the database by its run_id.
 
         Args:
-            eval_run_id (str): The ID of the eval run to get.
+            eval_run_id (str): The run_id of the eval run to get.
+            deserialize (Optional[bool]): Whether to deserialize to EvalRunRecord. Defaults to True.
 
         Returns:
-            Optional[EvalRunRecord]: The eval run if found, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while getting the eval run.
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object or None if not found
+                - When deserialize=False: Dictionary or None if not found
         """
         try:
             eval_run_raw = self._get_record("evals", eval_run_id)
@@ -1403,21 +1400,36 @@ class RedisDb(BaseDb):
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
+        eval_id: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        """Get all eval runs from Redis.
+        """Get all eval runs from the database.
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
-            page (Optional[int]): The page number to return.
-            sort_by (Optional[str]): The field to sort by.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            eval_id (Optional[str]): The ID of the eval configuration to filter by. Returns all runs of this eval.
+            parent_run_id (Optional[str]): The parent run ID to filter by (for evals linked to agent/team runs).
+            parent_session_id (Optional[str]): The parent session ID to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
 
         Returns:
-            List[EvalRunRecord]: The list of eval runs.
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: Tuple of (list of dictionaries, total count)
 
         Raises:
-            Exception: If any error occurs while getting the eval runs.
+            Exception: If an error occurs during retrieval.
         """
         try:
             all_eval_runs = self._get_all_records("evals")
@@ -1439,6 +1451,16 @@ class RedisDb(BaseDb):
                 if eval_type is not None and len(eval_type) > 0:
                     if run.get("eval_type") not in eval_type:
                         continue
+
+                # Eval ID filter
+                if eval_id is not None and run.get("eval_id") != eval_id:
+                    continue
+
+                # Parent run/session filters
+                if parent_run_id is not None and run.get("parent_run_id") != parent_run_id:
+                    continue
+                if parent_session_id is not None and run.get("parent_session_id") != parent_session_id:
+                    continue
 
                 # Filter type
                 if filter_type is not None:
@@ -1513,7 +1535,7 @@ class RedisDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="culture")  # type: ignore[arg-type]
 
             if keys:
                 self.redis_client.delete(*keys)

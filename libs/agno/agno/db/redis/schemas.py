@@ -53,6 +53,7 @@ METRICS_SCHEMA = {
 
 EVAL_SCHEMA = {
     "run_id": {"type": "string", "primary_key": True},
+    "eval_id": {"type": "string"},
     "eval_type": {"type": "string"},
     "eval_data": {"type": "json"},
     "eval_input": {"type": "json"},
@@ -63,6 +64,8 @@ EVAL_SCHEMA = {
     "model_id": {"type": "string"},
     "model_provider": {"type": "string"},
     "evaluated_component_name": {"type": "string"},
+    "parent_run_id": {"type": "string"},
+    "parent_session_id": {"type": "string"},
     "created_at": {"type": "integer"},
     "updated_at": {"type": "integer"},
 }
