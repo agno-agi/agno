@@ -60,7 +60,7 @@ def hook(*args, **kwargs) -> Union[F, Callable[[F], F]]:
         run_in_background: If True, this hook will be scheduled as a FastAPI background task
                           when background_tasks is available, regardless of the agent/team's
                           run_hooks_in_background setting. This allows per-hook control over
-                          background execution.
+                          background execution.  This is only use-able when running with AgentOS.
 
     Returns:
         Union[F, Callable[[F], F]]: Decorated function or decorator
