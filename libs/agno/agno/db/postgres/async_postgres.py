@@ -32,6 +32,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 try:
     from sqlalchemy import Index, String, Table, UniqueConstraint, func, update
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.exc import ProgrammingError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
@@ -897,10 +898,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = select(func.json_array_elements_text(table.c.topics))
-                if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-                result = await sess.execute(stmt)
+                try:
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+                except ProgrammingError:
+                    # Retrying with json_array_elements_text. This works in older versions,
+                    # where the topics column was of type JSON instead of JSONB
+                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+
                 records = result.fetchall()
 
                 return list(set([record[0] for record in records]))
