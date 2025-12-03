@@ -19,15 +19,13 @@
 
 ## What is Agno?
 
-Agno is a multi-agent framework, runtime and control plane. Built for speed, privacy, and scale.
+Agno is an incredibly fast multi-agent framework, runtime and control plane.
 
-It provides a rich set of tools for building:
+It provides the complete stack for building, running and managing multi-agent systems:
 
-- **Agents** with memory, knowledge, session management, and advanced features like human-in-the-loop, guardrails, dynamic context management and best-in-class MCP support.
-- **Multi-Agent Teams** that operate autonomously under a team leader that maintains shared state and context. Perfect for use cases where the scope exceeds beyond a single agent.
-- **Step-based Workflows** for controlled, deterministic execution. Steps can be Agents, Teams, or regular python functions that run sequentially, in parallel, in loops, branches, or conditionally.
-
-Agno also provides a ready-to-use FastAPI app (called the AgentOS) for serving your agents, teams and workflows in production. Stateless, horizontally scalable and designed for scale, the AgentOS gives you major head start in building your AI product.
+- **Framework**: Build agents, multi-agent teams and workflows with memory, knowledge, state, guardrails, HITL, context compression, MCP, A2A and 100+ toolkits.
+- **AgentOS Runtime**: Run your multi-agent system in production with a secure, stateless runtime and ready to use integration endpoints.
+- **AgentOS Control Plane**: Test, monitor and manage AgentOS deployments across environments with full operational visibility.
 
 ## Getting started
 
@@ -44,7 +42,7 @@ After that, checkout the [examples gallery](https://docs.agno.com/examples/use-c
 
 ## Example
 
-Here’s an example of an Agent that connects to an MCP server, manages conversation state in a database, is served using a FastAPI application that you can chat with using the [AgentOS UI](https://os.agno.com).
+Here's an example of an Agent that connects to an MCP server, manages conversation state in a database, is served using a FastAPI application that you can chat with using the [AgentOS UI](https://os.agno.com).
 
 ```python agno_agent.py
 from agno.agent import Agent
@@ -79,21 +77,21 @@ if __name__ == "__main__":
 
 ## AgentOS - Production Runtime for Multi-Agent Systems
 
-Building Agents is easy, running them is hard, and that's where the AgentOS comes in. AgentOS is a high-performance runtime for serving multi-agent systems in production. Key features include:
+Building Agents is easy, running them as a secure, scalable service is hard. AgentOS solves this by providing a high performance runtime for serving multi-agent systems in production. Key features include:
 
-1. **Pre-built FastAPI app**: AgentOS ships with a ready-to-use FastAPI app for orchestrating your agents, teams, and workflows. This gives you a major head start in building your AI product.
+1. **Pre-built FastAPI app**: AgentOS includes a ready-to-use FastAPI app for running your agents, teams and workflows. This gives you a significant head start when building an AI product.
 
-2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, letting you test, monitor, and manage your system in real time, giving you unmatched control over your system.
+2. **Integrated Control Plane**: The [AgentOS UI](https://os.agno.com) connects directly to your runtime, so you can test, monitor and manage your system in real time with full operational visibility.
 
-3. **Private by Design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data ever leaves your system. This is ideal for security-conscious enterprises.
+3. **Private by Design**: AgentOS runs entirely in your cloud, ensuring complete data privacy. No data leaves your environment, making it ideal for security conscious enterprises..
 
-Here's what the [AgentOS UI](https://os.agno.com) looks like in action:
+When you run the example script shared above, you get a FastAPI app that you can connect to the [AgentOS UI](https://os.agno.com). Here's what it looks like in action:
 
 https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 
 ## The Complete Agentic Solution
 
-For companies building agents, Agno provides the complete agentic solution:
+Agno provides the complete solution for companies building agentic systems:
 
 - The fastest framework for building agents, multi-agent teams and agentic workflows.
 - A ready-to-use FastAPI app that gets you building AI products on day one.
@@ -152,7 +150,7 @@ At Agno, we optimize performance across 3 dimensions:
 
 1. **Agent performance:** We optimize static operations (instantiation, memory footprint) and runtime operations (tool calls, memory updates, history management).
 2. **System performance:** The AgentOS API is async by default and has a minimal memory footprint. The system is stateless and horizontally scalable, with a focus on preventing memory leaks. It handles parallel and batch embedding generation during knowledge ingestion, metrics collection in background tasks, and other system-level optimizations.
-3. **Agent reliability and accuracy:** Monitored through evals, which we’ll explore later.
+3. **Agent reliability and accuracy:** Monitored through evals, which we'll explore later.
 
 ### Agent Performance
 

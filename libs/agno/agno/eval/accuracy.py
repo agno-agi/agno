@@ -359,10 +359,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
+                agent_session_id = f"eval_{self.eval_id}_{i + 1}"
+
                 if self.agent is not None:
-                    output = self.agent.run(input=eval_input).content
+                    output = self.agent.run(input=eval_input, session_id=agent_session_id).content
                 elif self.team is not None:
-                    output = self.team.run(input=eval_input).content
+                    output = self.team.run(input=eval_input, session_id=agent_session_id).content
 
                 if not output:
                     logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
@@ -500,11 +502,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
+                agent_session_id = f"eval_{self.eval_id}_{i + 1}"
+
                 if self.agent is not None:
-                    response = await self.agent.arun(input=eval_input)
+                    response = await self.agent.arun(input=eval_input, session_id=agent_session_id)
                     output = response.content
                 elif self.team is not None:
-                    response = await self.team.arun(input=eval_input)  # type: ignore
+                    response = await self.team.arun(input=eval_input, session_id=agent_session_id)  # type: ignore
                     output = response.content
 
                 if not output:
