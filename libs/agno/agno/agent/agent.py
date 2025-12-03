@@ -35,7 +35,6 @@ from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.exceptions import (
     InputCheckError,
-    ModelProviderError,
     OutputCheckError,
     RunCancelledException,
     StopAgentRun,
@@ -1785,19 +1784,6 @@ class Agent:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -1814,14 +1800,6 @@ class Agent:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-
-            raise last_exception
-        else:
             if stream:
                 return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
@@ -2736,19 +2714,6 @@ class Agent:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -2765,17 +2730,9 @@ class Agent:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-
             if stream:
                 return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
 
     @overload
     def continue_run(
@@ -3028,19 +2985,6 @@ class Agent:
                         **kwargs,
                     )
                     return response
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 if stream:
                     return generator_wrapper(  # type: ignore
@@ -3053,17 +2997,9 @@ class Agent:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-
             if stream:
                 return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _continue_run(
         self,
@@ -3549,19 +3485,6 @@ class Agent:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 if stream:
@@ -3575,16 +3498,9 @@ class Agent:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
             if stream:
                 return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _acontinue_run(
         self,

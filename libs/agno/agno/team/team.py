@@ -36,7 +36,6 @@ from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.exceptions import (
     InputCheckError,
-    ModelProviderError,
     OutputCheckError,
     RunCancelledException,
 )
@@ -2208,18 +2207,6 @@ class Team:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                import time
-
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -2235,18 +2222,9 @@ class Team:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
             if stream:
                 return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
             raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -3091,17 +3069,6 @@ class Team:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -3117,18 +3084,9 @@ class Team:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
             if stream:
                 return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
             raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _update_run_response(
         self,
