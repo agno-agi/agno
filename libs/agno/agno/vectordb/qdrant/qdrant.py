@@ -545,13 +545,13 @@ class Qdrant(VectorDb):
             log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
             filters = None
 
-        filters = self._format_filters(filters or {})  # type: ignore
+        formatted_filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
-            results = self._run_vector_search_sync(query, limit, filters)  # type: ignore
+            results = self._run_vector_search_sync(query, limit, formatted_filters=formatted_filters)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = self._run_keyword_search_sync(query, limit, filters)  # type: ignore
+            results = self._run_keyword_search_sync(query, limit, formatted_filters=formatted_filters)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = self._run_hybrid_search_sync(query, limit, filters)  # type: ignore
+            results = self._run_hybrid_search_sync(query, limit, formatted_filters=formatted_filters)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
@@ -564,13 +564,13 @@ class Qdrant(VectorDb):
             log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
             filters = None
 
-        filters = self._format_filters(filters or {})  # type: ignore
+        formatted_filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
-            results = await self._run_vector_search_async(query, limit, filters)  # type: ignore
+            results = await self._run_vector_search_async(query, limit, formatted_filters=formatted_filters)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = await self._run_keyword_search_async(query, limit, filters)  # type: ignore
+            results = await self._run_keyword_search_async(query, limit, formatted_filters=formatted_filters)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = await self._run_hybrid_search_async(query, limit, filters)  # type: ignore
+            results = await self._run_hybrid_search_async(query, limit, formatted_filters=formatted_filters)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
@@ -580,7 +580,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
@@ -598,7 +598,7 @@ class Qdrant(VectorDb):
             with_vectors=True,
             with_payload=True,
             limit=limit,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -606,7 +606,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
 
@@ -618,7 +618,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
                 using=self.dense_vector_name,
             )
         else:
@@ -629,7 +629,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
             )
         return call.points
 
@@ -637,7 +637,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
@@ -647,7 +647,7 @@ class Qdrant(VectorDb):
             with_payload=True,
             limit=limit,
             using=self.sparse_vector_name,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -655,7 +655,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
 
@@ -667,7 +667,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
                 using=self.dense_vector_name,
             )
         else:
@@ -678,7 +678,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
             )
         return call.points
 
@@ -686,7 +686,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
@@ -696,7 +696,7 @@ class Qdrant(VectorDb):
             with_payload=True,
             limit=limit,
             using=self.sparse_vector_name,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -704,7 +704,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
@@ -722,7 +722,7 @@ class Qdrant(VectorDb):
             with_vectors=True,
             with_payload=True,
             limit=limit,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
