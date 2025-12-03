@@ -43,6 +43,7 @@ agent_os = AgentOS(
         competitive_brief,
     ],
     config=config_path,
+    tracing=True,
 )
 app = agent_os.get_app()
 

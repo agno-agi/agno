@@ -115,6 +115,42 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": lambda: String(128), "nullable": True},
 }
 
+TRACE_TABLE_SCHEMA = {
+    "trace_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "name": {"type": lambda: String(512), "nullable": False},
+    "status": {"type": lambda: String(20), "nullable": False, "index": True},
+    "start_time": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
+    "end_time": {"type": lambda: String(64), "nullable": False},  # ISO 8601 datetime string
+    "duration_ms": {"type": BigInteger, "nullable": False},
+    "run_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "session_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "agent_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "team_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "workflow_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "created_at": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
+}
+
+SPAN_TABLE_SCHEMA = {
+    "span_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "trace_id": {
+        "type": lambda: String(128),
+        "nullable": False,
+        "index": True,
+        "foreign_key": "agno_traces.trace_id",  # Foreign key to traces table
+    },
+    "parent_span_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "name": {"type": lambda: String(512), "nullable": False},
+    "span_kind": {"type": lambda: String(50), "nullable": False},
+    "status_code": {"type": lambda: String(20), "nullable": False},
+    "status_message": {"type": Text, "nullable": True},
+    "start_time": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
+    "end_time": {"type": lambda: String(64), "nullable": False},  # ISO 8601 datetime string
+    "duration_ms": {"type": BigInteger, "nullable": False},
+    "attributes": {"type": JSON, "nullable": True},
+    "created_at": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -132,6 +168,8 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
+        "traces": TRACE_TABLE_SCHEMA,
+        "spans": SPAN_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

@@ -24,11 +24,12 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.tracing.schemas import Span, Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, select, text, update
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
@@ -48,6 +49,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
@@ -70,6 +73,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            traces_table (Optional[str]): Name of the table to store run traces.
+            spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
@@ -88,6 +93,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
             versions_table=versions_table,
         )
 
@@ -140,7 +147,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._get_or_create_table(table_name=table_name, table_type=table_type)
+            await self._get_or_create_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=True
+            )
 
     async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
@@ -232,12 +241,13 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
-    async def _get_table(self, table_type: str) -> Optional[Table]:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
                     table_name=self.session_table_name,
                     table_type=table_type,
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
@@ -246,6 +256,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 self.memory_table = await self._get_or_create_table(
                     table_name=self.memory_table_name,
                     table_type="memories",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
@@ -254,6 +265,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 self.metrics_table = await self._get_or_create_table(
                     table_name=self.metrics_table_name,
                     table_type="metrics",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
@@ -262,6 +274,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 self.eval_table = await self._get_or_create_table(
                     table_name=self.eval_table_name,
                     table_type="evals",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.eval_table
 
@@ -270,6 +283,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 self.knowledge_table = await self._get_or_create_table(
                     table_name=self.knowledge_table_name,
                     table_type="knowledge",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
@@ -278,6 +292,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 self.culture_table = await self._get_or_create_table(
                     table_name=self.culture_table_name,
                     table_type="culture",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.culture_table
 
@@ -286,8 +301,29 @@ class AsyncSqliteDb(AsyncBaseDb):
                 self.versions_table = await self._get_or_create_table(
                     table_name=self.versions_table_name,
                     table_type="versions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.versions_table
+
+        elif table_type == "traces":
+            if not hasattr(self, "traces_table"):
+                self.traces_table = await self._get_or_create_table(
+                    table_name=self.trace_table_name,
+                    table_type="traces",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.traces_table
+
+        elif table_type == "spans":
+            if not hasattr(self, "spans_table"):
+                # Ensure traces table exists first (spans has FK to traces)
+                await self._get_table(table_type="traces", create_table_if_not_found=True)
+                self.spans_table = await self._get_or_create_table(
+                    table_name=self.span_table_name,
+                    table_type="spans",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.spans_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -296,6 +332,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         table_name: str,
         table_type: str,
+        create_table_if_not_found: Optional[bool] = False,
     ) -> Table:
         """
         Check if the table exists and is valid, else create it.
@@ -311,6 +348,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -384,7 +424,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return False
 
@@ -2371,3 +2411,503 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
+
+    # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
+    async def create_trace(self, trace: "Trace") -> None:
+        """Create a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = await self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Check if trace exists
+                result = await sess.execute(select(table).where(table.c.trace_id == trace.trace_id))
+                existing = result.fetchone()
+
+                if existing:
+                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+
+                    def get_component_level(workflow_id, team_id, agent_id, name):
+                        # Check if name indicates a root span
+                        is_root_name = ".run" in name or ".arun" in name
+
+                        if not is_root_name:
+                            return 0  # Child span (not a root)
+                        elif workflow_id:
+                            return 3  # Workflow root
+                        elif team_id:
+                            return 2  # Team root
+                        elif agent_id:
+                            return 1  # Agent root
+                        else:
+                            return 0  # Unknown
+
+                    existing_level = get_component_level(
+                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
+                    )
+                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                    # Only update name if new trace is from a higher or equal level
+                    should_update_name = new_level > existing_level
+
+                    # Parse existing start_time to calculate correct duration
+                    existing_start_time_str = existing.start_time
+                    if isinstance(existing_start_time_str, str):
+                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                    else:
+                        existing_start_time = trace.start_time
+
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                    update_values = {
+                        "end_time": trace.end_time.isoformat(),
+                        "duration_ms": recalculated_duration_ms,
+                        "status": trace.status,
+                        "name": trace.name if should_update_name else existing.name,
+                    }
+
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values["run_id"] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values["session_id"] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values["user_id"] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values["agent_id"] = trace.agent_id
+                    if trace.team_id is not None:
+                        update_values["team_id"] = trace.team_id
+                    if trace.workflow_id is not None:
+                        update_values["workflow_id"] = trace.workflow_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
+                        f"team_id={update_values.get('team_id', 'unchanged')}, "
+                    )
+
+                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    await sess.execute(stmt)
+                else:
+                    trace_dict = trace.to_dict()
+                    trace_dict.pop("total_spans", None)
+                    trace_dict.pop("error_count", None)
+                    stmt = sqlite.insert(table).values(trace_dict)
+                    await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    async def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = await self._get_table(table_type="traces")
+            if table is None:
+                return None
+
+            # Get spans table for JOIN
+            spans_table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row:
+                    return Trace.from_dict(dict(row._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    async def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            log_debug(
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            table = await self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            # Get spans table for JOIN
+            spans_table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    log_debug(f"Filtering by session_id={session_id}")
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+                log_debug(f"Total matching traces: {total_count}")
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    async def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                workflow_id, first_trace_at, last_trace_at.
+        """
+        try:
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
+            )
+
+            table = await self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        table.c.team_id,
+                        table.c.workflow_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+                log_debug(f"Total matching sessions: {total_count}")
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+                log_debug(f"Returning page {page} with {len(results)} session stats")
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects
+                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    async def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(span.to_dict())
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    async def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                for span in spans:
+                    stmt = sqlite.insert(table).values(span.to_dict())
+                    await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    async def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row:
+                    return Span.from_dict(dict(row._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                result = await sess.execute(stmt)
+                results = result.fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []
