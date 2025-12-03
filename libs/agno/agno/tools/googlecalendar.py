@@ -4,7 +4,7 @@ import uuid
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info
@@ -164,8 +164,10 @@ class GoogleCalendarTools(Toolkit):
                 )
 
         try:
+            service = cast(Resource, self.service)
+
             events_result = (
-                self.service.events()  # type: ignore
+                service.events()
                 .list(
                     calendarId=self.calendar_id,
                     timeMin=start_date,
@@ -194,6 +196,7 @@ class GoogleCalendarTools(Toolkit):
         timezone: Optional[str] = "UTC",
         attendees: Optional[List[str]] = None,
         add_google_meet_link: Optional[bool] = False,
+        notify_attendees: Optional[bool] = False,
     ) -> str:
         """
         Create a new event in the Google Calendar.
@@ -207,6 +210,7 @@ class GoogleCalendarTools(Toolkit):
             timezone (Optional[str]): Timezone for the event (default: UTC)
             attendees (Optional[List[str]]): List of email addresses of the attendees
             add_google_meet_link (Optional[bool]): Whether to add a Google Meet video link to the event
+            notify_attendees (Optional[bool]): Whether to send email notifications to attendees (default: False)
 
         Returns:
             str: JSON string containing the created Google Calendar event or error message
@@ -241,12 +245,18 @@ class GoogleCalendarTools(Toolkit):
             # Remove None values
             event = {k: v for k, v in event.items() if v is not None}
 
+            # Determine sendUpdates value based on notify_attendees parameter
+            send_updates = "all" if notify_attendees and attendees else "none"
+
+            service = cast(Resource, self.service)
+
             event_result = (
-                self.service.events()  # type: ignore
+                service.events()
                 .insert(
                     calendarId=self.calendar_id,
                     body=event,
                     conferenceDataVersion=1 if add_google_meet_link else 0,
+                    sendUpdates=send_updates,
                 )
                 .execute()
             )
@@ -267,6 +277,7 @@ class GoogleCalendarTools(Toolkit):
         end_date: Optional[str] = None,
         timezone: Optional[str] = None,
         attendees: Optional[List[str]] = None,
+        notify_attendees: Optional[bool] = False,
     ) -> str:
         """
         Update an existing event in the Google Calendar.
@@ -280,13 +291,16 @@ class GoogleCalendarTools(Toolkit):
             end_date (Optional[str]): New end date and time in ISO format (YYYY-MM-DDTHH:MM:SS)
             timezone (Optional[str]): New timezone for the event
             attendees (Optional[List[str]]): Updated list of attendee email addresses
+            notify_attendees (Optional[bool]): Whether to send email notifications to attendees (default: False)
 
         Returns:
             str: JSON string containing the updated Google Calendar event or error message
         """
         try:
+            service = cast(Resource, self.service)
+
             # First get the existing event to preserve its structure
-            event = self.service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()  # type: ignore
+            event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
 
             # Update only the fields that are provided
             if title is not None:
@@ -317,9 +331,15 @@ class GoogleCalendarTools(Toolkit):
                 except ValueError:
                     return json.dumps({"error": f"Invalid end datetime format: {end_date}. Use ISO format."})
 
+            # Determine sendUpdates value based on notify_attendees parameter
+            send_updates = "all" if notify_attendees and attendees else "none"
+
             # Update the event
+
             updated_event = (
-                self.service.events().update(calendarId=self.calendar_id, eventId=event_id, body=event).execute()  # type: ignore
+                service.events()
+                .update(calendarId=self.calendar_id, eventId=event_id, body=event, sendUpdates=send_updates)
+                .execute()
             )
 
             log_debug(f"Event {event_id} updated successfully.")
@@ -329,18 +349,24 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def delete_event(self, event_id: str) -> str:
+    def delete_event(self, event_id: str, notify_attendees: Optional[bool] = True) -> str:
         """
         Delete an event from the Google Calendar.
 
         Args:
             event_id (str): ID of the event to delete
+            notify_attendees (Optional[bool]): Whether to send email notifications to attendees (default: False)
 
         Returns:
             str: JSON string containing success message or error message
         """
         try:
-            self.service.events().delete(calendarId=self.calendar_id, eventId=event_id).execute()  # type: ignore
+            # Determine sendUpdates value based on notify_attendees parameter
+            send_updates = "all" if notify_attendees else "none"
+
+            service = cast(Resource, self.service)
+
+            service.events().delete(calendarId=self.calendar_id, eventId=event_id, sendUpdates=send_updates).execute()
 
             log_debug(f"Event {event_id} deleted successfully.")
             return json.dumps({"success": True, "message": f"Event {event_id} deleted successfully."})
@@ -366,6 +392,8 @@ class GoogleCalendarTools(Toolkit):
             str: JSON string containing all Google Calendar events or error message
         """
         try:
+            service = cast(Resource, self.service)
+
             params = {
                 "calendarId": self.calendar_id,
                 "maxResults": min(max_results, 100),
@@ -412,7 +440,7 @@ class GoogleCalendarTools(Toolkit):
                 if page_token:
                     params["pageToken"] = page_token
 
-                events_result = self.service.events().list(**params).execute()  # type: ignore
+                events_result = service.events().list(**params).execute()
                 all_events.extend(events_result.get("items", []))
 
                 page_token = events_result.get("nextPageToken")

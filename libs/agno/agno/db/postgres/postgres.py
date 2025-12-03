@@ -1,20 +1,27 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
+
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
+    deserialize_cultural_knowledge,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    serialize_cultural_knowledge,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -23,12 +30,12 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Index, String, UniqueConstraint, func, update
+    from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, select, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -40,10 +47,14 @@ class PostgresDb(BaseDb):
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -63,6 +74,10 @@ class PostgresDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            traces_table (Optional[str]): Name of the table to store run traces.
+            spans_table (Optional[str]): Name of the table to store span events.
+            versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -91,23 +106,52 @@ class PostgresDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            culture_table=culture_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
+            versions_table=versions_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session
-        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
 
     # -- DB methods --
-    def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the Postgres database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+    def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+
+    def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -133,11 +177,20 @@ class PostgresDb(BaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
+
+                # Handle foreign key constraint
+                if "foreign_key" in col_config:
+                    fk_ref = col_config["foreign_key"]
+                    # For spans table, dynamically replace the traces table reference
+                    # with the actual trace table name configured for this db instance
+                    if table_type == "spans" and "trace_id" in fk_ref:
+                        fk_ref = f"{self.db_schema}.{self.trace_table_name}.trace_id"
+                    column_args.append(ForeignKey(fk_ref))
+
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -151,10 +204,16 @@ class PostgresDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=db_schema)
+                create_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
-            table.create(self.db_engine, checkfirst=True)
+            table_created = False
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -165,24 +224,29 @@ class PostgresDb(BaseDb):
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
                         exists = (
-                            sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
+                            sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name}).scalar()
                             is not None
                         )
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     idx.create(self.db_engine)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {table_name} in schema {db_schema}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -190,7 +254,6 @@ class PostgresDb(BaseDb):
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type="sessions",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
@@ -199,7 +262,6 @@ class PostgresDb(BaseDb):
             self.memory_table = self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.memory_table
@@ -208,7 +270,6 @@ class PostgresDb(BaseDb):
             self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
@@ -217,7 +278,6 @@ class PostgresDb(BaseDb):
             self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.eval_table
@@ -226,15 +286,50 @@ class PostgresDb(BaseDb):
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
 
+        if table_type == "culture":
+            self.culture_table = self._get_or_create_table(
+                table_name=self.culture_table_name,
+                table_type="culture",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.culture_table
+
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
+        if table_type == "traces":
+            self.traces_table = self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.traces_table
+
+        if table_type == "spans":
+            # Ensure traces table exists first (spans has FK to traces)
+            if create_table_if_not_found:
+                self._get_table(table_type="traces", create_table_if_not_found=True)
+
+            self.spans_table = self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.spans_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
-        self, table_name: str, table_type: str, db_schema: str, create_table_if_not_found: Optional[bool] = False
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
     ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
@@ -242,39 +337,72 @@ class PostgresDb(BaseDb):
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Optional[Table]: SQLAlchemy Table object representing the schema.
         """
 
         with self.Session() as sess, sess.begin():
-            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return self._create_table(table_name=table_name, table_type=table_type)
 
         if not is_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
+            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
             return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
 
-    # -- Session methods --
+    def get_latest_schema_version(self, table_name: str):
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
 
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            sess.execute(stmt)
+
+    # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -368,9 +496,6 @@ class PostgresDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                if session_type is not None:
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    stmt = stmt.where(table.c.session_type == session_type_value)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -704,7 +829,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk insert or update multiple sessions.
@@ -712,6 +837,7 @@ class PostgresDb(BaseDb):
         Args:
             sessions (List[Session]): The list of session data to upsert.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
 
         Returns:
             List[Union[Session, Dict[str, Any]]]: List of upserted sessions
@@ -739,6 +865,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for agent_session in agent_sessions:
                     session_dict = agent_session.to_dict()
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -751,7 +879,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -782,6 +910,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for team_session in team_sessions:
                     session_dict = team_session.to_dict()
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -794,7 +924,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -825,6 +955,8 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for workflow_session in workflow_sessions:
                     session_dict = workflow_session.to_dict()
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
                         {
                             "session_id": session_dict.get("session_id"),
@@ -837,7 +969,7 @@ class PostgresDb(BaseDb):
                             "metadata": session_dict.get("metadata"),
                             "runs": session_dict.get("runs"),
                             "created_at": session_dict.get("created_at"),
-                            "updated_at": int(time.time()),
+                            "updated_at": updated_at,
                         }
                     )
 
@@ -870,8 +1002,12 @@ class PostgresDb(BaseDb):
             return []
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -886,6 +1022,10 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = sess.execute(delete_stmt)
 
                 success = result.rowcount > 0
@@ -898,11 +1038,12 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting user memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -914,6 +1055,10 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
@@ -938,6 +1083,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
+
                 result = sess.execute(stmt).fetchall()
 
                 return list(set([record[0] for record in result]))
@@ -947,13 +1093,14 @@ class PostgresDb(BaseDb):
             return []
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -970,6 +1117,9 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = sess.execute(stmt).fetchone()
                 if not result:
@@ -1087,13 +1237,14 @@ class PostgresDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1116,16 +1267,17 @@ class PostgresDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -1179,6 +1331,8 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = postgresql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1187,7 +1341,9 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.created_at,
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1197,7 +1353,10 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
+                        feedback=memory.feedback,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
                     ),
                 ).returning(table)
 
@@ -1216,7 +1375,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk insert or update multiple memories in the database for improved performance.
@@ -1224,6 +1383,8 @@ class PostgresDb(BaseDb):
         Args:
             memories (List[UserMemory]): The list of memories to upsert.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the memory object.
+                                       If False (default), set updated_at to current time.
 
         Returns:
             List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories
@@ -1247,6 +1408,9 @@ class PostgresDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1256,7 +1420,9 @@ class PostgresDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
-                        "updated_at": current_time,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
+                        "updated_at": updated_at,
                     }
                 )
 
@@ -1267,7 +1433,7 @@ class PostgresDb(BaseDb):
                 update_columns = {
                     col.name: insert_stmt.excluded[col.name]
                     for col in table.columns
-                    if col.name not in ["memory_id"]  # Don't update primary key
+                    if col.name not in ["memory_id", "created_at"]  # Don't update primary key or created_at
                 }
                 stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
                     table
@@ -1908,6 +2074,233 @@ class PostgresDb(BaseDb):
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
             raise e
 
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from the database.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
+                else:
+                    log_debug(f"No cultural knowledge found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from the database.
+
+        Args:
+            id (str): The ID of the cultural knowledge to get.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row or not deserialize:
+                    return db_row
+
+            return deserialize_cultural_knowledge(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from cultural knowledge table: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from the database as CulturalKnowledge objects.
+
+        Args:
+            name (Optional[str]): The name of the cultural knowledge to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                db_rows = [dict(record._mapping) for record in result]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+            return [deserialize_cultural_knowledge(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from cultural knowledge table: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into the database.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge(cultural_knowledge)
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        name=cultural_knowledge.name,
+                        summary=cultural_knowledge.summary,
+                        content=content_dict if content_dict else None,
+                        metadata=cultural_knowledge.metadata,
+                        input=cultural_knowledge.input,
+                        updated_at=int(time.time()),
+                        agent_id=cultural_knowledge.agent_id,
+                        team_id=cultural_knowledge.team_id,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+            db_row = dict(row._mapping)
+            if not db_row or not deserialize:
+                return db_row
+
+            return deserialize_cultural_knowledge(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
+            raise e
+
     # -- Migrations --
 
     def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
@@ -1965,3 +2358,497 @@ class PostgresDb(BaseDb):
             for memory in memories:
                 self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
+
+    # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
+    def create_trace(self, trace: "Trace") -> None:
+        """Create a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                # Check if trace exists
+                existing = sess.execute(select(table).where(table.c.trace_id == trace.trace_id)).fetchone()
+
+                if existing:
+                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+
+                    def get_component_level(workflow_id, team_id, agent_id, name):
+                        # Check if name indicates a root span
+                        is_root_name = ".run" in name or ".arun" in name
+
+                        if not is_root_name:
+                            return 0  # Child span (not a root)
+                        elif workflow_id:
+                            return 3  # Workflow root
+                        elif team_id:
+                            return 2  # Team root
+                        elif agent_id:
+                            return 1  # Agent root
+                        else:
+                            return 0  # Unknown
+
+                    existing_level = get_component_level(
+                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
+                    )
+                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                    # Only update name if new trace is from a higher or equal level
+                    should_update_name = new_level > existing_level
+
+                    # Parse existing start_time to calculate correct duration
+                    existing_start_time_str = existing.start_time
+                    if isinstance(existing_start_time_str, str):
+                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                    else:
+                        existing_start_time = trace.start_time
+
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                    update_values = {
+                        "end_time": trace.end_time.isoformat(),
+                        "duration_ms": recalculated_duration_ms,
+                        "status": trace.status,
+                        "name": trace.name if should_update_name else existing.name,
+                    }
+
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values["run_id"] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values["session_id"] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values["user_id"] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values["agent_id"] = trace.agent_id
+                    if trace.team_id is not None:
+                        update_values["team_id"] = trace.team_id
+                    if trace.workflow_id is not None:
+                        update_values["workflow_id"] = trace.workflow_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
+                        f"team_id={update_values.get('team_id', 'unchanged')}, "
+                    )
+
+                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    sess.execute(stmt)
+                else:
+                    trace_dict = trace.to_dict()
+                    trace_dict.pop("total_spans", None)
+                    trace_dict.pop("error_count", None)
+                    stmt = postgresql.insert(table).values(trace_dict)
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return None
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = sess.execute(stmt).fetchone()
+
+                if result:
+                    return Trace.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            log_debug(
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    log_debug(f"Filtering by session_id={session_id}")
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching traces: {total_count}")
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        try:
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            with self.Session() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        table.c.team_id,
+                        table.c.workflow_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching sessions: {total_count}")
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} session stats")
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects
+                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(span.to_dict())
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                for span in spans:
+                    stmt = postgresql.insert(table).values(span.to_dict())
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []

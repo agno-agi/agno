@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -13,9 +14,12 @@ from fastapi import (
     WebSocket,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
+from packaging import version
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
+from agno.db.base import AsyncBaseDb
+from agno.db.migrations.manager import MigrationManager
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -39,6 +43,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
+    get_db,
     get_team_by_id,
     get_workflow_by_id,
     process_audio,
@@ -72,24 +77,91 @@ async def _get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict
     form_data = await request.form()
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
-    kwargs = {key: value for key, value in form_data.items() if key not in known_fields}
+    kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
 
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):
         try:
-            session_state_dict = json.loads(session_state)  # type: ignore
-            kwargs["session_state"] = session_state_dict
+            if isinstance(session_state, str):
+                session_state_dict = json.loads(session_state)  # type: ignore
+                kwargs["session_state"] = session_state_dict
         except json.JSONDecodeError:
             kwargs.pop("session_state")
             log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
 
     if dependencies := kwargs.get("dependencies"):
         try:
-            dependencies_dict = json.loads(dependencies)  # type: ignore
-            kwargs["dependencies"] = dependencies_dict
+            if isinstance(dependencies, str):
+                dependencies_dict = json.loads(dependencies)  # type: ignore
+                kwargs["dependencies"] = dependencies_dict
         except json.JSONDecodeError:
             kwargs.pop("dependencies")
             log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+
+    if metadata := kwargs.get("metadata"):
+        try:
+            if isinstance(metadata, str):
+                metadata_dict = json.loads(metadata)  # type: ignore
+                kwargs["metadata"] = metadata_dict
+        except json.JSONDecodeError:
+            kwargs.pop("metadata")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+
+    if knowledge_filters := kwargs.get("knowledge_filters"):
+        try:
+            if isinstance(knowledge_filters, str):
+                knowledge_filters_dict = json.loads(knowledge_filters)  # type: ignore
+
+                # Try to deserialize FilterExpr objects
+                from agno.filters import from_dict
+
+                # Check if it's a single FilterExpr dict or a list of FilterExpr dicts
+                if isinstance(knowledge_filters_dict, dict) and "op" in knowledge_filters_dict:
+                    # Single FilterExpr - convert to list format
+                    kwargs["knowledge_filters"] = [from_dict(knowledge_filters_dict)]
+                elif isinstance(knowledge_filters_dict, list):
+                    # List of FilterExprs or mixed content
+                    deserialized = []
+                    for item in knowledge_filters_dict:
+                        if isinstance(item, dict) and "op" in item:
+                            deserialized.append(from_dict(item))
+                        else:
+                            # Keep non-FilterExpr items as-is
+                            deserialized.append(item)
+                    kwargs["knowledge_filters"] = deserialized
+                else:
+                    # Regular dict filter
+                    kwargs["knowledge_filters"] = knowledge_filters_dict
+        except json.JSONDecodeError:
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+        except ValueError as e:
+            # Filter deserialization failed
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
+
+    # Handle output_schema - convert JSON schema to dynamic Pydantic model
+    if output_schema := kwargs.get("output_schema"):
+        try:
+            if isinstance(output_schema, str):
+                from agno.os.utils import json_schema_to_pydantic_model
+
+                schema_dict = json.loads(output_schema)
+                dynamic_model = json_schema_to_pydantic_model(schema_dict)
+                kwargs["output_schema"] = dynamic_model
+        except json.JSONDecodeError:
+            kwargs.pop("output_schema")
+            log_warning(f"Invalid output_schema JSON: {output_schema}")
+        except Exception as e:
+            kwargs.pop("output_schema")
+            log_warning(f"Failed to create output_schema model: {e}")
+
+    # Parse boolean and null values
+    for key, value in kwargs.items():
+        if isinstance(value, str) and value.lower() in ["true", "false"]:
+            kwargs[key] = value.lower() == "true"
+        elif isinstance(value, str) and value.lower() in ["null", "none"]:
+            kwargs[key] = None
 
     return kwargs
 
@@ -229,9 +301,14 @@ async def agent_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
+        # Pass background_tasks if provided
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
         run_response = agent.arun(
             input=message,
             session_id=session_id,
@@ -241,7 +318,7 @@ async def agent_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -270,6 +347,7 @@ async def agent_continue_response_streamer(
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> AsyncGenerator:
     try:
         continue_response = agent.acontinue_run(
@@ -278,7 +356,8 @@ async def agent_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
+            background_tasks=background_tasks,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -313,10 +392,15 @@ async def team_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
+        # Pass background_tasks if provided
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
         run_response = team.arun(
             input=message,
             session_id=session_id,
@@ -326,7 +410,7 @@ async def team_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -380,12 +464,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_result = await workflow.arun(
+        workflow_result = await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             background=True,
             websocket=websocket,
         )
@@ -423,15 +507,20 @@ async def workflow_response_streamer(
     input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
-        run_response = await workflow.arun(
+        # Pass background_tasks if provided
+        if background_tasks is not None:
+            kwargs["background_tasks"] = background_tasks
+
+        run_response = workflow.arun(
             input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             **kwargs,
         )
 
@@ -643,18 +732,19 @@ def get_base_router(
             os_id=os.id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=[db.id for db in os.dbs.values()],
+            databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
+            traces=os._get_traces_config(),
             agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
             teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
-                InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
+                InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
             ],
         )
@@ -742,6 +832,7 @@ def get_base_router(
     async def create_agent_run(
         agent_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         message: str = Form(...),
         stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
@@ -768,6 +859,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -784,19 +880,39 @@ def get_base_router(
 
         if files:
             for file in files:
-                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                if file.content_type in [
+                    "image/png",
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/gif",
+                    "image/webp",
+                    "image/bmp",
+                    "image/tiff",
+                    "image/tif",
+                    "image/avif",
+                ]:
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {e}")
                         continue
-                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                elif file.content_type in [
+                    "audio/wav",
+                    "audio/wave",
+                    "audio/mp3",
+                    "audio/mpeg",
+                    "audio/ogg",
+                    "audio/mp4",
+                    "audio/m4a",
+                    "audio/aac",
+                    "audio/flac",
+                ]:
                     try:
-                        base64_audio = process_audio(file)
-                        base64_audios.append(base64_audio)
+                        audio = process_audio(file)
+                        base64_audios.append(audio)
                     except Exception as e:
-                        log_error(f"Error processing audio {file.filename}: {e}")
+                        log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -819,10 +935,19 @@ def get_base_router(
                         continue
                 elif file.content_type in [
                     "application/pdf",
-                    "text/csv",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "text/plain",
                     "application/json",
+                    "application/x-javascript",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/javascript",
+                    "application/x-python",
+                    "text/x-python",
+                    "text/plain",
+                    "text/html",
+                    "text/css",
+                    "text/md",
+                    "text/csv",
+                    "text/xml",
+                    "text/rtf",
                 ]:
                     # Process document files
                     try:
@@ -846,6 +971,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=input_files if input_files else None,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -863,6 +989,7 @@ def get_base_router(
                         videos=base64_videos if base64_videos else None,
                         files=input_files if input_files else None,
                         stream=False,
+                        background_tasks=background_tasks,
                         **kwargs,
                     ),
                 )
@@ -931,6 +1058,7 @@ def get_base_router(
         agent_id: str,
         run_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         tools: str = Form(...),  # JSON string of tools
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
@@ -974,6 +1102,7 @@ def get_base_router(
                     updated_tools=updated_tools,
                     session_id=session_id,
                     user_id=user_id,
+                    background_tasks=background_tasks,
                 ),
                 media_type="text/event-stream",
             )
@@ -987,6 +1116,7 @@ def get_base_router(
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,
+                        background_tasks=background_tasks,
                     ),
                 )
                 return run_response_obj.to_dict()
@@ -1039,7 +1169,8 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
-            agents.append(AgentResponse.from_agent(agent=agent))
+            agent_response = await AgentResponse.from_agent(agent=agent)
+            agents.append(agent_response)
 
         return agents
 
@@ -1086,7 +1217,7 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return AgentResponse.from_agent(agent)
+        return await AgentResponse.from_agent(agent)
 
     # -- Team routes ---
 
@@ -1123,6 +1254,7 @@ def get_base_router(
     async def create_team_run(
         team_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         message: str = Form(...),
         stream: bool = Form(True),
         monitor: bool = Form(True),
@@ -1150,6 +1282,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
@@ -1227,6 +1364,7 @@ def get_base_router(
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1242,6 +1380,7 @@ def get_base_router(
                     videos=base64_videos if base64_videos else None,
                     files=document_files if document_files else None,
                     stream=False,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 return run_response.to_dict()
@@ -1366,7 +1505,8 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
-            teams.append(TeamResponse.from_team(team=team))
+            team_response = await TeamResponse.from_team(team=team)
+            teams.append(team_response)
 
         return teams
 
@@ -1459,7 +1599,7 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamResponse.from_team(team)
+        return await TeamResponse.from_team(team)
 
     # -- Workflow routes ---
 
@@ -1532,7 +1672,7 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowResponse.from_workflow(workflow)
+        return await WorkflowResponse.from_workflow(workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",
@@ -1571,6 +1711,7 @@ def get_base_router(
     async def create_workflow_run(
         workflow_id: str,
         request: Request,
+        background_tasks: BackgroundTasks,
         message: str = Form(...),
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
@@ -1596,6 +1737,11 @@ def get_base_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata"):
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)
@@ -1617,6 +1763,7 @@ def get_base_router(
                         input=message,
                         session_id=session_id,
                         user_id=user_id,
+                        background_tasks=background_tasks,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
@@ -1627,6 +1774,7 @@ def get_base_router(
                     session_id=session_id,
                     user_id=user_id,
                     stream=False,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 return run_response.to_dict()
@@ -1662,5 +1810,54 @@ def get_base_router(
             raise HTTPException(status_code=500, detail="Failed to cancel run")
 
         return JSONResponse(content={}, status_code=200)
+
+    # -- Database Migration routes ---
+
+    @router.post(
+        "/databases/{db_id}/migrate",
+        tags=["Database"],
+        operation_id="migrate_database",
+        summary="Migrate Database",
+        description=(
+            "Migrate the given database schema to the given target version. "
+            "If a target version is not provided, the database will be migrated to the latest version. "
+        ),
+        responses={
+            200: {
+                "description": "Database migrated successfully",
+                "content": {
+                    "application/json": {
+                        "example": {"message": "Database migrated successfully to version 3.0.0"},
+                    }
+                },
+            },
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            500: {"description": "Failed to migrate database", "model": InternalServerErrorResponse},
+        },
+    )
+    async def migrate_database(db_id: str, target_version: Optional[str] = None):
+        db = await get_db(os.dbs, db_id)
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        if target_version:
+            # Use the session table as proxy for the database schema version
+            if isinstance(db, AsyncBaseDb):
+                current_version = await db.get_latest_schema_version(db.session_table_name)
+            else:
+                current_version = db.get_latest_schema_version(db.session_table_name)
+
+            if version.parse(target_version) > version.parse(current_version):  # type: ignore
+                MigrationManager(db).up(target_version)  # type: ignore
+            else:
+                MigrationManager(db).down(target_version)  # type: ignore
+
+        # If the target version is not provided, migrate to the latest version
+        else:
+            MigrationManager(db).up()  # type: ignore
+
+        return JSONResponse(
+            content={"message": f"Database migrated successfully to version {target_version}"}, status_code=200
+        )
 
     return router

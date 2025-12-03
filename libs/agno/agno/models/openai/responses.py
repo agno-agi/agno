@@ -6,13 +6,14 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model
+from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -45,7 +46,7 @@ class OpenAIResponses(Model):
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
     verbosity: Optional[Literal["low", "medium", "high"]] = None
-    reasoning_effort: Optional[Literal["minimal", "medium", "high"]] = None
+    reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = None
     reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
@@ -53,6 +54,7 @@ class OpenAIResponses(Model):
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -66,7 +68,7 @@ class OpenAIResponses(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Dict[str, str]] = None
     default_query: Optional[Dict[str, str]] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Parameters affecting built-in tools
@@ -115,7 +117,10 @@ class OpenAIResponses(Model):
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                raise ModelAuthenticationError(
+                    message="OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.",
+                    model_name=self.name,
+                )
 
         # Define base client params
         base_params = {
@@ -139,7 +144,7 @@ class OpenAIResponses(Model):
 
     def get_client(self) -> OpenAI:
         """
-        Returns an OpenAI client.
+        Returns an OpenAI client. Caches the client to avoid recreating it on every request.
 
         Returns:
             OpenAI: An instance of the OpenAI client.
@@ -150,28 +155,29 @@ class OpenAIResponses(Model):
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
             client_params["http_client"] = self.http_client
+        else:
+            # Use global sync client when no custom http_client is provided
+            client_params["http_client"] = get_default_sync_client()
 
         self.client = OpenAI(**client_params)
         return self.client
 
     def get_async_client(self) -> AsyncOpenAI:
         """
-        Returns an asynchronous OpenAI client.
+        Returns an asynchronous OpenAI client. Caches the client to avoid recreating it on every request.
 
         Returns:
             AsyncOpenAI: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
         else:
-            # Create a new async HTTP client with custom limits
-            client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            # Use global async client when no custom http_client is provided
+            client_params["http_client"] = get_default_async_client()
 
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
@@ -224,7 +230,7 @@ class OpenAIResponses(Model):
                     "type": "json_schema",
                     "name": response_format.__name__,
                     "schema": schema,
-                    "strict": True,
+                    "strict": self.strict_output,
                 }
             else:
                 # JSON mode
@@ -392,12 +398,15 @@ class OpenAIResponses(Model):
 
         return formatted_tools
 
-    def _format_messages(self, messages: List[Message]) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
+    def _format_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             messages (List[Message]): The message to format.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -442,7 +451,7 @@ class OpenAIResponses(Model):
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
-                    "content": message.content,
+                    "content": message.get_content(use_compressed_content=compress_tool_results),
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -466,7 +475,9 @@ class OpenAIResponses(Model):
 
             # Tool call result
             elif message.role == "tool":
-                if message.tool_call_id and message.content is not None:
+                tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
+                if message.tool_call_id and tool_result is not None:
                     function_call_id = message.tool_call_id
                     # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
                     if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
@@ -474,7 +485,7 @@ class OpenAIResponses(Model):
                     else:
                         call_id_value = function_call_id
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
+                        {"type": "function_call_output", "call_id": call_id_value, "output": tool_result}
                     )
             # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
@@ -516,6 +527,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
@@ -532,7 +544,7 @@ class OpenAIResponses(Model):
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **request_params,
             )
 
@@ -573,6 +585,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -585,6 +600,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
@@ -601,7 +617,7 @@ class OpenAIResponses(Model):
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 **request_params,
             )
 
@@ -642,6 +658,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -654,6 +673,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
@@ -671,7 +691,7 @@ class OpenAIResponses(Model):
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 **request_params,
             ):
@@ -715,6 +735,9 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -727,6 +750,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
@@ -744,7 +768,7 @@ class OpenAIResponses(Model):
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
-                input=self._format_messages(messages),  # type: ignore
+                input=self._format_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
                 **request_params,
             )
@@ -785,12 +809,19 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from exc
+        except ModelAuthenticationError as exc:
+            log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str]
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        tool_call_ids: List[str],
+        compress_tool_results: bool = False,
     ) -> None:
         """
         Handle the results of function calls.
@@ -799,68 +830,12 @@ class OpenAIResponses(Model):
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
+            compress_tool_results (bool): Whether to compress tool results.
         """
         if len(function_call_results) > 0:
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
-
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        for model_response_delta in self.invoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            )
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
-
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        async for model_response_delta in self.ainvoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            ):
-                yield model_response
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """

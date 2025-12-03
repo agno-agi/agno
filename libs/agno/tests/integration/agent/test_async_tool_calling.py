@@ -6,35 +6,36 @@ import pytest
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 
 
 # Test tools: Async functions (return values)
-async def fast_async_function(session_state, data: str) -> str:
+async def fast_async_function(run_context: RunContext, data: str) -> str:
     """Fast async function that returns a value (1 second)"""
     await asyncio.sleep(1)
-    session_state["fast_async_function"] = True
+    run_context.session_state["fast_async_function"] = True  # type: ignore
     return f"Fast result: {data}"
 
 
-async def slow_async_function(session_state, data: str) -> str:
+async def slow_async_function(run_context: RunContext, data: str) -> str:
     """Slow async function that returns a value (3 seconds)"""
     await asyncio.sleep(3)
-    session_state["slow_async_function"] = True
+    run_context.session_state["slow_async_function"] = True  # type: ignore
     return f"Slow result: {data}"
 
 
 # Test tools: Async generators (yield values)
-async def fast_async_generator(session_state, data: str) -> AsyncIterator[str]:
+async def fast_async_generator(run_context: RunContext, data: str) -> AsyncIterator[str]:
     """Fast async generator that yields a value (1 second)"""
     await asyncio.sleep(1)
-    session_state["fast_async_generator"] = True
+    run_context.session_state["fast_async_generator"] = True  # type: ignore
     yield f"Fast generator result: {data}"
 
 
-async def slow_async_generator(session_state, data: str) -> AsyncIterator[str]:
+async def slow_async_generator(run_context: RunContext, data: str) -> AsyncIterator[str]:
     """Slow async generator that yields a value (3 seconds)"""
     await asyncio.sleep(3)
-    session_state["slow_async_generator"] = True
+    run_context.session_state["slow_async_generator"] = True  # type: ignore
     yield f"Slow generator result: {data}"
 
 
@@ -69,7 +70,7 @@ async def test_concurrent_async_functions_stream():
     async for event in agent.arun(
         "Call both fast_async_function and slow_async_function concurrently, with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if hasattr(event, "event"):
             if event.event in ["ToolCallStarted", "ToolCallCompleted"]:
@@ -117,7 +118,7 @@ async def test_concurrent_async_generators_stream():
     async for event in agent.arun(
         "Call both fast_async_generator and slow_async_generator with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if hasattr(event, "event"):
             if event.event in ["ToolCallStarted", "ToolCallCompleted"]:
@@ -204,7 +205,7 @@ async def test_session_state_updates_in_concurrent_async_functions_stream():
     async for _ in agent.arun(
         "Call both fast_async_function and slow_async_function concurrently, with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         session_state={"test": "test"},
     ):
         pass
@@ -243,7 +244,7 @@ async def test_session_state_updates_in_concurrent_async_generators_stream():
     async for _ in agent.arun(
         "Call both fast_async_generator and slow_async_generator with 'test'",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
         session_state={"test": "test"},
     ):
         pass

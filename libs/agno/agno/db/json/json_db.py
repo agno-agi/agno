@@ -3,17 +3,22 @@ import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    hydrate_session,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -27,10 +32,13 @@ class JsonDb(BaseDb):
         self,
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -39,10 +47,13 @@ class JsonDb(BaseDb):
         Args:
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
+            culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
             memory_table (Optional[str]): Name of the JSON file to store memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
+            traces_table (Optional[str]): Name of the JSON file to store run traces.
+            spans_table (Optional[str]): Name of the JSON file to store span events.
             id (Optional[str]): ID of the database.
         """
         if id is None:
@@ -52,14 +63,21 @@ class JsonDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
 
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
+
+    def table_exists(self, table_name: str) -> bool:
+        """JSON implementation, always returns True."""
+        return True
 
     def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
@@ -114,6 +132,14 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error writing to the {file_path} JSON file: {e}")
             raise e
+
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
 
     # -- Session methods --
 
@@ -196,21 +222,16 @@ class JsonDb(BaseDb):
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    if session_data.get("session_type") != session_type_value:
-                        continue
-
-                    session = hydrate_session(session_data)
 
                     if not deserialize:
-                        return session
+                        return session_data
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_data)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_data)
                     else:
                         raise ValueError(f"Invalid session type: {session_type}")
 
@@ -398,7 +419,7 @@ class JsonDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -445,11 +466,29 @@ class JsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str):
-        """Delete a user memory from the JSON file."""
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
+        """Delete a user memory from the JSON file.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             original_count = len(memories)
+
+            # If user_id is provided, verify the memory belongs to the user before deleting
+            if user_id:
+                memory_to_delete = None
+                for m in memories:
+                    if m.get("memory_id") == memory_id:
+                        memory_to_delete = m
+                        break
+
+                if memory_to_delete and memory_to_delete.get("user_id") != user_id:
+                    log_debug(f"Memory {memory_id} does not belong to user {user_id}")
+                    return
+
             memories = [m for m in memories if m.get("memory_id") != memory_id]
 
             if len(memories) < original_count:
@@ -462,10 +501,24 @@ class JsonDb(BaseDb):
             log_error(f"Error deleting memory: {e}")
             raise e
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        """Delete multiple user memories from the JSON file."""
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete multiple user memories from the JSON file.
+
+        Args:
+            memory_ids (List[str]): List of memory IDs to delete.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
+
+            # If user_id is provided, filter memory_ids to only those belonging to the user
+            if user_id:
+                filtered_memory_ids: List[str] = []
+                for memory in memories:
+                    if memory.get("memory_id") in memory_ids and memory.get("user_id") == user_id:
+                        filtered_memory_ids.append(memory.get("memory_id"))  # type: ignore
+                memory_ids = filtered_memory_ids
+
             memories = [m for m in memories if m.get("memory_id") not in memory_ids]
             self._write_json_file(self.memory_table_name, memories)
 
@@ -476,7 +529,11 @@ class JsonDb(BaseDb):
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
-        """Get all memory topics from the JSON file."""
+        """Get all memory topics from the JSON file.
+
+        Returns:
+            List[str]: List of unique memory topics.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
 
@@ -492,14 +549,30 @@ class JsonDb(BaseDb):
             raise e
 
     def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        """Get a memory from the JSON file."""
+        """Get a memory from the JSON file.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+            deserialize (Optional[bool]): Whether to deserialize the memory.
+            user_id (Optional[str]): The ID of the user (optional, for filtering).
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]: The user memory data if found, None otherwise.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
 
             for memory_data in memories:
                 if memory_data.get("memory_id") == memory_id:
+                    # Filter by user_id if provided
+                    if user_id and memory_data.get("user_id") != user_id:
+                        return None
+
                     if not deserialize:
                         return memory_data
                     return UserMemory.from_dict(memory_data)
@@ -569,22 +642,38 @@ class JsonDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory statistics."""
+        """Get user memory statistics.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+        """
         try:
             memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
 
             for memory in memories:
-                user_id = memory.get("user_id")
-                if user_id:
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
-                    user_stats[user_id]["total_memories"] += 1
+                memory_user_id = memory.get("user_id")
+                # filter by user_id if provided
+                if user_id is not None and memory_user_id != user_id:
+                    continue
+                if memory_user_id:
+                    if memory_user_id not in user_stats:
+                        user_stats[memory_user_id] = {
+                            "user_id": memory_user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": 0,
+                        }
+                    user_stats[memory_user_id]["total_memories"] += 1
                     updated_at = memory.get("updated_at", 0)
-                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = updated_at
+                    if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
+                        user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -639,7 +728,7 @@ class JsonDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1135,3 +1224,554 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
             raise e
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from JSON file."""
+        try:
+            self._write_json_file(self.culture_table_name, [])
+        except Exception as e:
+            log_error(f"Error clearing cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from JSON file."""
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+            cultural_knowledge = [ck for ck in cultural_knowledge if ck.get("id") != id]
+            self._write_json_file(self.culture_table_name, cultural_knowledge)
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from JSON file."""
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+            for ck in cultural_knowledge:
+                if ck.get("id") == id:
+                    if not deserialize:
+                        return ck
+                    return deserialize_cultural_knowledge_from_db(ck)
+            return None
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from JSON file."""
+        try:
+            cultural_knowledge = self._read_json_file(self.culture_table_name)
+
+            # Filter
+            filtered = []
+            for ck in cultural_knowledge:
+                if name and ck.get("name") != name:
+                    continue
+                if agent_id and ck.get("agent_id") != agent_id:
+                    continue
+                if team_id and ck.get("team_id") != team_id:
+                    continue
+                filtered.append(ck)
+
+            # Sort
+            if sort_by:
+                filtered = apply_sorting(filtered, sort_by, sort_order)
+
+            total_count = len(filtered)
+
+            # Paginate
+            if limit and page:
+                start = (page - 1) * limit
+                filtered = filtered[start : start + limit]
+            elif limit:
+                filtered = filtered[:limit]
+
+            if not deserialize:
+                return filtered, total_count
+
+            return [deserialize_cultural_knowledge_from_db(ck) for ck in filtered]
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into JSON file."""
+        try:
+            if not cultural_knowledge.id:
+                cultural_knowledge.id = str(uuid4())
+
+            all_cultural_knowledge = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the item dict with serialized content
+            ck_dict = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Remove existing entry
+            all_cultural_knowledge = [ck for ck in all_cultural_knowledge if ck.get("id") != cultural_knowledge.id]
+
+            # Add new entry
+            all_cultural_knowledge.append(ck_dict)
+
+            self._write_json_file(self.culture_table_name, all_cultural_knowledge)
+
+            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
+            raise e
+
+    # --- Traces ---
+    def create_trace(self, trace: "Trace") -> None:
+        """Create a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            traces = self._read_json_file(self.trace_table_name, create_table_if_not_found=True)
+
+            # Check if trace exists
+            existing_idx = None
+            for i, existing in enumerate(traces):
+                if existing.get("trace_id") == trace.trace_id:
+                    existing_idx = i
+                    break
+
+            if existing_idx is not None:
+                existing = traces[existing_idx]
+
+                # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+                def get_component_level(workflow_id, team_id, agent_id, name):
+                    is_root_name = ".run" in name or ".arun" in name
+                    if not is_root_name:
+                        return 0
+                    elif workflow_id:
+                        return 3
+                    elif team_id:
+                        return 2
+                    elif agent_id:
+                        return 1
+                    else:
+                        return 0
+
+                existing_level = get_component_level(
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
+                )
+                new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+                should_update_name = new_level > existing_level
+
+                # Parse existing start_time to calculate correct duration
+                existing_start_time_str = existing.get("start_time")
+                if isinstance(existing_start_time_str, str):
+                    existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                else:
+                    existing_start_time = trace.start_time
+
+                recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                # Update existing trace
+                existing["end_time"] = trace.end_time.isoformat()
+                existing["duration_ms"] = recalculated_duration_ms
+                existing["status"] = trace.status
+                if should_update_name:
+                    existing["name"] = trace.name
+
+                # Update context fields only if new value is not None
+                if trace.run_id is not None:
+                    existing["run_id"] = trace.run_id
+                if trace.session_id is not None:
+                    existing["session_id"] = trace.session_id
+                if trace.user_id is not None:
+                    existing["user_id"] = trace.user_id
+                if trace.agent_id is not None:
+                    existing["agent_id"] = trace.agent_id
+                if trace.team_id is not None:
+                    existing["team_id"] = trace.team_id
+                if trace.workflow_id is not None:
+                    existing["workflow_id"] = trace.workflow_id
+
+                traces[existing_idx] = existing
+            else:
+                # Add new trace
+                trace_dict = trace.to_dict()
+                trace_dict.pop("total_spans", None)
+                trace_dict.pop("error_count", None)
+                traces.append(trace_dict)
+
+            self._write_json_file(self.trace_table_name, traces)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            traces = self._read_json_file(self.trace_table_name, create_table_if_not_found=False)
+            if not traces:
+                return None
+
+            # Get spans for calculating total_spans and error_count
+            spans = self._read_json_file(self.span_table_name, create_table_if_not_found=False)
+
+            # Filter traces
+            filtered = []
+            for t in traces:
+                if trace_id and t.get("trace_id") == trace_id:
+                    filtered.append(t)
+                    break
+                elif run_id and t.get("run_id") == run_id:
+                    filtered.append(t)
+
+            if not filtered:
+                return None
+
+            # Sort by start_time desc and get first
+            filtered.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+            trace_data = filtered[0]
+
+            # Calculate total_spans and error_count
+            trace_spans = [s for s in spans if s.get("trace_id") == trace_data.get("trace_id")]
+            trace_data["total_spans"] = len(trace_spans)
+            trace_data["error_count"] = sum(1 for s in trace_spans if s.get("status_code") == "ERROR")
+
+            return Trace.from_dict(trace_data)
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            traces = self._read_json_file(self.trace_table_name, create_table_if_not_found=False)
+            if not traces:
+                return [], 0
+
+            # Get spans for calculating total_spans and error_count
+            spans = self._read_json_file(self.span_table_name, create_table_if_not_found=False)
+
+            # Apply filters
+            filtered = []
+            for t in traces:
+                if run_id and t.get("run_id") != run_id:
+                    continue
+                if session_id and t.get("session_id") != session_id:
+                    continue
+                if user_id and t.get("user_id") != user_id:
+                    continue
+                if agent_id and t.get("agent_id") != agent_id:
+                    continue
+                if team_id and t.get("team_id") != team_id:
+                    continue
+                if workflow_id and t.get("workflow_id") != workflow_id:
+                    continue
+                if status and t.get("status") != status:
+                    continue
+                if start_time:
+                    trace_start = t.get("start_time", "")
+                    if trace_start < start_time.isoformat():
+                        continue
+                if end_time:
+                    trace_end = t.get("end_time", "")
+                    if trace_end > end_time.isoformat():
+                        continue
+                filtered.append(t)
+
+            total_count = len(filtered)
+
+            # Sort by start_time desc
+            filtered.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+
+            # Apply pagination
+            if limit and page:
+                start_idx = (page - 1) * limit
+                filtered = filtered[start_idx : start_idx + limit]
+
+            # Add total_spans and error_count to each trace
+            result_traces = []
+            for t in filtered:
+                trace_spans = [s for s in spans if s.get("trace_id") == t.get("trace_id")]
+                t["total_spans"] = len(trace_spans)
+                t["error_count"] = sum(1 for s in trace_spans if s.get("status_code") == "ERROR")
+                result_traces.append(Trace.from_dict(t))
+
+            return result_traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+        """
+        try:
+            traces = self._read_json_file(self.trace_table_name, create_table_if_not_found=False)
+            if not traces:
+                return [], 0
+
+            # Group by session_id
+            session_stats: Dict[str, Dict[str, Any]] = {}
+
+            for t in traces:
+                session_id = t.get("session_id")
+                if not session_id:
+                    continue
+
+                # Apply filters
+                if user_id and t.get("user_id") != user_id:
+                    continue
+                if agent_id and t.get("agent_id") != agent_id:
+                    continue
+                if team_id and t.get("team_id") != team_id:
+                    continue
+                if workflow_id and t.get("workflow_id") != workflow_id:
+                    continue
+
+                created_at = t.get("created_at", "")
+                if start_time and created_at < start_time.isoformat():
+                    continue
+                if end_time and created_at > end_time.isoformat():
+                    continue
+
+                if session_id not in session_stats:
+                    session_stats[session_id] = {
+                        "session_id": session_id,
+                        "user_id": t.get("user_id"),
+                        "agent_id": t.get("agent_id"),
+                        "team_id": t.get("team_id"),
+                        "workflow_id": t.get("workflow_id"),
+                        "total_traces": 0,
+                        "first_trace_at": created_at,
+                        "last_trace_at": created_at,
+                    }
+
+                session_stats[session_id]["total_traces"] += 1
+                if created_at < session_stats[session_id]["first_trace_at"]:
+                    session_stats[session_id]["first_trace_at"] = created_at
+                if created_at > session_stats[session_id]["last_trace_at"]:
+                    session_stats[session_id]["last_trace_at"] = created_at
+
+            stats_list = list(session_stats.values())
+            total_count = len(stats_list)
+
+            # Sort by last_trace_at desc
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+
+            # Apply pagination
+            if limit and page:
+                start_idx = (page - 1) * limit
+                stats_list = stats_list[start_idx : start_idx + limit]
+
+            # Convert ISO strings to datetime objects
+            for stat in stats_list:
+                first_at = stat.get("first_trace_at", "")
+                last_at = stat.get("last_trace_at", "")
+                if first_at:
+                    stat["first_trace_at"] = datetime.fromisoformat(first_at.replace("Z", "+00:00"))
+                if last_at:
+                    stat["last_trace_at"] = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+
+            return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            spans = self._read_json_file(self.span_table_name, create_table_if_not_found=True)
+            spans.append(span.to_dict())
+            self._write_json_file(self.span_table_name, spans)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            existing_spans = self._read_json_file(self.span_table_name, create_table_if_not_found=True)
+            for span in spans:
+                existing_spans.append(span.to_dict())
+            self._write_json_file(self.span_table_name, existing_spans)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            spans = self._read_json_file(self.span_table_name, create_table_if_not_found=False)
+
+            for s in spans:
+                if s.get("span_id") == span_id:
+                    return Span.from_dict(s)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            spans = self._read_json_file(self.span_table_name, create_table_if_not_found=False)
+            if not spans:
+                return []
+
+            # Apply filters
+            filtered = []
+            for s in spans:
+                if trace_id and s.get("trace_id") != trace_id:
+                    continue
+                if parent_span_id and s.get("parent_span_id") != parent_span_id:
+                    continue
+                filtered.append(s)
+
+            # Apply limit
+            if limit:
+                filtered = filtered[:limit]
+
+            return [Span.from_dict(s) for s in filtered]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []

@@ -35,7 +35,7 @@ class ToolExecution:
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
 
-    created_at: int = int(time())
+    created_at: int = field(default_factory=lambda: int(time()))
 
     # User control flow requirements
     requires_confirmation: Optional[bool] = None
@@ -81,6 +81,7 @@ class ToolExecution:
             else None,
             external_execution_required=data.get("external_execution_required"),
             metrics=Metrics(**(data.get("metrics", {}) or {})),
+            **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
 
 
@@ -123,8 +124,78 @@ class ModelResponse:
 
     updated_session_state: Optional[Dict[str, Any]] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize ModelResponse to dictionary for caching."""
+        _dict = asdict(self)
+
+        # Handle special serialization for audio
+        if self.audio is not None:
+            _dict["audio"] = self.audio.to_dict()
+
+        # Handle lists of media objects
+        if self.images is not None:
+            _dict["images"] = [img.to_dict() for img in self.images]
+        if self.videos is not None:
+            _dict["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.audios is not None:
+            _dict["audios"] = [aud.to_dict() for aud in self.audios]
+        if self.files is not None:
+            _dict["files"] = [f.to_dict() for f in self.files]
+
+        # Handle tool executions
+        if self.tool_executions is not None:
+            _dict["tool_executions"] = [tool_execution.to_dict() for tool_execution in self.tool_executions]
+
+        # Handle response usage which might be a Pydantic BaseModel
+        response_usage = _dict.pop("response_usage", None)
+        if response_usage is not None:
+            try:
+                from pydantic import BaseModel
+
+                if isinstance(response_usage, BaseModel):
+                    _dict["response_usage"] = response_usage.model_dump()
+                else:
+                    _dict["response_usage"] = response_usage
+            except ImportError:
+                _dict["response_usage"] = response_usage
+
+        return _dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ModelResponse":
+        """Reconstruct ModelResponse from cached dictionary."""
+        # Reconstruct media objects
+        if data.get("audio"):
+            data["audio"] = Audio(**data["audio"])
+
+        if data.get("images"):
+            data["images"] = [Image(**img) for img in data["images"]]
+        if data.get("videos"):
+            data["videos"] = [Video(**vid) for vid in data["videos"]]
+        if data.get("audios"):
+            data["audios"] = [Audio(**aud) for aud in data["audios"]]
+        if data.get("files"):
+            data["files"] = [File(**f) for f in data["files"]]
+
+        # Reconstruct tool executions
+        if data.get("tool_executions"):
+            data["tool_executions"] = [ToolExecution.from_dict(te) for te in data["tool_executions"]]
+
+        # Reconstruct citations
+        if data.get("citations") and isinstance(data["citations"], dict):
+            data["citations"] = Citations(**data["citations"])
+
+        # Reconstruct response usage (Metrics)
+        if data.get("response_usage") and isinstance(data["response_usage"], dict):
+            from agno.models.metrics import Metrics
+
+            data["response_usage"] = Metrics(**data["response_usage"])
+
+        return cls(**data)
+
 
 class FileType(str, Enum):
     MP4 = "mp4"
     GIF = "gif"
     MP3 = "mp3"
+    WAV = "wav"

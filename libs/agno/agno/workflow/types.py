@@ -1,13 +1,23 @@
+import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
+from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_videos,
+)
+from agno.utils.serialize import json_serializer
+from agno.utils.timer import Timer
 
 
 @dataclass
@@ -77,6 +87,8 @@ class StepInput:
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
+
+    workflow_session: Optional["WorkflowSession"] = None
 
     def get_input_as_string(self) -> Optional[str]:
         """Convert input to string representation"""
@@ -169,13 +181,35 @@ class StepInput:
         # Use the helper method to get the deepest content
         return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
 
+    def get_workflow_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get workflow conversation history as structured data for custom function steps
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.workflow_session:
+            return []
+
+        return self.workflow_session.get_workflow_history(num_runs=num_runs)
+
+    def get_workflow_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted workflow conversation history context for custom function steps
+
+        Args:
+            num_runs: Number of recent runs to include. If None, returns all available history.
+        """
+        if not self.workflow_session:
+            return None
+
+        return self.workflow_session.get_workflow_history_context(num_runs=num_runs)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified message field
         input_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.input is not None:
             if isinstance(self.input, BaseModel):
-                input_dict = self.input.model_dump(exclude_none=True)
+                input_dict = self.input.model_dump(exclude_none=True, mode="json")
             elif isinstance(self.input, (dict, list)):
                 input_dict = self.input
             else:
@@ -247,7 +281,7 @@ class StepOutput:
         content_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.content is not None:
             if isinstance(self.content, BaseModel):
-                content_dict = self.content.model_dump(exclude_none=True)
+                content_dict = self.content.model_dump(exclude_none=True, mode="json")
             elif isinstance(self.content, (dict, list)):
                 content_dict = self.content
             else:
@@ -281,21 +315,10 @@ class StepOutput:
     def from_dict(cls, data: Dict[str, Any]) -> "StepOutput":
         """Create StepOutput from dictionary"""
         # Reconstruct media artifacts
-        images = data.get("images")
-        if images:
-            images = [Image.model_validate(img) for img in images]
-
-        videos = data.get("videos")
-        if videos:
-            videos = [Video.model_validate(vid) for vid in videos]
-
-        audio = data.get("audio")
-        if audio:
-            audio = [Audio.model_validate(aud) for aud in audio]
-
-        files = data.get("files")
-        if files:
-            files = [File.model_validate(file) for file in files]
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audio = reconstruct_audio_list(data.get("audio"))
+        files = reconstruct_files(data.get("files"))
 
         metrics_data = data.get("metrics")
         metrics = None
@@ -383,12 +406,18 @@ class WorkflowMetrics:
     """Complete metrics for a workflow execution"""
 
     steps: Dict[str, StepMetrics]
+    # Timer utility for tracking execution time
+    timer: Optional[Timer] = None
+    # Total workflow execution time
+    duration: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        return {
+        result: Dict[str, Any] = {
             "steps": {name: step.to_dict() for name, step in self.steps.items()},
+            "duration": self.duration,
         }
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowMetrics":
@@ -397,7 +426,19 @@ class WorkflowMetrics:
 
         return cls(
             steps=steps,
+            duration=data.get("duration"),
         )
+
+    def start_timer(self):
+        if self.timer is None:
+            self.timer = Timer()
+        self.timer.start()
+
+    def stop_timer(self, set_duration: bool = True):
+        if self.timer is not None:
+            self.timer.stop()
+            if set_duration:
+                self.duration = self.timer.elapsed
 
 
 @dataclass
@@ -443,9 +484,7 @@ class WebSocketHandler:
             else:
                 data = {"type": "message", "content": str(event)}
 
-            import json
-
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
         except Exception as e:
             log_warning(f"Failed to handle WebSocket event: {e}")
@@ -466,9 +505,7 @@ class WebSocketHandler:
             return
 
         try:
-            import json
-
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
         except Exception as e:
             log_warning(f"Failed to send WebSocket dict: {e}")
 

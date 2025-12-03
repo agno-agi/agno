@@ -80,7 +80,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
     session_options = []
     session_dict = {}
 
-    for session in sessions:
+    for session in sessions:  # type: ignore
         if not hasattr(session, "session_id") or not session.session_id:
             continue
 
@@ -452,7 +452,7 @@ MODELS = [
     "gpt-4o",
     "o3-mini",
     "gpt-5",
-    "claude-4-sonnet",
+    "claude-sonnet-4-5-20250929",
     "gemini-2.5-pro",
 ]
 

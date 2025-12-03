@@ -84,11 +84,7 @@ if __name__ == "__main__":
             "Provide clear, actionable steps to resolve customer issues.",
             "Follow the established patterns for consistent, high-quality support.",
         ],
-        debug_mode=True,
         markdown=True,
     )
 
-    for i, example in enumerate(support_examples, 1):
-        print(f"📞 Example {i}: {example}")
-        print("-" * 50)
-        agent.print_response(example)
+    agent.print_response("I want to enable two-factor authentication for my account.")

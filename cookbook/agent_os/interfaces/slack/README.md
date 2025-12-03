@@ -57,7 +57,7 @@ You can find these values in your Slack App settings:
    1. For local testing with Agno's SlackApp and agents, we recommend using ngrok to create a secure tunnel to your local server. It is also easier if you get a static url from ngrok.
    2. Run ngrok:
    ```bash
-   ngrok http --url=your-url.ngrok-free.app http://localhost:8000
+   ngrok http --url=your-url.ngrok-free.app http://localhost:7777
    ```
    3. Run your app locally with `python <my-app>.py`
    4. Subscribe to the following events:
@@ -71,8 +71,8 @@ You can find these values in your Slack App settings:
 
 1. Go to "Event Subscriptions" in your Slack App settings
 2. Enable events by toggling the switch
-3. Add your ngrok URL + "/slack/events" to the Request URL
-   - Example: `https://your-ngrok-url.ngrok.io/slack/events`
+3. Add your ngrok URL + "/slack/events" to the Request URL (or with a custom prefix)
+   - Example: `https://your-ngrok-url.ngrok.io/slack/events` (or with a custom prefix: `https://your-ngrok-url.ngrok.io/custom-prefix/events`)
 4. Make sure your app is running with ngrok, then verify the request URL
 5. Reinstall the app to your workspace to apply the changes
 

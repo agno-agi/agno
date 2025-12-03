@@ -27,17 +27,8 @@ agent = Agent(
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 
-    **Backend Tools (executed on server):**
+    **Tools (executed on server):**
     - Web search using DuckDuckGo for finding current information
-
-    **Frontend Tools (executed in browser):**
-    - Generate beautiful haikus with English/Japanese text and images
-    - Change the chat background color or style for better user experience
-    - Ask users for confirmation before important actions
-    - Create charts and visualizations from data
-
-    **When to use frontend tools:**
-    - Use generate_haiku when users ask for poems or creative content
 
     Always be helpful, creative, and use the most appropriate tool for each request!
     """,
@@ -60,10 +51,10 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     """Run your AgentOS.
-    
+
     You can see the configuration and available apps at:
     http://localhost:9001/config
-    
+
     Use Port 9001 to configure Dojo endpoint.
     """
     agent_os.serve(app="agent_with_tools:app", port=9001, reload=True)

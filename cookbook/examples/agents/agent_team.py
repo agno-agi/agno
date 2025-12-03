@@ -49,6 +49,5 @@ Compare their market positions, growth metrics, and future outlook."""
 team_leader.print_response(
     task,
     stream=True,
-    stream_intermediate_steps=True,
     show_full_reasoning=True,
 )
