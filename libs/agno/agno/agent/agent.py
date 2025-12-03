@@ -1115,6 +1115,9 @@ class Agent:
 
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
+            
+            elapsed = run_response.metrics.timer.elapsed if run_response.metrics and run_response.metrics.timer else 0.0
+            print(f"[MODEL CALL] Calling main model (id={self.model.id}) at {elapsed:.3f}s")
 
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
@@ -1179,7 +1182,9 @@ class Agent:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
                 try:
-                    self.session_summary_manager.create_session_summary(session=session)
+                    self.session_summary_manager.create_session_summary(session=session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -1462,7 +1467,9 @@ class Agent:
                         store_events=self.store_events,
                     )
                 try:
-                    self.session_summary_manager.create_session_summary(session=session)
+                    self.session_summary_manager.create_session_summary(session=session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if stream_events:
@@ -2006,6 +2013,9 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 9. Generate a response from the Model (includes running function calls)
+            elapsed = run_response.metrics.timer.elapsed if run_response.metrics and run_response.metrics.timer else 0.0
+            print(f"[MODEL CALL] Calling main model (id={self.model.id}) at {elapsed:.3f}s")
+            
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -2075,7 +2085,9 @@ class Agent:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 agent_session.upsert_run(run=run_response)
                 try:
-                    await self.session_summary_manager.acreate_session_summary(session=agent_session)
+                    await self.session_summary_manager.acreate_session_summary(session=agent_session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -2409,7 +2421,9 @@ class Agent:
                         store_events=self.store_events,
                     )
                 try:
-                    await self.session_summary_manager.acreate_session_summary(session=agent_session)
+                    await self.session_summary_manager.acreate_session_summary(session=agent_session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if stream_events:
@@ -3222,7 +3236,9 @@ class Agent:
                 session.upsert_run(run=run_response)
 
                 try:
-                    self.session_summary_manager.create_session_summary(session=session)
+                    self.session_summary_manager.create_session_summary(session=session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3365,7 +3381,9 @@ class Agent:
                         store_events=self.store_events,
                     )
                 try:
-                    self.session_summary_manager.create_session_summary(session=session)
+                    self.session_summary_manager.create_session_summary(session=session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3858,7 +3876,9 @@ class Agent:
                 agent_session.upsert_run(run=run_response)
 
                 try:
-                    await self.session_summary_manager.acreate_session_summary(session=agent_session)
+                    await self.session_summary_manager.acreate_session_summary(session=agent_session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -4138,7 +4158,9 @@ class Agent:
                         store_events=self.store_events,
                     )
                 try:
-                    await self.session_summary_manager.acreate_session_summary(session=agent_session)
+                    await self.session_summary_manager.acreate_session_summary(session=agent_session, run_response=run_response, run_messages=run_messages)
+                    # Recalculate metrics to include session summary model metrics
+                    self._recalculate_metrics_after_session_summary(run_response, run_messages)
                 except Exception as e:
                     log_warning(f"Error in session summary creation: {str(e)}")
                 if stream_events:
@@ -9217,6 +9239,31 @@ class Agent:
             except Exception as e:
                 log_warning(f"Failed to save output to file: {e}")
 
+    def _recalculate_metrics_after_session_summary(self, run_response: RunOutput, run_messages: RunMessages) -> None:
+        """Recalculate run metrics to include session summary model metrics."""
+        # Always recalculate if we have session summary messages, even if the list is empty
+        # This ensures we process any messages that were added
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        output_model_messages = getattr(run_messages, 'output_model_messages', None)
+        reasoning_model_messages = getattr(run_messages, 'reasoning_model_messages', None)
+        parser_model_messages = getattr(run_messages, 'parser_model_messages', None)
+        if reasoning_model_messages is None and run_response.reasoning_messages:
+            reasoning_model_messages = run_response.reasoning_messages
+        
+        session_summary_model_messages = getattr(run_messages, 'session_summary_model_messages', None)
+        
+        run_response.metrics = self._calculate_run_metrics(
+            model_messages=messages_for_run_response,
+            output_model_messages=output_model_messages,
+            reasoning_model_messages=reasoning_model_messages,
+            parser_model_messages=parser_model_messages,
+            memory_model_messages=getattr(run_messages, 'memory_model_messages', None),
+            session_summary_model_messages=session_summary_model_messages,
+            compression_model_messages=getattr(run_messages, 'compression_model_messages', None),
+            culture_model_messages=getattr(run_messages, 'culture_model_messages', None),
+            current_run_metrics=run_response.metrics
+        )
+
     def _calculate_run_metrics(
         self,
         model_messages: Optional[List[Message]] = None,
@@ -9247,7 +9294,12 @@ class Agent:
         from agno.metrics import ModelMetrics
         
         metrics = current_run_metrics or Metrics()
+        # Preserve existing details if they exist, otherwise start fresh
+        # We need to do a deep copy to avoid mutating the original
         details: Dict[str, List[ModelMetrics]] = {}
+        if metrics.details:
+            import copy
+            details = copy.deepcopy(metrics.details)
         
         # Backward compatibility: if messages is provided, use it as model_messages
         if messages is not None and model_messages is None:
@@ -9425,39 +9477,47 @@ class Agent:
                 details["memory_model"] = [model_metrics]
         
         # Track session_summary_model metrics
-        if session_summary_model_messages and self.session_summary_manager is not None and self.session_summary_manager.model is not None:
-            session_summary_model = self.session_summary_manager.model
-            session_summary_assistant_role = session_summary_model.assistant_message_role
-            session_summary_model_assistant_messages = [
-                m for m in session_summary_model_messages
-                if m.role == session_summary_assistant_role and m.metrics is not None
-            ]
+        if session_summary_model_messages and self.session_summary_manager is not None:
+            # Ensure model is initialized - it should be set after create_session_summary is called
+            if self.session_summary_manager.model is None:
+                from agno.models.utils import get_model
+                self.session_summary_manager.model = get_model(self.session_summary_manager.model) or self.model
             
-            if session_summary_model_assistant_messages:
-                # Aggregate metrics from all session_summary_model messages
-                aggregated_metrics = MessageMetrics()
-                first_time_to_first_token = None
+            session_summary_model = self.session_summary_manager.model or self.model
+            
+            if session_summary_model is not None:
+                session_summary_assistant_role = session_summary_model.assistant_message_role
                 
-                for m in session_summary_model_assistant_messages:
-                    if m.metrics:
-                        aggregated_metrics += m.metrics
-                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
-                            first_time_to_first_token = m.metrics.time_to_first_token
+                session_summary_model_assistant_messages = [
+                    m for m in session_summary_model_messages
+                    if m.role == session_summary_assistant_role and m.metrics is not None
+                ]
                 
-                # Get model info
-                model_id = session_summary_model.id
-                model_provider = session_summary_model.get_provider()
-                
-                # Create ModelMetrics entry
-                model_metrics = ModelMetrics(
-                    id=model_id,
-                    provider=model_provider,
-                    input_tokens=aggregated_metrics.input_tokens,
-                    output_tokens=aggregated_metrics.output_tokens,
-                    total_tokens=aggregated_metrics.total_tokens,
-                    time_to_first_token=first_time_to_first_token,
-                )
-                details["session_summary_model"] = [model_metrics]
+                if session_summary_model_assistant_messages:
+                    # Aggregate metrics from all session_summary_model messages
+                    aggregated_metrics = MessageMetrics()
+                    first_time_to_first_token = None
+                    
+                    for m in session_summary_model_assistant_messages:
+                        if m.metrics:
+                            aggregated_metrics += m.metrics
+                            if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                                first_time_to_first_token = m.metrics.time_to_first_token
+                    
+                    # Get model info
+                    model_id = session_summary_model.id
+                    model_provider = session_summary_model.get_provider()
+                    
+                    # Create ModelMetrics entry
+                    model_metrics = ModelMetrics(
+                        id=model_id,
+                        provider=model_provider,
+                        input_tokens=aggregated_metrics.input_tokens,
+                        output_tokens=aggregated_metrics.output_tokens,
+                        total_tokens=aggregated_metrics.total_tokens,
+                        time_to_first_token=first_time_to_first_token,
+                    )
+                    details["session_summary_model"] = [model_metrics]
         
         # Track compression_model metrics
         if compression_model_messages and self.compression_manager is not None and self.compression_manager.model is not None:
@@ -9547,12 +9607,16 @@ class Agent:
                     metrics.total_tokens += model_metrics.total_tokens
             
             # Set time_to_first_token from the first model that generated tokens
+            # Exclude models that are called after the main model response (output_model, parser_model)
+            # as they shouldn't contribute to the top-level time_to_first_token
+            excluded_model_types = {"output_model", "parser_model", "session_summary_model"}
             first_ttft = None
             for model_type, model_metrics_list in metrics.details.items():
-                for model_metrics in model_metrics_list:
-                    if model_metrics.time_to_first_token is not None:
-                        if first_ttft is None or model_metrics.time_to_first_token < first_ttft:
-                            first_ttft = model_metrics.time_to_first_token
+                if model_type not in excluded_model_types:
+                    for model_metrics in model_metrics_list:
+                        if model_metrics.time_to_first_token is not None:
+                            if first_ttft is None or model_metrics.time_to_first_token < first_ttft:
+                                first_ttft = model_metrics.time_to_first_token
             if first_ttft is not None:
                 metrics.time_to_first_token = first_ttft
         else:
@@ -9855,6 +9919,8 @@ class Agent:
                 log_debug(f"Step {step_count}", center=True, symbol="=")
                 try:
                     # Run the reasoning agent
+                    reasoning_model_id = reasoning_agent.model.id if reasoning_agent.model else "unknown"
+                    print(f"[MODEL CALL] Calling reasoning_model (id={reasoning_model_id})")
                     reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
@@ -10151,6 +10217,8 @@ class Agent:
                 step_count += 1
                 try:
                     # Run the reasoning agent
+                    reasoning_model_id = reasoning_agent.model.id if reasoning_agent.model else "unknown"
+                    print(f"[MODEL CALL] Calling reasoning_model (id={reasoning_model_id})")
                     reasoning_agent_response: RunOutput = await reasoning_agent.arun(
                         input=run_messages.get_input_messages()
                     )
@@ -10273,6 +10341,7 @@ class Agent:
             messages_for_parser_model = self._get_messages_for_parser_model(
                 model_response, parser_response_format, run_context=run_context
             )
+            print(f"[MODEL CALL] Calling parser_model (id={self.parser_model.id})")
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -10301,6 +10370,7 @@ class Agent:
             messages_for_parser_model = self._get_messages_for_parser_model(
                 model_response, parser_response_format, run_context=run_context
             )
+            print(f"[MODEL CALL] Calling parser_model (id={self.parser_model.id})")
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -10454,6 +10524,7 @@ class Agent:
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         initial_output_model_messages_count = len(messages_for_output_model)
+        print(f"[MODEL CALL] Calling output_model (id={self.output_model.id})")
         output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
         model_response.content = output_model_response.content
         
@@ -10549,6 +10620,7 @@ class Agent:
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         initial_output_model_messages_count = len(messages_for_output_model)
+        print(f"[MODEL CALL] Calling output_model (id={self.output_model.id})")
         output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
         model_response.content = output_model_response.content
         

@@ -18,16 +18,19 @@ class Response(BaseModel):
     story_content: str = Field(description="The content of the story")
 
 agent = Agent(
+    id="basic-stream-metrics-agent",
     model=OpenAIChat(id="gpt-4o"),
     reasoning_model=OpenAIResponses(id="gpt-4.1"),
     output_model=OpenAIChat(id="o3-mini"),
     parser_model=OpenAIChat(id="gpt-5-mini"),
     enable_user_memories=True,
+    enable_session_summaries=True,
     db=db,
     markdown=True,
     tools=[DuckDuckGoTools()],
     session_id="metrics-test-session",
     output_schema=Response,
+    
 )
 
 # Run the agent to generate metrics
