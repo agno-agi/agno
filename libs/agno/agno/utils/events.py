@@ -722,3 +722,12 @@ def add_error_event(
     events.append(error)
     
     return events
+
+def add_team_error_event(
+    error: TeamRunErrorEvent,
+    events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+    return events

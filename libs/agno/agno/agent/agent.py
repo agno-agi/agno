@@ -1164,11 +1164,9 @@ class Agent:
 
             return run_response
         except Exception as e:
-            run_response.error = create_run_error_event(run_response, error=str(e))
             # Add error event to list of events
-            run_error_event = create_run_error_event(run_response, error=str(e))
-            run_response.error = run_error_event
-            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+            run_response.error = create_run_error_event(run_response, error=str(e))
+            run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
             # If the content is None, set it to the error message
             if run_response.content is None:
@@ -1500,9 +1498,8 @@ class Agent:
             # Handle exceptions during streaming
             run_response.status = RunStatus.error
             # Add error event to list of events
-            run_error_event = create_run_error_event(run_response, error=str(e))
-            run_response.error = run_error_event
-            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+            run_response.error = create_run_error_event(run_response, error=str(e))
+            run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
             # If the content is None, set it to the error message
             if run_response.content is None:
@@ -1514,7 +1511,7 @@ class Agent:
             )
 
             # Yield the error event
-            yield create_run_error_event(run_response, error=str(e))
+            yield run_response.error
         finally:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2088,11 +2085,9 @@ class Agent:
             return run_response
 
         except Exception as e:
-            run_response.error = create_run_error_event(run_response, error=str(e))
             # Add error event to list of events
-            run_error_event = create_run_error_event(run_response, error=str(e))
-            run_response.error = run_error_event
-            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+            run_response.error = create_run_error_event(run_response, error=str(e))
+            run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
             # If the content is None, set it to the error message
             if run_response.content is None:
@@ -2483,9 +2478,8 @@ class Agent:
             # Handle exceptions during async streaming
             run_response.status = RunStatus.error
             # Add error event to list of events
-            run_error_event = create_run_error_event(run_response, error=str(e))
-            run_response.error = run_error_event
-            run_response.events = add_error_event(error=run_error_event, events=run_response.events)
+            run_response.error = create_run_error_event(run_response, error=str(e))
+            run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
             # If the content is None, set it to the error message
             if run_response.content is None:

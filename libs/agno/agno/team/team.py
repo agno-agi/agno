@@ -122,6 +122,7 @@ from agno.utils.events import (
     create_team_tool_call_completed_event,
     create_team_tool_call_started_event,
     handle_event,
+    add_team_error_event,
 )
 from agno.utils.hooks import filter_hook_args, normalize_hooks
 from agno.utils.knowledge import get_agentic_or_user_search_filters
@@ -1325,82 +1326,81 @@ class Team:
         12. Create session summary
         13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
         """
+        try:
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
+            # 1. Execute pre-hooks
+            run_input = cast(TeamRunInput, run_response.input)
+            self.model = cast(Model, self.model)
+            if self.pre_hooks is not None:
+                # Can modify the run input
+                pre_hook_iterator = self._execute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_input=run_input,
+                    run_context=run_context,
+                    session=session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+                # Consume the generator without yielding
+                deque(pre_hook_iterator, maxlen=0)
 
-        # 1. Execute pre-hooks
-        run_input = cast(TeamRunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            # Can modify the run input
-            pre_hook_iterator = self._execute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
+            # 2. Determine tools for model
+            # Initialize team run context
+            team_run_context: Dict[str, Any] = {}
+
+            _tools = self._determine_tools_for_model(
+                model=self.model,
                 run_response=run_response,
-                run_input=run_input,
                 run_context=run_context,
+                team_run_context=team_run_context,
                 session=session,
                 user_id=user_id,
+                async_mode=False,
+                input_message=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
                 debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+            )
+
+            # 3. Prepare run messages
+            run_messages: RunMessages = self._get_run_messages(
+                run_response=run_response,
+                session=session,
+                run_context=run_context,
+                user_id=user_id,
+                input_message=run_input.input_content,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
                 **kwargs,
             )
-            # Consume the generator without yielding
-            deque(pre_hook_iterator, maxlen=0)
+            if len(run_messages.messages) == 0:
+                log_error("No messages to be sent to the model.")
 
-        # 2. Determine tools for model
-        # Initialize team run context
-        team_run_context: Dict[str, Any] = {}
+            log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=session,
-            user_id=user_id,
-            async_mode=False,
-            input_message=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-        )
+            # 4. Start memory creation in background thread
+            memory_future = None
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background thread.")
+                memory_future = self.background_executor.submit(
+                    self._make_memories, run_messages=run_messages, user_id=user_id
+                )
 
-        # 3. Prepare run messages
-        run_messages: RunMessages = self._get_run_messages(
-            run_response=run_response,
-            session=session,
-            run_context=run_context,
-            user_id=user_id,
-            input_message=run_input.input_content,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
-
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
-        # 4. Start memory creation in background thread
-        memory_future = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background thread.")
-            memory_future = self.background_executor.submit(
-                self._make_memories, run_messages=run_messages, user_id=user_id
-            )
-
-        try:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 5. Reason about the task if reasoning is enabled
@@ -1498,9 +1498,11 @@ class Team:
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
         except Exception as e:
-            log_error(f"Team run {run_response.run_id} encountered an error: {str(e)}")
-
+            # Add error event to list of events
             run_response.error = create_team_run_error_event(run_response, error=str(e))
+            run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+            if run_response.content is None:
+                run_response.content = str(e)
 
             # Cleanup and store the run response
             self._cleanup_and_store(run_response=run_response, session=session)
@@ -1538,15 +1540,15 @@ class Team:
         9. Create session summary
         10. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
+        try:
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
 
-        # 1. Execute pre-hooks
-        run_input = cast(TeamRunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            # Can modify the run input
-            try:
+            # 1. Execute pre-hooks
+            run_input = cast(TeamRunInput, run_response.input)
+            self.model = cast(Model, self.model)
+            if self.pre_hooks is not None:
+                # Can modify the run input
                 pre_hook_iterator = self._execute_pre_hooks(
                     hooks=self.pre_hooks,  # type: ignore
                     run_response=run_response,
@@ -1560,76 +1562,60 @@ class Team:
                 )
                 for pre_hook_event in pre_hook_iterator:
                     yield pre_hook_event
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
-                run_response.status = RunStatus.error
-                run_response.content = str(e)
-                error_event = create_team_run_error_event(
-                    from_run_response=run_response,
-                    error=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
-                run_response.error = error_event  # type: ignore
-                self._cleanup_and_store(run_response=run_response, session=session)
-                yield error_event
-                return
 
-        # 2. Determine tools for model
-        # Initialize team run context
-        team_run_context: Dict[str, Any] = {}
+            # 2. Determine tools for model
+            # Initialize team run context
+            team_run_context: Dict[str, Any] = {}
 
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=session,
-            user_id=user_id,
-            async_mode=False,
-            input_message=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-        )
-
-        # 3. Prepare run messages
-        run_messages: RunMessages = self._get_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            session=session,
-            user_id=user_id,
-            input_message=run_input.input_content,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
-
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
-        # 4. Start memory creation in background thread
-        memory_future = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background thread.")
-            memory_future = self.background_executor.submit(
-                self._make_memories, run_messages=run_messages, user_id=user_id
+            _tools = self._determine_tools_for_model(
+                model=self.model,
+                run_response=run_response,
+                run_context=run_context,
+                team_run_context=team_run_context,
+                session=session,
+                user_id=user_id,
+                async_mode=False,
+                input_message=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
             )
 
-        try:
+            # 3. Prepare run messages
+            run_messages: RunMessages = self._get_run_messages(
+                run_response=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                input_message=run_input.input_content,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
+                **kwargs,
+            )
+            if len(run_messages.messages) == 0:
+                log_error("No messages to be sent to the model.")
+
+            log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+
+            # 4. Start memory creation in background thread
+            memory_future = None
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background thread.")
+                memory_future = self.background_executor.submit(
+                    self._make_memories, run_messages=run_messages, user_id=user_id
+                )
+
             # Start the Run by yielding a RunStarted event
             if stream_events:
                 yield handle_event(  # type: ignore
@@ -1807,6 +1793,18 @@ class Team:
 
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
+
+        except Exception as e:
+            run_response.status = RunStatus.error
+            run_response.error = create_team_run_error_event(run_response, error=str(e))
+            run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+            if run_response.content is None:
+                run_response.content = str(e)
+
+            # Cleanup and store the run response and session
+            self._cleanup_and_store(run_response=run_response, session=session)
+
+            yield run_response.error
         finally:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
@@ -2166,106 +2164,106 @@ class Team:
         15. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+        memory_task = None
 
-        register_run(run_response.run_id)  # type: ignore
+        try:
+            register_run(run_response.run_id)  # type: ignore
 
-        if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(run_context=run_context)
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
 
-        # 1. Read or create session. Reads from the database if provided.
-        if self._has_async_db():
-            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+            # 1. Read or create session. Reads from the database if provided.
+            if self._has_async_db():
+                team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+            else:
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
-        # 2. Update metadata and session state
-        self._update_metadata(session=team_session)
-        # Initialize session state
-        run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_response.run_id,
-        )
-        # Update session state from DB
-        if run_context.session_state is not None:
-            run_context.session_state = self._load_session_state(
-                session=team_session, session_state=run_context.session_state
+            # 2. Update metadata and session state
+            self._update_metadata(session=team_session)
+            # Initialize session state
+            run_context.session_state = self._initialize_session_state(
+                session_state=run_context.session_state or {},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_response.run_id,
             )
+            # Update session state from DB
+            if run_context.session_state is not None:
+                run_context.session_state = self._load_session_state(
+                    session=team_session, session_state=run_context.session_state
+                )
 
-        run_input = cast(TeamRunInput, run_response.input)
+            run_input = cast(TeamRunInput, run_response.input)
 
-        # 3. Execute pre-hooks after session is loaded but before processing starts
-        if self.pre_hooks is not None:
-            pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
+            # 3. Execute pre-hooks after session is loaded but before processing starts
+            if self.pre_hooks is not None:
+                pre_hook_iterator = self._aexecute_pre_hooks(
+                    hooks=self.pre_hooks,  # type: ignore
+                    run_response=run_response,
+                    run_context=run_context,
+                    run_input=run_input,
+                    session=team_session,
+                    user_id=user_id,
+                    debug_mode=debug_mode,
+                    **kwargs,
+                )
+
+                # Consume the async iterator without yielding
+                async for _ in pre_hook_iterator:
+                    pass
+
+            # 4. Determine tools for model
+            team_run_context: Dict[str, Any] = {}
+            self.model = cast(Model, self.model)
+            await self._check_and_refresh_mcp_tools()
+            _tools = self._determine_tools_for_model(
+                model=self.model,
                 run_response=run_response,
                 run_context=run_context,
-                run_input=run_input,
+                team_run_context=team_run_context,
                 session=team_session,
                 user_id=user_id,
+                async_mode=True,
+                input_message=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
                 debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+            )
+
+            # 5. Prepare run messages
+            run_messages = await self._aget_run_messages(
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,  # type: ignore
+                user_id=user_id,
+                input_message=run_input.input_content,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
                 **kwargs,
             )
 
-            # Consume the async iterator without yielding
-            async for _ in pre_hook_iterator:
-                pass
+            self.model = cast(Model, self.model)
+            log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        # 4. Determine tools for model
-        team_run_context: Dict[str, Any] = {}
-        self.model = cast(Model, self.model)
-        await self._check_and_refresh_mcp_tools()
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=team_session,
-            user_id=user_id,
-            async_mode=True,
-            input_message=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-        )
+            # 6. Start memory creation in background task
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background task.")
+                memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # 5. Prepare run messages
-        run_messages = await self._aget_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            session=team_session,  # type: ignore
-            user_id=user_id,
-            input_message=run_input.input_content,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
 
-        self.model = cast(Model, self.model)
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
-        # 6. Start memory creation in background task
-        memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
-        try:
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 7. Reason about the task if reasoning is enabled
             await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
@@ -2362,15 +2360,18 @@ class Team:
 
             return run_response
         except Exception as e:
-            # Handle general exceptions during async non-streaming run
-            log_error(f"Team run {run_response.run_id} encountered an error: {str(e)}")
 
             run_response.error = create_team_run_error_event(run_response, error=str(e))
+            run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+
+            if run_response.content is None:
+                run_response.content = str(e)
 
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
             return run_response
+
         finally:
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
@@ -2418,36 +2419,38 @@ class Team:
         13. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
 
-        # 1. Resolve dependencies
-        if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(run_context=run_context)
+        memory_task = None
 
-        # 2. Read or create session. Reads from the database if provided.
-        if self._has_async_db():
-            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        try:
+            # 1. Resolve dependencies
+            if run_context.dependencies is not None:
+                await self._aresolve_run_dependencies(run_context=run_context)
 
-        # 3. Update metadata and session state
-        self._update_metadata(session=team_session)
-        # Initialize session state
-        run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_response.run_id,
-        )
-        # Update session state from DB
-        if run_context.session_state is not None:
-            run_context.session_state = self._load_session_state(
-                session=team_session, session_state=run_context.session_state
-            )  # type: ignore
+            # 2. Read or create session. Reads from the database if provided.
+            if self._has_async_db():
+                team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+            else:
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
-        # 4. Execute pre-hooks
-        run_input = cast(TeamRunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            try:
+            # 3. Update metadata and session state
+            self._update_metadata(session=team_session)
+            # Initialize session state
+            run_context.session_state = self._initialize_session_state(
+                session_state=run_context.session_state or {},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_response.run_id,
+            )
+            # Update session state from DB
+            if run_context.session_state is not None:
+                run_context.session_state = self._load_session_state(
+                    session=team_session, session_state=run_context.session_state
+                )  # type: ignore
+
+            # 4. Execute pre-hooks
+            run_input = cast(TeamRunInput, run_response.input)
+            self.model = cast(Model, self.model)
+            if self.pre_hooks is not None:
                 pre_hook_iterator = self._aexecute_pre_hooks(
                     hooks=self.pre_hooks,  # type: ignore
                     run_response=run_response,
@@ -2458,79 +2461,59 @@ class Team:
                     debug_mode=debug_mode,
                     stream_events=stream_events,
                     **kwargs,
-                )
+                    )
                 async for pre_hook_event in pre_hook_iterator:
                     yield pre_hook_event
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
-                run_response.status = RunStatus.error
-                run_response.content = str(e)
-                error_event = create_team_run_error_event(
-                    from_run_response=run_response,
-                    error=str(e),
-                    error_type=e.type,
-                    error_id=e.error_id,
-                    additional_data=e.additional_data,
-                )
-                run_response.error = error_event  # type: ignore
-                await self._acleanup_and_store(
-                    run_response=run_response,
-                    session=team_session,
-                )
-                yield error_event
-                return
 
-        # 5. Determine tools for model
-        team_run_context: Dict[str, Any] = {}
-        self.model = cast(Model, self.model)
-        await self._check_and_refresh_mcp_tools()
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=team_session,  # type: ignore
-            user_id=user_id,
-            async_mode=True,
-            input_message=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-        )
+            # 5. Determine tools for model
+            team_run_context: Dict[str, Any] = {}
+            self.model = cast(Model, self.model)
+            await self._check_and_refresh_mcp_tools()
+            _tools = self._determine_tools_for_model(
+                model=self.model,
+                run_response=run_response,
+                run_context=run_context,
+                team_run_context=team_run_context,
+                session=team_session,  # type: ignore
+                user_id=user_id,
+                async_mode=True,
+                input_message=run_input.input_content,
+                images=run_input.images,
+                videos=run_input.videos,
+                audio=run_input.audios,
+                files=run_input.files,
+                debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+            )
 
-        # 6. Prepare run messages
-        run_messages = await self._aget_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            session=team_session,  # type: ignore
-            user_id=user_id,
-            input_message=run_input.input_content,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
+            # 6. Prepare run messages
+            run_messages = await self._aget_run_messages(
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,  # type: ignore
+                user_id=user_id,
+                input_message=run_input.input_content,
+                audio=run_input.audios,
+                images=run_input.images,
+                videos=run_input.videos,
+                files=run_input.files,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                tools=_tools,
+                **kwargs,
+            )
 
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+            log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        # 7. Start memory creation in background task
-        memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
-            log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            # 7. Start memory creation in background task
+            if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                log_debug("Starting memory creation in background task.")
+                memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
 
-        try:
             # Considering both stream_events and stream_intermediate_steps (deprecated)
             stream_events = stream_events or stream_intermediate_steps
 
@@ -2715,6 +2698,18 @@ class Team:
 
             # Cleanup and store the run response and session
             await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+        except Exception as e:
+            run_response.status = RunStatus.error
+            run_response.error = create_team_run_error_event(run_response, error=str(e))
+            run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+            if run_response.content is None:
+                run_response.content = str(e)
+
+            # Cleanup and store the run response and session
+            await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+            yield run_response.error
 
         finally:
             await self._disconnect_mcp_tools()
