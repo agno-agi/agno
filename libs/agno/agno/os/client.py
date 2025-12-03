@@ -34,11 +34,6 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
-from agno.run.agent import RunOutput
-from agno.run.team import TeamRunOutput
-from agno.run.workflow import WorkflowRunOutput
-from agno.runner.os import AgentOSRunner
-
 try:
     from httpx import AsyncClient, HTTPStatusError
 except ImportError:
@@ -70,11 +65,6 @@ class AgentOSClient:
         self.timeout = timeout
         self._http_client: Optional[AsyncClient] = None
 
-        # Cached runner instances for reuse
-        self._agent_runners: Dict[str, AgentOSRunner] = {}
-        self._team_runners: Dict[str, AgentOSRunner] = {}
-        self._workflow_runners: Dict[str, AgentOSRunner] = {}
-
     async def __aenter__(self) -> "AgentOSClient":
         """Enter async context manager."""
         self._http_client = AsyncClient(timeout=self.timeout)
@@ -83,6 +73,19 @@ class AgentOSClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager and cleanup resources."""
         await self.close()
+
+    async def connect(self) -> "AgentOSClient":
+        """Explicitly create HTTP client connection.
+        
+        Use this when you need to manage the client lifecycle manually
+        without using the async context manager.
+        
+        Returns:
+            AgentOSClient: self for method chaining
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+        return self
 
     async def close(self) -> None:
         """Close HTTP client connections."""
@@ -335,53 +338,6 @@ class AgentOSClient:
         data = await self._get(f"/agents/{agent_id}")
         return AgentResponse.model_validate(data)
 
-    def agent(self, agent_id: str) -> AgentOSRunner:
-        """Get or create an AgentOSRunner for the specified agent.
-
-        Returns a cached runner instance if one exists, otherwise creates a new one.
-        This is useful for reusing runners across multiple executions.
-
-        Args:
-            agent_id: ID of the agent
-
-        Returns:
-            AgentOSRunner: Runner instance for executing the agent
-        """
-        if agent_id not in self._agent_runners:
-            self._agent_runners[agent_id] = AgentOSRunner(
-                base_url=self.base_url,
-                agent_id=agent_id,
-                api_key=self.api_key,
-                timeout=self.timeout,
-            )
-        return self._agent_runners[agent_id]
-
-    async def run_agent(
-        self,
-        agent_id: str,
-        input: Any,
-        **kwargs: Any,
-    ) -> Union[RunOutput, AsyncIterator]:
-        """Execute an agent (convenience wrapper).
-
-        This is a convenience method that creates a runner and executes it.
-        For multiple executions of the same agent, prefer using agent() to get
-        a runner instance and reuse it.
-
-        Args:
-            agent_id: ID of the agent to run
-            input: Input message or data
-            **kwargs: Additional arguments passed to AgentOSRunner.arun()
-
-        Returns:
-            RunOutput or AsyncIterator: Agent execution result
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        runner = self.agent(agent_id)
-        return await runner.arun(input, **kwargs)
-
     # Team Operations
 
     async def list_teams(self) -> List[TeamSummaryResponse]:
@@ -416,48 +372,6 @@ class AgentOSClient:
         data = await self._get(f"/teams/{team_id}")
         return TeamResponse.model_validate(data)
 
-    def team(self, team_id: str) -> AgentOSRunner:
-        """Get or create an AgentOSRunner for the specified team.
-
-        Returns a cached runner instance if one exists, otherwise creates a new one.
-
-        Args:
-            team_id: ID of the team
-
-        Returns:
-            AgentOSRunner: Runner instance for executing the team
-        """
-        if team_id not in self._team_runners:
-            self._team_runners[team_id] = AgentOSRunner(
-                base_url=self.base_url,
-                team_id=team_id,
-                api_key=self.api_key,
-                timeout=self.timeout,
-            )
-        return self._team_runners[team_id]
-
-    async def run_team(
-        self,
-        team_id: str,
-        input: Any,
-        **kwargs: Any,
-    ) -> Union[TeamRunOutput, AsyncIterator]:
-        """Execute a team (convenience wrapper).
-
-        Args:
-            team_id: ID of the team to run
-            input: Input message or data
-            **kwargs: Additional arguments passed to AgentOSRunner.arun()
-
-        Returns:
-            TeamRunOutput or AsyncIterator: Team execution result
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        runner = self.team(team_id)
-        return await runner.arun(input, **kwargs)
-
     # Workflow Operations
 
     async def list_workflows(self) -> List[WorkflowSummaryResponse]:
@@ -490,48 +404,6 @@ class AgentOSClient:
         """
         data = await self._get(f"/workflows/{workflow_id}")
         return WorkflowResponse.model_validate(data)
-
-    def workflow(self, workflow_id: str) -> AgentOSRunner:
-        """Get or create an AgentOSRunner for the specified workflow.
-
-        Returns a cached runner instance if one exists, otherwise creates a new one.
-
-        Args:
-            workflow_id: ID of the workflow
-
-        Returns:
-            AgentOSRunner: Runner instance for executing the workflow
-        """
-        if workflow_id not in self._workflow_runners:
-            self._workflow_runners[workflow_id] = AgentOSRunner(
-                base_url=self.base_url,
-                workflow_id=workflow_id,
-                api_key=self.api_key,
-                timeout=self.timeout,
-            )
-        return self._workflow_runners[workflow_id]
-
-    async def run_workflow(
-        self,
-        workflow_id: str,
-        input: Any,
-        **kwargs: Any,
-    ) -> Union[WorkflowRunOutput, AsyncIterator]:
-        """Execute a workflow (convenience wrapper).
-
-        Args:
-            workflow_id: ID of the workflow to run
-            input: Input message or data
-            **kwargs: Additional arguments passed to AgentOSRunner.arun()
-
-        Returns:
-            WorkflowRunOutput or AsyncIterator: Workflow execution result
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        runner = self.workflow(workflow_id)
-        return await runner.arun(input, **kwargs)
 
     # Memory Operations
 
