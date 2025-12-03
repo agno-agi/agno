@@ -169,6 +169,45 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
+@dataclass
+class MemberDelegationContext:
+    """Context passed to member delegation functions.
+
+    This dataclass contains all the information needed to run a member agent
+    as part of a team delegation.
+    """
+
+    member_agent: Agent
+    # The input to send to the member agent - either a task string or a list of history messages
+    input: Union[str, List[Message]]
+    user_id: Optional[str]
+    session_id: Optional[str]
+    session_state: Optional[Dict[str, Any]]
+    images: Optional[List[Image]]
+    videos: Optional[List[Video]]
+    audio: Optional[List[Audio]]
+    files: Optional[List[File]]
+    stream: bool
+    stream_events: Optional[bool]
+    debug_mode: bool
+    dependencies: Optional[Dict[str, Any]]
+    add_dependencies_to_context: bool
+    add_session_state_to_context: bool
+    metadata: Optional[Dict[str, Any]]
+    knowledge_filters: Optional[Union[Dict[str, Any], List[Any]]]
+    parent_run_id: Optional[str]
+
+
+# Type alias for member delegation functions (can be sync or async)
+MemberDelegationFunction = Callable[
+    [MemberDelegationContext],
+    Union[
+        Iterator[Union["RunOutputEvent", "TeamRunOutputEvent", "RunOutput", "TeamRunOutput", str]],
+        AsyncIterator[Union["RunOutputEvent", "TeamRunOutputEvent", "RunOutput", "TeamRunOutput", str]],
+    ],
+]
+
+
 @dataclass(init=False)
 class Team:
     """
@@ -345,6 +384,12 @@ class Team:
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
 
+    # --- Member Delegation ---
+    # Custom function to handle member delegation (can be sync or async)
+    # If provided, this function will be called instead of the default delegation logic.
+    # The function must match the execution mode: sync function for run(), async function for arun().
+    member_delegation_function: Optional[MemberDelegationFunction] = None
+
     # --- Structured output ---
     # Input schema for validating input
     input_schema: Optional[Type[BaseModel]] = None
@@ -511,6 +556,7 @@ class Team:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        member_delegation_function: Optional[MemberDelegationFunction] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Union[Model, str]] = None,
@@ -639,6 +685,9 @@ class Team:
         # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
+
+        # Member delegation function (can be sync or async)
+        self.member_delegation_function = member_delegation_function
 
         self.input_schema = input_schema
         self.output_schema = output_schema
@@ -1884,6 +1933,18 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
+        # Validate member_delegation_function compatibility early
+        if self.member_delegation_function is not None:
+            import inspect
+
+            if inspect.isasyncgenfunction(self.member_delegation_function) or inspect.iscoroutinefunction(
+                self.member_delegation_function
+            ):
+                raise ValueError(
+                    "member_delegation_function is an async function, but run() requires a sync function. "
+                    "Use arun() for async execution, or provide a sync generator function."
+                )
+
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
@@ -2771,6 +2832,19 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
+
+        # Validate member_delegation_function compatibility early
+        if self.member_delegation_function is not None:
+            import inspect
+
+            if not (
+                inspect.isasyncgenfunction(self.member_delegation_function)
+                or inspect.iscoroutinefunction(self.member_delegation_function)
+            ):
+                raise ValueError(
+                    "member_delegation_function is a sync function, but arun() requires an async function. "
+                    "Use run() for sync execution, or provide an async generator function."
+                )
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
@@ -7233,6 +7307,219 @@ class Team:
 
         return None
 
+    def _run_member_delegation(
+        self,
+        context: MemberDelegationContext,
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput, TeamRunOutput, str]]:
+        """
+        Default sync implementation for running a member agent delegation.
+
+        This method can be overridden by providing a custom sync `member_delegation_function`
+        when instantiating the Team. Use this with Team.run().
+
+        Args:
+            context: MemberDelegationContext containing all necessary parameters.
+
+        Yields:
+            Events, run outputs, or string responses from the member agent.
+        """
+        member_agent = context.member_agent
+
+        if context.stream:
+            member_agent_run_response_stream = member_agent.run(
+                input=context.input,
+                user_id=context.user_id,
+                session_id=context.session_id,
+                session_state=context.session_state,
+                images=context.images,
+                videos=context.videos,
+                audio=context.audio,
+                files=context.files,
+                stream=True,
+                stream_events=context.stream_events,
+                debug_mode=context.debug_mode,
+                dependencies=context.dependencies,
+                add_dependencies_to_context=context.add_dependencies_to_context,
+                metadata=context.metadata,
+                add_session_state_to_context=context.add_session_state_to_context,
+                knowledge_filters=context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+                yield_run_output=True,
+            )
+            member_agent_run_response = None
+            for member_agent_run_output_event in member_agent_run_response_stream:
+                # Do NOT break out of the loop, Iterator need to exit properly
+                if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
+                    member_agent_run_response = member_agent_run_output_event
+                    continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+
+                # Check if the run is cancelled
+                check_if_run_cancelled(member_agent_run_output_event)
+
+                # Yield the member event directly
+                member_agent_run_output_event.parent_run_id = (
+                    member_agent_run_output_event.parent_run_id or context.parent_run_id
+                )
+                yield member_agent_run_output_event
+
+            # Yield the final run response
+            if member_agent_run_response is not None:
+                yield member_agent_run_response
+        else:
+            member_agent_run_response = member_agent.run(
+                input=context.input,
+                user_id=context.user_id,
+                session_id=context.session_id,
+                session_state=context.session_state,
+                images=context.images,
+                videos=context.videos,
+                audio=context.audio,
+                files=context.files,
+                stream=False,
+                debug_mode=context.debug_mode,
+                dependencies=context.dependencies,
+                add_dependencies_to_context=context.add_dependencies_to_context,
+                add_session_state_to_context=context.add_session_state_to_context,
+                metadata=context.metadata,
+                knowledge_filters=context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+            )
+
+            check_if_run_cancelled(member_agent_run_response)
+
+            try:
+                if member_agent_run_response.content is None and (
+                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                ):
+                    yield "No response from the member agent."
+                elif isinstance(member_agent_run_response.content, str):
+                    content = member_agent_run_response.content.strip()
+                    if len(content) > 0:
+                        yield content
+
+                    # If the content is empty but we have tool calls
+                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                        tool_str = ""
+                        for tool in member_agent_run_response.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
+
+                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                    yield member_agent_run_response.content.model_dump_json(indent=2)
+                else:
+                    yield json.dumps(member_agent_run_response.content, indent=2)
+            except Exception as e:
+                yield str(e)
+
+            # Yield the run response for post-processing
+            yield member_agent_run_response
+
+    async def _arun_member_delegation(
+        self,
+        context: MemberDelegationContext,
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, RunOutput, TeamRunOutput, str]]:
+        """
+        Default async implementation for running a member agent delegation.
+
+        This method can be overridden by providing a custom async `member_delegation_function`
+        when instantiating the Team. Use this with Team.arun().
+
+        Args:
+            context: MemberDelegationContext containing all necessary parameters.
+
+        Yields:
+            Events, run outputs, or string responses from the member agent.
+        """
+        member_agent = context.member_agent
+
+        if context.stream:
+            member_agent_run_response_stream = member_agent.arun(
+                input=context.input,
+                user_id=context.user_id,
+                session_id=context.session_id,
+                session_state=context.session_state,
+                images=context.images,
+                videos=context.videos,
+                audio=context.audio,
+                files=context.files,
+                stream=True,
+                stream_events=context.stream_events,
+                debug_mode=context.debug_mode,
+                dependencies=context.dependencies,
+                add_dependencies_to_context=context.add_dependencies_to_context,
+                add_session_state_to_context=context.add_session_state_to_context,
+                metadata=context.metadata,
+                knowledge_filters=context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+                yield_run_output=True,
+            )
+            member_agent_run_response = None
+            async for member_agent_run_response_event in member_agent_run_response_stream:
+                # Do NOT break out of the loop, AsyncIterator need to exit properly
+                if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
+                    member_agent_run_response = member_agent_run_response_event
+                    continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+
+                # Check if the run is cancelled
+                check_if_run_cancelled(member_agent_run_response_event)
+
+                # Yield the member event directly
+                member_agent_run_response_event.parent_run_id = (
+                    getattr(member_agent_run_response_event, "parent_run_id", None) or context.parent_run_id
+                )
+                yield member_agent_run_response_event
+
+            # Yield the final run response
+            if member_agent_run_response is not None:
+                yield member_agent_run_response
+        else:
+            member_agent_run_response = await member_agent.arun(
+                input=context.input,
+                user_id=context.user_id,
+                session_id=context.session_id,
+                session_state=context.session_state,
+                images=context.images,
+                videos=context.videos,
+                audio=context.audio,
+                files=context.files,
+                stream=False,
+                debug_mode=context.debug_mode,
+                dependencies=context.dependencies,
+                add_dependencies_to_context=context.add_dependencies_to_context,
+                add_session_state_to_context=context.add_session_state_to_context,
+                metadata=context.metadata,
+                knowledge_filters=context.knowledge_filters
+                if not member_agent.knowledge_filters and member_agent.knowledge
+                else None,
+            )
+            check_if_run_cancelled(member_agent_run_response)
+
+            try:
+                if member_agent_run_response.content is None and (
+                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                ):
+                    yield "No response from the member agent."
+                elif isinstance(member_agent_run_response.content, str):
+                    if len(member_agent_run_response.content.strip()) > 0:
+                        yield member_agent_run_response.content
+
+                    # If the content is empty but we have tool calls
+                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])
+                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                    yield member_agent_run_response.content.model_dump_json(indent=2)
+                else:
+                    yield json.dumps(member_agent_run_response.content, indent=2)
+            except Exception as e:
+                yield str(e)
+
+            # Yield the run response for post-processing
+            yield member_agent_run_response
+
     def _get_delegate_task_function(
         self,
         run_response: TeamRunOutput,
@@ -7265,11 +7552,6 @@ class Team:
         def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
             # 1. Initialize the member agent
             self._initialize_member(member_agent)
-
-            # If team has send_media_to_model=False, ensure member agent also has it set to False
-            # This allows tools to access files while preventing models from receiving them
-            if not self.send_media_to_model:
-                member_agent.send_media_to_model = False
 
             # 2. Handle respond_directly nuances
             if self.respond_directly:
@@ -7401,94 +7683,48 @@ class Team:
 
             member_session_state_copy = copy(run_context.session_state)
 
-            if stream:
-                member_agent_run_response_stream = member_agent.run(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_events=stream_events or self.stream_member_events,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    metadata=run_context.metadata,
-                    add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    yield_run_output=True,
+            # Create the delegation context - use history if available, otherwise use task
+            delegation_input: Union[str, List[Message]] = (
+                history
+                if history
+                else (
+                    member_agent_task if isinstance(member_agent_task, str) else str(member_agent_task.content)  # type: ignore
                 )
-                member_agent_run_response = None
-                for member_agent_run_output_event in member_agent_run_response_stream:
-                    # Do NOT break out of the loop, Iterator need to exit properly
-                    if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                        member_agent_run_response = member_agent_run_output_event  # type: ignore
-                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+            )
+            delegation_context = MemberDelegationContext(
+                member_agent=member_agent,  # type: ignore
+                input=delegation_input,
+                user_id=user_id,
+                session_id=session.session_id,
+                session_state=member_session_state_copy,
+                images=images,
+                videos=videos,
+                audio=audio,
+                files=files,
+                stream=stream,
+                stream_events=stream_events or self.stream_member_events,
+                debug_mode=debug_mode,  # type: ignore
+                dependencies=run_context.dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,  # type: ignore
+                add_session_state_to_context=add_session_state_to_context,  # type: ignore
+                metadata=run_context.metadata,
+                knowledge_filters=run_context.knowledge_filters,
+                parent_run_id=run_response.run_id,
+            )
 
-                    # Check if the run is cancelled
-                    check_if_run_cancelled(member_agent_run_output_event)
-
-                    # Yield the member event directly
-                    member_agent_run_output_event.parent_run_id = (
-                        member_agent_run_output_event.parent_run_id or run_response.run_id
-                    )
-                    yield member_agent_run_output_event  # type: ignore
+            # Use custom delegation function if provided, otherwise use default
+            if self.member_delegation_function is not None:
+                delegation_fn = self.member_delegation_function
             else:
-                member_agent_run_response = member_agent.run(  # type: ignore
-                    input=member_agent_task if not history else history,  # type: ignore
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                )
+                delegation_fn = self._run_member_delegation
 
-                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+            member_agent_run_response = None
 
-                try:
-                    if member_agent_run_response.content is None and (  # type: ignore
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                    ):
-                        yield "No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                        content = member_agent_run_response.content.strip()  # type: ignore
-                        if len(content) > 0:
-                            yield content
-
-                        # If the content is empty but we have tool calls
-                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
-                            tool_str = ""
-                            for tool in member_agent_run_response.tools:  # type: ignore
-                                if tool.result:
-                                    tool_str += f"{tool.result},"
-                            yield tool_str.rstrip(",")
-
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    else:
-                        import json
-
-                        yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-                except Exception as e:
-                    yield str(e)
+            for output in delegation_fn(delegation_context):
+                if isinstance(output, (TeamRunOutput, RunOutput)):
+                    member_agent_run_response = output
+                else:
+                    yield output
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -7527,90 +7763,48 @@ class Team:
 
             member_session_state_copy = copy(run_context.session_state)
 
-            if stream:
-                member_agent_run_response_stream = member_agent.arun(  # type: ignore
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_events=stream_events or self.stream_member_events,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    yield_run_output=True,
+            # Create the delegation context - use history if available, otherwise use task
+            delegation_input: Union[str, List[Message]] = (
+                history
+                if history
+                else (
+                    member_agent_task if isinstance(member_agent_task, str) else str(member_agent_task.content)  # type: ignore
                 )
-                member_agent_run_response = None
-                async for member_agent_run_response_event in member_agent_run_response_stream:
-                    # Do NOT break out of the loop, AsyncIterator need to exit properly
-                    if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
-                        member_agent_run_response = member_agent_run_response_event  # type: ignore
-                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+            )
+            delegation_context = MemberDelegationContext(
+                member_agent=member_agent,  # type: ignore
+                input=delegation_input,
+                user_id=user_id,
+                session_id=session.session_id,
+                session_state=member_session_state_copy,
+                images=images,
+                videos=videos,
+                audio=audio,
+                files=files,
+                stream=stream,
+                stream_events=stream_events or self.stream_member_events,
+                debug_mode=debug_mode,  # type: ignore
+                dependencies=run_context.dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,  # type: ignore
+                add_session_state_to_context=add_session_state_to_context,  # type: ignore
+                metadata=run_context.metadata,
+                knowledge_filters=run_context.knowledge_filters,
+                parent_run_id=run_response.run_id,
+            )
 
-                    # Check if the run is cancelled
-                    check_if_run_cancelled(member_agent_run_response_event)
-
-                    # Yield the member event directly
-                    member_agent_run_response_event.parent_run_id = (
-                        getattr(member_agent_run_response_event, "parent_run_id", None) or run_response.run_id
-                    )
-                    yield member_agent_run_response_event  # type: ignore
+            # Use custom delegation function if provided, otherwise use default
+            if self.member_delegation_function is not None:
+                delegation_fn = self.member_delegation_function
             else:
-                member_agent_run_response = await member_agent.arun(  # type: ignore
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                )
-                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                delegation_fn = self._arun_member_delegation
 
-                try:
-                    if member_agent_run_response.content is None and (  # type: ignore
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                    ):
-                        yield "No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                        if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                            yield member_agent_run_response.content  # type: ignore
+            member_agent_run_response = None
 
-                        # If the content is empty but we have tool calls
-                        elif (
-                            member_agent_run_response.tools is not None  # type: ignore
-                            and len(member_agent_run_response.tools) > 0  # type: ignore
-                        ):
-                            yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    else:
-                        import json
-
-                        yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
-                except Exception as e:
-                    yield str(e)
+            async for output in delegation_fn(delegation_context):
+                if isinstance(output, (TeamRunOutput, RunOutput)):
+                    member_agent_run_response = output
+                else:
+                    yield output
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -7639,89 +7833,49 @@ class Team:
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
                 member_session_state_copy = copy(run_context.session_state)
-                if stream:
-                    member_agent_run_response_stream = member_agent.run(
-                        input=member_agent_task if not history else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                        stream_events=stream_events or self.stream_member_events,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
-                        debug_mode=debug_mode,
-                        dependencies=run_context.dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
-                        add_session_state_to_context=add_session_state_to_context,
-                        metadata=run_context.metadata,
-                        yield_run_output=True,
+
+                # Create the delegation context - use history if available, otherwise use task
+                delegation_input: Union[str, List[Message]] = (
+                    history
+                    if history
+                    else (
+                        member_agent_task if isinstance(member_agent_task, str) else str(member_agent_task.content)  # type: ignore
                     )
-                    member_agent_run_response = None
-                    for member_agent_run_response_chunk in member_agent_run_response_stream:
-                        # Do NOT break out of the loop, Iterator need to exit properly
-                        if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
-                            member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+                )
+                delegation_context = MemberDelegationContext(
+                    member_agent=member_agent,  # type: ignore
+                    input=delegation_input,
+                    user_id=user_id,
+                    session_id=session.session_id,
+                    session_state=member_session_state_copy,
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=stream,
+                    stream_events=stream_events or self.stream_member_events,
+                    debug_mode=debug_mode,  # type: ignore
+                    dependencies=run_context.dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,  # type: ignore
+                    add_session_state_to_context=add_session_state_to_context,  # type: ignore
+                    metadata=run_context.metadata,
+                    knowledge_filters=run_context.knowledge_filters,
+                    parent_run_id=run_response.run_id,
+                )
 
-                        # Check if the run is cancelled
-                        check_if_run_cancelled(member_agent_run_response_chunk)
+                # Use custom delegation function if provided, otherwise use default
+                delegation_fn = self.member_delegation_function or self._run_member_delegation
+                member_agent_run_response = None
 
-                        # Yield the member event directly
-                        member_agent_run_response_chunk.parent_run_id = (
-                            member_agent_run_response_chunk.parent_run_id or run_response.run_id
-                        )
-                        yield member_agent_run_response_chunk  # type: ignore
-
-                else:
-                    member_agent_run_response = member_agent.run(  # type: ignore
-                        input=member_agent_task if not history else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
-                        debug_mode=debug_mode,
-                        dependencies=run_context.dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
-                        add_session_state_to_context=add_session_state_to_context,
-                        metadata=run_context.metadata,
-                    )
-
-                    check_if_run_cancelled(member_agent_run_response)  # type: ignore
-
-                    try:
-                        if member_agent_run_response.content is None and (  # type: ignore
-                            member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                        ):
-                            yield f"Agent {member_agent.name}: No response from the member agent."
-                        elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                            if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                                yield f"Agent {member_agent.name}: {member_agent_run_response.content}"  # type: ignore
-                            elif (
-                                member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
-                            ):
-                                yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
-                        elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                            yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                        else:
-                            import json
-
-                            yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
-                    except Exception as e:
-                        yield f"Agent {member_agent.name}: Error - {str(e)}"
+                for output in delegation_fn(delegation_context):
+                    if isinstance(output, (TeamRunOutput, RunOutput)):
+                        member_agent_run_response = output
+                    elif stream:
+                        # In streaming mode, yield events directly
+                        yield output
+                    else:
+                        # In non-streaming mode, format with agent name
+                        yield f"Agent {member_agent.name}: {output}"
 
                 _process_delegate_task_to_member(
                     member_agent_run_response,
@@ -7753,44 +7907,49 @@ class Team:
                     member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                     member_session_state_copy = copy(run_context.session_state)
 
-                    member_stream = agent.arun(  # type: ignore
-                        input=member_agent_task if not history else history,
+                    # Create the delegation context - use history if available, otherwise use task
+                    delegation_input: Union[str, List[Message]] = (
+                        history
+                        if history
+                        else (
+                            member_agent_task if isinstance(member_agent_task, str) else str(member_agent_task.content)  # type: ignore
+                        )
+                    )
+                    delegation_context = MemberDelegationContext(
+                        member_agent=agent,  # type: ignore
+                        input=delegation_input,
                         user_id=user_id,
                         session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        session_state=member_session_state_copy,
                         images=images,
                         videos=videos,
                         audio=audio,
                         files=files,
                         stream=True,
                         stream_events=stream_events or self.stream_member_events,
-                        debug_mode=debug_mode,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
+                        debug_mode=debug_mode,  # type: ignore
                         dependencies=run_context.dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
-                        add_session_state_to_context=add_session_state_to_context,
+                        add_dependencies_to_context=add_dependencies_to_context,  # type: ignore
+                        add_session_state_to_context=add_session_state_to_context,  # type: ignore
                         metadata=run_context.metadata,
-                        yield_run_output=True,
+                        knowledge_filters=run_context.knowledge_filters,
+                        parent_run_id=run_response.run_id,
                     )
-                    member_agent_run_response = None
-                    try:
-                        async for member_agent_run_output_event in member_stream:
-                            # Do NOT break out of the loop, AsyncIterator need to exit properly
-                            if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                                member_agent_run_response = member_agent_run_output_event  # type: ignore
-                                continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                            check_if_run_cancelled(member_agent_run_output_event)
-                            member_agent_run_output_event.parent_run_id = (
-                                member_agent_run_output_event.parent_run_id or run_response.run_id
-                            )
-                            await queue.put(member_agent_run_output_event)
+                    # Use custom delegation function if provided, otherwise use default
+                    delegation_fn = self.member_delegation_function or self._arun_member_delegation
+                    member_agent_run_response = None
+
+                    try:
+                        async for output in delegation_fn(delegation_context):
+                            if isinstance(output, (TeamRunOutput, RunOutput)):
+                                member_agent_run_response = output
+                            else:
+                                await queue.put(output)
                     finally:
                         _process_delegate_task_to_member(
                             member_agent_run_response,
-                            member_agent,
+                            agent,
                             member_agent_task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
@@ -7828,62 +7987,64 @@ class Team:
                     current_agent = member_agent
                     member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
-                    async def run_member_agent(agent=current_agent) -> str:
+                    async def run_member_agent(
+                        agent: Union[Agent, "Team"] = current_agent,
+                        agent_task: Union[str, Message] = member_agent_task,
+                        agent_history: Optional[List[Message]] = history,
+                        agent_index: int = member_agent_index,
+                    ) -> str:
                         member_session_state_copy = copy(run_context.session_state)
 
-                        member_agent_run_response = await agent.arun(
-                            input=member_agent_task if not history else history,
+                        # Create the delegation context - use history if available, otherwise use task
+                        delegation_input: Union[str, List[Message]] = (
+                            agent_history
+                            if agent_history
+                            else (
+                                agent_task if isinstance(agent_task, str) else str(agent_task.content)  # type: ignore
+                            )
+                        )
+                        delegation_context = MemberDelegationContext(
+                            member_agent=agent,  # type: ignore
+                            input=delegation_input,
                             user_id=user_id,
-                            # All members have the same session_id
                             session_id=session.session_id,
-                            session_state=member_session_state_copy,  # Send a copy to the agent
+                            session_state=member_session_state_copy,
                             images=images,
                             videos=videos,
                             audio=audio,
                             files=files,
                             stream=False,
                             stream_events=stream_events,
-                            debug_mode=debug_mode,
-                            knowledge_filters=run_context.knowledge_filters
-                            if not member_agent.knowledge_filters and member_agent.knowledge
-                            else None,
+                            debug_mode=debug_mode,  # type: ignore
                             dependencies=run_context.dependencies,
-                            add_dependencies_to_context=add_dependencies_to_context,
-                            add_session_state_to_context=add_session_state_to_context,
+                            add_dependencies_to_context=add_dependencies_to_context,  # type: ignore
+                            add_session_state_to_context=add_session_state_to_context,  # type: ignore
                             metadata=run_context.metadata,
+                            knowledge_filters=run_context.knowledge_filters,
+                            parent_run_id=run_response.run_id,
                         )
-                        check_if_run_cancelled(member_agent_run_response)
+
+                        # Use custom delegation function if provided, otherwise use default
+                        delegation_fn = self.member_delegation_function or self._arun_member_delegation
+                        member_agent_run_response = None
+                        result_parts: List[str] = []
+
+                        async for output in delegation_fn(delegation_context):
+                            if isinstance(output, (TeamRunOutput, RunOutput)):
+                                member_agent_run_response = output
+                            else:
+                                result_parts.append(str(output))
 
                         _process_delegate_task_to_member(
                             member_agent_run_response,
-                            member_agent,
-                            member_agent_task,  # type: ignore
+                            agent,
+                            agent_task,  # type: ignore
                             member_session_state_copy,  # type: ignore
                         )
 
-                        member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-                        try:
-                            if member_agent_run_response.content is None and (
-                                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                            ):
-                                return f"Agent {member_name}: No response from the member agent."
-                            elif isinstance(member_agent_run_response.content, str):
-                                if len(member_agent_run_response.content.strip()) > 0:
-                                    return f"Agent {member_name}: {member_agent_run_response.content}"
-                                elif (
-                                    member_agent_run_response.tools is not None
-                                    and len(member_agent_run_response.tools) > 0
-                                ):
-                                    return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
-                            elif issubclass(type(member_agent_run_response.content), BaseModel):
-                                return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                            else:
-                                import json
-
-                                return f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}"
-                        except Exception as e:
-                            return f"Agent {member_name}: Error - {str(e)}"
-
+                        member_name = agent.name if agent.name else f"agent_{agent_index}"
+                        if result_parts:
+                            return f"Agent {member_name}: {' '.join(result_parts)}"
                         return f"Agent {member_name}: No Response"
 
                     tasks.append(run_member_agent)  # type: ignore
