@@ -7,6 +7,7 @@ If the agent doesn't have enough information to complete a task, it will use the
 from typing import Any, Dict, List
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import Toolkit
 from agno.tools.function import UserInputField
@@ -57,6 +58,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[EmailTools(), UserControlFlowTools()],
     markdown=True,
+    db=SqliteDb(db_file="tmp/agentic_user_input.db"),
 )
 
 run_response = agent.run("Send an email with the body 'What is the weather in Tokyo?'")

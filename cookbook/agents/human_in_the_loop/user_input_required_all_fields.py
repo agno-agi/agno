@@ -6,6 +6,7 @@ This example shows how to use the `requires_user_input` parameter to allow users
 from typing import List
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.tools.function import UserInputField
@@ -29,6 +30,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[send_email],
     markdown=True,
+    db=SqliteDb(db_file="tmp/user_input_required_all_fields.db"),
 )
 
 run_response = agent.run("Send an email please")

@@ -15,6 +15,7 @@ Run `pip install openai httpx rich agno` to install dependencies.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils import pprint
@@ -27,6 +28,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools(requires_confirmation_tools=["duckduckgo_search"])],
     markdown=True,
+    db=SqliteDb(db_file="tmp/confirmation_required_toolkit.db"),
 )
 
 run_response = agent.run("What is the current stock price of Apple?")

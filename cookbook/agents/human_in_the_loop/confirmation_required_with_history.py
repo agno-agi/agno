@@ -18,6 +18,7 @@ import json
 
 import httpx
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -60,6 +61,7 @@ agent = Agent(
     add_history_to_context=True,
     num_history_runs=2,
     markdown=True,
+    db=SqliteDb(db_file="tmp/confirmation_required_with_history.db"),
 )
 
 agent.run("What can you do?")

@@ -41,7 +41,7 @@ async def main():
         stream=True,
     ):
         if run_event.is_paused:  # Or agent.run_response.is_paused
-            for requirement in run_event.active_requirements:
+            for requirement in run_event.active_requirements:  # type: ignore
                 if requirement.needs_user_input:
                     input_schema: List[UserInputField] = requirement.user_input_schema  # type: ignore
 
@@ -57,7 +57,9 @@ async def main():
 
                         # Get user input
                         if field.value is None:
-                            user_value = input(f"Please enter a value for {field.name}: ")
+                            user_value = input(
+                                f"Please enter a value for {field.name}: "
+                            )
                         else:
                             print(f"Value: {field.value}")
                             user_value = field.value

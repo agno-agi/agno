@@ -84,9 +84,12 @@ for run_event in agent.run("Fetch the top 2 hackernews stories", stream=True):
                     requirement.reject()
                 else:
                     requirement.confirm()
+
         run_response = agent.continue_run(
-            run_id=run_event.run_id, updated_tools=run_event.tools, stream=True
-        )  # type: ignore
+            run_id=run_event.run_id,
+            requirements=run_event.requirements,  # type: ignore
+            stream=True,
+        )
         pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow

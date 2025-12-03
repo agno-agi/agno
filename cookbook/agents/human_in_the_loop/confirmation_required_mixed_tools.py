@@ -13,6 +13,7 @@ import json
 
 import httpx
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -64,6 +65,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories, send_email],
     markdown=True,
+    db=SqliteDb(db_file="tmp/confirmation_required_mixed_tools.db"),
 )
 
 run_response = agent.run(
@@ -87,10 +89,10 @@ if run_response.is_paused:
             else:
                 requirement.confirm()
 
-    for tool in run_response.tools:  # type: ignore
-        if not tool.requires_confirmation and tool.is_completed:
+    for requirement in run_response.active_requirements:  # type: ignore
+        if requirement.is_resolved():
             console.print(
-                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.duration:.2f}[/] seconds."  # type: ignore
+                f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] was completed in [bold green]{requirement.tool_execution.metrics.duration:.2f}[/] seconds."  # type: ignore
             )
 
     run_response = agent.continue_run(

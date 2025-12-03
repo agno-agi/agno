@@ -18,6 +18,7 @@ import json
 
 import httpx
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.tools.wikipedia import WikipediaTools
@@ -62,6 +63,7 @@ agent = Agent(
         WikipediaTools(requires_confirmation_tools=["search_wikipedia"]),
     ],
     markdown=True,
+    db=SqliteDb(db_file="tmp/confirmation_required_multiple_tools.db"),
 )
 
 run_response = agent.run(
