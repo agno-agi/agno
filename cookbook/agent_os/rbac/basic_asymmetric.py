@@ -9,7 +9,7 @@ RS256 uses:
 - Public key: Used by AgentOS to VERIFY token signatures
 
 Prerequisites:
-- Set JWT_VERIFICATION_KEY environment variable with your public key (PEM format)
+- Set JWT_VERIFICATION_KEY and JWT_SIGNING_KEY environment variables with your public and private keys (PEM format)
 - Or generate keys at runtime for testing (as shown below)
 - Endpoints are automatically protected with default scope mappings
 """
@@ -48,6 +48,7 @@ def generate_rsa_keys():
     return private_pem.decode("utf-8"), public_pem.decode("utf-8")
 
 PUBLIC_KEY = os.getenv("JWT_VERIFICATION_KEY", None)
+PRIVATE_KEY = os.getenv("JWT_SIGNING_KEY", None)
 
 if not PUBLIC_KEY:
     # Generate keys for this example (in production, use your auth provider's public key)
