@@ -539,6 +539,8 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
+    error: Optional[RunErrorEvent] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
@@ -587,6 +589,7 @@ class RunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "error",
             ]
         }
 
@@ -675,6 +678,9 @@ class RunOutput:
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
+        if self.error is not None:
+            _dict["error"] = self.error.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -750,6 +756,10 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        error = data.pop("error", None)
+        if error is not None:
+            error = run_output_event_from_dict(error)  # type: ignore
+
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
 
@@ -772,6 +782,7 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
+            error=error,  # type: ignore
             **filtered_data,
         )
 
