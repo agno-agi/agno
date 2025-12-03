@@ -5,7 +5,7 @@ from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -104,7 +104,7 @@ knowledge = Knowledge(
 agno_assist = Agent(
     name="Agno Assist",
     id="agno-assist",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=OpenAIChat(id="gpt-4.1"),
     description=description,
     instructions=instructions,
     db=db_sqlite,
@@ -134,4 +134,4 @@ if __name__ == "__main__":
 
     """
     # Don't use reload=True here, this can cause issues with the lifespan
-    agent_os.serve(app="04_agent_with_knowledge_tracing:app")
+    agent_os.serve(app="03_agent_with_knowledge_tracing:app")
