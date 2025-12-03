@@ -92,7 +92,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
-        verify_audience: bool = True,
+        verify_audience: bool = False,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         authorization: Optional[bool] = None,
@@ -116,7 +116,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim: JWT claim name for user ID (default: "sub")
             session_id_claim: JWT claim name for session ID (default: "session_id")
             audience_claim: JWT claim name for audience/OS ID (default: "aud")
-            verify_audience: Whether to verify the audience claim matches AgentOS ID (default: True)
+            verify_audience: Whether to verify the audience claim matches AgentOS ID (default: False)
             authorization: Whether to add validation/authorization checks to the request (i.e. validation of scopes)
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
