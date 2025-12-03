@@ -56,6 +56,17 @@ def download_image(url: str, output_path: str) -> bool:
         return False
 
 
+def download_audio(url: str, output_path: str) -> str:
+    """Download audio from URL"""
+    response = httpx.get(url)
+    response.raise_for_status()
+
+    with open(output_path, "wb") as f:
+        for chunk in response.iter_bytes(chunk_size=8192):
+            f.write(chunk)
+    return output_path
+
+
 def download_video(url: str, output_path: str) -> str:
     """Download video from URL"""
     response = httpx.get(url)

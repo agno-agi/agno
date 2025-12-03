@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -50,7 +51,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
-from agno.session.workflow import WorkflowSession
+from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.log import (
@@ -153,8 +154,6 @@ class Workflow:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Workflow
     stream_events: bool = False
-    # [Deprecated] Stream the intermediate steps from the Workflow
-    stream_intermediate_steps: bool = False
     # Stream events from executors (agents/teams/functions) within steps
     stream_executor_events: bool = True
 
@@ -184,6 +183,12 @@ class Workflow:
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
+    # Deprecated. Use stream_events instead.
+    stream_intermediate_steps: bool = False
+
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: bool = False
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -196,6 +201,7 @@ class Workflow:
         session_state: Optional[Dict[str, Any]] = None,
         overwrite_db_session_state: bool = False,
         user_id: Optional[str] = None,
+        debug_level: Literal[1, 2] = 1,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
@@ -221,11 +227,10 @@ class Workflow:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
+        self.debug_level = debug_level
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
         self.stream = stream
-        self.stream_events = stream_events
-        self.stream_intermediate_steps = stream_intermediate_steps
         self.stream_executor_events = stream_executor_events
         self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
@@ -236,6 +241,14 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
+
+        if stream_intermediate_steps:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self.stream_events = stream_events or stream_intermediate_steps
 
         # Warn if workflow history is enabled without a database
         if self.add_workflow_history_to_steps and self.db is None:
@@ -755,13 +768,12 @@ class Workflow:
         Returns:
             WorkflowSession: The WorkflowSession loaded from the database or created if it does not exist.
         """
-        if not session_id and not self.session_id:
+        session_id_to_load = session_id or self.session_id
+        if session_id_to_load is None:
             raise Exception("No session_id provided")
 
-        session_id_to_load = session_id or self.session_id
-
         # Try to load from database
-        if self.db is not None and session_id_to_load is not None:
+        if self.db is not None:
             workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id_to_load))
             return workflow_session
 
@@ -830,6 +842,54 @@ class Workflow:
 
             self._upsert_session(session=session)
             log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+
+    def get_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[WorkflowChatInteraction]:
+        """Return a list of dictionaries containing the input and output for each run in the session.
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
+
+        Returns:
+            A list of WorkflowChatInteraction objects.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        session = self.get_session(
+            session_id=session_id,
+        )
+        if session is None:
+            raise Exception("Session not found")
+
+        return session.get_chat_history(last_n_runs=last_n_runs)
+
+    async def aget_chat_history(
+        self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
+    ) -> List[WorkflowChatInteraction]:
+        """Return a list of dictionaries containing the input and output for each run in the session.
+
+        Args:
+            session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
+
+        Returns:
+            A list of dictionaries containing the input and output for each run.
+        """
+        session_id = session_id or self.session_id
+        if session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        session = await self.aget_session(session_id=session_id)
+        if session is None:
+            raise Exception("Session not found")
+
+        return session.get_chat_history(last_n_runs=last_n_runs)
 
     # -*- Session Database Functions
     async def _aread_session(self, session_id: str) -> Optional[WorkflowSession]:
@@ -1050,9 +1110,12 @@ class Workflow:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             use_workflow_logger()
+            debug_level: Literal[1, 2] = (
+                cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+            )
 
             self.debug_mode = True
-            set_log_level_to_debug(source_type="workflow")
+            set_log_level_to_debug(source_type="workflow", level=debug_level)
 
             # Propagate to steps - only if steps is iterable (not callable)
             if self.steps and not callable(self.steps):
@@ -1227,14 +1290,13 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -1300,6 +1362,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation after step execution
@@ -1400,16 +1463,13 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -1497,6 +1557,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -1776,7 +1837,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        _session_state = session_state or {}
+        _session_state = session_state if session_state is not None else {}
         _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
         return workflow_session, _session_state
@@ -1788,6 +1849,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
@@ -1799,10 +1861,6 @@ class Workflow:
         )
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -1876,6 +1934,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation after step execution
@@ -1976,6 +2035,7 @@ class Workflow:
         run_context: RunContext,
         stream_events: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -1987,10 +2047,6 @@ class Workflow:
         )
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -2086,6 +2142,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
                             raise_if_cancelled(workflow_run_response.run_id)
@@ -3402,6 +3459,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3420,6 +3478,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3437,19 +3496,22 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         if self._has_async_db():
             raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         input = self._validate_input(input)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
         self._set_debug()
-
-        run_id = str(uuid4())
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3460,7 +3522,10 @@ class Workflow:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
@@ -3537,6 +3602,7 @@ class Workflow:
                 workflow_run_response=workflow_run_response,
                 stream_events=stream_events,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
@@ -3545,6 +3611,7 @@ class Workflow:
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -3565,6 +3632,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3584,6 +3652,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -3602,6 +3671,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -3617,6 +3687,12 @@ class Workflow:
         if background:
             if stream and websocket:
                 # Consider both stream_events and stream_intermediate_steps (deprecated)
+                if stream_intermediate_steps is not None:
+                    warnings.warn(
+                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
                 stream_events = stream_events or stream_intermediate_steps or False
 
                 # Background + Streaming + WebSocket = Real-time events
@@ -3654,7 +3730,9 @@ class Workflow:
 
         self._set_debug()
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
         run_id = str(uuid4())
+        register_run(run_id)
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3732,6 +3810,7 @@ class Workflow:
                 files=files,
                 session_state=session_state,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
@@ -3744,6 +3823,7 @@ class Workflow:
                 files=files,
                 session_state=session_state,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -3792,8 +3872,6 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -3812,12 +3890,10 @@ class Workflow:
             videos: Video input
             files: File input
             stream: Whether to stream the response content
-            stream_events: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
         """
         if self._has_async_db():
             raise Exception("`print_response()` is not supported with an async DB. Please use `aprint_response()`.")
@@ -3825,19 +3901,8 @@ class Workflow:
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             print_response_stream(
@@ -3850,7 +3915,7 @@ class Workflow:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -3886,8 +3951,6 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -3906,29 +3969,16 @@ class Workflow:
             videos: Video input
             files: Files input
             stream: Whether to stream the response content
-            stream_events: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
         """
         if stream is None:
             stream = self.stream or False
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = (
-                False
-                if (self.stream_events is None and self.stream_intermediate_steps is None)
-                else (self.stream_intermediate_steps or self.stream_events)
-            )
+        if "stream_events" in kwargs:
+            kwargs.pop("stream_events")
 
         if stream:
             await aprint_response_stream(
@@ -3941,7 +3991,7 @@ class Workflow:
                 images=images,
                 videos=videos,
                 files=files,
-                stream_events=stream_events,
+                stream_events=True,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4122,6 +4172,56 @@ class Workflow:
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.id
 
+    def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_hooks_in_background setting to this workflow and all agents/teams in steps.
+
+        This method sets _run_hooks_in_background on the workflow and all agents/teams
+        within its steps, including nested teams and their members.
+
+        Args:
+            run_in_background: Whether hooks should run in background. Defaults to True.
+        """
+        self._run_hooks_in_background = run_in_background
+
+        if not self.steps or callable(self.steps):
+            return
+
+        steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+
+        for step in steps_list:
+            self._propagate_hooks_to_step(step, run_in_background)
+
+    def _propagate_hooks_to_step(self, step: Any, run_in_background: bool) -> None:
+        """Recursively propagate _run_hooks_in_background to a step and its nested content."""
+        # Handle Step objects with active executor
+        if hasattr(step, "active_executor") and step.active_executor:
+            executor = step.active_executor
+            # If it's a team, use its propagation method
+            if hasattr(executor, "propagate_run_hooks_in_background"):
+                executor.propagate_run_hooks_in_background(run_in_background)
+            elif hasattr(executor, "_run_hooks_in_background"):
+                executor._run_hooks_in_background = run_in_background
+
+        # Handle agent/team directly on step
+        if hasattr(step, "agent") and step.agent:
+            if hasattr(step.agent, "_run_hooks_in_background"):
+                step.agent._run_hooks_in_background = run_in_background
+        if hasattr(step, "team") and step.team:
+            # Use team's method to propagate to all nested members
+            if hasattr(step.team, "propagate_run_hooks_in_background"):
+                step.team.propagate_run_hooks_in_background(run_in_background)
+            elif hasattr(step.team, "_run_hooks_in_background"):
+                step.team._run_hooks_in_background = run_in_background
+
+        # Handle nested primitives - check 'steps' and 'choices' attributes
+        for attr_name in ["steps", "choices"]:
+            if hasattr(step, attr_name):
+                attr_value = getattr(step, attr_name)
+                if attr_value and isinstance(attr_value, list):
+                    for nested_step in attr_value:
+                        self._propagate_hooks_to_step(nested_step, run_in_background)
+
     ###########################################################################
     # Telemetry functions
     ###########################################################################
@@ -4174,8 +4274,6 @@ class Workflow:
         user: str = "User",
         emoji: str = ":technologist:",
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -4195,12 +4293,10 @@ class Workflow:
             user: Display name for the user in the CLI prompt. Defaults to "User".
             emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
             stream: Whether to stream the workflow response. If None, uses workflow default.
-            stream_events: Whether to stream intermediate step outputs. If None, uses workflow default.
             markdown: Whether to render output as markdown. Defaults to True.
             show_time: Whether to display timestamps in the output. Defaults to True.
             show_step_details: Whether to show detailed step information. Defaults to True.
             exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
             **kwargs: Additional keyword arguments passed to the workflow's print_response method.
 
         Returns:
@@ -4209,14 +4305,10 @@ class Workflow:
 
         from rich.prompt import Prompt
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps or False
-
         if input:
             self.print_response(
                 input=input,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4234,7 +4326,6 @@ class Workflow:
             self.print_response(
                 input=message,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4251,8 +4342,6 @@ class Workflow:
         user: str = "User",
         emoji: str = ":technologist:",
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
@@ -4272,12 +4361,10 @@ class Workflow:
             user: Display name for the user in the CLI prompt. Defaults to "User".
             emoji: Emoji to display next to the user name in prompts. Defaults to ":technologist:".
             stream: Whether to stream the workflow response. If None, uses workflow default.
-            stream_events: Whether to stream events from the workflow. If None, uses workflow default.
             markdown: Whether to render output as markdown. Defaults to True.
             show_time: Whether to display timestamps in the output. Defaults to True.
             show_step_details: Whether to show detailed step information. Defaults to True.
             exit_on: List of commands that will exit the CLI. Defaults to ["exit", "quit", "bye", "stop"].
-            (deprecated) stream_intermediate_steps: Whether to stream intermediate step outputs. If None, uses workflow default.
             **kwargs: Additional keyword arguments passed to the workflow's print_response method.
 
         Returns:
@@ -4286,14 +4373,10 @@ class Workflow:
 
         from rich.prompt import Prompt
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps or False
-
         if input:
             await self.aprint_response(
                 input=input,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -4311,7 +4394,6 @@ class Workflow:
             await self.aprint_response(
                 input=message,
                 stream=stream,
-                stream_events=stream_events,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,

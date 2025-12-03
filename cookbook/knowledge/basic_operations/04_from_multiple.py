@@ -41,7 +41,7 @@ asyncio.run(
         urls=[
             "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
             "https://docs.agno.com/introduction",
-            "https://docs.agno.com/agents/knowledge.md",
+            "https://docs.agno.com/basics/knowledge/overview.md",
         ],
     )
 )

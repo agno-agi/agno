@@ -263,7 +263,7 @@ def test_extract_with_custom_name():
         }
 
         # Create reader and call read with custom name
-        reader = TavilyReader()
+        reader = TavilyReader(chunk=False)
         documents = reader.read("https://example.com", name="Custom Name")
 
         # Verify custom name was used

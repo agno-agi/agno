@@ -129,12 +129,13 @@ class WatsonX(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by WatsonX.
 
         Args:
             message (Message): The message to format.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -151,7 +152,12 @@ class WatsonX(Model):
         if message.videos is not None and len(message.videos) > 0:
             log_warning("Video input is currently unsupported.")
 
-        return message.to_dict()
+        message_dict = message.to_dict()
+
+        # Use compressed content for tool messages if compression is active
+        if message.role == "tool" and compress_tool_results:
+            message_dict["content"] = message.get_content(use_compressed_content=True)
+        return message_dict
 
     def invoke(
         self,
@@ -161,6 +167,7 @@ class WatsonX(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the WatsonX API.
@@ -171,7 +178,7 @@ class WatsonX(Model):
 
             client = self.get_client()
 
-            formatted_messages = [self._format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
             request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
@@ -196,6 +203,7 @@ class WatsonX(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Any:
         """
         Sends an asynchronous chat completion request to the WatsonX API.
@@ -205,7 +213,7 @@ class WatsonX(Model):
                 run_response.metrics.set_time_to_first_token()
 
             client = self.get_client()
-            formatted_messages = [self._format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 
             request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -231,13 +239,14 @@ class WatsonX(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the WatsonX API.
         """
         try:
             client = self.get_client()
-            formatted_messages = [self._format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 
             request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -265,6 +274,7 @@ class WatsonX(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the WatsonX API.
@@ -274,7 +284,7 @@ class WatsonX(Model):
                 run_response.metrics.set_time_to_first_token()
 
             client = self.get_client()
-            formatted_messages = [self._format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 
             # Get parameters for chat
             request_params = self.get_request_params(
