@@ -1335,9 +1335,6 @@ class Team:
         13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
         """
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
@@ -1538,8 +1535,6 @@ class Team:
         9. Create session summary
         10. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
@@ -1902,6 +1897,8 @@ class Team:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        register_run(run_id)
+
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
 
@@ -2151,8 +2148,6 @@ class Team:
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        register_run(run_response.run_id)  # type: ignore
-
         if run_context.dependencies is not None:
             await self._aresolve_run_dependencies(run_context=run_context)
 
@@ -2245,9 +2240,6 @@ class Team:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         try:
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2481,9 +2473,6 @@ class Team:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         try:
             # Considering both stream_events and stream_intermediate_steps (deprecated)
@@ -2786,6 +2775,8 @@ class Team:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        register_run(run_id)
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
