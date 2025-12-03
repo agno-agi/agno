@@ -15,7 +15,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
@@ -326,9 +326,6 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics if None
 
             self._ensure_message_metrics_initialized(assistant_message)
@@ -375,9 +372,6 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics if None
 
             self._ensure_message_metrics_initialized(assistant_message)
@@ -422,9 +416,6 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics if None
 
             self._ensure_message_metrics_initialized(assistant_message)
@@ -471,9 +462,6 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics if None
 
             self._ensure_message_metrics_initialized(assistant_message)

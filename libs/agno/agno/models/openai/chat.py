@@ -11,7 +11,7 @@ from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -397,9 +397,6 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 
@@ -483,9 +480,6 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
             response = await self.get_async_client().chat.completions.create(
@@ -565,9 +559,6 @@ class OpenAIChat(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 
@@ -647,9 +638,6 @@ class OpenAIChat(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 

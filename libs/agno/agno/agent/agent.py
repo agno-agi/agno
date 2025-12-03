@@ -48,7 +48,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics, MessageMetrics, ModelMetrics, SessionMetrics, SessionModelMetrics
+from agno.metrics import Metrics, MessageMetrics, ModelMetrics, SessionMetrics, SessionModelMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -1089,7 +1089,7 @@ class Agent:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
-                self._make_memories, run_messages=run_messages, user_id=user_id
+                self._make_memories, run_messages=run_messages, user_id=user_id, run_response=run_response
             )
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
@@ -1308,7 +1308,7 @@ class Agent:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
-                self._make_memories, run_messages=run_messages, user_id=user_id
+                self._make_memories, run_messages=run_messages, user_id=user_id, run_response=run_response
             )
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
@@ -1983,7 +1983,7 @@ class Agent:
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
-            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id, run_response=run_response))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -2263,7 +2263,7 @@ class Agent:
         memory_task = None
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
-            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+            memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id, run_response=run_response))
 
         # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
         cultural_knowledge_task = None
@@ -5115,12 +5115,16 @@ class Agent:
             output_model_messages=output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
             parser_model_messages=parser_model_messages,
+            memory_model_messages=getattr(run_messages, 'memory_model_messages', None),
+            session_summary_model_messages=getattr(run_messages, 'session_summary_model_messages', None),
+            compression_model_messages=getattr(run_messages, 'compression_model_messages', None),
+            culture_model_messages=getattr(run_messages, 'culture_model_messages', None),
             current_run_metrics=run_response.metrics
         )
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput):
         """Calculate session metrics - convert run Metrics to SessionMetrics"""
-        from agno.models.metrics import SessionModelMetrics
+        from agno.metrics import SessionModelMetrics
         
         session_metrics = self._get_session_metrics(session=session)
 
@@ -5294,6 +5298,10 @@ class Agent:
             output_model_messages=output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
             parser_model_messages=parser_model_messages,
+            memory_model_messages=getattr(run_messages, 'memory_model_messages', None),
+            session_summary_model_messages=getattr(run_messages, 'session_summary_model_messages', None),
+            compression_model_messages=getattr(run_messages, 'compression_model_messages', None),
+            culture_model_messages=getattr(run_messages, 'culture_model_messages', None),
             current_run_metrics=run_response.metrics
         )
 
@@ -5393,6 +5401,10 @@ class Agent:
             output_model_messages=output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
             parser_model_messages=parser_model_messages,
+            memory_model_messages=getattr(run_messages, 'memory_model_messages', None),
+            session_summary_model_messages=getattr(run_messages, 'session_summary_model_messages', None),
+            compression_model_messages=getattr(run_messages, 'compression_model_messages', None),
+            culture_model_messages=getattr(run_messages, 'culture_model_messages', None),
             current_run_metrics=run_response.metrics
         )
 
@@ -5769,6 +5781,7 @@ class Agent:
         self,
         run_messages: RunMessages,
         user_id: Optional[str] = None,
+        run_response: Optional[RunOutput] = None,
     ):
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
@@ -5779,6 +5792,8 @@ class Agent:
                 message=user_message_str,
                 user_id=user_id,
                 agent_id=self.id,
+                run_response=run_response,
+                run_messages=run_messages,
             )
 
         if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -5802,7 +5817,7 @@ class Agent:
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
             if len(non_empty_messages) > 0 and self.memory_manager is not None:
-                self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
+                self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id, run_response=run_response, run_messages=run_messages)  # type: ignore
             else:
                 log_warning("Unable to add messages to memory")
 
@@ -5810,6 +5825,7 @@ class Agent:
         self,
         run_messages: RunMessages,
         user_id: Optional[str] = None,
+        run_response: Optional[RunOutput] = None,
     ):
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
@@ -5820,6 +5836,8 @@ class Agent:
                 message=user_message_str,
                 user_id=user_id,
                 agent_id=self.id,
+                run_response=run_response,
+                run_messages=run_messages,
             )
 
         if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
@@ -5844,7 +5862,7 @@ class Agent:
             ]
             if len(non_empty_messages) > 0 and self.memory_manager is not None:
                 await self.memory_manager.acreate_user_memories(  # type: ignore
-                    messages=non_empty_messages, user_id=user_id, agent_id=self.id
+                    messages=non_empty_messages, user_id=user_id, agent_id=self.id, run_response=run_response, run_messages=run_messages
                 )
             else:
                 log_warning("Unable to add messages to memory")
@@ -9205,6 +9223,10 @@ class Agent:
         output_model_messages: Optional[List[Message]] = None,
         reasoning_model_messages: Optional[List[Message]] = None,
         parser_model_messages: Optional[List[Message]] = None,
+        memory_model_messages: Optional[List[Message]] = None,
+        session_summary_model_messages: Optional[List[Message]] = None,
+        compression_model_messages: Optional[List[Message]] = None,
+        culture_model_messages: Optional[List[Message]] = None,
         messages: Optional[List[Message]] = None,  # For backward compatibility
         current_run_metrics: Optional[Metrics] = None,
     ) -> Metrics:
@@ -9215,10 +9237,14 @@ class Agent:
             output_model_messages: Messages from the output_model (assistant messages)
             reasoning_model_messages: Messages from the reasoning_model (assistant messages)
             parser_model_messages: Messages from the parser_model (assistant messages)
+            memory_model_messages: Messages from the memory_manager model (assistant messages)
+            session_summary_model_messages: Messages from the session_summary_manager model (assistant messages)
+            compression_model_messages: Messages from the compression_manager model (assistant messages)
+            culture_model_messages: Messages from the culture_manager model (assistant messages)
             messages: Legacy parameter - if provided, treated as model_messages
             current_run_metrics: Existing metrics to update (preserves timing)
         """
-        from agno.models.metrics import ModelMetrics
+        from agno.metrics import ModelMetrics
         
         metrics = current_run_metrics or Metrics()
         details: Dict[str, List[ModelMetrics]] = {}
@@ -9362,6 +9388,146 @@ class Agent:
                     time_to_first_token=first_time_to_first_token,
                 )
                 details["parser_model"] = [model_metrics]
+        
+        # Track memory_model metrics
+        if memory_model_messages and self.memory_manager is not None and self.memory_manager.model is not None:
+            memory_model = self.memory_manager.get_model()
+            memory_assistant_role = memory_model.assistant_message_role
+            memory_model_assistant_messages = [
+                m for m in memory_model_messages
+                if m.role == memory_assistant_role and m.metrics is not None
+            ]
+            
+            if memory_model_assistant_messages:
+                # Aggregate metrics from all memory_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in memory_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = memory_model.id
+                model_provider = memory_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["memory_model"] = [model_metrics]
+        
+        # Track session_summary_model metrics
+        if session_summary_model_messages and self.session_summary_manager is not None and self.session_summary_manager.model is not None:
+            session_summary_model = self.session_summary_manager.model
+            session_summary_assistant_role = session_summary_model.assistant_message_role
+            session_summary_model_assistant_messages = [
+                m for m in session_summary_model_messages
+                if m.role == session_summary_assistant_role and m.metrics is not None
+            ]
+            
+            if session_summary_model_assistant_messages:
+                # Aggregate metrics from all session_summary_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in session_summary_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = session_summary_model.id
+                model_provider = session_summary_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["session_summary_model"] = [model_metrics]
+        
+        # Track compression_model metrics
+        if compression_model_messages and self.compression_manager is not None and self.compression_manager.model is not None:
+            compression_model = self.compression_manager.model
+            compression_assistant_role = compression_model.assistant_message_role
+            compression_model_assistant_messages = [
+                m for m in compression_model_messages
+                if m.role == compression_assistant_role and m.metrics is not None
+            ]
+            
+            if compression_model_assistant_messages:
+                # Aggregate metrics from all compression_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in compression_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = compression_model.id
+                model_provider = compression_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["compression_model"] = [model_metrics]
+        
+        # Track culture_model metrics
+        if culture_model_messages and self.culture_manager is not None and self.culture_manager.model is not None:
+            culture_model = self.culture_manager.get_model()
+            culture_assistant_role = culture_model.assistant_message_role
+            culture_model_assistant_messages = [
+                m for m in culture_model_messages
+                if m.role == culture_assistant_role and m.metrics is not None
+            ]
+            
+            if culture_model_assistant_messages:
+                # Aggregate metrics from all culture_model messages
+                aggregated_metrics = MessageMetrics()
+                first_time_to_first_token = None
+                
+                for m in culture_model_assistant_messages:
+                    if m.metrics:
+                        aggregated_metrics += m.metrics
+                        if m.metrics.time_to_first_token is not None and first_time_to_first_token is None:
+                            first_time_to_first_token = m.metrics.time_to_first_token
+                
+                # Get model info
+                model_id = culture_model.id
+                model_provider = culture_model.get_provider()
+                
+                # Create ModelMetrics entry
+                model_metrics = ModelMetrics(
+                    id=model_id,
+                    provider=model_provider,
+                    input_tokens=aggregated_metrics.input_tokens,
+                    output_tokens=aggregated_metrics.output_tokens,
+                    total_tokens=aggregated_metrics.total_tokens,
+                    time_to_first_token=first_time_to_first_token,
+                )
+                details["culture_model"] = [model_metrics]
         
         # Set details if we have any model metrics
         if details:
@@ -10369,6 +10535,10 @@ class Agent:
             output_model_messages=run_messages.output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
             parser_model_messages=parser_model_messages,
+            memory_model_messages=getattr(run_messages, 'memory_model_messages', None),
+            session_summary_model_messages=getattr(run_messages, 'session_summary_model_messages', None),
+            compression_model_messages=getattr(run_messages, 'compression_model_messages', None),
+            culture_model_messages=getattr(run_messages, 'culture_model_messages', None),
             current_run_metrics=run_response.metrics
         )
 
@@ -10463,6 +10633,10 @@ class Agent:
             output_model_messages=run_messages.output_model_messages,
             reasoning_model_messages=reasoning_model_messages,
             parser_model_messages=parser_model_messages,
+            memory_model_messages=getattr(run_messages, 'memory_model_messages', None),
+            session_summary_model_messages=getattr(run_messages, 'session_summary_model_messages', None),
+            compression_model_messages=getattr(run_messages, 'compression_model_messages', None),
+            culture_model_messages=getattr(run_messages, 'culture_model_messages', None),
             current_run_metrics=run_response.metrics
         )
 

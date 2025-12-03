@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import MessageMetrics, ToolCallMetrics
+from agno.metrics import MessageMetrics, ToolCallMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -922,15 +922,20 @@ class Model(ABC):
                 assistant_message.metrics.start_timer()
             # Update MessageMetrics with usage data from response
             usage = provider_response.response_usage
-            assistant_message.metrics.input_tokens += usage.input_tokens
-            assistant_message.metrics.output_tokens += usage.output_tokens
-            assistant_message.metrics.total_tokens += usage.total_tokens
-            assistant_message.metrics.audio_input_tokens += usage.audio_input_tokens
-            assistant_message.metrics.audio_output_tokens += usage.audio_output_tokens
-            assistant_message.metrics.audio_total_tokens += usage.audio_total_tokens
-            assistant_message.metrics.cache_read_tokens += usage.cache_read_tokens
-            assistant_message.metrics.cache_write_tokens += usage.cache_write_tokens
-            assistant_message.metrics.reasoning_tokens += usage.reasoning_tokens
+            # Convert Metrics to MessageMetrics for addition
+            usage_metrics = MessageMetrics(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                total_tokens=usage.total_tokens,
+                audio_input_tokens=usage.audio_input_tokens,
+                audio_output_tokens=usage.audio_output_tokens,
+                audio_total_tokens=usage.audio_total_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_write_tokens=usage.cache_write_tokens,
+                reasoning_tokens=usage.reasoning_tokens,
+            )
+            # Use in-place addition to preserve timer automatically
+            assistant_message.metrics += usage_metrics
             # Set time_to_first_token if we have content and it's not already set
             if provider_response.content is not None and assistant_message.metrics.time_to_first_token is None:
                 assistant_message.metrics.set_time_to_first_token()
@@ -1425,15 +1430,20 @@ class Model(ABC):
                 stream_data.response_metrics.start_timer()
             # Update MessageMetrics with usage data from response
             usage = model_response_delta.response_usage
-            stream_data.response_metrics.input_tokens += usage.input_tokens
-            stream_data.response_metrics.output_tokens += usage.output_tokens
-            stream_data.response_metrics.total_tokens += usage.total_tokens
-            stream_data.response_metrics.audio_input_tokens += usage.audio_input_tokens
-            stream_data.response_metrics.audio_output_tokens += usage.audio_output_tokens
-            stream_data.response_metrics.audio_total_tokens += usage.audio_total_tokens
-            stream_data.response_metrics.cache_read_tokens += usage.cache_read_tokens
-            stream_data.response_metrics.cache_write_tokens += usage.cache_write_tokens
-            stream_data.response_metrics.reasoning_tokens += usage.reasoning_tokens
+            # Convert Metrics to MessageMetrics for addition
+            usage_metrics = MessageMetrics(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                total_tokens=usage.total_tokens,
+                audio_input_tokens=usage.audio_input_tokens,
+                audio_output_tokens=usage.audio_output_tokens,
+                audio_total_tokens=usage.audio_total_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_write_tokens=usage.cache_write_tokens,
+                reasoning_tokens=usage.reasoning_tokens,
+            )
+            # Use in-place addition to preserve timer automatically
+            stream_data.response_metrics += usage_metrics
 
         # Update stream_data content
         if model_response_delta.content is not None:

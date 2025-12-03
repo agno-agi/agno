@@ -125,9 +125,6 @@ class MessageMetrics:
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
-        # Preserve timer from self (left operand)
-        result.timer = self.timer
-
         # Sum durations if both exist
         if self.duration is not None and other.duration is not None:
             result.duration = self.duration + other.duration
@@ -145,33 +142,6 @@ class MessageMetrics:
             result.time_to_first_token = other.time_to_first_token
 
         return result
-
-    def __iadd__(self, other: "MessageMetrics") -> "MessageMetrics":
-        """In-place addition - modifies self and preserves timer."""
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.total_tokens += other.total_tokens
-        self.audio_total_tokens += other.audio_total_tokens
-        self.audio_input_tokens += other.audio_input_tokens
-        self.audio_output_tokens += other.audio_output_tokens
-        self.cache_read_tokens += other.cache_read_tokens
-        self.cache_write_tokens += other.cache_write_tokens
-        self.reasoning_tokens += other.reasoning_tokens
-
-        # Sum durations if both exist
-        if self.duration is not None and other.duration is not None:
-            self.duration = self.duration + other.duration
-        elif other.duration is not None:
-            self.duration = other.duration
-
-        # Sum time to first token if both exist
-        if self.time_to_first_token is not None and other.time_to_first_token is not None:
-            self.time_to_first_token = self.time_to_first_token + other.time_to_first_token
-        elif other.time_to_first_token is not None:
-            self.time_to_first_token = other.time_to_first_token
-
-        # Timer is preserved automatically since we're modifying self in place
-        return self
 
     def start_timer(self):
         """Start the timer for message processing."""

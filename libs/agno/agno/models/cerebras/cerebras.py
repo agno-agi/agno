@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -223,9 +223,6 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics and start timer
         self._ensure_message_metrics_initialized(assistant_message)
         provider_response = self.get_client().chat.completions.create(
@@ -258,9 +255,6 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics and start timer
         self._ensure_message_metrics_initialized(assistant_message)
         provider_response = await self.get_async_client().chat.completions.create(
@@ -293,9 +287,6 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics and start timer
         self._ensure_message_metrics_initialized(assistant_message)
 
@@ -328,9 +319,6 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics and start timer
         self._ensure_message_metrics_initialized(assistant_message)
 

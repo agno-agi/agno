@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -173,8 +173,6 @@ class WatsonX(Model):
         Send a chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             client = self.get_client()
 
@@ -210,8 +208,6 @@ class WatsonX(Model):
         Sends an asynchronous chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -254,9 +250,6 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 
@@ -283,8 +276,6 @@ class WatsonX(Model):
         Sends an asynchronous streaming chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]

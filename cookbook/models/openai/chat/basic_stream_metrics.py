@@ -22,7 +22,7 @@ agent = Agent(
     reasoning_model=OpenAIResponses(id="gpt-4.1"),
     output_model=OpenAIChat(id="o3-mini"),
     parser_model=OpenAIChat(id="gpt-5-mini"),
-
+    enable_user_memories=True,
     db=db,
     markdown=True,
     tools=[DuckDuckGoTools()],
@@ -35,6 +35,10 @@ agent.print_response(
     "Write a 2 sentence horror story about the latest news on AI", stream=True
 )
 
+
+agent.print_response(
+    "My name is John Doe and I like to hike in the mountains on weekends.", stream=True
+)
 run_output = agent.get_last_run_output()
 
 print("\n" + "=" * 80)

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
@@ -213,9 +213,6 @@ class AzureAIFoundry(Model):
         Send a chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().complete(
@@ -255,9 +252,6 @@ class AzureAIFoundry(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_async_client().complete(
@@ -296,9 +290,6 @@ class AzureAIFoundry(Model):
         Send a streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 
@@ -337,9 +328,6 @@ class AzureAIFoundry(Model):
         Sends an asynchronous streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 

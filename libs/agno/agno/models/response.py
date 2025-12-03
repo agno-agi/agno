@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations
-from agno.models.metrics import Metrics, ToolCallMetrics
+from agno.metrics import Metrics, ToolCallMetrics
 from agno.tools.function import UserInputField
 
 
@@ -187,7 +187,7 @@ class ModelResponse:
 
         # Reconstruct response usage (Metrics)
         if data.get("response_usage") and isinstance(data["response_usage"], dict):
-            from agno.models.metrics import Metrics
+            from agno.metrics import Metrics
 
             data["response_usage"] = Metrics(**data["response_usage"])
 

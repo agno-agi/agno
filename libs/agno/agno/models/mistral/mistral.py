@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
@@ -187,9 +187,6 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-
                 # Initialize MessageMetrics and start timer
                 self._ensure_message_metrics_initialized(assistant_message)
 
@@ -200,9 +197,6 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-
                 # Initialize MessageMetrics and start timer
                 self._ensure_message_metrics_initialized(assistant_message)
                 response = self.get_client().chat.complete(
@@ -238,9 +232,6 @@ class MistralChat(Model):
         Stream the response from the Mistral model.
         """
         mistral_messages = format_messages(messages, compress_tool_results)
-
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
 
         # Initialize MessageMetrics if None
 
@@ -284,8 +275,6 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
                 # Initialize MessageMetrics and start timer
                 self._ensure_message_metrics_initialized(assistant_message)
                 response = await self.get_client().chat.complete_async(
@@ -295,8 +284,6 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
                 # Initialize MessageMetrics and start timer
                 self._ensure_message_metrics_initialized(assistant_message)
                 response = await self.get_client().chat.complete_async(
@@ -332,9 +319,6 @@ class MistralChat(Model):
         """
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics if None
 
             self._ensure_message_metrics_initialized(assistant_message)

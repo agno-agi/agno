@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.agent import RunOutput
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics, Metrics
+from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 from agno.utils.reasoning import extract_thinking_content
@@ -242,9 +242,6 @@ class Ollama(Model):
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics if None
 
         self._ensure_message_metrics_initialized(assistant_message)
@@ -275,9 +272,6 @@ class Ollama(Model):
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics if None
 
         self._ensure_message_metrics_initialized(assistant_message)
@@ -306,9 +300,6 @@ class Ollama(Model):
         """
         Sends a streaming chat request to the Ollama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics if None
 
         self._ensure_message_metrics_initialized(assistant_message)
@@ -336,9 +327,6 @@ class Ollama(Model):
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         # Initialize MessageMetrics if None
 
         self._ensure_message_metrics_initialized(assistant_message)

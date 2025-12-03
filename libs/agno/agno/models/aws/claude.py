@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
+from agno.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -214,9 +214,6 @@ class Claude(AnthropicClaude):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
             response = self.get_client().messages.create(
@@ -280,9 +277,6 @@ class Claude(AnthropicClaude):
             request_kwargs["tools"] = format_tools_for_model(tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
 
@@ -327,9 +321,6 @@ class Claude(AnthropicClaude):
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)
@@ -388,9 +379,6 @@ class Claude(AnthropicClaude):
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             # Initialize MessageMetrics and start timer
             self._ensure_message_metrics_initialized(assistant_message)

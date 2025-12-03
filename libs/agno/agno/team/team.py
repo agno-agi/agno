@@ -48,7 +48,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics, SessionMetrics
+from agno.metrics import Metrics, SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps

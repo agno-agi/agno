@@ -7,7 +7,7 @@ from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import Metrics
+from agno.metrics import Metrics
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
 from agno.utils.media import (
@@ -325,7 +325,7 @@ class StepOutput:
         if metrics_data:
             if isinstance(metrics_data, dict):
                 # Convert dict to Metrics object
-                from agno.models.metrics import Metrics
+                from agno.metrics import Metrics
 
                 metrics = Metrics(**metrics_data)
             else:
@@ -386,7 +386,7 @@ class StepMetrics:
         if metrics_data:
             if isinstance(metrics_data, dict):
                 # Convert dict to Metrics object
-                from agno.models.metrics import Metrics
+                from agno.metrics import Metrics
 
                 metrics = Metrics(**metrics_data)
             else:

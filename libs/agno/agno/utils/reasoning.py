@@ -54,7 +54,7 @@ def add_reasoning_metrics_to_metadata(
         if run_response.reasoning_messages is None:
             run_response.reasoning_messages = []
 
-        from agno.models.metrics import MessageMetrics
+        from agno.metrics import MessageMetrics
 
         metrics_message = Message(
             role="assistant",
