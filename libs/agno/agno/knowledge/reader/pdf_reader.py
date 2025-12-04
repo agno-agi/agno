@@ -1,8 +1,12 @@
 import asyncio
+import base64
+import os
 import re
 from pathlib import Path
+import tempfile
 from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
+import uuid
 
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -10,6 +14,9 @@ from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
+from agno.models.message import Message
+from agno.models.openai import OpenAIChat
+import fitz
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -429,3 +436,180 @@ class PDFImageReader(BasePDFReader):
 
         # Read and chunk.
         return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
+
+def img_to_base64(bytes_data: bytes) -> str:
+    return base64.b64encode(bytes_data).decode("utf-8")
+
+class VlmPDFReader(BasePDFReader):
+    """
+    Multimodal PDF reader for Agno using VLLM.
+    Extracts text + images + vision captions.
+    """
+
+    def __init__(self, vlm: OpenAIChat, chunking_strategy=None, **kwargs):
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+        self.vlm = vlm
+
+    @classmethod
+    def get_supported_content_types(cls):
+        return ["pdf"]
+
+    def read(
+        self,
+        pdf: str,
+        name: Optional[str] = None,
+        password: Optional[str] = None
+    ) -> List[Document]:
+
+        doc_name = name or os.path.basename(pdf)
+        log_debug(f"Reading PDF with VLM: {doc_name}")
+
+        try:
+            pdf_reader = fitz.open(pdf)
+        except Exception as e:
+            log_error(f"Failed to open PDF: {e}")
+            return []
+
+        documents: List[Document] = []
+        tmp_dir = tempfile.mkdtemp(prefix="pdf_img_")
+
+        for page_index, page in enumerate(pdf_reader):
+
+            text = page.get_text("text") or ""
+            text = text.strip()
+            if text:
+                documents.append(
+                    Document(
+                        name=doc_name,
+                        id=str(uuid.uuid4()),
+                        content=text,
+                        meta_data={"type": "text", "page": page_index},
+                    )
+                )
+
+            for img_ref in page.get_images(full=True):
+                xref = img_ref[0]
+                image_info = pdf_reader.extract_image(xref)
+                img_bytes = image_info["image"]
+                img_ext = image_info["ext"]
+
+                img_path = os.path.join(tmp_dir, f"{doc_name}_p{page_index}_{uuid.uuid4()}.{img_ext}")
+                with open(img_path, "wb") as f:
+                    f.write(img_bytes)
+
+                msg = Message(
+                    role="user",
+                    content="Describe this image in detail.",
+                    images=[{"content": img_bytes, "mime_type": f"image/{img_ext}"}]
+                )
+
+                try:
+                    assistant_msg = Message(role="assistant", content=None)
+                    response = self.vlm.invoke(messages=[msg], assistant_message=assistant_msg)
+                    caption = response.content or "(no caption)"
+                except Exception as e:
+                    log_error(f"VLM caption generation failed: {e}")
+                    caption = "(caption unavailable)"
+
+                documents.append(
+                    Document(
+                        name=doc_name,
+                        id=str(uuid.uuid4()),
+                        content=f"[IMAGE CAPTION]\n{caption}",
+                        meta_data={"type": "image", "page": page_index, "path": img_path},
+                    )
+                )
+
+        return self._build_chunked_documents(documents)
+
+    async def async_read(
+        self,
+        pdf: str,
+        name: Optional[str] = None,
+        password: Optional[str] = None
+    ) -> List[Document]:
+        """
+        Asynchronous version of read().
+        - Opens PDF in a worker thread (fitz is not async)
+        - Produces captions using true async calls (OpenAIChat.async_invoke)
+        """
+
+        doc_name = name or os.path.basename(pdf)
+
+        try:
+            pdf_reader = await asyncio.to_thread(fitz.open, pdf)
+        except Exception as e:
+            log_error(f"Failed to open PDF: {e}")
+            return []
+
+        documents: List[Document] = []
+        tmp_dir = tempfile.mkdtemp(prefix="pdf_img_")
+
+        tasks = [
+            self._process_page_async(page_index, page, tmp_dir, doc_name)
+            for page_index, page in enumerate(pdf_reader)
+        ]
+
+        all_pages = await asyncio.gather(*tasks)
+
+        for page_docs in all_pages:
+            documents.extend(page_docs)
+
+        return self._build_chunked_documents(documents)
+
+    async def _process_page_async(self, page_index, page, tmp_dir, doc_name):
+        docs: List[Document] = []
+
+        text = await asyncio.to_thread(page.get_text, "text")
+        text = (text or "").strip()
+
+        if text:
+            docs.append(
+                Document(
+                    name=doc_name,
+                    id=str(uuid.uuid4()),
+                    content=text,
+                    meta_data={"type": "text", "page": page_index},
+                )
+            )
+
+        for img_ref in page.get_images(full=True):
+            xref = img_ref[0]
+
+            image_info = await asyncio.to_thread(page.parent.extract_image, xref)
+            img_bytes = image_info["image"]
+            img_ext = image_info["ext"]
+
+            img_path = os.path.join(tmp_dir, f"{doc_name}_p{page_index}_{uuid.uuid4()}.{img_ext}")
+            await asyncio.to_thread(self._save_bytes, img_path, img_bytes)
+
+            caption = await self._caption_async(img_bytes, img_ext)
+
+            docs.append(
+                Document(
+                    name=doc_name,
+                    id=str(uuid.uuid4()),
+                    content=f"[IMAGE CAPTION]\n{caption}",
+                    meta_data={"type": "image", "page": page_index, "path": img_path},
+                )
+            )
+
+        return docs
+
+    def _save_bytes(self, path, data):
+        with open(path, "wb") as f:
+            f.write(data)
+
+    async def _caption_async(self, img_bytes, img_ext):
+        msg = Message(
+            role="user",
+            content="Describe this image in detail.",
+            images=[{"content": img_bytes, "mime_type": f"image/{img_ext}"}]
+        )
+        try:
+            assistant_msg = Message(role="assistant", content=None)
+            response = await self.vlm.async_invoke(messages=[msg], assistant_message=assistant_msg)
+            return response.content or "(no caption)"
+        except Exception as e:
+            log_error(f"Async VLM caption failed: {e}")
+            return "(caption unavailable)"
