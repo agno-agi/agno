@@ -11,6 +11,10 @@ The `AgentOSClient` provides programmatic access to AgentOS API endpoints, allow
 | `03_memory_operations.py` | Create, read, update, delete user memories |
 | `04_session_management.py` | Manage sessions and conversation history |
 | `05_knowledge_search.py` | Search the knowledge base |
+| `06_run_teams.py` | Execute team runs with streaming support |
+| `07_run_workflows.py` | Execute workflow runs with sessions |
+| `08_run_evals.py` | Run accuracy/performance evaluations |
+| `09_upload_content.py` | Upload documents to knowledge base |
 
 ## Quick Start
 
@@ -67,7 +71,7 @@ team = await client.get_team("team-id")
 workflow = await client.get_workflow("workflow-id")
 ```
 
-### Run Operations
+### Agent Run Operations
 
 ```python
 # Non-streaming run
@@ -87,6 +91,34 @@ result = await client.run_agent(
 
 # Cancel a run
 await client.cancel_agent_run(agent_id="agent-id", run_id="run-id")
+```
+
+### Team Run Operations
+
+```python
+# Non-streaming team run
+result = await client.run_team(team_id="team-id", message="Hello team")
+
+# Streaming team run
+async for line in client.stream_team_run(team_id="team-id", message="Hello"):
+    print(line)
+
+# Cancel a team run
+await client.cancel_team_run(team_id="team-id", run_id="run-id")
+```
+
+### Workflow Run Operations
+
+```python
+# Non-streaming workflow run
+result = await client.run_workflow(workflow_id="workflow-id", message="Start")
+
+# Streaming workflow run
+async for line in client.stream_workflow_run(workflow_id="workflow-id", message="Start"):
+    print(line)
+
+# Cancel a workflow run
+await client.cancel_workflow_run(workflow_id="workflow-id", run_id="run-id")
 ```
 
 ### Session Operations
@@ -131,14 +163,51 @@ await client.delete_memory(memory_id="mem-id", user_id="user-id")
 ### Knowledge Operations
 
 ```python
+# Upload content to knowledge base
+result = await client.upload_content(file_path="document.pdf", name="My Doc")
+
+# Get content status
+status = await client.get_content_status(content_id="content-id")
+
+# List content
+content = await client.list_content()
+
 # Search knowledge base
 results = await client.search_knowledge(query="What is X?")
 
 # Get knowledge config
 config = await client.get_knowledge_config()
 
-# List content
-content = await client.list_content()
+# Delete content
+await client.delete_content(content_id="content-id")
+```
+
+### Eval Operations
+
+```python
+from agno.db.schemas.evals import EvalType
+
+# Run accuracy evaluation
+eval_result = await client.run_eval(
+    agent_id="agent-id",
+    eval_type=EvalType.ACCURACY,
+    input_text="What is 2+2?",
+    expected_output="4",
+)
+
+# Run performance evaluation
+eval_result = await client.run_eval(
+    agent_id="agent-id",
+    eval_type=EvalType.PERFORMANCE,
+    input_text="Hello",
+    num_iterations=3,
+)
+
+# List evaluation runs
+evals = await client.list_eval_runs()
+
+# Get evaluation details
+eval_run = await client.get_eval_run(eval_id="eval-id")
 ```
 
 ## Authentication

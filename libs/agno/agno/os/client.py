@@ -1,42 +1,5 @@
-"""
-AgentOS Client for programmatic access to AgentOS API endpoints.
-
-AgentOSClient provides a comprehensive async client for interacting with
-remote AgentOS instances. It supports all major operations including:
-
-- **Discovery**: Get configuration, list agents/teams/workflows
-- **Runs**: Execute agent/team/workflow runs with streaming support
-- **Sessions**: Manage conversation sessions and history
-- **Memory**: Create, read, update, delete user memories
-- **Knowledge**: Search and manage knowledge base content
-- **Evals**: Run and manage evaluations
-
-Example:
-    ```python
-    import asyncio
-    from agno.os.client import AgentOSClient
-
-    async def main():
-        async with AgentOSClient(base_url="http://localhost:7777") as client:
-            # Discover available agents
-            config = await client.get_config()
-            print(f"Agents: {[a.id for a in config.agents]}")
-
-            # Run an agent
-            result = await client.run_agent(
-                agent_id="assistant",
-                message="Hello!",
-            )
-            print(f"Response: {result.content}")
-
-    asyncio.run(main())
-    ```
-"""
-
 from os import getenv
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
-
-__all__ = ["AgentOSClient"]
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
@@ -82,36 +45,10 @@ except ImportError:
 class AgentOSClient:
     """Async client for interacting with AgentOS API endpoints.
 
-    AgentOSClient provides programmatic access to all AgentOS operations,
-    including agent execution, session management, memory operations,
-    knowledge search, and evaluations.
-
-    The client uses httpx for async HTTP operations and supports both
-    context manager and manual connection management patterns.
-
     Attributes:
         base_url: Base URL of the AgentOS instance
         api_key: API key for authentication (optional)
         timeout: Request timeout in seconds
-
-    Example:
-        Using context manager (recommended):
-
-        ```python
-        async with AgentOSClient(base_url="http://localhost:7777") as client:
-            result = await client.run_agent(agent_id="assistant", message="Hello")
-        ```
-
-        Manual connection management:
-
-        ```python
-        client = AgentOSClient(base_url="http://localhost:7777")
-        await client.connect()
-        try:
-            result = await client.run_agent(agent_id="assistant", message="Hello")
-        finally:
-            await client.close()
-        ```
     """
 
     def __init__(
@@ -371,8 +308,6 @@ class AgentOSClient:
         data = await self._get("/models")
         return [Model.model_validate(item) for item in data]
 
-    # Agent Operations
-
     async def list_agents(self) -> List[AgentSummaryResponse]:
         """List all agents configured in the AgentOS instance.
 
@@ -404,8 +339,6 @@ class AgentOSClient:
         """
         data = await self._get(f"/agents/{agent_id}")
         return AgentResponse.model_validate(data)
-
-    # Team Operations
 
     async def list_teams(self) -> List[TeamSummaryResponse]:
         """List all teams configured in the AgentOS instance.
@@ -439,8 +372,6 @@ class AgentOSClient:
         data = await self._get(f"/teams/{team_id}")
         return TeamResponse.model_validate(data)
 
-    # Workflow Operations
-
     async def list_workflows(self) -> List[WorkflowSummaryResponse]:
         """List all workflows configured in the AgentOS instance.
 
@@ -471,8 +402,6 @@ class AgentOSClient:
         """
         data = await self._get(f"/workflows/{workflow_id}")
         return WorkflowResponse.model_validate(data)
-
-    # Memory Operations
 
     async def create_memory(
         self,
