@@ -24,7 +24,7 @@ AgentOS supports both symmetric and asymmetric JWT signing:
 
 **Most examples in this directory use HS256 (symmetric) for simplicity.** This allows running examples without setting up key pairs. For production deployments, we recommend RS256 asymmetric keys.
 
-For an asymmetric key example, see `basic_asymmetric.py` which demonstrates:
+For an asymmetric key example, see `asymmetric/basic.py` which demonstrates:
 - RSA key pair generation
 - Using private key to sign tokens (auth server)
 - Using public key to verify tokens (AgentOS)

@@ -8,11 +8,6 @@ Scope Format:
 2. Per-resource scopes: resource:<resource-id>:action
 3. Wildcard support: resource:*:action
 
-Audience Verification:
-- The `aud` claim in JWT tokens should contain the AgentOS ID
-- This is verified automatically when authorization=True
-- Tokens with mismatched audience will be rejected with 401
-
 Scope Examples:
 - system:read - Read system config
 - agents:read - List all agents
@@ -39,9 +34,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
-
-# AgentOS ID - used for audience verification
-AGENT_OS_ID = "my-production-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -77,7 +69,7 @@ admin_agent = Agent(
 
 # Create AgentOS with specific ID for audience verification
 agent_os = AgentOS(
-    id=AGENT_OS_ID,
+    id="my-agent-os",
     name="Production AgentOS",
     description="RBAC Protected AgentOS with Simplified Scopes",
     agents=[web_search_agent, analyst_agent, admin_agent],
@@ -96,7 +88,6 @@ def create_token(user_id: str, scopes: list[str], hours: int = 24) -> str:
     """Helper function to create JWT tokens with scopes and audience."""
     payload = {
         "sub": user_id,
-        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": scopes,
         "exp": datetime.now(UTC) + timedelta(hours=hours),
         "iat": datetime.now(UTC),
@@ -122,7 +113,6 @@ if __name__ == "__main__":
        - "agents:*:run" - Run ANY agent (wildcard)
     
     AUDIENCE VERIFICATION:
-       - All tokens must include `aud` claim matching the AgentOS ID
        - Tokens for other AgentOS instances will be rejected
     """
 
@@ -264,7 +254,6 @@ For POST /agents/{agent_id}/runs:
   * 'agent_os:admin' (full access)
 
 AUDIENCE VERIFICATION:
-- All tokens must have 'aud' claim matching the AgentOS ID
 - Invalid audience returns 401 Unauthorized
     """)
 

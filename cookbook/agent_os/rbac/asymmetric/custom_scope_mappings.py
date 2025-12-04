@@ -4,12 +4,13 @@ Custom Scope Mappings Example
 This example demonstrates how to define custom scope mappings for your AgentOS endpoints.
 You can specify exactly which scopes are required for each endpoint.
 
-Audience Verification:
-- The `aud` claim in JWT tokens should contain the AgentOS ID
-- This is verified automatically when authorization=True
+RS256 uses:
+- Private key: Used by your auth server to SIGN tokens
+- Public key: Used by AgentOS to VERIFY token signatures
 
 Pre-requisites:
-- Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
+- Set JWT_SIGNING_KEY and JWT_VERIFICATION_KEY environment variables with your public and private keys (PEM format)
+- Or generate keys at runtime for testing (as shown below)
 - Endpoints are automatically protected with default scope mappings
 """
 
@@ -22,12 +23,36 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.utils.cryptography import generate_rsa_keys
 
-# JWT Secret (use environment variable in production)
-JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
+# Keys file path for persistence across reloads
+_KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
-# AgentOS ID - used for audience verification
-AGENT_OS_ID = "my-agent-os"
+def _load_or_generate_keys():
+    """Load keys from file or generate new ones. Persists keys for reload consistency."""
+    import json
+    
+    # First check environment variables
+    public_key = os.getenv("JWT_VERIFICATION_KEY", None)
+    private_key = os.getenv("JWT_SIGNING_KEY", None)
+    
+    if public_key and private_key:
+        return private_key, public_key
+    
+    # Try to load from file (for reload consistency)
+    if os.path.exists(_KEYS_FILE):
+        with open(_KEYS_FILE, "r") as f:
+            keys = json.load(f)
+            return keys["private_key"], keys["public_key"]
+    
+    # Generate new keys and save them
+    private_key, public_key = generate_rsa_keys()
+    with open(_KEYS_FILE, "w") as f:
+        json.dump({"private_key": private_key, "public_key": public_key}, f)
+    
+    return private_key, public_key
+
+PRIVATE_KEY, PUBLIC_KEY = _load_or_generate_keys()
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -60,20 +85,17 @@ custom_scopes = {
 
 # Create AgentOS
 agent_os = AgentOS(
-    id=AGENT_OS_ID,  # Important: Set ID for audience verification
+    id="my-agent-os",
     description="Custom Scope Mappings AgentOS",
     agents=[research_agent],
 )
 
 app = agent_os.get_app()
 
-# Store AgentOS ID in app state for middleware
-app.state.agent_os_id = AGENT_OS_ID
-
 # Add JWT middleware with RBAC enabled using custom scope mappings
 app.add_middleware(
     JWTMiddleware,
-    verification_key=JWT_SECRET,
+    verification_key=PUBLIC_KEY,
     algorithm="HS256",  # Use HS256 for symmetric key
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="agent_os:admin",  # Admin can bypass all checks
@@ -98,33 +120,30 @@ if __name__ == "__main__":
     basic_user_token = jwt.encode(
         {
             "sub": "user_123",
-            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["app:read"],  # Can only read, not execute
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
-        JWT_SECRET,
+        PRIVATE_KEY,
         algorithm="HS256",
     )
 
     power_user_token = jwt.encode(
         {
             "sub": "user_456",
-            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["app:read", "app:run", "app:execute"],  # Can read and execute
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
-        JWT_SECRET,
+        PRIVATE_KEY,
         algorithm="HS256",
     )
 
     admin_token = jwt.encode(
         {
             "sub": "admin_789",
-            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["agent_os:admin"],  # Admin bypasses all checks
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
-        JWT_SECRET,
+        PRIVATE_KEY,
         algorithm="HS256",
     )
 

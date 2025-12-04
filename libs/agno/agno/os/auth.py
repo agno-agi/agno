@@ -157,7 +157,7 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
 
     # Get accessible resource IDs
     accessible_ids = get_accessible_resource_ids(
-        user_scopes=user_scopes, resource_type=resource_type, agent_os_id=agent_os_id
+        user_scopes=user_scopes, resource_type=resource_type
     )
 
     return accessible_ids

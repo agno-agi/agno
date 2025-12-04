@@ -8,12 +8,8 @@ RS256 uses:
 - Private key: Used by your auth server to SIGN tokens
 - Public key: Used by AgentOS to VERIFY token signatures
 
-Audience Verification:
-- The `aud` claim in JWT tokens should contain the AgentOS ID
-- This is verified automatically when authorization=True
-
 Prerequisites:
-- Set JWT_VERIFICATION_KEY and JWT_SIGNING_KEY environment variables with your public and private keys (PEM format)
+- Set JWT_SIGNING_KEY and JWT_VERIFICATION_KEY environment variables with your public and private keys (PEM format)
 - Or generate keys at runtime for testing (as shown below)
 - Endpoints are automatically protected with default scope mappings
 """
@@ -21,8 +17,6 @@ Prerequisites:
 from datetime import UTC, datetime, timedelta
 import os
 import jwt
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -30,30 +24,8 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import JWTConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.utils.cryptography import generate_rsa_keys
 
-
-# AgentOS ID - used for audience verification
-AGENT_OS_ID = "my-agent-os"
-
-
-def generate_rsa_keys():
-    """Generate RSA key pair for RS256 JWT signing/verification."""
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-    # Private key PEM (used by auth server to sign tokens)
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-    # Public key PEM (used by AgentOS to verify tokens)
-    public_pem = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-
-    return private_pem.decode("utf-8"), public_pem.decode("utf-8")
 
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
@@ -100,7 +72,7 @@ research_agent = Agent(
 
 # Create AgentOS with RS256 (default algorithm)
 agent_os = AgentOS(
-    id=AGENT_OS_ID,  # Important: Set ID for audience verification
+    id="my-agent-os",
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
@@ -145,7 +117,6 @@ if __name__ == "__main__":
         user_token_payload = {
             "sub": "user_123",
             "session_id": "session_456",
-            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["agents:read", "agents:run"],
             "exp": datetime.now(UTC) + timedelta(hours=24),
             "iat": datetime.now(UTC),
@@ -155,7 +126,6 @@ if __name__ == "__main__":
         admin_token_payload = {
             "sub": "admin_789",
             "session_id": "admin_session_123",
-            "aud": AGENT_OS_ID,  # Must match AgentOS ID
             "scopes": ["agent_os:admin"],  # Admin has access to everything
             "exp": datetime.now(UTC) + timedelta(hours=24),
             "iat": datetime.now(UTC),
@@ -174,4 +144,4 @@ if __name__ == "__main__":
         print(admin_token)
         print("\n" + "=" * 60 + "\n")
 
-    agent_os.serve(app="basic_asymmetric:app", port=7777, reload=True)
+    agent_os.serve(app="basic:app", port=7777, reload=True)

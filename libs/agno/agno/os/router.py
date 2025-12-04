@@ -739,6 +739,7 @@ def get_base_router(
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
+            traces=os._get_traces_config(),
             agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
             teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],

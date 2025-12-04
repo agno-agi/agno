@@ -4,10 +4,6 @@ Per-Agent Permissions Example with AgentOS
 This example demonstrates how to define per-agent permission scopes
 to control which users can run which specific agents.
 
-Audience Verification:
-- The `aud` claim in JWT tokens should contain the AgentOS ID
-- This is verified automatically when authorization=True
-
 Prerequisites:
 - Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
@@ -28,8 +24,6 @@ from agno.tools.mcp import MCPTools
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
-# AgentOS ID - used for audience verification
-AGENT_OS_ID = "my-agent-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -57,16 +51,13 @@ agno_agent = Agent(
 
 # Create AgentOS
 agent_os = AgentOS(
-    id=AGENT_OS_ID,  # Important: Set ID for audience verification
+    id="my-agent-os",
     description="RBAC Protected AgentOS",
     agents=[web_search_agent, agno_agent],
 )
 
 # Get the app and add RBAC middleware
 app = agent_os.get_app()
-
-# Store AgentOS ID in app state for middleware
-app.state.agent_os_id = AGENT_OS_ID
 
 # Add JWT middleware with RBAC enabled using custom scope mappings
 app.add_middleware(
@@ -110,7 +101,6 @@ if __name__ == "__main__":
     # Note: Include `aud` claim with AgentOS ID
     web_search_user_token_payload = {
         "sub": "user_123",
-        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agents:web-search-agent:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
@@ -121,7 +111,6 @@ if __name__ == "__main__":
 
     agno_user_token_payload = {
         "sub": "user_456",
-        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agents:agno-agent:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),

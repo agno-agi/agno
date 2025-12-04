@@ -2,33 +2,26 @@
 Basic RBAC Example with AgentOS
 
 This example demonstrates how to enable RBAC (Role-Based Access Control)
-with JWT token authentication in AgentOS using middleware.
-
-Audience Verification:
-- The `aud` claim in JWT tokens should contain the AgentOS ID
-- This is verified automatically when authorization=True
+with JWT token authentication in AgentOS using middleware with cookie-based tokens.
 
 Prerequisites:
 - Set JWT_VERIFICATION_KEY environment variable or pass it to middleware
 - Endpoints are automatically protected with default scope mappings
 """
 
-import os
 from datetime import UTC, datetime, timedelta
-
+import os
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.config import JWTConfig
+from agno.os.middleware import JWTMiddleware, TokenSource
 from agno.tools.duckduckgo import DuckDuckGoTools
+from fastapi import FastAPI, Response
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
-
-# AgentOS ID - used for audience verification
-AGENT_OS_ID = "my-agent-os"
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -44,16 +37,79 @@ research_agent = Agent(
     markdown=True,
 )
 
+
+app = FastAPI()
+
+
+# Add a simple endpoint to set the JWT authentication cookie
+@app.get("/set-auth-cookie")
+async def set_auth_cookie(response: Response):
+    """
+    Endpoint to set the JWT authentication cookie.
+    In a real application, this would be done after successful login.
+    """
+    # Create a test JWT token with aud claim
+    payload = {
+        "sub": "user_123",
+        "session_id": "cookie_session_123",
+        "scopes": ["agents:read", "agents:run", "sessions:read", "sessions:write"],
+        "exp": datetime.now(UTC) + timedelta(hours=24),
+        "iat": datetime.now(UTC),
+    }
+
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Set HTTP-only cookie (more secure than localStorage for JWT storage)
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,  # Prevents access from JavaScript (XSS protection)
+        secure=True,  # Only send over HTTPS in production
+        samesite="strict",  # CSRF protection
+        max_age=24 * 60 * 60,  # 24 hours
+    )
+
+    return {
+        "message": "Authentication cookie set successfully",
+        "cookie_name": "auth_token",
+        "expires_in": "24 hours",
+        "security_features": ["httponly", "secure", "samesite=strict"],
+        "instructions": "Now you can make authenticated requests without Authorization headers",
+    }
+
+
+# Add a simple endpoint to clear the JWT authentication cookie
+@app.get("/clear-auth-cookie")
+async def clear_auth_cookie(response: Response):
+    """Endpoint to clear the JWT authentication cookie (logout)."""
+    response.delete_cookie(key="auth_token")
+    return {"message": "Authentication cookie cleared successfully"}
+
+
+# Add RBAC middleware configured for cookie-based authentication
+app.add_middleware(
+    JWTMiddleware,
+    verification_key=JWT_SECRET,
+    algorithm="HS256",
+    authorization=True,
+    excluded_route_paths=[
+        "/set-auth-cookie",
+        "/clear-auth-cookie",
+    ],
+    token_source=TokenSource.COOKIE,  # Extract JWT from cookies
+    cookie_name="auth_token",  # Name of the cookie containing the JWT
+    user_id_claim="sub",  # Extract user_id from 'sub' claim
+    session_id_claim="session_id",  # Extract session_id from 'session_id' claim
+    scopes_claim="scopes",  # Extract scopes from 'scopes' claim
+)
+
+
 # Create AgentOS
 agent_os = AgentOS(
-    id=AGENT_OS_ID,  # Important: Set ID for audience verification
+    id="my-agent-os",
     description="RBAC Protected AgentOS",
     agents=[research_agent],
-    authorization=True,
-    jwt_config=JWTConfig(
-        verification_key=JWT_SECRET,
-        algorithm="HS256",
-    ),
+    base_app=app,
 )
 
 # Get the app and add RBAC middleware
@@ -88,7 +144,6 @@ if __name__ == "__main__":
     user_token_payload = {
         "sub": "user_123",
         "session_id": "session_456",
-        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agents:read", "agents:run"],
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
@@ -98,7 +153,6 @@ if __name__ == "__main__":
     admin_token_payload = {
         "sub": "admin_789",
         "session_id": "admin_session_123",
-        "aud": AGENT_OS_ID,  # Must match AgentOS ID
         "scopes": ["agent_os:admin"],  # Admin has access to everything
         "exp": datetime.now(UTC) + timedelta(hours=24),
         "iat": datetime.now(UTC),
@@ -122,4 +176,4 @@ if __name__ == "__main__":
     )
     print("\n" + "=" * 60 + "\n")
 
-    agent_os.serve(app="basic_symmetric:app", port=7777, reload=True)
+    agent_os.serve(app="with_cookie:app", port=7777, reload=True)
