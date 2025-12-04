@@ -55,7 +55,6 @@ agent = Agent(
     add_history_to_context=True,  # Add history to context
     num_history_runs=10,
     session_id="token_based_tool_call_compression",
-    debug_mode=True,
 )
 
 agent.print_response(
