@@ -3791,7 +3791,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+        self._update_session_metrics(session=session)
 
         # Save session to memory
         self.save_session(session=session)
@@ -3808,7 +3808,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+        self._update_session_metrics(session=session)
 
         # Save session to memory
         await self.asave_session(session=session)
@@ -4674,7 +4674,7 @@ class Team:
 
         return session_metrics
 
-    def _calculate_metrics(self, messages: List[Message]) -> Metrics:
+    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
         """Sum MessageMetrics from assistant messages into Metrics (run-level)"""
         metrics = Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
@@ -4701,40 +4701,40 @@ class Team:
 
         return metrics
 
-<<<<<<< HEAD
-    def _get_session_metrics(self, session: TeamSession) -> Metrics:
-        # Get the session_metrics from the database
-=======
     def _get_session_metrics(self, session: TeamSession) -> SessionMetrics:
         """Get existing session metrics from the database"""
->>>>>>> 6fdae9197 (feat: SDK-179 Metrics updates)
         if session.session_data is not None and "session_metrics" in session.session_data:
             session_metrics_from_db = session.session_data.get("session_metrics")
             if session_metrics_from_db is not None:
                 if isinstance(session_metrics_from_db, dict):
-<<<<<<< HEAD
-                    return Metrics(**session_metrics_from_db)
-                elif isinstance(session_metrics_from_db, Metrics):
-                    return session_metrics_from_db
-
-        return Metrics()
-
-    def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
-        """Calculate session metrics"""
-        session_metrics = self._get_session_metrics(session=session)
-        # Add the metrics for the current run to the session metrics
-        if run_response.metrics is not None:
-            session_metrics += run_response.metrics
-        session_metrics.time_to_first_token = None
-=======
                     # Handle legacy Metrics dict - convert to SessionMetrics
                     metrics_dict = session_metrics_from_db.copy()
                     # Remove run-level timing fields
                     metrics_dict.pop("duration", None)
                     metrics_dict.pop("time_to_first_token", None)
                     metrics_dict.pop("timer", None)
+                    # Handle details deserialization if present
+                    if "details" in metrics_dict and isinstance(metrics_dict["details"], list):
+                        from agno.models.metrics import SessionModelMetrics
+                        details_list = []
+                        for detail_dict in metrics_dict["details"]:
+                            if isinstance(detail_dict, dict):
+                                details_list.append(SessionModelMetrics(**detail_dict))
+                            elif isinstance(detail_dict, SessionModelMetrics):
+                                details_list.append(detail_dict)
+                        metrics_dict["details"] = details_list if details_list else None
                     return SessionMetrics(**metrics_dict)
                 elif isinstance(session_metrics_from_db, SessionMetrics):
+                    # Ensure details are SessionModelMetrics objects, not dicts
+                    if session_metrics_from_db.details:
+                        from agno.models.metrics import SessionModelMetrics
+                        details_list = []
+                        for detail in session_metrics_from_db.details:
+                            if isinstance(detail, dict):
+                                details_list.append(SessionModelMetrics(**detail))
+                            elif isinstance(detail, SessionModelMetrics):
+                                details_list.append(detail)
+                        session_metrics_from_db.details = details_list if details_list else None
                     return session_metrics_from_db
                 elif isinstance(session_metrics_from_db, Metrics):
                     # Convert legacy Metrics to SessionMetrics
@@ -4788,8 +4788,6 @@ class Team:
             total_runs = len(run_durations)
             session_metrics.total_runs = total_runs
             session_metrics.average_duration = sum(run_durations) / total_runs
-
->>>>>>> 6fdae9197 (feat: SDK-179 Metrics updates)
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics.to_dict()
 

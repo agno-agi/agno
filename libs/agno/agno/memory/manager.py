@@ -1091,7 +1091,6 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        print(f"[MODEL CALL] Calling memory_model (id={model_copy.id})")
         response = model_copy.response(
             messages=messages_for_model,
             tools=_tools,
@@ -1180,7 +1179,6 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        print(f"[MODEL CALL] Calling memory_model (id={model_copy.id})")
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=_tools,
@@ -1315,7 +1313,6 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        print(f"[MODEL CALL] Calling memory_model (id={model_copy.id})")
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=_tools,

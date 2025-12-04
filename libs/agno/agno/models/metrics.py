@@ -44,9 +44,18 @@ class ToolCallMetrics:
     duration: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        from datetime import datetime
+        
         metrics_dict = asdict(self)
         # Remove the timer util if present
         metrics_dict.pop("timer", None)
+        
+        # Convert start_time and end_time from Unix timestamps to ISO format strings
+        if metrics_dict.get("start_time") is not None:
+            metrics_dict["start_time"] = datetime.fromtimestamp(metrics_dict["start_time"]).isoformat()
+        if metrics_dict.get("end_time") is not None:
+            metrics_dict["end_time"] = datetime.fromtimestamp(metrics_dict["end_time"]).isoformat()
+        
         metrics_dict = {
             k: v for k, v in metrics_dict.items() if v is not None and (not isinstance(v, (int, float)) or v != 0)
         }
@@ -68,6 +77,36 @@ class ToolCallMetrics:
                 self.duration = self.timer.elapsed
         if self.end_time is None:
             self.end_time = time()
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ToolCallMetrics":
+        """Create ToolCallMetrics from dict, handling ISO format strings for start_time and end_time."""
+        from datetime import datetime
+        
+        metrics_data = data.copy()
+        
+        # Convert ISO format strings back to Unix timestamps if needed
+        if "start_time" in metrics_data and isinstance(metrics_data["start_time"], str):
+            try:
+                metrics_data["start_time"] = datetime.fromisoformat(metrics_data["start_time"]).timestamp()
+            except (ValueError, AttributeError):
+                # If parsing fails, try as float (backward compatibility)
+                try:
+                    metrics_data["start_time"] = float(metrics_data["start_time"])
+                except (ValueError, TypeError):
+                    metrics_data["start_time"] = None
+        
+        if "end_time" in metrics_data and isinstance(metrics_data["end_time"], str):
+            try:
+                metrics_data["end_time"] = datetime.fromisoformat(metrics_data["end_time"]).timestamp()
+            except (ValueError, AttributeError):
+                # If parsing fails, try as float (backward compatibility)
+                try:
+                    metrics_data["end_time"] = float(metrics_data["end_time"])
+                except (ValueError, TypeError):
+                    metrics_data["end_time"] = None
+        
+        return cls(**metrics_data)
 
 
 @dataclass
@@ -253,6 +292,8 @@ class SessionMetrics:
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
+        # Remove the timer util if present (shouldn't be in SessionMetrics, but safety check)
+        metrics_dict.pop("timer", None)
         # Convert details SessionModelMetrics to dicts
         if metrics_dict.get("details") is not None:
             details_list = [

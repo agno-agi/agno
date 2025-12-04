@@ -628,6 +628,9 @@ class TeamRunOutput:
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:

@@ -80,7 +80,7 @@ class ToolExecution:
             if "user_input_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
-            metrics=ToolCallMetrics(**(data.get("metrics", {}) or {})) if data.get("metrics") else None,
+            metrics=ToolCallMetrics.from_dict(data.get("metrics", {})) if data.get("metrics") else None,
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )
 

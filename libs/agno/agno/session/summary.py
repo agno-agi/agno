@@ -229,7 +229,6 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
-        print(f"[MODEL CALL] Calling session_summary_model (id={self.model.id})")
         summary_response = self.model.response(messages=messages, response_format=response_format, run_response=run_response)
         
         # Extract assistant message from messages (added by model.response())
@@ -269,7 +268,6 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
-        print(f"[MODEL CALL] Calling session_summary_model (id={self.model.id})")
         summary_response = await self.model.aresponse(messages=messages, response_format=response_format, run_response=run_response)
         
         # Extract assistant message from messages (added by model.aresponse())

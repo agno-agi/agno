@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import MessageMetrics
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
 
@@ -25,13 +26,18 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
-def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
+
+    # Capture elapsed time from main run right before calling reasoning agent
+    reasoning_start_elapsed_time = None
+    if main_run_metrics is not None and main_run_metrics.timer is not None:
+        reasoning_start_elapsed_time = main_run_metrics.timer.elapsed
 
     try:
         reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
@@ -63,18 +69,43 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
     )
     if reasoning_metrics is not None:
-        reasoning_message.metrics = reasoning_metrics
+        # Adjust time_to_first_token to be relative to main run start
+        adjusted_time_to_first_token = reasoning_metrics.time_to_first_token
+        if reasoning_metrics.time_to_first_token is not None and reasoning_start_elapsed_time is not None:
+            adjusted_time_to_first_token = reasoning_start_elapsed_time + reasoning_metrics.time_to_first_token
+        
+        # Create a copy of the metrics to avoid sharing the same object reference
+        # This ensures the reasoning message has its own metrics instance
+        reasoning_message.metrics = MessageMetrics(
+            input_tokens=reasoning_metrics.input_tokens,
+            output_tokens=reasoning_metrics.output_tokens,
+            total_tokens=reasoning_metrics.total_tokens,
+            audio_input_tokens=reasoning_metrics.audio_input_tokens,
+            audio_output_tokens=reasoning_metrics.audio_output_tokens,
+            audio_total_tokens=reasoning_metrics.audio_total_tokens,
+            cache_read_tokens=reasoning_metrics.cache_read_tokens,
+            cache_write_tokens=reasoning_metrics.cache_write_tokens,
+            reasoning_tokens=reasoning_metrics.reasoning_tokens,
+            time_to_first_token=adjusted_time_to_first_token,
+            duration=reasoning_metrics.duration,
+            # Don't copy the timer - it's specific to the original message context
+        )
     
     return reasoning_message
 
 
-async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
+
+    # Capture elapsed time from main run right before calling reasoning agent
+    reasoning_start_elapsed_time = None
+    if main_run_metrics is not None and main_run_metrics.timer is not None:
+        reasoning_start_elapsed_time = main_run_metrics.timer.elapsed
 
     try:
         reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
@@ -105,6 +136,26 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
     )
     if reasoning_metrics is not None:
-        reasoning_message.metrics = reasoning_metrics
+        # Adjust time_to_first_token to be relative to main run start
+        adjusted_time_to_first_token = reasoning_metrics.time_to_first_token
+        if reasoning_metrics.time_to_first_token is not None and reasoning_start_elapsed_time is not None:
+            adjusted_time_to_first_token = reasoning_start_elapsed_time + reasoning_metrics.time_to_first_token
+        
+        # Create a copy of the metrics to avoid sharing the same object reference
+        # This ensures the reasoning message has its own metrics instance
+        reasoning_message.metrics = MessageMetrics(
+            input_tokens=reasoning_metrics.input_tokens,
+            output_tokens=reasoning_metrics.output_tokens,
+            total_tokens=reasoning_metrics.total_tokens,
+            audio_input_tokens=reasoning_metrics.audio_input_tokens,
+            audio_output_tokens=reasoning_metrics.audio_output_tokens,
+            audio_total_tokens=reasoning_metrics.audio_total_tokens,
+            cache_read_tokens=reasoning_metrics.cache_read_tokens,
+            cache_write_tokens=reasoning_metrics.cache_write_tokens,
+            reasoning_tokens=reasoning_metrics.reasoning_tokens,
+            time_to_first_token=adjusted_time_to_first_token,
+            duration=reasoning_metrics.duration,
+            # Don't copy the timer - it's specific to the original message context
+        )
     
     return reasoning_message

@@ -1116,8 +1116,6 @@ class Agent:
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
             
-            elapsed = run_response.metrics.timer.elapsed if run_response.metrics and run_response.metrics.timer else 0.0
-            print(f"[MODEL CALL] Calling main model (id={self.model.id}) at {elapsed:.3f}s")
 
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
@@ -2013,8 +2011,6 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 9. Generate a response from the Model (includes running function calls)
-            elapsed = run_response.metrics.timer.elapsed if run_response.metrics and run_response.metrics.timer else 0.0
-            print(f"[MODEL CALL] Calling main model (id={self.model.id}) at {elapsed:.3f}s")
             
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -9308,9 +9304,14 @@ class Agent:
         # Track main model metrics
         if model_messages and self.model is not None:
             assistant_message_role = self.model.assistant_message_role
+            # Exclude reasoning messages from main model messages (they're tracked separately)
+            reasoning_message_ids = {id(m) for m in (reasoning_model_messages or [])}
             main_model_messages = [
                 m for m in model_messages
-                if m.role == assistant_message_role and m.metrics is not None and m.from_history is False
+                if m.role == assistant_message_role 
+                and m.metrics is not None 
+                and m.from_history is False
+                and id(m) not in reasoning_message_ids
             ]
             
             if main_model_messages:
@@ -9606,13 +9607,11 @@ class Agent:
                     metrics.output_tokens += model_metrics.output_tokens
                     metrics.total_tokens += model_metrics.total_tokens
             
-            # Set time_to_first_token from the first model that generated tokens
-            # Exclude models that are called after the main model response (output_model, parser_model)
-            # as they shouldn't contribute to the top-level time_to_first_token
-            excluded_model_types = {"output_model", "parser_model", "session_summary_model"}
+            # Set time_to_first_token from the first model that generates user-visible output
+            user_visible_model_types = {"model", "reasoning_model"}
             first_ttft = None
             for model_type, model_metrics_list in metrics.details.items():
-                if model_type not in excluded_model_types:
+                if model_type in user_visible_model_types:
                     for model_metrics in model_metrics_list:
                         if model_metrics.time_to_first_token is not None:
                             if first_ttft is None or model_metrics.time_to_first_token < first_ttft:
@@ -9798,6 +9797,7 @@ class Agent:
                     reasoning_message = get_openai_reasoning(
                         reasoning_agent=reasoning_agent,
                         messages=run_messages.get_input_messages(),
+                        main_run_metrics=run_response.metrics,
                     )
                 elif is_ollama:
                     from agno.reasoning.ollama import get_ollama_reasoning
@@ -9919,8 +9919,6 @@ class Agent:
                 log_debug(f"Step {step_count}", center=True, symbol="=")
                 try:
                     # Run the reasoning agent
-                    reasoning_model_id = reasoning_agent.model.id if reasoning_agent.model else "unknown"
-                    print(f"[MODEL CALL] Calling reasoning_model (id={reasoning_model_id})")
                     reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
@@ -10095,6 +10093,7 @@ class Agent:
                     reasoning_message = await aget_openai_reasoning(
                         reasoning_agent=reasoning_agent,
                         messages=run_messages.get_input_messages(),
+                        main_run_metrics=run_response.metrics,
                     )
                 elif is_ollama:
                     from agno.reasoning.ollama import get_ollama_reasoning
@@ -10217,8 +10216,6 @@ class Agent:
                 step_count += 1
                 try:
                     # Run the reasoning agent
-                    reasoning_model_id = reasoning_agent.model.id if reasoning_agent.model else "unknown"
-                    print(f"[MODEL CALL] Calling reasoning_model (id={reasoning_model_id})")
                     reasoning_agent_response: RunOutput = await reasoning_agent.arun(
                         input=run_messages.get_input_messages()
                     )
@@ -10341,7 +10338,6 @@ class Agent:
             messages_for_parser_model = self._get_messages_for_parser_model(
                 model_response, parser_response_format, run_context=run_context
             )
-            print(f"[MODEL CALL] Calling parser_model (id={self.parser_model.id})")
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -10370,7 +10366,6 @@ class Agent:
             messages_for_parser_model = self._get_messages_for_parser_model(
                 model_response, parser_response_format, run_context=run_context
             )
-            print(f"[MODEL CALL] Calling parser_model (id={self.parser_model.id})")
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -10524,7 +10519,6 @@ class Agent:
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         initial_output_model_messages_count = len(messages_for_output_model)
-        print(f"[MODEL CALL] Calling output_model (id={self.output_model.id})")
         output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
         model_response.content = output_model_response.content
         
@@ -10620,7 +10614,6 @@ class Agent:
 
         messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         initial_output_model_messages_count = len(messages_for_output_model)
-        print(f"[MODEL CALL] Calling output_model (id={self.output_model.id})")
         output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
         model_response.content = output_model_response.content
         
