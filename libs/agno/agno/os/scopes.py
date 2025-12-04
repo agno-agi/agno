@@ -91,12 +91,13 @@ class ParsedScope:
         return self.scope_type == "per_resource"
 
 
-def parse_scope(scope: str) -> ParsedScope:
+def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
     """
     Parse a scope string into its components.
 
     Args:
         scope: The scope string to parse
+        admin_scope: The scope string that grants admin access (default: "agent_os:admin")
 
     Returns:
         ParsedScope object with parsed components
@@ -114,7 +115,8 @@ def parse_scope(scope: str) -> ParsedScope:
         >>> parse_scope("agents:*:run")
         ParsedScope(raw="...", scope_type="per_resource", resource="agents", resource_id="*", action="run", is_wildcard_resource=True)
     """
-    if scope == "agent_os:admin":
+    effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
+    if scope == effective_admin_scope:
         return ParsedScope(raw=scope, scope_type="admin")
 
     parts = scope.split(":")
@@ -216,6 +218,7 @@ def has_required_scopes(
     required_scopes: List[str],
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
+    admin_scope: Optional[str] = None,
 ) -> bool:
     """
     Check if user has all required scopes.
@@ -225,6 +228,7 @@ def has_required_scopes(
         required_scopes: List of scope strings required
         resource_type: Type of resource being accessed ("agents", "teams", "workflows")
         resource_id: Specific resource ID being accessed
+        admin_scope: The scope string that grants admin access (default: "agent_os:admin")
 
     Returns:
         True if user has all required scopes
@@ -256,7 +260,7 @@ def has_required_scopes(
         return True
 
     # Parse user scopes once
-    parsed_user_scopes = [parse_scope(scope) for scope in user_scopes]
+    parsed_user_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
     # Check for admin scope
     if any(s.scope_type == "admin" for s in parsed_user_scopes):
@@ -292,7 +296,9 @@ def has_required_scopes(
 
 
 def get_accessible_resource_ids(
-    user_scopes: List[str], resource_type: str
+    user_scopes: List[str],
+    resource_type: str,
+    admin_scope: Optional[str] = None,
 ) -> Set[str]:
     """
     Get the set of resource IDs the user has access to.
@@ -300,6 +306,7 @@ def get_accessible_resource_ids(
     Args:
         user_scopes: List of scope strings the user has
         resource_type: Type of resource ("agents", "teams", "workflows")
+        admin_scope: The scope string that grants admin access (default: "agent_os:admin")
 
     Returns:
         Set of resource IDs the user can access. Returns {"*"} for wildcard access.
@@ -320,7 +327,7 @@ def get_accessible_resource_ids(
         >>> get_accessible_resource_ids(["admin"], "agents")
         {'*'}
     """
-    parsed_scopes = [parse_scope(scope) for scope in user_scopes]
+    parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
     # Check for admin or global wildcard access
     for scope in parsed_scopes:

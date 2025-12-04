@@ -447,13 +447,14 @@ class JWTMiddleware(BaseHTTPMiddleware):
                         required_scopes,
                         resource_type=resource_type,
                         resource_id=resource_id,
+                        admin_scope=self.admin_scope,
                     )
 
                     # Special handling for listing endpoints (no resource_id)
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
                         # This allows endpoints to return filtered results (including empty list) instead of 403
-                        accessible_ids = get_accessible_resource_ids(scopes, resource_type)
+                        accessible_ids = get_accessible_resource_ids(scopes, resource_type, admin_scope=self.admin_scope)
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
 

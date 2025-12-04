@@ -96,9 +96,9 @@ app = agent_os.get_app()
 app.add_middleware(
     JWTMiddleware,
     verification_key=PUBLIC_KEY,
-    algorithm="HS256",  # Use HS256 for symmetric key
+    algorithm="RS256",  # Use RS256 for asymmetric key
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
-    admin_scope="agent_os:admin",  # Admin can bypass all checks
+    admin_scope="foo:bar",  # Admin can bypass all checks with this scope
 )
 
 if __name__ == "__main__":
@@ -124,7 +124,7 @@ if __name__ == "__main__":
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
         PRIVATE_KEY,
-        algorithm="HS256",
+        algorithm="RS256",
     )
 
     power_user_token = jwt.encode(
@@ -134,7 +134,7 @@ if __name__ == "__main__":
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
         PRIVATE_KEY,
-        algorithm="HS256",
+        algorithm="RS256",
     )
 
     admin_token = jwt.encode(
@@ -144,7 +144,7 @@ if __name__ == "__main__":
             "exp": datetime.now(UTC) + timedelta(hours=24),
         },
         PRIVATE_KEY,
-        algorithm="HS256",
+        algorithm="RS256",
     )
 
     print("\n" + "=" * 60)
