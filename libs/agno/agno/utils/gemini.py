@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -424,3 +425,14 @@ def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[To
         return Tool(function_declarations=function_declarations)
     else:
         return None
+
+
+GEMINI_FILE_URI_PATTERN = re.compile(r"^https://generativelanguage\.googleapis\.com/v1beta/files/[a-zA-Z0-9]+")
+GCS_FILE_URI_PATTERN = re.compile(r"^gs://")
+
+
+def is_gemini_or_gcs_file_uri(uri: str | None) -> bool:
+    """Check if the URI is a Gemini file URI or a GCS file URI."""
+    if not uri:
+        return False
+    return bool(GEMINI_FILE_URI_PATTERN.match(uri)) or bool(GCS_FILE_URI_PATTERN.match(uri))
