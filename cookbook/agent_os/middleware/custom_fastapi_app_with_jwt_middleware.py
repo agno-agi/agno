@@ -38,14 +38,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Add JWT middleware
+# Add RBAC middleware
 app.add_middleware(
     JWTMiddleware,
-    secret_key=JWT_SECRET,
+    verification_key=JWT_SECRET,
+    algorithm="HS256",  # Use HS256 for symmetric key
     excluded_route_paths=[
         "/auth/login"
     ],  # We don't want to validate the token for the login endpoint
-    validate_token=True,  # Set validate to False to skip token validation
 )
 
 

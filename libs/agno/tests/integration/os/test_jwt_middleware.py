@@ -11,8 +11,7 @@ from fastapi.testclient import TestClient
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
-from agno.os.middleware import JWTMiddleware
-from agno.os.middleware.jwt import TokenSource
+from agno.os.middleware import JWTMiddleware, TokenSource
 
 # Test JWT secret
 JWT_SECRET = "test-secret-key-for-integration-tests"
@@ -56,12 +55,12 @@ def jwt_test_client(jwt_test_agent):
     # Add JWT middleware
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",  # Extract user_id from 'sub' claim
         session_id_claim="session_id",  # Extract session_id from 'session_id' claim
         dependencies_claims=["name", "email", "roles", "org_id"],  # Extract these as dependencies
-        validate=True,  # Enable token validation for this test
+        authorization=True,  # Enable token validation for this test
     )
 
     return TestClient(app)
@@ -178,13 +177,13 @@ def test_jwt_middleware_validation_disabled(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         token_header_key="Authorization",
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email", "roles"],
-        validate=False,  # Disable validation
+        authorization=False,  # Disable validation
     )
 
     client = TestClient(app)
@@ -217,13 +216,13 @@ def test_jwt_middleware_custom_claims_configuration(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         token_header_key="Authorization",
         user_id_claim="custom_user_id",  # Different claim name
         session_id_claim="custom_session",  # Different claim name
         dependencies_claims=["department", "level"],  # Different dependency claims
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -268,13 +267,13 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
     # Add JWT middleware with excluded routes
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         token_header_key="Authorization",
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email"],
-        validate=True,
+        authorization=True,
         excluded_route_paths=[
             "/health",  # Exclude health endpoint
             "/sessions",  # Exclude sessions endpoint
@@ -313,14 +312,14 @@ def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email", "roles", "org_id"],
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -358,10 +357,11 @@ def test_jwt_middleware_cookie_missing_token_fails(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -384,11 +384,12 @@ def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_toke
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -429,11 +430,12 @@ def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_t
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -463,10 +465,10 @@ def test_jwt_middleware_both_token_sources_missing_both_fails(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -490,11 +492,12 @@ def test_jwt_middleware_custom_cookie_name(jwt_test_agent, jwt_token):
     custom_cookie_name = "custom_auth_token"
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name=custom_cookie_name,
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -526,10 +529,11 @@ def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -553,11 +557,11 @@ def test_jwt_middleware_scopes_string_format(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         scopes_claim="scope",  # Standard OAuth2 scope claim
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -594,11 +598,11 @@ def test_jwt_middleware_scopes_list_format(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         scopes_claim="permissions",  # Custom scope claim name
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -635,11 +639,11 @@ def test_jwt_middleware_no_scopes_claim(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         scopes_claim=None,  # No scopes extraction
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -676,11 +680,11 @@ def test_jwt_middleware_session_state_claims(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
         session_state_claims=["session_data", "user_preferences", "theme"],
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -721,11 +725,11 @@ def test_jwt_middleware_custom_token_header_key(jwt_test_agent):
     custom_header_key = "X-Auth-Token"
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         token_header_key=custom_header_key,
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -772,10 +776,10 @@ def test_jwt_middleware_malformed_authorization_header(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -821,11 +825,11 @@ def test_jwt_middleware_missing_session_id_claim(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
         session_id_claim="missing_session_claim",  # Claim that won't exist
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -869,10 +873,10 @@ def test_jwt_middleware_general_exception_during_decode(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -916,10 +920,10 @@ def test_jwt_middleware_different_algorithm_rs256(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=public_pem.decode("utf-8"),  # Use public key for verification
+        verification_key=public_pem.decode("utf-8"),  # Use public key for verification
         algorithm="RS256",
         user_id_claim="sub",
-        validate=True,
+        authorization=True,
     )
 
     client = TestClient(app)
@@ -965,10 +969,10 @@ def test_jwt_middleware_request_state_token_storage(jwt_test_agent):
 
     app.add_middleware(
         JWTMiddleware,
-        secret_key=JWT_SECRET,
+        verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
-        validate=False,  # Don't fail on validation errors, just set authenticated=False
+        authorization=False,  # Don't fail on validation errors, just set authenticated=False
     )
 
     client = TestClient(app)

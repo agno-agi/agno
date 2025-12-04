@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
+import os
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ from agno.os.config import (
     MetricsDomainConfig,
     SessionConfig,
     SessionDomainConfig,
+    JWTConfig,
     TracesConfig,
     TracesDomainConfig,
 )
@@ -46,11 +48,12 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     load_yaml_config,
+    resolve_origins,
     setup_tracing_for_os,
     update_cors_middleware,
 )
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow.workflow import Workflow
 
@@ -106,17 +109,20 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        authorization: bool = False,
+        jwt_config: Optional[JWTConfig] = None,
+        cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
-        telemetry: bool = True,
         tracing: bool = False,
         tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        telemetry: bool = True,
     ):
         """Initialize AgentOS.
 
@@ -137,11 +143,18 @@ class AgentOS:
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
-            telemetry: Whether to enable telemetry
+            auto_provision_dbs: Whether to automatically provision databases
+            authorization: Whether to enable authorization
+            jwt_verification_key: Key used to verify JWT signatures. For asymmetric algorithms (RS256, ES256),
+                this should be the public key. For symmetric algorithms (HS256), this is the shared secret.
+            jwt_algorithm: JWT algorithm for signature verification (default: RS256).
+                Common options: RS256 (asymmetric, recommended), HS256 (symmetric).
+            cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
                        If not provided and tracing=True, the first available db from agents/teams/workflows is used.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            telemetry: Whether to enable telemetry
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -186,6 +199,18 @@ class AgentOS:
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
 
+        # RBAC
+        self.authorization = authorization
+        self.jwt_config = jwt_config
+
+        if self.authorization and not self.id:
+            raise ValueError(
+                "Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS."
+            )
+
+        # CORS configuration - merge user-provided origins with defaults from settings
+        self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+        
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
@@ -548,7 +573,31 @@ class AgentOS:
                 )
 
         # Update CORS middleware
-        update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
+        update_cors_middleware(fastapi_app, self.cors_allowed_origins)  # type: ignore
+
+        # Set agent_os_id and cors_allowed_origins on app state
+        # This allows middleware (like JWT) to access these values
+        fastapi_app.state.agent_os_id = self.id
+        fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
+
+        # Add JWT middleware if authorization is enabled
+        if self.authorization:
+            from agno.os.middleware.jwt import JWTMiddleware
+
+            algorithm = "RS256"
+            verification_key = None
+            if self.jwt_config:
+                algorithm = self.jwt_config.algorithm if self.jwt_config and self.jwt_config.algorithm else "RS256"
+                verification_key = self.jwt_config.verification_key if self.jwt_config and self.jwt_config.verification_key else None
+                
+            log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
+                
+            fastapi_app.add_middleware(
+                JWTMiddleware,
+                verification_key=verification_key,
+                algorithm=algorithm,
+                authorization=self.authorization,
+            )
 
         return fastapi_app
 
@@ -966,4 +1015,4 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, lifespan="on", **kwargs)
