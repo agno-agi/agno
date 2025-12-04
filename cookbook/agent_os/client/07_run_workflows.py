@@ -84,9 +84,11 @@ async def run_workflow_streaming():
 
 
 async def run_workflow_with_session():
-    """Execute workflow runs within a session."""
+    """
+    Execute workflow runs within a session.
+    """
     print("=" * 60)
-    print("Workflow with Session Context")
+    print("Workflow with Session")
     print("=" * 60)
 
     async with AgentOSClient(base_url="http://localhost:7777") as client:
@@ -106,23 +108,13 @@ async def run_workflow_with_session():
             )
             print(f"Created session: {session.session_id}")
 
-            # First message
-            print("\nUser: My favorite programming language is Rust.")
-            result1 = await client.run_workflow(
+            # Run a workflow with the session
+            result = await client.run_workflow(
                 workflow_id=workflow_id,
-                message="My favorite programming language is Rust. Remember this.",
+                message="What are the key features of modern programming languages?",
                 session_id=session.session_id,
             )
-            print(f"Workflow: {result1.content}")
-
-            # Second message - test context retention
-            print("\nUser: What is my favorite language?")
-            result2 = await client.run_workflow(
-                workflow_id=workflow_id,
-                message="What is my favorite language?",
-                session_id=session.session_id,
-            )
-            print(f"Workflow: {result2.content}")
+            print(f"Workflow: {result.content[:500]}..." if len(str(result.content)) > 500 else f"Workflow: {result.content}")
         except Exception as e:
             print(f"Error: {e}")
             if hasattr(e, "response"):

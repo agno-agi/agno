@@ -66,7 +66,8 @@ async def run_team_streaming():
             if line.startswith("data: "):
                 try:
                     data = json.loads(line[6:])
-                    if data.get("event") == "RunContent":
+                    # Team streaming uses "TeamRunContent" event
+                    if data.get("event") == "TeamRunContent":
                         content = data.get("content", "")
                         print(content, end="", flush=True)
                 except json.JSONDecodeError:
@@ -76,9 +77,13 @@ async def run_team_streaming():
 
 
 async def run_team_with_session():
-    """Execute team runs within a session for multi-turn conversations."""
+    """Execute team runs within a session.
+    
+    Note: Teams coordinate multiple agents and may not maintain
+    conversation context like a single agent would.
+    """
     print("=" * 60)
-    print("Multi-Turn Team Conversation with Session")
+    print("Team Run with Session")
     print("=" * 60)
 
     async with AgentOSClient(base_url="http://localhost:7777") as client:
@@ -97,26 +102,17 @@ async def run_team_with_session():
         )
         print(f"Created session: {session.session_id}")
 
-        # First message - simple calculation
-        print("\nUser: Calculate 25 + 17.")
+        # Run a query that requires team coordination
+        print("\nUser: Research what Python is and calculate 100 / 4.")
         try:
-            result1 = await client.run_team(
+            result = await client.run_team(
                 team_id=team_id,
-                message="Calculate 25 + 17.",
+                message="Research what Python is and calculate 100 / 4.",
                 session_id=session.session_id,
             )
-            print(f"Team: {result1.content}")
-
-            # Second message
-            print("\nUser: Now multiply the result by 2.")
-            result2 = await client.run_team(
-                team_id=team_id,
-                message="Now multiply the result by 2.",
-                session_id=session.session_id,
-            )
-            print(f"Team: {result2.content}")
+            print(f"Team: {result.content}")
         except Exception as e:
-            print(f"Error (team may have timed out): {type(e).__name__}")
+            print(f"Error: {type(e).__name__}: {e}")
 
 
 async def main():
