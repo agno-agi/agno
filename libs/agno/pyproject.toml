@@ -107,6 +107,7 @@ notion = ["notion-client"]
 opencv = ["opencv-python"]
 parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
+redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
@@ -238,6 +239,7 @@ tools = [
   "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
   "agno[neo4j]",
@@ -496,6 +498,7 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "parallel.*",
+  "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"
