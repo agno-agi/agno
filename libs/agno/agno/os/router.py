@@ -1165,7 +1165,8 @@ def get_base_router(
                         ]
                     }
                 },
-            }
+            },
+            403: {"description": "Access denied - no agent scopes"},
         },
     )
     async def get_agents(request: Request) -> List[AgentResponse]:
@@ -1174,7 +1175,12 @@ def get_base_router(
             return []
 
         # Filter agents based on user's scopes
-        from agno.os.auth import filter_resources_by_access
+        from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+        # Check if user has any agent scopes at all
+        accessible_ids = get_accessible_resources(request, "agents")
+        if not accessible_ids:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
 
         # Limit results based on the user's access/scopes
         accessible_agents = filter_resources_by_access(request, os.agents, "agents")
@@ -1519,7 +1525,8 @@ def get_base_router(
                         ]
                     }
                 },
-            }
+            },
+            403: {"description": "Access denied - no team scopes"},
         },
     )
     async def get_teams(request: Request) -> List[TeamResponse]:
@@ -1528,7 +1535,12 @@ def get_base_router(
             return []
 
         # Filter teams based on user's scopes
-        from agno.os.auth import filter_resources_by_access
+        from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+        # Check if user has any team scopes at all
+        accessible_ids = get_accessible_resources(request, "teams")
+        if not accessible_ids:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
 
         accessible_teams = filter_resources_by_access(request, os.teams, "teams")
 
@@ -1668,7 +1680,8 @@ def get_base_router(
                         ]
                     }
                 },
-            }
+            },
+            403: {"description": "Access denied - no workflow scopes"},
         },
     )
     async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
@@ -1676,7 +1689,12 @@ def get_base_router(
             return []
 
         # Filter workflows based on user's scopes
-        from agno.os.auth import filter_resources_by_access
+        from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+        # Check if user has any workflow scopes at all
+        accessible_ids = get_accessible_resources(request, "workflows")
+        if not accessible_ids:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
 
         accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
 

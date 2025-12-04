@@ -71,6 +71,7 @@ research_agent = Agent(
 # Define custom scope mappings
 # Format: "METHOD /path": ["scope1", "scope2"]
 custom_scopes = {
+    "GET /config": ["app:admin"],
     # Agent endpoints
     "GET /agents": ["app:read"],  # Custom scope instead of default "agents:read"
     "GET /agents/*": ["app:read"],

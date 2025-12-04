@@ -279,9 +279,9 @@ def has_required_scopes(
                 # Global resource scope required
                 full_required_scope = required_scope_str
 
-            required = parse_scope(full_required_scope)
+            required = parse_scope(full_required_scope, admin_scope=admin_scope)
         else:
-            required = parse_scope(required_scope_str)
+            required = parse_scope(required_scope_str, admin_scope=admin_scope)
 
         scope_matched = False
         for user_scope in parsed_user_scopes:
