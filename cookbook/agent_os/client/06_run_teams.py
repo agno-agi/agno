@@ -78,7 +78,7 @@ async def run_team_streaming():
 
 async def run_team_with_session():
     """Execute team runs within a session.
-    
+
     Note: Teams coordinate multiple agents and may not maintain
     conversation context like a single agent would.
     """

@@ -114,7 +114,11 @@ async def run_workflow_with_session():
                 message="What are the key features of modern programming languages?",
                 session_id=session.session_id,
             )
-            print(f"Workflow: {result.content[:500]}..." if len(str(result.content)) > 500 else f"Workflow: {result.content}")
+            print(
+                f"Workflow: {result.content[:500]}..."
+                if len(str(result.content)) > 500
+                else f"Workflow: {result.content}"
+            )
         except Exception as e:
             print(f"Error: {e}")
             if hasattr(e, "response"):
