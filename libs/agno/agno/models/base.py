@@ -30,6 +30,7 @@ from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
@@ -423,9 +424,22 @@ class Model(ABC):
                                 ]
                                 and function_call_response.tool_executions is not None
                             ):
+                                # Record the tool execution in the model response
                                 if model_response.tool_executions is None:
                                     model_response.tool_executions = []
                                 model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                                # If the tool is currently paused (HITL flow), add the requirement to the run response
+                                if (
+                                    function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                    and run_response is not None
+                                ):
+                                    current_tool_execution = function_call_response.tool_executions[-1]
+                                    if run_response.requirements is None:
+                                        run_response.requirements = []
+                                    run_response.requirements.append(
+                                        RunRequirement(tool_execution=current_tool_execution)
+                                    )
 
                             elif function_call_response.event not in [
                                 ModelResponseEvent.tool_call_started.value,
@@ -615,6 +629,19 @@ class Model(ABC):
                                 if model_response.tool_executions is None:
                                     model_response.tool_executions = []
                                 model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                                # If the tool is currently paused (HITL flow), add the requirement to the run response
+                                if (
+                                    function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                    and run_response is not None
+                                ):
+                                    current_tool_execution = function_call_response.tool_executions[-1]
+                                    if run_response.requirements is None:
+                                        run_response.requirements = []
+                                    run_response.requirements.append(
+                                        RunRequirement(tool_execution=current_tool_execution)
+                                    )
+
                             elif function_call_response.event not in [
                                 ModelResponseEvent.tool_call_started.value,
                                 ModelResponseEvent.tool_call_completed.value,
@@ -1706,7 +1733,7 @@ class Model(ABC):
 
             paused_tool_executions = []
 
-            # The function cannot be executed without user confirmation
+            # The function requires user confirmation (HITL)
             if fc.function.requires_confirmation:
                 paused_tool_executions.append(
                     ToolExecution(
@@ -1716,7 +1743,8 @@ class Model(ABC):
                         requires_confirmation=True,
                     )
                 )
-            # If the function requires user input, we yield a message to the user
+
+            # The function requires user input (HITL)
             if fc.function.requires_user_input:
                 user_input_schema = fc.function.user_input_schema
                 if fc.arguments and user_input_schema:
@@ -1734,7 +1762,8 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
-            # If the function is from the user control flow tools, we handle it here
+
+            # If the function is from the user control flow (HITL) tools, we handle it here
             if fc.function.name == "get_user_input" and fc.arguments and fc.arguments.get("user_input_fields"):
                 user_input_schema = []
                 for input_field in fc.arguments.get("user_input_fields", []):
@@ -1760,7 +1789,8 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
-            # If the function requires external execution, we yield a message to the user
+
+            # The function requires external execution (HITL)
             if fc.function.external_execution:
                 paused_tool_executions.append(
                     ToolExecution(

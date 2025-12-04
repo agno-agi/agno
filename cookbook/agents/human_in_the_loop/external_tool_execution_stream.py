@@ -44,20 +44,25 @@ for run_event in agent.run(
     "What files do I have in my current directory?", stream=True
 ):
     if run_event.is_paused:
-        for tool in run_event.tools_awaiting_external_execution:  # type: ignore
-            if tool.tool_name == execute_shell_command.name:
-                print(
-                    f"Executing {tool.tool_name} with args {tool.tool_args} externally"
-                )
-                # We execute the tool ourselves. You can also execute something completely external here.
-                result = execute_shell_command.entrypoint(**tool.tool_args)  # type: ignore
-                # We have to set the result on the tool execution object so that the agent can continue
-                tool.result = result
+        for requirement in run_event.active_requirements:  # type: ignore
+            if requirement.needs_external_execution:
+                if requirement.tool_execution.tool_name == execute_shell_command.name:
+                    print(
+                        f"Executing {requirement.tool_execution.tool_name} with args {requirement.tool_execution.tool_args} externally"
+                    )
+                    # We execute the tool ourselves. You can also execute something completely external here.
+                    result = execute_shell_command.entrypoint(
+                        **requirement.tool_execution.tool_args  # type: ignore
+                    )  # type: ignore
+                    # We have to set the result on the tool execution object so that the agent can continue
+                    requirement.set_external_execution_result(result)
 
-        run_response = agent.continue_run(
-            run_id=run_event.run_id, updated_tools=run_event.tools, stream=True
-        )  # type: ignore
-        pprint.pprint_run_response(run_response)
+run_response = agent.continue_run(
+    run_id=run_event.run_id,
+    requirements=run_event.requirements,  # type: ignore
+    stream=True,
+)
+pprint.pprint_run_response(run_response)
 
 
 # Or for simple debug flow
