@@ -1,11 +1,3 @@
-"""
-Memori + Agno + SQLite Example
-
-Demonstrates how Memori adds persistent memory to Agno agents.
-
-Run: `pip install memori sqlalchemy` to install dependencies
-"""
-
 import os
 
 from agno.agent import Agent
