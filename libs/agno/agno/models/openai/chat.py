@@ -812,8 +812,17 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
 
+        # Extract reasoning_content attribute (for models like o1, o3)
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
+        # Extract reasoning attribute (for Gemini via OpenRouter and other providers)
+        elif hasattr(response_message, "reasoning") and response_message.reasoning is not None:  # type: ignore
+            reasoning = response_message.reasoning  # type: ignore
+            # Handle both string and object types
+            if isinstance(reasoning, str):
+                model_response.reasoning_content = reasoning
+            elif hasattr(reasoning, "content"):
+                model_response.reasoning_content = reasoning.content  # type: ignore
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
@@ -844,8 +853,17 @@ class OpenAIChat(Model):
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
+                # Extract reasoning_content attribute (for models like o1, o3)
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content
+                # Extract reasoning attribute (for Gemini via OpenRouter and other providers)
+                elif hasattr(choice_delta, "reasoning") and choice_delta.reasoning is not None:  # type: ignore
+                    reasoning = choice_delta.reasoning  # type: ignore
+                    # Handle both string and object types
+                    if isinstance(reasoning, str):
+                        model_response.reasoning_content = reasoning
+                    elif hasattr(reasoning, "content"):
+                        model_response.reasoning_content = reasoning.content  # type: ignore
 
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
