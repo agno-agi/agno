@@ -11,8 +11,8 @@ Prerequisites:
 
 import asyncio
 
-from agno.os.client import AgentOSClient
 from agno.db.schemas.evals import EvalType
+from agno.os.client import AgentOSClient
 
 
 async def run_accuracy_eval():
@@ -149,4 +149,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

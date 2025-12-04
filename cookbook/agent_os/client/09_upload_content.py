@@ -51,7 +51,7 @@ async def upload_text_content():
                 description="A guide to the Agno framework",
             )
 
-            print(f"\nUpload successful!")
+            print("\nUpload successful!")
             print(f"Content ID: {result.id}")
             print(f"Status: {result.status}")
 
@@ -106,7 +106,9 @@ async def search_uploaded_content():
             print(f"\nFound {len(results.data)} results")
 
             for result in results.data:
-                content_preview = str(result.content)[:150] if hasattr(result, "content") else "N/A"
+                content_preview = (
+                    str(result.content)[:150] if hasattr(result, "content") else "N/A"
+                )
                 print(f"\n- Content: {content_preview}...")
 
         except Exception as e:
@@ -154,4 +156,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

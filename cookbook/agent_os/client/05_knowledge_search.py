@@ -25,8 +25,12 @@ async def main():
         print("\n1. Getting knowledge config...")
         try:
             config = await client.get_knowledge_config()
-            print(f"   Available readers: {config.readers if hasattr(config, 'readers') else 'N/A'}")
-            print(f"   Available chunkers: {config.chunkers if hasattr(config, 'chunkers') else 'N/A'}")
+            print(
+                f"   Available readers: {config.readers if hasattr(config, 'readers') else 'N/A'}"
+            )
+            print(
+                f"   Available chunkers: {config.chunkers if hasattr(config, 'chunkers') else 'N/A'}"
+            )
         except Exception as e:
             print(f"   Knowledge not configured: {e}")
             return
@@ -37,7 +41,9 @@ async def main():
             content = await client.list_content()
             print(f"   Found {len(content.data)} content items")
             for item in content.data[:5]:
-                print(f"   - {item.id}: {item.name if hasattr(item, 'name') else 'Unnamed'}")
+                print(
+                    f"   - {item.id}: {item.name if hasattr(item, 'name') else 'Unnamed'}"
+                )
         except Exception as e:
             print(f"   Error listing content: {e}")
 
@@ -50,8 +56,12 @@ async def main():
             )
             print(f"   Found {len(results.data)} results")
             for result in results.data:
-                content_preview = str(result.content)[:100] if hasattr(result, 'content') else 'N/A'
-                print(f"   - Score: {result.score if hasattr(result, 'score') else 'N/A'}")
+                content_preview = (
+                    str(result.content)[:100] if hasattr(result, "content") else "N/A"
+                )
+                print(
+                    f"   - Score: {result.score if hasattr(result, 'score') else 'N/A'}"
+                )
                 print(f"     Content: {content_preview}...")
         except Exception as e:
             print(f"   Error searching: {e}")
@@ -59,4 +69,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

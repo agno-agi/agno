@@ -6,12 +6,13 @@ from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.os.routers.evals.schemas import EvalSchema
 from agno.os.routers.knowledge.schemas import (
     ConfigResponseSchema as KnowledgeConfigResponse,
+)
+from agno.os.routers.knowledge.schemas import (
     ContentResponseSchema,
     ContentStatusResponse,
     VectorSearchResult,
 )
 from agno.os.routers.memory.schemas import (
-    UserMemoryCreateSchema,
     UserMemorySchema,
     UserStatsSchema,
 )
@@ -20,8 +21,6 @@ from agno.os.schema import (
     AgentSessionDetailSchema,
     AgentSummaryResponse,
     ConfigResponse,
-    CreateSessionRequest,
-    DeleteSessionRequest,
     Model,
     PaginatedResponse,
     RunSchema,
@@ -30,14 +29,14 @@ from agno.os.schema import (
     TeamRunSchema,
     TeamSessionDetailSchema,
     TeamSummaryResponse,
-    UpdateSessionRequest,
     WorkflowResponse,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
+
 try:
-    from httpx import AsyncClient, HTTPStatusError
+    from httpx import AsyncClient
 except ImportError:
     raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
@@ -80,10 +79,10 @@ class AgentOSClient:
 
     async def connect(self) -> "AgentOSClient":
         """Explicitly create HTTP client connection.
-        
+
         Use this when you need to manage the client lifecycle manually
         without using the async context manager.
-        
+
         Returns:
             AgentOSClient: self for method chaining
         """
@@ -172,9 +171,7 @@ class AgentOSClient:
         response.raise_for_status()
         return response.json()
 
-    async def _stream_post_form_data(
-        self, endpoint: str, data: Dict[str, Any]
-    ) -> AsyncIterator[str]:
+    async def _stream_post_form_data(self, endpoint: str, data: Dict[str, Any]) -> AsyncIterator[str]:
         """Stream POST request with form data.
 
         Args:

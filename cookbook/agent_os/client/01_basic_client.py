@@ -42,7 +42,7 @@ async def main():
         if config.agents:
             agent_id = config.agents[0].id
             agent = await client.get_agent(agent_id)
-            print(f"\nAgent Details:")
+            print("\nAgent Details:")
             print(f"  Name: {agent.name}")
             print(f"  Model: {agent.model}")
             print(f"  Tools: {len(agent.tools or [])}")
@@ -50,4 +50,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

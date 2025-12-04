@@ -1,2 +1,1 @@
 """AgentOSClient cookbook examples."""
-

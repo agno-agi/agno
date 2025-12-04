@@ -50,7 +50,9 @@ async def main():
         details = await client.get_session(session.session_id)
         print(f"   Agent ID: {details.agent_id}")
         print(f"   User ID: {details.user_id}")
-        print(f"   Runs: {len(details.runs) if hasattr(details, 'runs') and details.runs else 0}")
+        print(
+            f"   Runs: {len(details.runs) if hasattr(details, 'runs') and details.runs else 0}"
+        )
 
         # Run some messages in the session
         print("\n4. Running messages in session...")
@@ -70,7 +72,11 @@ async def main():
         runs = await client.get_session_runs(session_id=session.session_id)
         print(f"   Found {len(runs)} runs in session")
         for run in runs:
-            content_preview = (run.content[:50] + "...") if run.content and len(str(run.content)) > 50 else run.content
+            content_preview = (
+                (run.content[:50] + "...")
+                if run.content and len(str(run.content)) > 50
+                else run.content
+            )
             print(f"   - {run.run_id}: {content_preview}")
 
         # Rename session
@@ -89,4 +95,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
