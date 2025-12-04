@@ -27,6 +27,8 @@ It provides the complete stack for building, running and managing multi-agent sy
 - **AgentOS Runtime**: Run your multi-agent system in production with a secure, stateless runtime and ready to use integration endpoints.
 - **AgentOS Control Plane**: Test, monitor and manage AgentOS deployments across environments with full operational visibility.
 
+Checkout the full list of features [here](#features).
+
 ## Getting started
 
 If you're new to Agno, follow our [quickstart](https://docs.agno.com/get-started/quickstart) to build your first Agent and chat with it using the AgentOS UI.
@@ -99,28 +101,32 @@ Agno provides the complete solution for companies building agentic systems:
 
 Agno brings a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to any external services or pay retention costs, you get complete privacy and control.
 
-## Designed for Agent Engineering
+## Features
 
-Agno is an incredibly feature-rich framework, designed for Agent Engineering. Here are some key features:
+Agno is an incredibly feature-rich framework purpose-built for Agent Engineering. Here are some key features:
 
 | **Category**                           | **Feature**                     | **Description**                                                                                                           |
 | -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Core Intelligence**                  | **Model Agnostic**              | Works with any model provider so you can use your favorite LLMs.                                                          |
-|                                        | **Type Safe**                   | Enforce structured I/O through `input_schema` and `output_schema` for predictable, composable behavior.                   |
-|                                        | **Dynamic Context Engineering** | Inject variables, state, and retrieved data on the fly into context. Perfect for dependency-driven agents.                |
-| **Memory, Knowledge, and Persistence** | **Persistent Storage**          | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages.                        |
-|                                        | **User Memory**                 | Built-in memory system that allows Agents to recall user-specific context across sessions.                                |
-|                                        | **Agentic RAG**                 | Connect to 20+ vector stores (called **Knowledge** in Agno) with hybrid search + reranking out of the box.                |
-|                                        | **Culture (Collective Memory)** | Shared knowledge that compounds across agents and time.                                                                   |
-| **Execution & Control**                | **Human-in-the-Loop**           | Native support for confirmations, manual overrides, and external tool execution.                                          |
+| **Foundational Principles**            | **Model Agnostic**              | Supports all model providers so you can choose the best model for your use case |
+|                                        | **Type Safe**                   | Enforces structured I/O through input_schema and output_schema for predictable and composable agent behavior. |
+|                                        | **Dynamic Context**             | Inject variables, state, and retrieved data at runtime into context. Compress, summarize and filter context to keep your Agents focused and efficient. |
+|                                        | **Designed for Scale**          | Designed around async execution and long-running tasks for high throughput agent workloads. |
+| **Memory, Knowledge, and Persistence** | **Persistent Storage**          | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
+|                                        | **User Memory**                 | Built in memory layer that helps agents recall user specific context across sessions. |
+|                                        | **Agentic RAG**                 | Connect to 20+ vector stores (called **Knowledge**) with hybrid search, reranking, and chunking out of the box. |
+|                                        | **Culture** | Shared long term collective memory that compounds across agents and time. |
+|                                        | **Ephemeral Context** | In memory scratchpad for short lived reasoning without polluting long term state. |
+| **Execution & Control**                | **Human-in-the-Loop**           | Native support for confirmations, approvals, manual overrides, and external actions. |
 |                                        | **Guardrails**                  | Built-in safeguards for validation, security, and prompt protection.                                                      |
-|                                        | **Agent Lifecycle Hooks**       | Pre- and post-hooks to validate or transform inputs and outputs.                                                          |
-|                                        | **MCP Integration**             | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems.                         |
-|                                        | **Toolkits**                    | 100+ built-in toolkits with thousands of tools, ready for use across data, code, web, and enterprise APIs.                |
-| **Runtime & Evaluation**               | **Runtime**                     | Pre-built FastAPI based runtime with SSE compatible endpoints, ready for production on day 1.                             |
-|                                        | **Control Plane (UI)**          | Integrated interface to visualize, monitor, and debug agent activity in real time.                                        |
-|                                        | **Natively Multimodal**         | Agents can process and generate text, images, audio, video, and files.                                                    |
-|                                        | **Evals**                       | Measure your Agents' Accuracy, Performance, and Reliability.                                                              |
+|                                        | **Agent Lifecycle Hooks**       | Pre and post hooks to validate, enrich, or transform inputs and outputs. |
+|                                        | **MCP Integration**             | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
+|                                        | **A2A Integration**             | First-class support for the Agent to Agent communication protocol (A2A). |
+|                                        | **Toolkits**                    | 100+ built in toolkits with thousands of tools covering data, code, web, and enterprise APIs. |
+| **Runtime & Evaluation**               | **Runtime**                     | Prebuilt FastAPI runtime with SSE compatible endpoints. Production ready from day one. |
+|                                        | **Control Plane (UI)**          | Integrated interface to test, observe, and debug your agents, teams, and workflows in real time. |
+|                                        | **Natively Multimodal**         | Agents can process and generate text, images, audio, video, and files. |
+|                                        | **Evals**                       | Measure Accuracy, Performance, Latency, and Reliability across agents and workflows. |
+|                                        | **Durable Execution**           | Built in support for long running, resumable workflows. |
 | **Security & Privacy**                 | **Private by Design**           | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
 |                                        | **Data Governance**             | Your data lives securely in your Agent database, no external data sharing or vendor lock-in.                              |
 |                                        | **Access Control**              | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools.                               |

@@ -245,9 +245,9 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
-            from traceback import format_exc
+            from traceback import print_exc
 
-            print(format_exc())
+            print_exc()
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
@@ -1109,9 +1109,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 # Select topics from all results
-                stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
+                stmt = select(table.c.topics)
                 result = sess.execute(stmt).fetchall()
-
                 return list(set([record[0] for record in result]))
 
         except Exception as e:
