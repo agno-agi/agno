@@ -495,7 +495,7 @@ class WebSocketHandler:
         except RuntimeError as e:
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 from agno.utils.log import log_debug
-                log_debug(f"WebSocket closed, event not sent (expected during disconnection)")
+                log_debug("WebSocket closed, event not sent (expected during disconnection)")
             else:
                 log_warning(f"Failed to handle WebSocket event: {e}")
         except Exception as e:
@@ -511,7 +511,7 @@ class WebSocketHandler:
         except RuntimeError as e:
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 from agno.utils.log import log_debug
-                log_debug(f"WebSocket closed, text not sent (expected during disconnection)")
+                log_debug("WebSocket closed, text not sent (expected during disconnection)")
             else:
                 log_warning(f"Failed to send WebSocket text: {e}")
         except Exception as e:
@@ -527,7 +527,7 @@ class WebSocketHandler:
         except RuntimeError as e:
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 from agno.utils.log import log_debug
-                log_debug(f"WebSocket closed, dict not sent (expected during disconnection)")
+                log_debug("WebSocket closed, dict not sent (expected during disconnection)")
             else:
                 log_warning(f"Failed to send WebSocket dict: {e}")
         except Exception as e:

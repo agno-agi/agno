@@ -601,7 +601,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_result = await workflow.arun(  # type: ignore
+        await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
             user_id=user_id,
@@ -610,8 +610,6 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             background=True,
             websocket=websocket,
         )
-
-        workflow_run_output = cast(WorkflowRunOutput, workflow_result)
 
         # NOTE: Don't register the original websocket in the manager
         # It's already handled by the WebSocketHandler passed to the workflow
