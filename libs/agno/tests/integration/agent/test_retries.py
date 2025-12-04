@@ -58,7 +58,7 @@ def test_agent_exponential_backoff():
 
     with patch.object(agent, "_run", side_effect=mock_run):
         with patch("agno.agent.agent.time.sleep") as mock_sleep:
-            response = agent.run("Test message")
+            _ = agent.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays
     # Attempt 1 fails -> sleep(1 * 2^0) = 1

@@ -63,7 +63,7 @@ def test_team_exponential_backoff():
 
     with patch.object(team, "_run", side_effect=mock_run):
         with patch("agno.team.team.time.sleep") as mock_sleep:
-            response = team.run("Test message")
+            _ = team.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays
     assert mock_sleep.call_count == 2
