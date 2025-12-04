@@ -10,7 +10,7 @@ This test verifies:
 
 Usage:
     1. Start server: python cookbook/agent_os/workflow/basic_workflow.py
-    2. Run this test: python cookbook/workflows/_06_advanced_concepts/_07_long_running_workflows/workflow_events_replay.py
+    2. Run this test: python cookbook/workflows/_06_advanced_concepts/_07_long_running_workflows/02_workflow_events_replay.py
 """
 
 import asyncio

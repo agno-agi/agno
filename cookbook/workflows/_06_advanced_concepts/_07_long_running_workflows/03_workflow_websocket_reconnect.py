@@ -9,7 +9,7 @@ This script tests:
 
 Usage:
     1. Start the AgentOS server: python cookbook/agent_os/workflow/basic_workflow.py
-    2. Run this test: python cookbook/workflows/_06_advanced_concepts/_07_long_running_workflows/workflow_websocket_reconnect.py
+    2. Run this test: python cookbook/workflows/_06_advanced_concepts/_07_long_running_workflows/03_workflow_websocket_reconnect.py
 """
 
 import asyncio
@@ -278,7 +278,7 @@ async def main():
     print("\n Starting WebSocket Reconnection Test")
     print(" Prerequisites:")
     print("   1. AgentOS server should be running at http://localhost:7777")
-    print("   2. Run: python libs/agno/agno/test.py")
+    print("   2. Run: python cookbook/agent_os/workflow/basic_workflow.py")
     print("\n Starting test in 2 seconds...")
     await asyncio.sleep(2)
 
