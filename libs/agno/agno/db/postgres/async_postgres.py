@@ -255,47 +255,63 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions"
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories"
+                    table_name=self.memory_table_name,
+                    table_type="memories",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics"
+                    table_name=self.metrics_table_name,
+                    table_type="metrics",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
+                self.eval_table = await self._get_or_create_table(
+                    table_name=self.eval_table_name,
+                    table_type="evals",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge"
+                    table_name=self.knowledge_table_name,
+                    table_type="knowledge",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture"
+                    table_name=self.culture_table_name,
+                    table_type="culture",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.culture_table
 
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, table_type="versions"
+                    table_name=self.versions_table_name,
+                    table_type="versions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.versions_table
 
