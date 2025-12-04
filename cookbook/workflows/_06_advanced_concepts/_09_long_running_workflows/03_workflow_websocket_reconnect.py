@@ -25,20 +25,20 @@ except ImportError:
 
 def parse_sse_message(message: str) -> dict:
     """Parse SSE-formatted message to extract JSON data.
-    
+
     SSE format:
         event: <event_type>
         data: <json_data>
-        
+
     """
-    lines = message.strip().split('\n')
+    lines = message.strip().split("\n")
     data_line = None
-    
+
     for line in lines:
-        if line.startswith('data: '):
+        if line.startswith("data: "):
             data_line = line[6:]  # Remove 'data: ' prefix
             break
-    
+
     if data_line:
         return json.loads(data_line)
     else:
@@ -121,11 +121,15 @@ class WorkflowWebSocketTester:
 
                     # Print event info
                     event_index = data.get("event_index", "N/A")
-                    print(f"  [{event_count}] event_index={event_index}, event={event_type}")
+                    print(
+                        f"  [{event_count}] event_index={event_index}, event={event_type}"
+                    )
 
                     # Check for workflow completion during phase 1 (shouldn't happen with fast disconnect)
                     if event_type in ["WorkflowCompleted", "WorkflowError"]:
-                        print(f"\n Workflow finished during initial connection: {event_type}")
+                        print(
+                            f"\n Workflow finished during initial connection: {event_type}"
+                        )
                         break
 
                     # "Disconnect" after receiving a few events
@@ -176,12 +180,10 @@ class WorkflowWebSocketTester:
                 print("\n Receiving events after reconnection:")
                 event_count = 0
                 missed_events_count = 0
-                last_event_time = asyncio.get_event_loop().time()
 
                 async for message in websocket:
                     data = parse_sse_message(message)
                     event_type = data.get("event")
-                    last_event_time = asyncio.get_event_loop().time()
 
                     # Track event_index
                     if "event_index" in data:
@@ -194,16 +196,22 @@ class WorkflowWebSocketTester:
                     if event_type == "catch_up":
                         missed_events_count = data.get("missed_events", 0)
                         print(f" catch_up: {missed_events_count} missed events")
-                        print(f" status={data.get('status')}, current_event_count={data.get('current_event_count')}")
+                        print(
+                            f" status={data.get('status')}, current_event_count={data.get('current_event_count')}"
+                        )
                         continue
                     elif event_type == "replay":
-                        print(f" replay: status={data.get('status')}, total_events={data.get('total_events')}")
+                        print(
+                            f" replay: status={data.get('status')}, total_events={data.get('total_events')}"
+                        )
                         print(f" message={data.get('message')}")
                         continue
                     elif event_type == "subscribed":
                         print(f" subscribed: status={data.get('status')}")
                         print(f" current_event_count={data.get('current_event_count')}")
-                        print("\n Now listening for NEW events as workflow continues...")
+                        print(
+                            "\n Now listening for NEW events as workflow continues..."
+                        )
                         continue
                     elif event_type == "error":
                         print(f" ERROR: {data.get('error', 'Unknown error')}")
@@ -214,13 +222,15 @@ class WorkflowWebSocketTester:
                     event_index = data.get("event_index", "N/A")
                     is_missed = event_count <= missed_events_count
                     marker = "🔄 MISSED" if is_missed else "🆕 NEW"
-                    print(f"  [{event_count}] {marker} event_index={event_index}, event={event_type}")
+                    print(
+                        f"  [{event_count}] {marker} event_index={event_index}, event={event_type}"
+                    )
 
                     # Check for workflow completion
                     if event_type in ["WorkflowCompleted", "WorkflowError"]:
                         print(f"\n Workflow finished: {event_type}")
                         break
-                
+
                 # If we exit the loop without completion, the connection closed
                 print("\n WebSocket connection closed (workflow may have completed)")
 

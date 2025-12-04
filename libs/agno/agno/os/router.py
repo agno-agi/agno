@@ -1,8 +1,6 @@
 import json
 from time import time
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Union, cast
-
-from agno.utils.serialize import json_serializer
 from uuid import uuid4
 
 from fastapi import (
@@ -58,9 +56,10 @@ from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutputEvent
-from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput, WorkflowRunOutputEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutputEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.utils.serialize import json_serializer
 from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
@@ -261,7 +260,7 @@ class WebSocketManager:
         """Register a workflow run with its WebSocket connection"""
         self.active_connections[run_id] = websocket
         logger.debug(f"Registered WebSocket for run_id: {run_id}")
-    
+
     async def broadcast_to_workflow(self, run_id: str, message: str):
         """Broadcast a message to the websocket registered for this workflow run"""
         if run_id in self.active_connections:
@@ -304,18 +303,18 @@ class WebSocketManager:
 class WorkflowEventBuffer:
     """
     In-memory buffer for workflow events to support WebSocket reconnection.
-    
+
     Stores recent events for active workflow runs, allowing clients to catch up
     on missed events when reconnecting after disconnection or page refresh.
-    
-    Buffers all event types: WorkflowRunOutputEvent, RunOutputEvent (from agents), 
+
+    Buffers all event types: WorkflowRunOutputEvent, RunOutputEvent (from agents),
     and TeamRunOutputEvent (from teams).
     """
 
     def __init__(self, max_events_per_run: int = 1000, cleanup_interval: int = 3600):
         """
         Initialize the event buffer.
-        
+
         Args:
             max_events_per_run: Maximum number of events to store per run (prevents memory bloat)
             cleanup_interval: How long (in seconds) to keep completed runs in buffer
@@ -346,7 +345,7 @@ class WorkflowEventBuffer:
         if len(self.buffers[run_id]) > self.max_events_per_run:
             self.buffers[run_id] = self.buffers[run_id][-self.max_events_per_run :]
             log_debug(f"Trimmed event buffer for run {run_id} to {self.max_events_per_run} events")
-        
+
         return event_index
 
     def get_events_since(
@@ -354,26 +353,26 @@ class WorkflowEventBuffer:
     ) -> List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Get events since the last received event index.
-        
+
         Args:
             run_id: The workflow run ID
             last_event_index: Index of last event received by client (0-based)
-        
+
         Returns:
             List of events since last_event_index, or all events if None
         """
         events = self.buffers.get(run_id, [])
-        
+
         if last_event_index is None:
             # Client has no events, send all
             return events
-        
+
         # Client has events up to last_event_index, send new ones
         # last_event_index is 0-based, so we want events starting from index + 1
         if last_event_index >= len(events) - 1:
             # Client is caught up
             return []
-        
+
         return events[last_event_index + 1 :]
 
     def get_current_event_count(self, run_id: str) -> int:
@@ -642,7 +641,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: "AgentOS"):
     """
     Handle subscription/reconnection to an existing workflow run.
-    
+
     Allows clients to reconnect after page refresh or disconnection and catch up on missed events.
     """
     try:
@@ -657,14 +656,14 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
 
         # Check if run exists in event buffer
         buffer_status = event_buffer.get_run_status(run_id)
-        
+
         if buffer_status is None:
             # Run not in buffer - check database
             if workflow_id and session_id:
                 workflow = get_workflow_by_id(workflow_id, os.workflows)
                 if workflow:
                     workflow_run = await workflow.aget_run_output(run_id, session_id)
-                    
+
                     if workflow_run:
                         # Run exists in DB - send all events from DB
                         if workflow_run.events:
@@ -679,15 +678,15 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                                     }
                                 )
                             )
-                            
+
                             # Send events one by one
                             for idx, event in enumerate(workflow_run.events):
                                 # Convert event to dict and add event_index
-                                event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
                                 event_dict["event_index"] = idx
                                 if "run_id" not in event_dict:
                                     event_dict["run_id"] = run_id
-                                
+
                                 await websocket.send_text(json.dumps(event_dict, default=json_serializer))
                         else:
                             await websocket.send_text(
@@ -702,7 +701,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                                 )
                             )
                         return
-            
+
             # Run not found anywhere
             await websocket.send_text(
                 json.dumps({"event": "error", "error": f"Run {run_id} not found in buffer or database"})
@@ -713,7 +712,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
             # Run finished - send all events from buffer
             all_events = event_buffer.get_events_since(run_id, last_event_index=None)
-            
+
             await websocket.send_text(
                 json.dumps(
                     {
@@ -725,15 +724,15 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     }
                 )
             )
-            
+
             # Send all events
             for idx, event in enumerate(all_events):
                 # Convert event to dict and add event_index
-                event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
                 event_dict["event_index"] = idx
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
-                
+
                 await websocket.send_text(json.dumps(event_dict))
             return
 
@@ -755,21 +754,21 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     }
                 )
             )
-            
+
             # Send missed events
             start_index = (last_event_index + 1) if last_event_index is not None else 0
             for idx, event in enumerate(missed_events):
                 # Convert event to dict and add event_index
-                event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
                 event_dict["event_index"] = start_index + idx
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
-                
+
                 await websocket.send_text(json.dumps(event_dict))
-        
+
         # Register websocket for future events
         await websocket_manager.register_workflow_websocket(run_id, websocket)
-        
+
         # Send subscription confirmation
         await websocket.send_text(
             json.dumps(
@@ -782,7 +781,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                 }
             )
         )
-        
+
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
     except Exception as e:

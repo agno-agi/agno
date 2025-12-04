@@ -26,9 +26,9 @@ except ImportError:
 
 def parse_sse_message(message: str) -> dict:
     """Parse SSE-formatted message"""
-    lines = message.strip().split('\n')
+    lines = message.strip().split("\n")
     for line in lines:
-        if line.startswith('data: '):
+        if line.startswith("data: "):
             return json.loads(line[6:])
     return json.loads(message)
 
@@ -45,7 +45,7 @@ async def test_replay():
 
     # Phase 1: Start workflow and let it complete
     print("\n Phase 1: Starting workflow and letting it complete...")
-    
+
     try:
         async with websockets.connect(ws_url) as websocket:
             print(f"✓ Connected to {ws_url}")
@@ -57,12 +57,16 @@ async def test_replay():
 
             # Start workflow
             print("\n Starting workflow...")
-            await websocket.send(json.dumps({
-                "action": "start-workflow",
-                "workflow_id": "content-creation-workflow",
-                "message": "Quick test workflow",
-                "session_id": "replay-test-session",
-            }))
+            await websocket.send(
+                json.dumps(
+                    {
+                        "action": "start-workflow",
+                        "workflow_id": "content-creation-workflow",
+                        "message": "Quick test workflow",
+                        "session_id": "replay-test-session",
+                    }
+                )
+            )
 
             # Receive all events until completion
             print("\n Waiting for workflow to complete...")
@@ -78,7 +82,7 @@ async def test_replay():
 
                 if event_type == "WorkflowStarted":
                     print(f"  🚀 Workflow started (run_id: {run_id})")
-                
+
                 if event_type == "WorkflowCompleted":
                     print(f"  🏁 Workflow completed ({total_events} events)")
                     break
@@ -96,8 +100,8 @@ async def test_replay():
     await asyncio.sleep(2)
 
     print("\n Phase 2: Reconnecting to COMPLETED workflow...")
-    print(f"   Sending last_event_index=10 (should be IGNORED)")
-    
+    print("   Sending last_event_index=10 (should be IGNORED)")
+
     try:
         async with websockets.connect(ws_url) as websocket:
             print(f"✓ Reconnected to {ws_url}")
@@ -107,19 +111,23 @@ async def test_replay():
             parse_sse_message(response)
 
             # Reconnect with a fake last_event_index
-            await websocket.send(json.dumps({
-                "action": "reconnect",
-                "run_id": run_id,
-                "last_event_index": 10,  # Fake - should be ignored!
-                "workflow_id": "content-creation-workflow",
-                "session_id": "replay-test-session",
-            }))
+            await websocket.send(
+                json.dumps(
+                    {
+                        "action": "reconnect",
+                        "run_id": run_id,
+                        "last_event_index": 10,  # Fake - should be ignored!
+                        "workflow_id": "content-creation-workflow",
+                        "session_id": "replay-test-session",
+                    }
+                )
+            )
 
             # Receive replay
             print("\n Receiving replay...")
             replay_events = []
             got_replay_notification = False
-            
+
             async for message in websocket:
                 data = parse_sse_message(message)
                 event_type = data.get("event")
@@ -139,13 +147,15 @@ async def test_replay():
                 if len(replay_events) > 0 and event_type == "WorkflowCompleted":
                     break
 
-            print("\n Received {len(replay_events)} events")
-            
+            print(f"\n Received {len(replay_events)} events")
+
             # Verify replay
             print("\n Verification:")
-            
+
             if not got_replay_notification:
-                print(" Did not receive 'replay' notification")
+                print(
+                    " Did not receive 'replay' no03_workflow_websocket_reconnecttification"
+                )
             else:
                 print(" Received 'replay' notification")
 
@@ -153,26 +163,30 @@ async def test_replay():
             if replay_events:
                 first_index = replay_events[0].get("event_index")
                 last_index = replay_events[-1].get("event_index")
-                
+
                 print(f"  First event_index: {first_index}")
                 print(f"  Last event_index: {last_index}")
-                
+
                 if first_index == 0:
                     print(" Replay started from event 0 (correct)")
                 else:
                     print(f" Replay started from event {first_index} (should be 0)")
-                
+
                 if len(replay_events) == total_events:
-                    print(f" Received all {total_events} events (last_event_index was ignored)")
+                    print(
+                        f" Received all {total_events} events (last_event_index was ignored)"
+                    )
                 else:
-                    print(f" Received {len(replay_events)} events, expected {total_events}")
-                
+                    print(
+                        f" Received {len(replay_events)} events, expected {total_events}"
+                    )
+
                 # Check for gaps
                 event_indices = [e.get("event_index") for e in replay_events]
                 expected = set(range(min(event_indices), max(event_indices) + 1))
                 actual = set(event_indices)
                 gaps = expected - actual
-                
+
                 if gaps:
                     print(f" Gaps in event sequence: {sorted(gaps)}")
                 else:
@@ -206,6 +220,7 @@ async def main():
     except Exception as e:
         print(f"\n Test failed: {e}")
         import traceback
+
         traceback.print_exc()
 
 

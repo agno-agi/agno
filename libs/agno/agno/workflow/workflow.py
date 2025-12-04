@@ -1069,11 +1069,11 @@ class Workflow:
         elif hasattr(event, "run_id") and event.run_id:
             # Workflow event - use run_id
             buffer_run_id = event.run_id
-        
+
         if buffer_run_id:
             try:
                 from agno.os.router import event_buffer
-                
+
                 # add_event now returns the event_index
                 event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
             except Exception as e:
@@ -1089,33 +1089,37 @@ class Workflow:
                 loop = asyncio.get_running_loop()
                 if loop:
                     # Pass event_index and run_id to websocket handler
-                    asyncio.create_task(websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id))
+                    asyncio.create_task(
+                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
+                    )
             except RuntimeError:
                 pass
-        
+
         # ALSO broadcast through websocket manager for reconnected clients
         # This ensures clients who reconnect after workflow started still receive events
         if buffer_run_id:
             try:
                 import asyncio
+
                 from agno.os.router import websocket_manager
-                
+
                 loop = asyncio.get_running_loop()
                 if loop:
                     # Format the event for broadcast
-                    event_dict = event.model_dump() if hasattr(event, 'model_dump') else event.to_dict()
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
                     if event_index is not None:
                         event_dict["event_index"] = event_index
                     if "run_id" not in event_dict:
                         event_dict["run_id"] = buffer_run_id
-                    
+
                     # Broadcast to registered websocket (if different from original)
                     import json
+
                     from agno.utils.serialize import json_serializer
+
                     asyncio.create_task(
                         websocket_manager.broadcast_to_workflow(
-                            buffer_run_id,
-                            json.dumps(event_dict, default=json_serializer)
+                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
                         )
                     )
             except Exception as e:
@@ -1817,14 +1821,14 @@ class Workflow:
         # Mark run as completed in event buffer
         try:
             from agno.os.router import event_buffer
-            
+
             event_buffer.mark_run_completed(
                 workflow_run_response.run_id,  # type: ignore
                 workflow_run_response.status or RunStatus.completed,
             )
         except Exception as e:
             log_debug(f"Failed to mark run as completed in buffer: {e}")
-            
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -2420,14 +2424,14 @@ class Workflow:
         # Mark run as completed in event buffer
         try:
             from agno.os.router import event_buffer
-            
+
             event_buffer.mark_run_completed(
                 workflow_run_response.run_id,  # type: ignore
                 workflow_run_response.status or RunStatus.completed,
             )
         except Exception as e:
             log_debug(f"Failed to mark run as completed in buffer: {e}")
-            
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
