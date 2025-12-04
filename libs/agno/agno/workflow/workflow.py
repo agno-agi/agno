@@ -1837,7 +1837,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        _session_state = session_state or {}
+        _session_state = session_state if session_state is not None else {}
         _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
         return workflow_session, _session_state
@@ -3522,7 +3522,10 @@ class Workflow:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
