@@ -257,7 +257,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.session_table = await self._get_or_create_table(
                     table_name=self.session_table_name,
                     table_type="sessions",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
@@ -266,7 +266,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.memory_table = await self._get_or_create_table(
                     table_name=self.memory_table_name,
                     table_type="memories",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
@@ -275,7 +275,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.metrics_table = await self._get_or_create_table(
                     table_name=self.metrics_table_name,
                     table_type="metrics",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
@@ -284,7 +284,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.eval_table = await self._get_or_create_table(
                     table_name=self.eval_table_name,
                     table_type="evals",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.eval_table
 
@@ -293,7 +293,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.knowledge_table = await self._get_or_create_table(
                     table_name=self.knowledge_table_name,
                     table_type="knowledge",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
@@ -302,7 +302,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.culture_table = await self._get_or_create_table(
                     table_name=self.culture_table_name,
                     table_type="culture",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.culture_table
 
@@ -311,7 +311,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 self.versions_table = await self._get_or_create_table(
                     table_name=self.versions_table_name,
                     table_type="versions",
-                    create_table_if_not_found=create_table_if_not_found
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.versions_table
 
