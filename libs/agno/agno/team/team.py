@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import warnings
 from collections import ChainMap, deque
 from copy import copy
@@ -114,7 +115,6 @@ from agno.utils.events import (
     create_team_run_cancelled_event,
     create_team_run_completed_event,
     create_team_run_content_completed_event,
-    create_team_run_error_event,
     create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_session_summary_completed_event,
@@ -1963,6 +1963,8 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
+        delay_between_retries: Optional[float] = None,
+        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1991,6 +1993,8 @@ class Team:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
+        delay_between_retries: Optional[float] = None,
+        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2020,6 +2024,8 @@ class Team:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
+        delay_between_retries: Optional[float] = None,
+        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2198,15 +2204,16 @@ class Team:
         # If no retries are set, use the team's default retries
         retries = retries if retries is not None else self.retries
 
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
-        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+        # Set up retry logic
+        run_retries = retries if retries is not None else self.retries
+        run_delay_between_retries = (
+            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
+        )
+        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
+        num_attempts = run_retries + 1
 
         for attempt in range(num_attempts):
-            # Initialize the current run
-
+            log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
             # Run the team
             try:
                 if stream:
@@ -2257,12 +2264,24 @@ class Team:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if run_exponential_backoff:
+                        delay = run_delay_between_retries * (2**attempt)
+                    else:
+                        delay = run_delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-            raise last_exception
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -2846,6 +2865,8 @@ class Team:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
+        delay_between_retries: Optional[float] = None,
+        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2874,6 +2895,8 @@ class Team:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
+        delay_between_retries: Optional[float] = None,
+        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2891,7 +2914,7 @@ class Team:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
-    def arun(  # type: ignore
+    async def arun(  # type: ignore
         self,
         input: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -2903,6 +2926,8 @@ class Team:
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
+        delay_between_retries: Optional[float] = None,
+        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -3065,17 +3090,23 @@ class Team:
         # If no retries are set, use the team's default retries
         retries = retries if retries is not None else self.retries
 
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
         yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
+        # Resolve retry parameters
+        run_retries = retries if retries is not None else self.retries
+        run_delay_between_retries = (
+            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
+        )
+        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
+        num_attempts = run_retries + 1
+
         for attempt in range(num_attempts):
+            log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             # Run the team
             try:
                 if stream:
-                    response_iterator = self._arun_stream(
+                    return await self._arun_stream(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3091,9 +3122,8 @@ class Team:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
-                    return response_iterator  # type: ignore
                 else:
-                    return self._arun(  # type: ignore
+                    return await self._arun(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3123,12 +3153,25 @@ class Team:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if run_exponential_backoff:
+                        delay = run_delay_between_retries * (2**attempt)
+                    else:
+                        delay = run_delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-            raise last_exception
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _update_run_response(
         self,

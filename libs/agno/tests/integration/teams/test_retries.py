@@ -1,4 +1,4 @@
-"""Integration tests for agent retry functionality."""
+"""Integration tests for team retry functionality."""
 
 from unittest.mock import Mock, patch
 
@@ -7,12 +7,15 @@ import pytest
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.base import RunStatus
+from agno.team import Team
 
 
-def test_agent_retry():
-    """Test that agent retries on failure and eventually succeeds."""
-    agent = Agent(
-        name="Retry Agent",
+def test_team_retry():
+    """Test that team retries on failure and eventually succeeds."""
+    member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    team = Team(
+        members=[member],
+        name="Retry Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         retries=2,
         delay_between_retries=0,
@@ -20,7 +23,7 @@ def test_agent_retry():
 
     # Mock that fails once, then succeeds
     attempt_count = {"count": 0}
-    original_run = agent._run
+    original_run = team._run
 
     def mock_run(*args, **kwargs):
         attempt_count["count"] += 1
@@ -28,8 +31,8 @@ def test_agent_retry():
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
         return original_run(*args, **kwargs)
 
-    with patch.object(agent, "_run", side_effect=mock_run):
-        response = agent.run("Test message")
+    with patch.object(team, "_run", side_effect=mock_run):
+        response = team.run("Test message")
 
     # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2
@@ -37,10 +40,12 @@ def test_agent_retry():
     assert response.status == RunStatus.completed
 
 
-def test_agent_exponential_backoff():
+def test_team_exponential_backoff():
     """Test that exponential backoff increases delay between retries."""
-    agent = Agent(
-        name="Retry Agent",
+    member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    team = Team(
+        members=[member],
+        name="Retry Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         retries=2,
         delay_between_retries=1,
@@ -56,25 +61,24 @@ def test_agent_exponential_backoff():
         # Succeed on 3rd attempt
         return Mock(status=RunStatus.completed)
 
-    with patch.object(agent, "_run", side_effect=mock_run):
-        with patch("agno.agent.agent.time.sleep") as mock_sleep:
-            response = agent.run("Test message")
+    with patch.object(team, "_run", side_effect=mock_run):
+        with patch("agno.team.team.time.sleep") as mock_sleep:
+            response = team.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays
-    # Attempt 1 fails -> sleep(1 * 2^0) = 1
-    # Attempt 2 fails -> sleep(1 * 2^1) = 2
-    # Attempt 3 succeeds
     assert mock_sleep.call_count == 2
     assert mock_sleep.call_args_list[0][0][0] == 1  # 2^0 * 1
     assert mock_sleep.call_args_list[1][0][0] == 2  # 2^1 * 1
 
 
-def test_agent_retry_parameter_overrides_agent_default():
-    """Test that retry parameter in run() overrides agent default."""
-    agent = Agent(
-        name="Retry Agent",
+def test_team_retry_parameter_overrides_team_default():
+    """Test that retry parameter in run() overrides team default."""
+    member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    team = Team(
+        members=[member],
+        name="Retry Team",
         model=OpenAIChat(id="gpt-4o-mini"),
-        retries=1,  # Agent default
+        retries=1,  # Team default
         delay_between_retries=0,
     )
 
@@ -84,18 +88,20 @@ def test_agent_retry_parameter_overrides_agent_default():
         attempt_count["count"] += 1
         raise Exception("Simulated failure")
 
-    with patch.object(agent, "_run", side_effect=mock_run):
+    with patch.object(team, "_run", side_effect=mock_run):
         with pytest.raises(Exception):
-            agent.run("Test message", retries=3)  # Override to 3 retries
+            team.run("Test message", retries=3)  # Override to 3 retries
 
     # Should have tried 4 times (initial + 3 retries)
     assert attempt_count["count"] == 4
 
 
-def test_agent_keyboard_interrupt_stops_retries():
+def test_team_keyboard_interrupt_stops_retries():
     """Test that KeyboardInterrupt stops retries immediately."""
-    agent = Agent(
-        name="Retry Agent",
+    member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    team = Team(
+        members=[member],
+        name="Retry Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         retries=5,
         delay_between_retries=0,
@@ -107,8 +113,8 @@ def test_agent_keyboard_interrupt_stops_retries():
         attempt_count["count"] += 1
         raise KeyboardInterrupt()
 
-    with patch.object(agent, "_run", side_effect=mock_run):
-        response = agent.run("Test message")
+    with patch.object(team, "_run", side_effect=mock_run):
+        response = team.run("Test message")
 
     # Should stop on first attempt without retrying
     assert attempt_count["count"] == 1
@@ -117,19 +123,21 @@ def test_agent_keyboard_interrupt_stops_retries():
 
 
 @pytest.mark.asyncio
-async def test_agent_async_retry():
-    """Test that async agent retries on failure and eventually succeeds."""
+async def test_team_async_retry():
+    """Test that async team retries on failure and eventually succeeds."""
     import types
 
-    agent = Agent(
-        name="Async Retry Agent",
+    member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+    team = Team(
+        members=[member],
+        name="Async Retry Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         retries=2,
         delay_between_retries=0,
     )
 
     attempt_count = {"count": 0}
-    original_arun = agent._arun
+    original_arun = team._arun
 
     async def mock_arun(self, *args, **kwargs):
         attempt_count["count"] += 1
@@ -138,8 +146,8 @@ async def test_agent_async_retry():
         return await original_arun(*args, **kwargs)
 
     # Properly bind the async method
-    agent._arun = types.MethodType(mock_arun, agent)
-    response = await agent.arun("Test message")
+    team._arun = types.MethodType(mock_arun, team)
+    response = await team.arun("Test message")
 
     # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2

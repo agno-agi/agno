@@ -2838,6 +2838,9 @@ class Agent:
                         return async_generator_wrapper(create_run_error_event(run_response, error=str(e)))  # type: ignore
                     raise e
 
+        # If we get here, all retries failed
+        raise Exception(f"Failed after {num_attempts} attempts.")
+
     @overload
     def continue_run(
         self,
@@ -2973,22 +2976,6 @@ class Agent:
             dependencies=dependencies,
         )
 
-        # Resolve dependencies
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
-
-        # When filters are passed manually
-        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Merge agent metadata with run metadata
-        run_context.metadata = metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
-
         # Resolve retry parameters
         run_retries = retries if retries is not None else self.retries
         run_delay_between_retries = (
@@ -2997,110 +2984,126 @@ class Agent:
         run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
         num_attempts = run_retries + 1
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
         for attempt in range(num_attempts):
             log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
-            # Run can be continued from previous run response or from passed run_response context
-            if run_response is not None:
-                # The run is continued from a provided run_response. This contains the updated tools.
-                input = run_response.messages or []
-            elif run_id is not None:
-                # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
-                if updated_tools is None and requirements is None:
-                    raise ValueError(
-                        "To continue a run from a given run_id, the requirements parameter must be provided."
-                    )
+            try:
+                # Resolve dependencies
+                if run_context.dependencies is not None:
+                    self._resolve_run_dependencies(run_context=run_context)
 
-                runs = agent_session.runs
-                run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
-                if run_response is None:
-                    raise RuntimeError(f"No runs found for run ID {run_id}")
+                # When filters are passed manually
+                if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
+                    run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-                input = run_response.messages or []
+                # Merge agent metadata with run metadata
+                run_context.metadata = metadata
+                if self.metadata is not None:
+                    if run_context.metadata is None:
+                        run_context.metadata = self.metadata
+                    else:
+                        merge_dictionaries(run_context.metadata, self.metadata)
 
-                # If we have updated_tools, set them in the run_response
-                if updated_tools is not None:
+                # Use stream override value when necessary
+                if stream is None:
+                    stream = False if self.stream is None else self.stream
+
+                # Considering both stream_events and stream_intermediate_steps (deprecated)
+                if stream_intermediate_steps is not None:
                     warnings.warn(
-                        "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
                         DeprecationWarning,
                         stacklevel=2,
                     )
-                    run_response.tools = updated_tools
+                stream_events = stream_events or stream_intermediate_steps
 
-                # If we have requirements, get the updated tools and set them in the run_response
-                elif requirements is not None:
-                    run_response.requirements = requirements
-                    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                    if updated_tools and run_response.tools:
-                        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = [
-                            updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                        ]
-                    else:
+                # Can't stream events if streaming is disabled
+                if stream is False:
+                    stream_events = False
+
+                if stream_events is None:
+                    stream_events = False if self.stream_events is None else self.stream_events
+
+                # Can't stream events if streaming is disabled
+                if stream is False:
+                    stream_events = False
+
+                self.stream = self.stream or stream
+                self.stream_events = self.stream_events or stream_events
+
+                # Run can be continued from previous run response or from passed run_response context
+                if run_response is not None:
+                    # The run is continued from a provided run_response. This contains the updated tools.
+                    input = run_response.messages or []
+                elif run_id is not None:
+                    # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
+                    if updated_tools is None and requirements is None:
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided."
+                        )
+
+                    runs = agent_session.runs
+                    run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+                    if run_response is None:
+                        raise RuntimeError(f"No runs found for run ID {run_id}")
+
+                    input = run_response.messages or []
+
+                    # If we have updated_tools, set them in the run_response
+                    if updated_tools is not None:
+                        warnings.warn(
+                            "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
                         run_response.tools = updated_tools
-            else:
-                raise ValueError("Either run_response or run_id must be provided.")
 
-            # Prepare arguments for the model
-            self._set_default_model()
-            response_format = self._get_response_format(run_context=run_context)
-            self.model = cast(Model, self.model)
+                    # If we have requirements, get the updated tools and set them in the run_response
+                    elif requirements is not None:
+                        run_response.requirements = requirements
+                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                        if updated_tools and run_response.tools:
+                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                            run_response.tools = [
+                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
+                            ]
+                        else:
+                            run_response.tools = updated_tools
+                else:
+                    raise ValueError("Either run_response or run_id must be provided.")
 
-            processed_tools = self.get_tools(
-                run_response=run_response,
-                run_context=run_context,
-                session=agent_session,
-                user_id=user_id,
-            )
+                # Prepare arguments for the model
+                self._set_default_model()
+                response_format = self._get_response_format(run_context=run_context)
+                self.model = cast(Model, self.model)
 
-            _tools = self._determine_tools_for_model(
-                model=self.model,
-                processed_tools=processed_tools,
-                run_response=run_response,
-                run_context=run_context,
-                session=agent_session,
-            )
+                processed_tools = self.get_tools(
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=agent_session,
+                    user_id=user_id,
+                )
 
-            run_response = cast(RunOutput, run_response)
+                _tools = self._determine_tools_for_model(
+                    model=self.model,
+                    processed_tools=processed_tools,
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=agent_session,
+                )
 
-            log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+                run_response = cast(RunOutput, run_response)
 
-            # Prepare run messages
-            run_messages = self._get_continue_run_messages(
-                input=input,
-            )
+                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-            # Reset the run state
-            run_response.status = RunStatus.running
+                # Prepare run messages
+                run_messages = self._get_continue_run_messages(
+                    input=input,
+                )
 
-            try:
+                # Reset the run state
+                run_response.status = RunStatus.running
+
                 if stream:
                     response_iterator = self._continue_run_stream(
                         run_response=run_response,
@@ -3156,6 +3159,9 @@ class Agent:
                     # Final attempt failed - re-raise the exception
                     log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
                     raise
+
+        # If we get here, all retries failed
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _continue_run(
         self,
@@ -3647,7 +3653,7 @@ class Agent:
 
             try:
                 if stream:
-                    return await self._acontinue_run_stream(
+                    return self._acontinue_run_stream(
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
@@ -3663,7 +3669,7 @@ class Agent:
                         **kwargs,
                     )
                 else:
-                    return await self._acontinue_run(  # type: ignore
+                    return self._acontinue_run(  # type: ignore
                         session_id=session_id,
                         run_response=run_response,
                         run_context=run_context,
@@ -3702,6 +3708,9 @@ class Agent:
                     # Final attempt failed - re-raise the exception
                     log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
                     raise
+
+        # If we get here, all retries failed
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _acontinue_run(
         self,
