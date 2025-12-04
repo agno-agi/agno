@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import warnings
 from asyncio import CancelledError, create_task
-from asyncio import sleep as async_sleep
 from collections import ChainMap, deque
 from dataclasses import dataclass
 from inspect import iscoroutinefunction
@@ -2561,7 +2560,7 @@ class Agent:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
-    async def arun(  # type: ignore
+    def arun(  # type: ignore
         self,
         input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
@@ -2741,7 +2740,7 @@ class Agent:
             try:
                 # Pass the new run_response to _arun
                 if stream:
-                    return await self._arun_stream(  # type: ignore
+                    return self._arun_stream(  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
                         user_id=user_id,
@@ -2757,7 +2756,7 @@ class Agent:
                         **kwargs,
                     )  # type: ignore[assignment]
                 else:
-                    return await self._arun(  # type: ignore
+                    return self._arun(  # type: ignore
                         run_response=run_response,
                         run_context=run_context,
                         user_id=user_id,
@@ -2796,7 +2795,7 @@ class Agent:
                         delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    await async_sleep(delay)
+                    time.sleep(delay)
                     continue
                 else:
                     # Final attempt failed - re-raise the exception
@@ -3636,7 +3635,7 @@ class Agent:
                         delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    await async_sleep(delay)
+                    time.sleep(delay)
                     continue
                 else:
                     # Final attempt failed - re-raise the exception
