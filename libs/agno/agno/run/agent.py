@@ -311,12 +311,26 @@ class PreHookStartedEvent(BaseAgentRunEvent):
     pre_hook_name: Optional[str] = None
     run_input: Optional[RunInput] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event": self.event,
+            "pre_hook_name": self.pre_hook_name,
+            "run_input": self.run_input.to_dict() if self.run_input else None,
+        }
+
 
 @dataclass
 class PreHookCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.pre_hook_completed.value
     pre_hook_name: Optional[str] = None
     run_input: Optional[RunInput] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event": self.event,
+            "pre_hook_name": self.pre_hook_name,
+            "run_input": self.run_input.to_dict() if self.run_input else None,
+        }
 
 
 @dataclass
