@@ -87,15 +87,15 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         return False
 
 
-def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str] = None) -> bool:
+def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
     """
     Check if the existing table has the expected column names.
-    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
     Args:
         db_engine (Engine): Database engine
         table_name (str): Name of the table to validate
         table_type (str): Type of table to get expected schema
-        db_schema (Optional[str]): Database schema name (ignored in SQLite)
+
     Returns:
         bool: True if table has all expected columns, False otherwise
     """
@@ -120,17 +120,15 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         return False
 
 
-async def ais_valid_table(
-    db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: Optional[str] = None
-) -> bool:
+async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str) -> bool:
     """
     Check if the existing table has the expected column names.
-    Note: db_schema parameter is ignored in SQLite but kept for API compatibility.
+
     Args:
         db_engine (Engine): Database engine
         table_name (str): Name of the table to validate
         table_type (str): Type of table to get expected schema
-        db_schema (Optional[str]): Database schema name (ignored in SQLite)
+
     Returns:
         bool: True if table has all expected columns, False otherwise
     """
@@ -270,7 +268,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
@@ -298,7 +296,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
 
     model_metrics = []
     for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
+        model_id, model_provider = model.rsplit(":", 1)
         model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
     metrics["users_count"] = len(all_user_ids)

@@ -8,19 +8,32 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.os.config import ChatConfig, EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
+from agno.os.config import (
+    ChatConfig,
+    EvalsConfig,
+    KnowledgeConfig,
+    MemoryConfig,
+    MetricsConfig,
+    SessionConfig,
+    TracesConfig,
+)
 from agno.os.utils import (
     extract_input_media,
     format_team_tools,
     format_tools,
+    get_agent_input_schema_dict,
     get_run_input,
     get_session_name,
+    get_team_input_schema_dict,
     get_workflow_input_schema_dict,
 )
+from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.utils.agent import aexecute_instructions, aexecute_system_message
+from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
 
@@ -147,6 +160,7 @@ class ConfigResponse(BaseModel):
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
+    traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
@@ -166,21 +180,22 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the agent")
-    name: Optional[str] = Field(None, description="Name of the agent")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    model: Optional[ModelResponse] = Field(None, description="Model configuration")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
-    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
-    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
-    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
-    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
-    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
-    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
-    extra_messages: Optional[Dict[str, Any]] = Field(None, description="Extra message configurations")
-    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
-    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: Optional[str] = None
+    name: Optional[str] = None
+    db_id: Optional[str] = None
+    model: Optional[ModelResponse] = None
+    tools: Optional[Dict[str, Any]] = None
+    sessions: Optional[Dict[str, Any]] = None
+    knowledge: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    default_tools: Optional[Dict[str, Any]] = None
+    system_message: Optional[Dict[str, Any]] = None
+    extra_messages: Optional[Dict[str, Any]] = None
+    response_settings: Optional[Dict[str, Any]] = None
+    streaming: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
@@ -243,9 +258,12 @@ class AgentResponse(BaseModel):
             "stream_intermediate_steps": False,
         }
 
+        session_id = str(uuid4())
+        run_id = str(uuid4())
         agent_tools = await agent.aget_tools(
-            session=AgentSession(session_id=str(uuid4()), session_data={}),
-            run_response=RunOutput(run_id=str(uuid4())),
+            session=AgentSession(session_id=session_id, session_data={}),
+            run_response=RunOutput(run_id=run_id, session_id=session_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, user_id=agent.user_id),
             check_mcp_tools=False,
         )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
@@ -329,12 +347,20 @@ class AgentResponse(BaseModel):
             "read_tool_call_history": agent.read_tool_call_history,
         }
 
+        instructions = agent.instructions if agent.instructions else None
+        if instructions and callable(instructions):
+            instructions = await aexecute_instructions(instructions=instructions, agent=agent)
+
+        system_message = agent.system_message if agent.system_message else None
+        if system_message and callable(system_message):
+            system_message = await aexecute_system_message(system_message=system_message, agent=agent)
+
         system_message_info = {
-            "system_message": str(agent.system_message) if agent.system_message else None,
+            "system_message": str(system_message) if system_message else None,
             "system_message_role": agent.system_message_role,
             "build_context": agent.build_context,
             "description": agent.description,
-            "instructions": agent.instructions if agent.instructions else None,
+            "instructions": instructions,
             "expected_output": agent.expected_output,
             "additional_context": agent.additional_context,
             "markdown": agent.markdown,
@@ -375,6 +401,7 @@ class AgentResponse(BaseModel):
             "stream_events": agent.stream_events,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
+
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -391,28 +418,28 @@ class AgentResponse(BaseModel):
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             metadata=agent.metadata,
+            input_schema=get_agent_input_schema_dict(agent),
         )
 
 
 class TeamResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the team")
-    name: Optional[str] = Field(None, description="Name of the team")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    description: Optional[str] = Field(None, description="Description of the team")
-    model: Optional[ModelResponse] = Field(None, description="Model configuration")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Tool configurations")
-    sessions: Optional[Dict[str, Any]] = Field(None, description="Session configurations")
-    knowledge: Optional[Dict[str, Any]] = Field(None, description="Knowledge base configurations")
-    memory: Optional[Dict[str, Any]] = Field(None, description="Memory configurations")
-    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning configurations")
-    default_tools: Optional[Dict[str, Any]] = Field(None, description="Default tool settings")
-    system_message: Optional[Dict[str, Any]] = Field(None, description="System message configurations")
-    response_settings: Optional[Dict[str, Any]] = Field(None, description="Response settings")
-    streaming: Optional[Dict[str, Any]] = Field(None, description="Streaming configurations")
-    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(
-        None, description="List of team members (agents or teams)"
-    )
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: Optional[str] = None
+    name: Optional[str] = None
+    db_id: Optional[str] = None
+    description: Optional[str] = None
+    model: Optional[ModelResponse] = None
+    tools: Optional[Dict[str, Any]] = None
+    sessions: Optional[Dict[str, Any]] = None
+    knowledge: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    default_tools: Optional[Dict[str, Any]] = None
+    system_message: Optional[Dict[str, Any]] = None
+    response_settings: Optional[Dict[str, Any]] = None
+    streaming: Optional[Dict[str, Any]] = None
+    members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
     @classmethod
     async def from_team(cls, team: Team) -> "TeamResponse":
@@ -449,7 +476,7 @@ class TeamResponse(BaseModel):
             "reasoning_max_steps": 10,
             # Default tools defaults
             "search_knowledge": True,
-            "read_team_history": False,
+            "read_chat_history": False,
             "get_member_information_tool": False,
             # System message defaults
             "system_message_role": "system",
@@ -466,12 +493,14 @@ class TeamResponse(BaseModel):
             "stream_member_events": False,
         }
 
+        run_id = str(uuid4())
+        session_id = str(uuid4())
         _tools = team._determine_tools_for_model(
             model=team.model,  # type: ignore
-            session=TeamSession(session_id=str(uuid4()), session_data={}),
-            run_response=TeamRunOutput(run_id=str(uuid4())),
+            session=TeamSession(session_id=session_id, session_data={}),
+            run_response=TeamRunOutput(run_id=run_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id, session_state={}),
             async_mode=True,
-            session_state={},
             team_run_context={},
             check_mcp_tools=False,
         )
@@ -545,16 +574,22 @@ class TeamResponse(BaseModel):
 
         default_tools_info = {
             "search_knowledge": team.search_knowledge,
-            "read_team_history": team.read_team_history,
+            "read_chat_history": team.read_chat_history,
             "get_member_information_tool": team.get_member_information_tool,
         }
 
-        team_instructions = (
-            team.instructions() if team.instructions and callable(team.instructions) else team.instructions
-        )
+        team_instructions = team.instructions if team.instructions else None
+        if team_instructions and callable(team_instructions):
+            team_instructions = await aexecute_instructions(instructions=team_instructions, agent=team, team=team)
+
+        team_system_message = team.system_message if team.system_message else None
+        if team_system_message and callable(team_system_message):
+            team_system_message = await aexecute_system_message(
+                system_message=team_system_message, agent=team, team=team
+            )
 
         system_message_info = {
-            "system_message": str(team.system_message) if team.system_message else None,
+            "system_message": team_system_message,
             "system_message_role": team.system_message_role,
             "description": team.description,
             "instructions": team_instructions,
@@ -621,6 +656,7 @@ class TeamResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=members if members else None,
             metadata=team.metadata,
+            input_schema=get_team_input_schema_dict(team),
         )
 
 
@@ -634,6 +670,7 @@ class WorkflowResponse(BaseModel):
     agent: Optional[AgentResponse] = Field(None, description="Agent configuration if used")
     team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
 
     @classmethod
     async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -685,6 +722,7 @@ class WorkflowResponse(BaseModel):
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
             metadata=workflow.metadata,
+            workflow_agent=isinstance(workflow.agent, WorkflowAgent) if workflow.agent else False,
         )
 
 
@@ -704,10 +742,11 @@ class SessionSchema(BaseModel):
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         session_name = get_session_name(session)
+        session_data = session.get("session_data", {}) or {}
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
-            session_state=session.get("session_data", {}).get("session_state", None),
+            session_state=session_data.get("session_state", None),
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
@@ -869,7 +908,11 @@ class RunSchema(BaseModel):
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
+    citations: Optional[Dict[str, Any]] = Field(
+        None, description="Citations from the model (e.g., from Gemini grounding/search)"
+    )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
@@ -896,7 +939,9 @@ class RunSchema(BaseModel):
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             references=run_dict.get("references", []),
+            citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
@@ -924,7 +969,11 @@ class TeamRunSchema(BaseModel):
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
+    citations: Optional[Dict[str, Any]] = Field(
+        None, description="Citations from the model (e.g., from Gemini grounding/search)"
+    )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
+    session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
@@ -953,7 +1002,9 @@ class TeamRunSchema(BaseModel):
             if run_dict.get("created_at") is not None
             else None,
             references=run_dict.get("references", []),
+            citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
+            session_state=run_dict.get("session_state"),
             images=run_dict.get("images", []),
             videos=run_dict.get("videos", []),
             audio=run_dict.get("audio", []),
@@ -979,6 +1030,9 @@ class WorkflowRunSchema(BaseModel):
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     references: Optional[List[dict]] = Field(None, description="References cited in the workflow")
+    citations: Optional[Dict[str, Any]] = Field(
+        None, description="Citations from the model (e.g., from Gemini grounding/search)"
+    )
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
     images: Optional[List[dict]] = Field(None, description="Images included in the workflow")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the workflow")
@@ -1005,6 +1059,7 @@ class WorkflowRunSchema(BaseModel):
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
+            citations=run_response.get("citations", None),
             reasoning_messages=run_response.get("reasoning_messages", []),
             images=run_response.get("images", []),
             videos=run_response.get("videos", []),

@@ -24,6 +24,7 @@ hackernews_agent = Agent(
     input_schema=ResearchTopic,
 )
 
+
 # Pass a dict that matches the input schema
 hackernews_agent.print_response(
     input={
@@ -35,11 +36,11 @@ hackernews_agent.print_response(
 )
 
 # Pass a pydantic model that matches the input schema
-# hackernews_agent.print_response(
-#     input=ResearchTopic(
-#         topic="AI",
-#         focus_areas=["AI", "Machine Learning"],
-#         target_audience="Developers",
-#         sources_required=5,
-#     )
-# )
+hackernews_agent.print_response(
+    input=ResearchTopic(
+        topic="AI",
+        focus_areas=["AI", "Machine Learning"],
+        target_audience="Developers",
+        sources_required=5,
+    )
+)
