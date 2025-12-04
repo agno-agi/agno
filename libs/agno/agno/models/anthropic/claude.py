@@ -402,7 +402,7 @@ class Claude(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, dict]]] = None,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages)
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -1073,5 +1073,11 @@ class Claude(Model):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}
                 metrics.provider_metrics["service_tier"] = response_usage.service_tier
+
+        log_debug(
+            f"Anthropic response metrics: input_tokens={metrics.input_tokens}, "
+            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}, "
+            f"cache_read={metrics.cache_read_tokens}, cache_write={metrics.cache_write_tokens}"
+        )
 
         return metrics

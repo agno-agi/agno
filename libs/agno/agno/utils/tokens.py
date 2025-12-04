@@ -232,36 +232,47 @@ def _count_image_url_tokens(image_url: Union[str, Dict[str, Any]]) -> int:
 
 
 def count_file_tokens(file: File) -> int:
-    content = getattr(file, "content", None)
-    if content:
-        if isinstance(content, str):
-            return len(content) // 4
-        elif isinstance(content, bytes):
-            return len(content) // 4
-
-    filepath = getattr(file, "filepath", None)
-    if filepath:
+    # Get file size
+    size = 0
+    if file.content and isinstance(file.content, (str, bytes)):
+        size = len(file.content)
+    elif file.filepath:
         try:
-            path = Path(filepath) if isinstance(filepath, str) else filepath
+            path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
             if path.exists():
-                return path.stat().st_size // 4
+                size = path.stat().st_size
         except Exception:
             pass
-
-    url = getattr(file, "url", None)
-    if url:
+    elif file.url:
         try:
             import urllib.request
 
-            req = urllib.request.Request(url, method="HEAD")
+            req = urllib.request.Request(file.url, method="HEAD")
             with urllib.request.urlopen(req, timeout=5) as response:
                 content_length = response.headers.get("Content-Length")
                 if content_length:
-                    return int(content_length) // 4
+                    size = int(content_length)
         except Exception:
             pass
 
-    return 0
+    if size == 0:
+        return 0
+
+    # Check if text file
+    ext = None
+    if file.format:
+        ext = file.format.lower().lstrip(".")
+    elif file.filepath:
+        path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
+        ext = path.suffix.lower().lstrip(".") if path.suffix else None
+    elif file.url:
+        url_path = file.url.split("?")[0]
+        if "." in url_path:
+            ext = url_path.rsplit(".", 1)[-1].lower()
+
+    if ext in {"txt", "csv", "md", "json", "xml", "html"}:
+        return size // 4
+    return size // 40
 
 
 def _count_tool_tokens(
@@ -402,7 +413,7 @@ def _count_message_tokens(
     if message.role:
         tokens += count_text_tokens(message.role, model)
 
-    content = message.compressed_content or message.content
+    content = message.get_content(use_compressed_content=True)
     if content:
         if isinstance(content, str):
             tokens += count_text_tokens(content, model)

@@ -482,7 +482,7 @@ class LiteLLM(Model):
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
-        formatted_messages = self._format_messages(messages)
+        formatted_messages = self._format_messages(messages, compress_tool_results=True)
         return litellm.token_counter(
             model=self.id,
             messages=formatted_messages,

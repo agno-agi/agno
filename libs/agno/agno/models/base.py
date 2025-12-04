@@ -362,6 +362,10 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    compression_manager.compress(messages)
+
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 self._process_model_response(
@@ -446,11 +450,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages, tools):
-                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -551,6 +550,10 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    await compression_manager.acompress(messages)
+
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 await self._aprocess_model_response(
@@ -634,11 +637,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages, tools):
-                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -731,11 +729,6 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Log token comparison if we have actual usage data
-        if provider_response.response_usage is not None and provider_response.response_usage.input_tokens > 0:
-            model_estimated = self.count_tokens(messages, tools)
-            log_debug(f"Tokens - estimated: {model_estimated}, actual: {provider_response.response_usage.input_tokens}")
-
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -792,11 +785,6 @@ class Model(ABC):
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
-
-        # Log token comparison if we have actual usage data
-        if provider_response.response_usage is not None and provider_response.response_usage.input_tokens > 0:
-            model_estimated = self.count_tokens(messages, tools)
-            log_debug(f"Tokens - estimated: {model_estimated}, actual: {provider_response.response_usage.input_tokens}")
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -927,11 +915,6 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
-        # Log token comparison if we have actual usage data
-        if stream_data.response_metrics is not None and stream_data.response_metrics.input_tokens > 0:
-            model_estimated = self.count_tokens(messages, tools)
-            log_debug(f"Tokens - estimated: {model_estimated}, actual: {stream_data.response_metrics.input_tokens}")
-
     def response_stream(
         self,
         messages: List[Message],
@@ -980,6 +963,10 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE invoke
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    compression_manager.compress(messages)
+
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
@@ -1040,11 +1027,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages, tools):
-                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1150,11 +1132,6 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
-        # Log token comparison if we have actual usage data
-        if stream_data.response_metrics is not None and stream_data.response_metrics.input_tokens > 0:
-            model_estimated = self.count_tokens(messages, tools)
-            log_debug(f"Tokens - estimated: {model_estimated}, actual: {stream_data.response_metrics.input_tokens}")
-
     async def aresponse_stream(
         self,
         messages: List[Message],
@@ -1203,6 +1180,10 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    await compression_manager.acompress(messages)
+
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
                 stream_data = MessageData()
@@ -1263,11 +1244,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages, tools):
-                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:

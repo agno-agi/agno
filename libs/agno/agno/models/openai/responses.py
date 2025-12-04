@@ -526,7 +526,7 @@ class OpenAIResponses(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         try:
-            formatted_input = self._format_messages(messages)
+            formatted_input = self._format_messages(messages, compress_tool_results=True)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
             response = self.get_client().responses.input_tokens.count(
@@ -1081,5 +1081,11 @@ class OpenAIResponses(Model):
 
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
+
+        log_debug(
+            f"OpenAI Responses response metrics: input_tokens={metrics.input_tokens}, "
+            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}, "
+            f"cache_read={metrics.cache_read_tokens}, reasoning={metrics.reasoning_tokens}"
+        )
 
         return metrics

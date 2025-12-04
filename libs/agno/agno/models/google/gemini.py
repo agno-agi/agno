@@ -315,7 +315,7 @@ class Gemini(Model):
         if not self.vertexai:
             return super().count_tokens(messages, tools)
 
-        contents, system_instruction = self._format_messages(messages)
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
 
         config: Dict[str, Any] = {}
         if system_instruction:
