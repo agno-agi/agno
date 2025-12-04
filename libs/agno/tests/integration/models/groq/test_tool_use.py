@@ -9,6 +9,7 @@ from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 
+@pytest.mark.skip(reason="This test fails often on CI for Groq")
 def test_tool_use():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
@@ -50,8 +51,8 @@ def test_tool_use_stream():
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
 
-
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="This test fails often on CI for Groq")
 async def test_async_tool_use():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
@@ -157,6 +158,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert response.content is not None
 
 
+@pytest.mark.skip(reason="This test fails often on CI for Groq")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """

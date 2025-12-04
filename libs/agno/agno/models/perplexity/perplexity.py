@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.message import Citations, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -60,10 +60,9 @@ class Perplexity(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("PERPLEXITY_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="PERPLEXITY_API_KEY not set. Please set the PERPLEXITY_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()
 

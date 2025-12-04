@@ -130,6 +130,7 @@ class Claude(Model):
 
     # Client parameters
     api_key: Optional[str] = None
+    auth_token: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
     http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
@@ -154,13 +155,15 @@ class Claude(Model):
         client_params: Dict[str, Any] = {}
 
         self.api_key = self.api_key or getenv("ANTHROPIC_API_KEY")
-        if not self.api_key:
-            raise ModelProviderError(
-                "ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable."
+        self.auth_token = self.auth_token or getenv("ANTHROPIC_AUTH_TOKEN")
+        if not (self.api_key or self.auth_token):
+            log_error(
+                "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN not set. Please set the ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN environment variable."
             )
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+        client_params["auth_token"] = self.auth_token
         if self.timeout is not None:
             client_params["timeout"] = self.timeout
 
@@ -951,8 +954,8 @@ class Claude(Model):
         elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
-                tool_name = tool_use.name
-                tool_input = tool_use.input
+                tool_name = tool_use.name  # type: ignore
+                tool_input = tool_use.input  # type: ignore
 
                 function_def = {"name": tool_name}
                 if tool_input:
@@ -962,7 +965,7 @@ class Claude(Model):
 
                 model_response.tool_calls = [
                     {
-                        "id": tool_use.id,
+                        "id": tool_use.id,  # type: ignore
                         "type": "function",
                         "function": function_def,
                     }
@@ -983,7 +986,7 @@ class Claude(Model):
             for block in response.message.content:  # type: ignore
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
-                    accumulated_text += block.text
+                    accumulated_text += block.text  # type: ignore
 
                 # Handle citations
                 citations = getattr(block, "citations", None)

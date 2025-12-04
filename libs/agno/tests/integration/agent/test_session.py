@@ -31,7 +31,7 @@ def chat_agent_factory(shared_db, session_id: Optional[str] = None, session_stat
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         session_id=session_id or str(uuid.uuid4()),
-        session_state=session_state or {},
+        session_state=session_state if session_state is not None else {},
     )
 
 

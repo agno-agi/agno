@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.4"
+version = "2.3.6"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -104,7 +104,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp>=1.9.2"]
 mem0 = ["mem0ai"]
-memori = ["memorisdk"]
+memori = ["memorisdk==2.3.3"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
@@ -310,6 +310,7 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
+    "grpcio==1.74.0",
 ]
 
 # Models integration test dependencies
