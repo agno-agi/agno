@@ -550,6 +550,7 @@ class TeamRunOutput:
                 "status",
                 "tools",
                 "metadata",
+                "metrics",
                 "images",
                 "videos",
                 "audio",
@@ -627,6 +628,9 @@ class TeamRunOutput:
 
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
+
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict()
 
         return _dict
 
