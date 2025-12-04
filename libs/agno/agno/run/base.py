@@ -136,7 +136,7 @@ class BaseRunOutputEvent:
             _dict["session_summary"] = self.session_summary.to_dict()
 
         if hasattr(self, "run_input") and self.run_input is not None:
-            _dict["run_input"] = self.run_input.to_dict()
+            _dict["run_input"] = self.run_input if isinstance(self.run_input, str) else self.run_input.to_dict()
 
         return _dict
 
