@@ -913,14 +913,20 @@ class Agent:
                     and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
-                    # Connect the MCP server
-                    await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    try:
+                        # Connect the MCP server
+                        await tool.connect()  # type: ignore
+                        self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Error connecting tool {tool.name}: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
         for tool in self._mcp_tools_initialized_on_run:
-            await tool.close()
+            try:
+                await tool.close()
+            except Exception as e:
+                log_warning(f"Error disconnecting tool {tool.name}: {str(e)}")
         self._mcp_tools_initialized_on_run = []
 
     def _connect_connectable_tools(self) -> None:
@@ -933,14 +939,20 @@ class Agent:
                     and hasattr(tool, "connect")
                     and tool not in self._connectable_tools_initialized_on_run
                 ):
-                    tool.connect()  # type: ignore
-                    self._connectable_tools_initialized_on_run.append(tool)
+                    try:
+                        tool.connect()  # type: ignore
+                        self._connectable_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool {tool.name}: {str(e)}")
 
     def _disconnect_connectable_tools(self) -> None:
         """Disconnect tools that require connection management."""
         for tool in self._connectable_tools_initialized_on_run:
             if hasattr(tool, "close"):
-                tool.close()  # type: ignore
+                try:
+                    tool.close()  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error disconnecting tool {tool.name}: {str(e)}")
         self._connectable_tools_initialized_on_run = []
 
     def _initialize_session(
