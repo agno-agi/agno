@@ -5382,6 +5382,7 @@ class Team:
                             run_response=run_response,
                             knowledge_filters=run_context.knowledge_filters,
                             async_mode=async_mode,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5390,6 +5391,7 @@ class Team:
                             run_response=run_response,
                             knowledge_filters=run_context.knowledge_filters,
                             async_mode=async_mode,
+                            run_context=run_context,
                         )
                     )
 
@@ -6579,7 +6581,7 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content, filters=run_context.knowledge_filters, dependencies=run_context.dependencies, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -6734,7 +6736,7 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content, filters=run_context.knowledge_filters, dependencies=run_context.dependencies, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -9000,6 +9002,7 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
@@ -9036,6 +9039,8 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "dependencies" in sig.parameters:
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -9067,6 +9072,7 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
@@ -9103,6 +9109,8 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "dependencies" in sig.parameters:
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
 
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
@@ -9187,6 +9195,7 @@ class Team:
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9202,7 +9211,8 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            dependencies = run_context.dependencies if run_context else None
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, dependencies=dependencies)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9229,7 +9239,8 @@ class Team:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            dependencies = run_context.dependencies if run_context else None
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, dependencies=dependencies)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9256,6 +9267,7 @@ class Team:
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9275,7 +9287,8 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            dependencies = run_context.dependencies if run_context else None
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters, dependencies=dependencies)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9306,7 +9319,8 @@ class Team:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            dependencies = run_context.dependencies if run_context else None
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters, dependencies=dependencies)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
