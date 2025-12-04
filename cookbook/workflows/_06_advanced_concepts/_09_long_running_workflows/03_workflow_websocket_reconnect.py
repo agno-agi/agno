@@ -203,7 +203,7 @@ class WorkflowWebSocketTester:
                     elif event_type == "subscribed":
                         print(f" subscribed: status={data.get('status')}")
                         print(f" current_event_count={data.get('current_event_count')}")
-                        print(f"\n Now listening for NEW events as workflow continues...")
+                        print("\n Now listening for NEW events as workflow continues...")
                         continue
                     elif event_type == "error":
                         print(f" ERROR: {data.get('error', 'Unknown error')}")
@@ -266,7 +266,7 @@ class WorkflowWebSocketTester:
             if gaps:
                 print(f" Gaps in event_index: {sorted(gaps)}")
             else:
-                print(f" No gaps in event_index (all events received)")
+                print(" No gaps in event_index (all events received)")
         else:
             print(" No events with event_index found")
 

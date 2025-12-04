@@ -131,7 +131,7 @@ async def test_full_catchup():
 
                 if event_type == "catch_up":
                     got_catch_up = True
-                    print(f"\n CATCH_UP notification:")
+                    print("\n CATCH_UP notification:")
                     print(f"     missed_events: {data.get('missed_events')}")
                     print(f"     current_event_count: {data.get('current_event_count')}")
                     print(f"     status: {data.get('status')}")
@@ -139,7 +139,7 @@ async def test_full_catchup():
 
                 if event_type == "subscribed":
                     got_subscribed = True
-                    print(f"\n SUBSCRIBED - now listening for new events")
+                    print("\n SUBSCRIBED - now listening for new events")
                     print(f"     current_event_count: {data.get('current_event_count')}")
                     continue
 
@@ -163,7 +163,7 @@ async def test_full_catchup():
 
                 # Or stop if workflow completes
                 if event_type == "WorkflowCompleted":
-                    print(f"\n Workflow completed")
+                    print("\n Workflow completed")
                     break
 
             # Verification
@@ -178,7 +178,7 @@ async def test_full_catchup():
                 first_index = catchup_events[0].get("event_index")
                 last_catchup_index = catchup_events[-1].get("event_index")
                 
-                print(f"\n  Catch-up events:")
+                print("\n  Catch-up events:")
                 print(f"    First event_index: {first_index}")
                 print(f"    Last event_index: {last_catchup_index}")
                 print(f"    Total received: {len(catchup_events)}")
@@ -197,16 +197,16 @@ async def test_full_catchup():
                 if gaps:
                     print(f" Gaps in event sequence: {sorted(gaps)}")
                 else:
-                    print(f" No gaps in event sequence")
+                    print(" No gaps in event sequence")
             else:
                 print(" No catch-up events received")
 
             if new_events:
-                print(f"\n  New events (after subscription):")
+                print("\n  New events (after subscription):")
                 print(f"    Total received: {len(new_events)}")
                 print(f" Workflow continued streaming after catch-up")
             else:
-                print(f"\n No new events received (workflow may have completed)")
+                print("\n No new events received (workflow may have completed)")
 
     except Exception as e:
         print(f" Error in Phase 3: {e}")

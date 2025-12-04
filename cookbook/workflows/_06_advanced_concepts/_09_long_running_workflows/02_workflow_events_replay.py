@@ -126,7 +126,7 @@ async def test_replay():
 
                 if event_type == "replay":
                     got_replay_notification = True
-                    print(f"\n REPLAY notification:")
+                    print("\n REPLAY notification:")
                     print(f"     status: {data.get('status')}")
                     print(f"     total_events: {data.get('total_events')}")
                     print(f"     message: {data.get('message')}")
@@ -139,7 +139,7 @@ async def test_replay():
                 if len(replay_events) > 0 and event_type == "WorkflowCompleted":
                     break
 
-            print(f"\n Received {len(replay_events)} events")
+            print("\n Received {len(replay_events)} events")
             
             # Verify replay
             print("\n Verification:")
