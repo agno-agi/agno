@@ -3088,12 +3088,12 @@ class Agent:
             except KeyboardInterrupt:
                 if stream:
                     return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(run_response, "Operation cancelled by user")
+                        create_run_cancelled_event(run_response, "Operation cancelled by user")  # type: ignore
                     )
                 else:
-                    run_response.content = "Operation cancelled by user"
-                    run_response.status = RunStatus.cancelled
-                    return run_response
+                    run_response.content = "Operation cancelled by user"  # type: ignore
+                    run_response.status = RunStatus.cancelled  # type: ignore
+                    return run_response  # type: ignore
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
