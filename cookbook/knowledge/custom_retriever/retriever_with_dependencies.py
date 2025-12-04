@@ -2,20 +2,21 @@
 Example demonstrating custom knowledge retriever with runtime dependencies.
 
 This cookbook shows how to access dependencies passed at runtime (e.g., via agent.run(dependencies={...}))
-in a custom knowledge retriever function. This fixes issue #5594.
+in a custom knowledge retriever function.
 
 Key points:
-1. Add 'dependencies' parameter to your retriever function signature
+1. Add 'run_context' parameter to your retriever function signature
 2. Dependencies are automatically passed from run_context when available
 3. Use dependencies to customize retrieval behavior based on user context
 """
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -38,7 +39,7 @@ def knowledge_retriever(
     query: str,
     agent: Optional[Agent] = None,
     num_documents: int = 5,
-    dependencies: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
     **kwargs,
 ) -> Optional[list[dict]]:
     """
@@ -48,12 +49,15 @@ def knowledge_retriever(
         query: The search query string
         agent: The agent instance making the query
         num_documents: Number of documents to retrieve (default: 5)
-        dependencies: Runtime dependencies passed to agent.run()
+        run_context: Runtime context containing dependencies and other context
         **kwargs: Additional keyword arguments
 
     Returns:
         List of retrieved documents or None if search fails
     """
+    # Extract dependencies from run_context
+    dependencies = run_context.dependencies if run_context else None
+
     print("\n=== Knowledge Retriever Called ===")
     print(f"Query: {query}")
     print(f"Dependencies available: {dependencies is not None}")

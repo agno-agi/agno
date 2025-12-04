@@ -19,12 +19,13 @@ Setup:
     export OPENAI_API_KEY=your_api_key
 """
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.team import Team
 from agno.vectordb.pgvector import PgVector
 
@@ -47,7 +48,7 @@ def knowledge_retriever(
     query: str,
     team: Optional[Team] = None,
     num_documents: int = 5,
-    dependencies: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
     **kwargs,
 ) -> Optional[list[dict]]:
     """
@@ -59,12 +60,15 @@ def knowledge_retriever(
         query: The search query string
         team: The team instance making the query
         num_documents: Number of documents to retrieve
-        dependencies: Runtime dependencies passed to team.run()
+        run_context: Runtime context containing dependencies and other context
         **kwargs: Additional keyword arguments
 
     Returns:
         List of retrieved documents or None if search fails
     """
+    # Extract dependencies from run_context
+    dependencies = run_context.dependencies if run_context else None
+
     if dependencies:
         print(f"[Team Retriever] Dependencies received: {list(dependencies.keys())}")
 

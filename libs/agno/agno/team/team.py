@@ -6583,7 +6583,7 @@ class Team:
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
                             query=user_msg_content,
                             filters=run_context.knowledge_filters,
-                            dependencies=run_context.dependencies,
+                            run_context=run_context,
                             **kwargs,
                         )
                         if docs_from_knowledge is not None:
@@ -6741,7 +6741,7 @@ class Team:
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
                             query=user_msg_content,
                             filters=run_context.knowledge_filters,
-                            dependencies=run_context.dependencies,
+                            run_context=run_context,
                             **kwargs,
                         )
                         if docs_from_knowledge is not None:
@@ -9008,11 +9008,14 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -9045,7 +9048,10 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
-                if "dependencies" in sig.parameters:
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
                     knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
@@ -9078,11 +9084,14 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -9115,7 +9124,10 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
-                if "dependencies" in sig.parameters:
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
                     knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
 
@@ -9217,9 +9229,8 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            dependencies = run_context.dependencies if run_context else None
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                query=query, filters=knowledge_filters, dependencies=dependencies
+                query=query, filters=knowledge_filters, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
@@ -9247,9 +9258,8 @@ class Team:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            dependencies = run_context.dependencies if run_context else None
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                query=query, filters=knowledge_filters, dependencies=dependencies
+                query=query, filters=knowledge_filters, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
@@ -9297,9 +9307,8 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            dependencies = run_context.dependencies if run_context else None
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, dependencies=dependencies
+                query=query, filters=search_filters, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
@@ -9331,9 +9340,8 @@ class Team:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            dependencies = run_context.dependencies if run_context else None
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, dependencies=dependencies
+                query=query, filters=search_filters, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
