@@ -8,8 +8,8 @@ This script tests:
 4. Reconnecting (reconnect action) and catching up on missed events
 
 Usage:
-    1. Start the AgentOS server: python libs/agno/agno/test.py
-    2. Run this test: python libs/agno/agno/test_websocket_reconnection.py
+    1. Start the AgentOS server: python cookbook/agent_os/workflow/basic_workflow.py
+    2. Run this test: python cookbook/workflows/_06_advanced_concepts/_07_long_running_workflows/workflow_websocket_reconnect.py
 """
 
 import asyncio
@@ -19,7 +19,7 @@ from typing import Optional
 try:
     import websockets
 except ImportError:
-    print("❌ websockets library not installed. Install with: pip install websockets")
+    print("websockets library not installed. Install with: pip install websockets")
     exit(1)
 
 
@@ -58,23 +58,23 @@ class WorkflowWebSocketTester:
     async def test_workflow_execution_with_reconnection(self):
         """Test complete workflow execution with simulated reconnection"""
         print("\n" + "=" * 80)
-        print("🧪 WebSocket Reconnection Test")
+        print("WebSocket Reconnection Test")
         print("=" * 80)
 
         # Phase 1: Start workflow and receive initial events
-        print("\n📡 Phase 1: Starting workflow and receiving initial events...")
+        print("\n Phase 1: Starting workflow and receiving initial events...")
         await self._phase1_start_workflow()
 
         # Wait a bit for workflow to generate more events
-        print("\n⏸️  Simulating user leaving page for 3 seconds...")
+        print("\n⏸ Simulating user leaving page for 3 seconds...")
         await asyncio.sleep(3)
 
         # Phase 2: Reconnect and catch up on missed events
-        print("\n🔄 Phase 2: Reconnecting to workflow...")
+        print("\n Phase 2: Reconnecting to workflow...")
         await self._phase2_reconnect()
 
         # Phase 3: Continue receiving remaining events
-        print("\n✅ Test completed!")
+        print("\n Test completed!")
         self._print_summary()
 
     async def _phase1_start_workflow(self):
@@ -103,9 +103,9 @@ class WorkflowWebSocketTester:
 
                 # Receive initial events (simulate user receiving only first few events)
                 event_count = 0
-                max_initial_events = 5  # Receive only 5 events before "disconnecting"
+                max_initial_events = 20  # Receive only 20 events before "disconnecting"
 
-                print("\n📥 Receiving initial events:")
+                print("\n Receiving initial events:")
                 async for message in websocket:
                     data = parse_sse_message(message)
                     event_type = data.get("event")
@@ -125,25 +125,25 @@ class WorkflowWebSocketTester:
 
                     # Check for workflow completion during phase 1 (shouldn't happen with fast disconnect)
                     if event_type in ["WorkflowCompleted", "WorkflowError"]:
-                        print(f"\n🏁 Workflow finished during initial connection: {event_type}")
+                        print(f"\n Workflow finished during initial connection: {event_type}")
                         break
 
                     # "Disconnect" after receiving a few events
                     if event_count >= max_initial_events:
                         print(
-                            f"\n⚠️  Simulating disconnect after {event_count} events "
+                            f"\n Simulating disconnect after {event_count} events "
                             f"(last_event_index={self.last_event_index})"
                         )
                         break
 
         except Exception as e:
-            print(f"❌ Error in Phase 1: {e}")
+            print(f" Error in Phase 1: {e}")
             raise
 
     async def _phase2_reconnect(self):
         """Phase 2: Reconnect to the workflow and catch up on missed events"""
         if not self.run_id:
-            print("❌ No run_id found, cannot reconnect")
+            print(" No run_id found, cannot reconnect")
             return
 
         try:
@@ -173,7 +173,7 @@ class WorkflowWebSocketTester:
                 )
 
                 # Receive reconnection response and remaining events
-                print("\n📥 Receiving events after reconnection:")
+                print("\n Receiving events after reconnection:")
                 event_count = 0
                 missed_events_count = 0
                 last_event_time = asyncio.get_event_loop().time()
@@ -193,20 +193,20 @@ class WorkflowWebSocketTester:
                     # Special handling for reconnection events
                     if event_type == "catch_up":
                         missed_events_count = data.get("missed_events", 0)
-                        print(f"  🔄 catch_up: {missed_events_count} missed events")
-                        print(f"     status={data.get('status')}, current_event_count={data.get('current_event_count')}")
+                        print(f" catch_up: {missed_events_count} missed events")
+                        print(f" status={data.get('status')}, current_event_count={data.get('current_event_count')}")
                         continue
                     elif event_type == "replay":
-                        print(f"  📼 replay: status={data.get('status')}, total_events={data.get('total_events')}")
-                        print(f"     message={data.get('message')}")
+                        print(f" replay: status={data.get('status')}, total_events={data.get('total_events')}")
+                        print(f" message={data.get('message')}")
                         continue
                     elif event_type == "subscribed":
-                        print(f"  ✅ subscribed: status={data.get('status')}")
-                        print(f"     current_event_count={data.get('current_event_count')}")
-                        print(f"\n⏳ Now listening for NEW events as workflow continues...")
+                        print(f" subscribed: status={data.get('status')}")
+                        print(f" current_event_count={data.get('current_event_count')}")
+                        print(f"\n Now listening for NEW events as workflow continues...")
                         continue
                     elif event_type == "error":
-                        print(f"  ❌ ERROR: {data.get('error', 'Unknown error')}")
+                        print(f" ERROR: {data.get('error', 'Unknown error')}")
                         print(f"     Full data: {data}")
                         continue
 
@@ -218,22 +218,22 @@ class WorkflowWebSocketTester:
 
                     # Check for workflow completion
                     if event_type in ["WorkflowCompleted", "WorkflowError"]:
-                        print(f"\n🏁 Workflow finished: {event_type}")
+                        print(f"\n Workflow finished: {event_type}")
                         break
                 
                 # If we exit the loop without completion, the connection closed
-                print("\n⚠️  WebSocket connection closed (workflow may have completed)")
+                print("\n WebSocket connection closed (workflow may have completed)")
 
         except asyncio.TimeoutError:
-            print("\n⏰ Timeout waiting for events (30s). Workflow may still be running.")
+            print("\n Timeout waiting for events (30s). Workflow may still be running.")
         except Exception as e:
-            print(f"❌ Error in Phase 2: {e}")
+            print(f" Error in Phase 2: {e}")
             raise
 
     def _print_summary(self):
         """Print test summary"""
         print("\n" + "=" * 80)
-        print("📊 Test Summary")
+        print(" Test Summary")
         print("=" * 80)
         print(f"Run ID: {self.run_id}")
         print(f"Last Event Index: {self.last_event_index}")
@@ -264,32 +264,32 @@ class WorkflowWebSocketTester:
             actual = set(event_indices)
             gaps = expected - actual
             if gaps:
-                print(f"  ⚠️  Gaps in event_index: {sorted(gaps)}")
+                print(f" Gaps in event_index: {sorted(gaps)}")
             else:
-                print(f"  ✅ No gaps in event_index (all events received)")
+                print(f" No gaps in event_index (all events received)")
         else:
-            print("  ⚠️  No events with event_index found")
+            print(" No events with event_index found")
 
         print("=" * 80)
 
 
 async def main():
     """Run the WebSocket reconnection test"""
-    print("\n🚀 Starting WebSocket Reconnection Test")
-    print("📋 Prerequisites:")
+    print("\n Starting WebSocket Reconnection Test")
+    print(" Prerequisites:")
     print("   1. AgentOS server should be running at http://localhost:7777")
     print("   2. Run: python libs/agno/agno/test.py")
-    print("\n⏳ Starting test in 2 seconds...")
+    print("\n Starting test in 2 seconds...")
     await asyncio.sleep(2)
 
     tester = WorkflowWebSocketTester()
     try:
         await tester.test_workflow_execution_with_reconnection()
     except ConnectionRefusedError:
-        print("\n❌ Connection refused. Is the AgentOS server running?")
-        print("   Start it with: python libs/agno/agno/test.py")
+        print("\n Connection refused. Is the AgentOS server running?")
+        print("   Start it with: python cookbook/agent_os/workflow/basic_workflow.py")
     except Exception as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\n Test failed: {e}")
         import traceback
 
         traceback.print_exc()
