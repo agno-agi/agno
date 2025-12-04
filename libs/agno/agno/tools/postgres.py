@@ -108,9 +108,16 @@ class PostgresTools(Toolkit):
         Returns:
             The database connection object.
         """
-        if self._connection is None or self._connection.closed:
+        if not self.is_connected:
             return self.connect()
         return self._connection
+
+    def __enter__(self):
+        return self.connect()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.is_connected:
+            self.close()
 
     def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
