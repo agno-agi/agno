@@ -474,15 +474,12 @@ class WebSocketHandler:
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
         except RuntimeError as e:
-            # Client disconnected - this is normal during reconnection scenarios
-            # Don't log as warning, just debug
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 from agno.utils.log import log_debug
                 log_debug(f"WebSocket closed, event not sent (expected during disconnection)")
             else:
                 log_warning(f"Failed to handle WebSocket event: {e}")
         except Exception as e:
-            # Other exceptions should still be logged as warnings
             log_warning(f"Failed to handle WebSocket event: {e}")
 
     async def handle_text(self, message: str) -> None:
@@ -493,7 +490,6 @@ class WebSocketHandler:
         try:
             await self.websocket.send_text(self.format_sse_event(message))
         except RuntimeError as e:
-            # Client disconnected - this is normal during reconnection scenarios
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 from agno.utils.log import log_debug
                 log_debug(f"WebSocket closed, text not sent (expected during disconnection)")
@@ -510,7 +506,6 @@ class WebSocketHandler:
         try:
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
         except RuntimeError as e:
-            # Client disconnected - this is normal during reconnection scenarios
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 from agno.utils.log import log_debug
                 log_debug(f"WebSocket closed, dict not sent (expected during disconnection)")
