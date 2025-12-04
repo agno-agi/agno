@@ -8,6 +8,8 @@ from os import getenv
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from agno.db.base import SessionType
+from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.os.routers.evals.schemas import EvalSchema
 from agno.os.routers.memory.schemas import (
     UserMemoryCreateSchema,
     UserMemorySchema,
@@ -1144,3 +1146,234 @@ class AgentOSClient:
             return TeamSessionDetailSchema.model_validate(data)
         else:
             return WorkflowSessionDetailSchema.model_validate(data)
+
+    # Eval Operations
+
+    async def list_eval_runs(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        filter_type: Optional[EvalFilterType] = None,
+        eval_types: Optional[List[EvalType]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> PaginatedResponse[EvalSchema]:
+        """List evaluation runs with filtering and pagination.
+
+        Args:
+            agent_id: Filter by agent ID
+            team_id: Filter by team ID
+            workflow_id: Filter by workflow ID
+            model_id: Filter by model ID
+            filter_type: Filter type (agent, team, workflow)
+            eval_types: List of eval types to filter by (accuracy, performance, reliability)
+            limit: Number of eval runs per page
+            page: Page number
+            sort_by: Field to sort by
+            sort_order: Sort order (asc or desc)
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            PaginatedResponse[EvalSchema]: Paginated list of evaluation runs
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {
+            "limit": str(limit),
+            "page": str(page),
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        if agent_id:
+            params["agent_id"] = agent_id
+        if team_id:
+            params["team_id"] = team_id
+        if workflow_id:
+            params["workflow_id"] = workflow_id
+        if model_id:
+            params["model_id"] = model_id
+        if filter_type:
+            params["type"] = filter_type.value
+        if eval_types:
+            params["eval_types"] = ",".join(et.value for et in eval_types)
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/eval-runs?" + "&".join(f"{k}={v}" for k, v in params.items())
+        data = await self._get(endpoint)
+        return PaginatedResponse[EvalSchema].model_validate(data)
+
+    async def get_eval_run(
+        self,
+        eval_run_id: str,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> EvalSchema:
+        """Get a specific evaluation run by ID.
+
+        Args:
+            eval_run_id: ID of the evaluation run to retrieve
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            EvalSchema: The evaluation run details
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/eval-runs/{eval_run_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+        return EvalSchema.model_validate(data)
+
+    async def delete_eval_runs(
+        self,
+        eval_run_ids: List[str],
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> None:
+        """Delete multiple evaluation runs.
+
+        Args:
+            eval_run_ids: List of evaluation run IDs to delete
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/eval-runs"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload = {"eval_run_ids": eval_run_ids}
+        await self._delete_with_body(endpoint, payload)
+
+    async def update_eval_run(
+        self,
+        eval_run_id: str,
+        name: str,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> EvalSchema:
+        """Update an evaluation run (rename).
+
+        Args:
+            eval_run_id: ID of the evaluation run to update
+            name: New name for the evaluation run
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            EvalSchema: The updated evaluation run
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = f"/eval-runs/{eval_run_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload = {"name": name}
+        data = await self._patch(endpoint, payload)
+        return EvalSchema.model_validate(data)
+
+    async def run_eval(
+        self,
+        eval_type: EvalType,
+        input_text: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        expected_output: Optional[str] = None,
+        expected_tool_calls: Optional[List[str]] = None,
+        num_iterations: int = 1,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+    ) -> Optional[EvalSchema]:
+        """Execute an evaluation on an agent or team.
+
+        Args:
+            eval_type: Type of evaluation (accuracy, performance, reliability)
+            input_text: Input text for the evaluation
+            agent_id: Agent ID to evaluate (mutually exclusive with team_id)
+            team_id: Team ID to evaluate (mutually exclusive with agent_id)
+            model_id: Optional model ID to use (overrides agent/team default)
+            model_provider: Optional model provider to use
+            expected_output: Expected output for accuracy evaluations
+            expected_tool_calls: Expected tool calls for reliability evaluations
+            num_iterations: Number of iterations for performance evaluations
+            db_id: Optional database ID to use
+            table: Optional table name to use
+
+        Returns:
+            EvalSchema: The evaluation result, or None if evaluation against remote agents
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+        if table:
+            params["table"] = table
+
+        endpoint = "/eval-runs"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        payload: Dict[str, Any] = {
+            "eval_type": eval_type.value,
+            "input": input_text,
+        }
+        if agent_id:
+            payload["agent_id"] = agent_id
+        if team_id:
+            payload["team_id"] = team_id
+        if model_id:
+            payload["model_id"] = model_id
+        if model_provider:
+            payload["model_provider"] = model_provider
+        if expected_output:
+            payload["expected_output"] = expected_output
+        if expected_tool_calls:
+            payload["expected_tool_calls"] = expected_tool_calls
+        if num_iterations != 1:
+            payload["num_iterations"] = num_iterations
+
+        data = await self._post(endpoint, payload)
+        if data is None:
+            return None
+        return EvalSchema.model_validate(data)
