@@ -427,7 +427,7 @@ def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[To
         return None
 
 
-GEMINI_FILE_URI_PATTERN = re.compile(r"^https://generativelanguage\.googleapis\.com/v1beta/files/[a-zA-Z0-9]+")
+GEMINI_FILE_URI_PATTERN = re.compile(r"^https://generativelanguage\.googleapis\.com/v1beta/files/[a-zA-Z0-9-]+")
 GCS_FILE_URI_PATTERN = re.compile(r"^gs://")
 
 
