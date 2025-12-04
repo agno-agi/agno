@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import uuid4
 
 from agno.models.response import ToolExecution, UserInputField
@@ -22,7 +22,6 @@ class RunRequirement:
 
     # User input
     user_input_schema: Optional[List[UserInputField]] = None
-    user_input: Optional[List[Any]] = None
 
     # External execution
     external_execution_result: Optional[str] = None
@@ -34,7 +33,7 @@ class RunRequirement:
 
     @property
     def needs_confirmation(self) -> bool:
-        if self.confirmation is True:
+        if self.confirmation is not None:
             return False
         if not self.tool_execution:
             return False
@@ -45,21 +44,21 @@ class RunRequirement:
 
     @property
     def needs_user_input(self) -> bool:
-        if self.user_input is not None:
-            return True
         if not self.tool_execution:
             return False
         if self.tool_execution.answered is True:
+            return False
+        if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
             return True
 
         return self.tool_execution.requires_user_input or False
 
     @property
     def needs_external_execution(self) -> bool:
-        if self.external_execution_result is not None:
-            return True
         if not self.tool_execution:
             return False
+        if self.external_execution_result is not None:
+            return True
 
         return self.tool_execution.external_execution_required or False
 
@@ -84,7 +83,7 @@ class RunRequirement:
         if self.tool_execution:
             self.tool_execution.result = result
 
-    def update_tools(self, tools: List[ToolExecution]):
+    def update_tool(self):
         if not self.tool_execution:
             return
         if self.confirmation is True:
@@ -96,6 +95,4 @@ class RunRequirement:
 
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
-        return bool(
-            self.confirmation is not None or self.user_input is not None or self.external_execution_result is not None
-        )
+        return not self.needs_confirmation and not self.needs_user_input and not self.needs_external_execution
