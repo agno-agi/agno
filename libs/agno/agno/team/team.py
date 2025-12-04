@@ -6581,7 +6581,10 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, dependencies=run_context.dependencies, **kwargs
+                            query=user_msg_content,
+                            filters=run_context.knowledge_filters,
+                            dependencies=run_context.dependencies,
+                            **kwargs,
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -6736,7 +6739,10 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, dependencies=run_context.dependencies, **kwargs
+                            query=user_msg_content,
+                            filters=run_context.knowledge_filters,
+                            dependencies=run_context.dependencies,
+                            **kwargs,
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -9212,7 +9218,9 @@ class Team:
             retrieval_timer = Timer()
             retrieval_timer.start()
             dependencies = run_context.dependencies if run_context else None
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, dependencies=dependencies)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9240,7 +9248,9 @@ class Team:
             retrieval_timer = Timer()
             retrieval_timer.start()
             dependencies = run_context.dependencies if run_context else None
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, dependencies=dependencies)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9288,7 +9298,9 @@ class Team:
             retrieval_timer = Timer()
             retrieval_timer.start()
             dependencies = run_context.dependencies if run_context else None
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters, dependencies=dependencies)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9320,7 +9332,9 @@ class Team:
             retrieval_timer = Timer()
             retrieval_timer.start()
             dependencies = run_context.dependencies if run_context else None
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters, dependencies=dependencies)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)

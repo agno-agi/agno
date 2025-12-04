@@ -51,6 +51,7 @@ def test_tool_use_stream():
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
 
+
 @pytest.mark.asyncio
 @pytest.mark.skip(reason="This test fails often on CI for Groq")
 async def test_async_tool_use():

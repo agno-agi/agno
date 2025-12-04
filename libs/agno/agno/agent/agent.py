@@ -10066,7 +10066,9 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             dependencies = run_context.dependencies if run_context else None
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, dependencies=dependencies)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -10098,7 +10100,9 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             dependencies = run_context.dependencies if run_context else None
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters, dependencies=dependencies)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,

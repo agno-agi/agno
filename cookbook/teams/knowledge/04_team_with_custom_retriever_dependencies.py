@@ -31,7 +31,8 @@ from agno.vectordb.pgvector import PgVector
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Initialize knowledge base
 vector_db = PgVector(
-    table_name="team-knowledge", embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    table_name="team-knowledge",
+    embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     db_url=db_url,
 )
 knowledge = Knowledge(vector_db=vector_db)
@@ -66,25 +67,25 @@ def knowledge_retriever(
     """
     if dependencies:
         print(f"[Team Retriever] Dependencies received: {list(dependencies.keys())}")
-        
+
         # Access team-level context from dependencies
         project_id = dependencies.get("project_id")
         user_role = dependencies.get("role")
         team_context = dependencies.get("team_context")
-        
+
         if project_id:
             print(f"[Team Retriever] Project ID: {project_id}")
             # You could filter by project_id in your vector DB here
-        
+
         if user_role:
             print(f"[Team Retriever] User role: {user_role}")
-        
+
         if team_context:
             print(f"[Team Retriever] Team context: {team_context}")
             # Use team context to customize search behavior
     else:
         print("[Team Retriever] No dependencies available")
-    
+
     # Perform the actual search
     try:
         docs = knowledge.search(
@@ -119,7 +120,7 @@ research_team = Team(
     knowledge=knowledge,
     knowledge_retriever=knowledge_retriever,
     search_knowledge=True,
-    add_knowledge_to_context=True,  # Force knowledge retrieval to demonstrate dependencies
+    add_knowledge_to_context=True,
     instructions="Work together to research and analyze information. Always search the knowledge base first using the search_knowledge_base tool before answering.",
 )
 

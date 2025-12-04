@@ -48,29 +48,27 @@ def knowledge_retriever(
         query: The search query string
         agent: The agent instance making the query
         num_documents: Number of documents to retrieve (default: 5)
-        dependencies: Runtime dependencies passed to agent.run() - THIS IS THE KEY ADDITION
+        dependencies: Runtime dependencies passed to agent.run()
         **kwargs: Additional keyword arguments
 
     Returns:
         List of retrieved documents or None if search fails
     """
-    print(f"\n=== Knowledge Retriever Called ===")
+    print("\n=== Knowledge Retriever Called ===")
     print(f"Query: {query}")
     print(f"Dependencies available: {dependencies is not None}")
-    
+
     if dependencies:
         print(f"Dependencies keys: {list(dependencies.keys())}")
-        
+
         # Example: Use user role from dependencies to filter results
         user_role = dependencies.get("role", "user")
         print(f"User role: {user_role}")
-        
+
         # Example: Use user preferences to customize search
         if "preferences" in dependencies:
             print(f"User preferences: {dependencies['preferences']}")
-            # You could modify the query based on preferences here
-        
-    
+
     # Perform the actual search
     try:
         docs = knowledge.search(
@@ -82,7 +80,6 @@ def knowledge_retriever(
     except Exception as e:
         print(f"Error during knowledge retrieval: {e}")
         return []
-
 
 
 agent = Agent(
@@ -109,5 +106,3 @@ agent.print_response(
         "preferences": ["AI", "Machine Learning"],
     },
 )
-
-
