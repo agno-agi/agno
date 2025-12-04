@@ -32,6 +32,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 try:
     from sqlalchemy import Index, String, Table, UniqueConstraint, func, update
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.exc import ProgrammingError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
@@ -254,47 +255,63 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions"
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories"
+                    table_name=self.memory_table_name,
+                    table_type="memories",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics"
+                    table_name=self.metrics_table_name,
+                    table_type="metrics",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
+                self.eval_table = await self._get_or_create_table(
+                    table_name=self.eval_table_name,
+                    table_type="evals",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge"
+                    table_name=self.knowledge_table_name,
+                    table_type="knowledge",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture"
+                    table_name=self.culture_table_name,
+                    table_type="culture",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.culture_table
 
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, table_type="versions"
+                    table_name=self.versions_table_name,
+                    table_type="versions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.versions_table
 
@@ -897,10 +914,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = select(func.json_array_elements_text(table.c.topics))
-                if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-                result = await sess.execute(stmt)
+                try:
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+                except ProgrammingError:
+                    # Retrying with json_array_elements_text. This works in older versions,
+                    # where the topics column was of type JSON instead of JSONB
+                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+
                 records = result.fetchall()
 
                 return list(set([record[0] for record in records]))
