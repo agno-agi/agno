@@ -1392,7 +1392,7 @@ class AgentOSClient:
         Args:
             name: Content name (auto-generated from file/URL if not provided)
             description: Content description
-            url: URL to fetch content from (can be JSON array or single URL)
+            url: URL to fetch content from (can be a single URL string or a JSON-encoded array of URLs)
             metadata: Metadata dictionary for the content
             file_content: Raw file bytes to upload
             file_name: Filename for the uploaded content
