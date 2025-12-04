@@ -66,25 +66,30 @@ agent = Agent(
 
 for run_event in agent.run("Fetch the top 2 hackernews stories", stream=True):
     if run_event.is_paused:
-        for tool in run_event.tools_requiring_confirmation:  # type: ignore
-            # Ask for confirmation
-            console.print(
-                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
-            )
-            message = (
-                Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
-                .strip()
-                .lower()
-            )
+        for requirement in run_event.active_requirements:
+            if requirement.needs_confirmation:
+                # Ask for confirmation
+                console.print(
+                    f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] requires confirmation."
+                )
+                message = (
+                    Prompt.ask(
+                        "Do you want to continue?", choices=["y", "n"], default="y"
+                    )
+                    .strip()
+                    .lower()
+                )
 
-            if message == "n":
-                tool.confirmed = False
-            else:
-                # We update the tools in place
-                tool.confirmed = True
+                if message == "n":
+                    requirement.reject()
+                else:
+                    requirement.confirm()
+
         run_response = agent.continue_run(
-            run_id=run_event.run_id, updated_tools=run_event.tools, stream=True
-        )  # type: ignore
+            run_id=run_event.run_id,
+            requirements=run_event.requirements,  # type: ignore
+            stream=True,
+        )
         pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow
