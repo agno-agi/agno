@@ -10,6 +10,12 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.os.routers.evals.schemas import EvalSchema
+from agno.os.routers.knowledge.schemas import (
+    ConfigResponseSchema as KnowledgeConfigResponse,
+    ContentResponseSchema,
+    ContentStatusResponse,
+    VectorSearchResult,
+)
 from agno.os.routers.memory.schemas import (
     UserMemoryCreateSchema,
     UserMemorySchema,
@@ -1377,3 +1383,384 @@ class AgentOSClient:
         if data is None:
             return None
         return EvalSchema.model_validate(data)
+
+    # Knowledge Operations
+
+    async def upload_content(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        file_content: Optional[bytes] = None,
+        file_name: Optional[str] = None,
+        file_content_type: Optional[str] = None,
+        text_content: Optional[str] = None,
+        reader_id: Optional[str] = None,
+        chunker: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
+        db_id: Optional[str] = None,
+    ) -> ContentResponseSchema:
+        """Upload content to the knowledge base.
+
+        Args:
+            name: Content name (auto-generated from file/URL if not provided)
+            description: Content description
+            url: URL to fetch content from (can be JSON array or single URL)
+            metadata: Metadata dictionary for the content
+            file_content: Raw file bytes to upload
+            file_name: Filename for the uploaded content
+            file_content_type: MIME type of the file
+            text_content: Raw text content to process
+            reader_id: ID of the reader to use for processing
+            chunker: Chunking strategy to apply
+            chunk_size: Chunk size for processing
+            chunk_overlap: Chunk overlap for processing
+            db_id: Optional database ID to use
+
+        Returns:
+            ContentResponseSchema: The uploaded content info
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = "/knowledge/content"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        url_full = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        # Build multipart form data
+        form_data: Dict[str, Any] = {}
+        files: Dict[str, Any] = {}
+
+        if name:
+            form_data["name"] = name
+        if description:
+            form_data["description"] = description
+        if url:
+            form_data["url"] = url
+        if metadata:
+            form_data["metadata"] = json.dumps(metadata)
+        if text_content:
+            form_data["text_content"] = text_content
+        if reader_id:
+            form_data["reader_id"] = reader_id
+        if chunker:
+            form_data["chunker"] = chunker
+        if chunk_size:
+            form_data["chunk_size"] = str(chunk_size)
+        if chunk_overlap:
+            form_data["chunk_overlap"] = str(chunk_overlap)
+
+        if file_content:
+            files["file"] = (file_name or "upload", file_content, file_content_type or "application/octet-stream")
+
+        if files:
+            response = await self._http_client.post(url_full, data=form_data, files=files, headers=headers)
+        else:
+            response = await self._http_client.post(url_full, data=form_data, headers=headers)
+
+        response.raise_for_status()
+        return ContentResponseSchema.model_validate(response.json())
+
+    async def update_content(
+        self,
+        content_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        reader_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+    ) -> ContentResponseSchema:
+        """Update content properties.
+
+        Args:
+            content_id: ID of the content to update
+            name: New content name
+            description: New content description
+            metadata: New metadata dictionary
+            reader_id: ID of the reader to use
+            db_id: Optional database ID to use
+
+        Returns:
+            ContentResponseSchema: The updated content
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        import json
+
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = f"/knowledge/content/{content_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        url_str = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        form_data: Dict[str, Any] = {}
+        if name:
+            form_data["name"] = name
+        if description:
+            form_data["description"] = description
+        if metadata:
+            form_data["metadata"] = json.dumps(metadata)
+        if reader_id:
+            form_data["reader_id"] = reader_id
+
+        response = await self._http_client.patch(url_str, data=form_data, headers=headers)
+        response.raise_for_status()
+        return ContentResponseSchema.model_validate(response.json())
+
+    async def list_content(
+        self,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+    ) -> PaginatedResponse[ContentResponseSchema]:
+        """List all content in the knowledge base.
+
+        Args:
+            limit: Number of content entries per page
+            page: Page number
+            sort_by: Field to sort by
+            sort_order: Sort order (asc or desc)
+            db_id: Optional database ID to use
+
+        Returns:
+            PaginatedResponse[ContentResponseSchema]: Paginated list of content
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, str] = {
+            "limit": str(limit),
+            "page": str(page),
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = "/knowledge/content?" + "&".join(f"{k}={v}" for k, v in params.items())
+        data = await self._get(endpoint)
+        return PaginatedResponse[ContentResponseSchema].model_validate(data)
+
+    async def get_content(
+        self,
+        content_id: str,
+        db_id: Optional[str] = None,
+    ) -> ContentResponseSchema:
+        """Get a specific content by ID.
+
+        Args:
+            content_id: ID of the content to retrieve
+            db_id: Optional database ID to use
+
+        Returns:
+            ContentResponseSchema: The content details
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = f"/knowledge/content/{content_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+        return ContentResponseSchema.model_validate(data)
+
+    async def delete_content(
+        self,
+        content_id: str,
+        db_id: Optional[str] = None,
+    ) -> ContentResponseSchema:
+        """Delete a specific content.
+
+        Args:
+            content_id: ID of the content to delete
+            db_id: Optional database ID to use
+
+        Returns:
+            ContentResponseSchema: The deleted content info
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = f"/knowledge/content/{content_id}"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        url_str = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        response = await self._http_client.delete(url_str, headers=headers)
+        response.raise_for_status()
+        return ContentResponseSchema.model_validate(response.json())
+
+    async def delete_all_content(
+        self,
+        db_id: Optional[str] = None,
+    ) -> str:
+        """Delete all content from the knowledge base.
+
+        WARNING: This is a destructive operation that cannot be undone.
+
+        Args:
+            db_id: Optional database ID to use
+
+        Returns:
+            str: "success" if successful
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = "/knowledge/content"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        url_str = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        response = await self._http_client.delete(url_str, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    async def get_content_status(
+        self,
+        content_id: str,
+        db_id: Optional[str] = None,
+    ) -> ContentStatusResponse:
+        """Get the processing status of a content item.
+
+        Args:
+            content_id: ID of the content
+            db_id: Optional database ID to use
+
+        Returns:
+            ContentStatusResponse: The content processing status
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = f"/knowledge/content/{content_id}/status"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+        return ContentStatusResponse.model_validate(data)
+
+    async def search_knowledge(
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        search_type: Optional[str] = None,
+        vector_db_ids: Optional[List[str]] = None,
+        limit: int = 20,
+        page: int = 1,
+        db_id: Optional[str] = None,
+    ) -> PaginatedResponse[VectorSearchResult]:
+        """Search the knowledge base.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return from search
+            filters: Optional filters to apply
+            search_type: Type of search (vector, keyword, hybrid)
+            vector_db_ids: Optional list of vector DB IDs to search
+            limit: Number of results per page
+            page: Page number
+            db_id: Optional database ID to use
+
+        Returns:
+            PaginatedResponse[VectorSearchResult]: Paginated search results
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        payload: Dict[str, Any] = {"query": query}
+        if max_results:
+            payload["max_results"] = max_results
+        if filters:
+            payload["filters"] = filters
+        if search_type:
+            payload["search_type"] = search_type
+        if vector_db_ids:
+            payload["vector_db_ids"] = vector_db_ids
+        payload["meta"] = {"limit": limit, "page": page}
+        if db_id:
+            payload["db_id"] = db_id
+
+        data = await self._post("/knowledge/search", payload)
+        return PaginatedResponse[VectorSearchResult].model_validate(data)
+
+    async def get_knowledge_config(
+        self,
+        db_id: Optional[str] = None,
+    ) -> KnowledgeConfigResponse:
+        """Get knowledge base configuration.
+
+        Returns available readers, chunkers, vector DBs, and filters.
+
+        Args:
+            db_id: Optional database ID to use
+
+        Returns:
+            KnowledgeConfigResponse: Knowledge configuration
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = {}
+        if db_id:
+            params["db_id"] = db_id
+
+        endpoint = "/knowledge/config"
+        if params:
+            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+
+        data = await self._get(endpoint)
+        return KnowledgeConfigResponse.model_validate(data)
