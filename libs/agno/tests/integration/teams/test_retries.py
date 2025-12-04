@@ -71,31 +71,6 @@ def test_team_exponential_backoff():
     assert mock_sleep.call_args_list[1][0][0] == 2  # 2^1 * 1
 
 
-def test_team_retry_parameter_overrides_team_default():
-    """Test that retry parameter in run() overrides team default."""
-    member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
-    team = Team(
-        members=[member],
-        name="Retry Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        retries=1,  # Team default
-        delay_between_retries=0,
-    )
-
-    attempt_count = {"count": 0}
-
-    def mock_run(*args, **kwargs):
-        attempt_count["count"] += 1
-        raise Exception("Simulated failure")
-
-    with patch.object(team, "_run", side_effect=mock_run):
-        with pytest.raises(Exception):
-            team.run("Test message", retries=3)  # Override to 3 retries
-
-    # Should have tried 4 times (initial + 3 retries)
-    assert attempt_count["count"] == 4
-
-
 def test_team_keyboard_interrupt_stops_retries():
     """Test that KeyboardInterrupt stops retries immediately."""
     member = Agent(model=OpenAIChat(id="gpt-4o-mini"))

@@ -1550,9 +1550,6 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1580,9 +1577,6 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1611,9 +1605,6 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1717,12 +1708,7 @@ class Agent:
         run_context.output_schema = output_schema
 
         # Set up retry logic
-        run_retries = retries if retries is not None else self.retries
-        run_delay_between_retries = (
-            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
-        )
-        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
-        num_attempts = run_retries + 1
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -1802,9 +1788,6 @@ class Agent:
                 run_response.metrics = Metrics()
                 run_response.metrics.start_timer()
 
-                # If no retries are set, use the agent's default retries
-                retries = retries if retries is not None else self.retries
-
                 yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
                 try:
@@ -1842,9 +1825,7 @@ class Agent:
                         return response
                 except (InputCheckError, OutputCheckError) as e:
                     log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                    # Only raise if this was the final retry
-                    if attempt == num_attempts - 1:
-                        raise e
+                    raise e
                 except KeyboardInterrupt:
                     run_response.content = "Operation cancelled by user"
                     run_response.status = RunStatus.cancelled
@@ -1862,10 +1843,10 @@ class Agent:
                     # Check if this is the last attempt
                     if attempt < num_attempts - 1:
                         # Calculate delay with exponential backoff if enabled
-                        if run_exponential_backoff:
-                            delay = run_delay_between_retries * (2**attempt)
+                        if self.exponential_backoff:
+                            delay = self.delay_between_retries * (2**attempt)
                         else:
-                            delay = run_delay_between_retries
+                            delay = self.delay_between_retries
 
                         log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                         time.sleep(delay)
@@ -2541,9 +2522,6 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2570,9 +2548,6 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2601,9 +2576,6 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2762,12 +2734,7 @@ class Agent:
         yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         # Set up retry logic
-        run_retries = retries if retries is not None else self.retries
-        run_delay_between_retries = (
-            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
-        )
-        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
-        num_attempts = run_retries + 1
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -2823,10 +2790,10 @@ class Agent:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
-                    if run_exponential_backoff:
-                        delay = run_delay_between_retries * (2**attempt)
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
                     else:
-                        delay = run_delay_between_retries
+                        delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                     await async_sleep(delay)
@@ -2854,9 +2821,6 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2877,9 +2841,6 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2900,9 +2861,6 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2921,7 +2879,6 @@ class Agent:
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
             run_context: The run context to use for the run.
-            retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for the run.
             metadata: The metadata to use for the run.
@@ -2977,12 +2934,7 @@ class Agent:
         )
 
         # Resolve retry parameters
-        run_retries = retries if retries is not None else self.retries
-        run_delay_between_retries = (
-            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
-        )
-        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
-        num_attempts = run_retries + 1
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -3147,10 +3099,10 @@ class Agent:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
-                    if run_exponential_backoff:
-                        delay = run_delay_between_retries * (2**attempt)
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
                     else:
-                        delay = run_delay_between_retries
+                        delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                     time.sleep(delay)
@@ -3477,9 +3429,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3500,9 +3449,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3523,9 +3469,6 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[int] = None,
-        exponential_backoff: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3545,7 +3488,6 @@ class Agent:
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
             run_context: The run context to use for the run.
-            retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for continuing the run.
             metadata: The metadata to use for continuing the run.
@@ -3582,9 +3524,6 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         dependencies = dependencies if dependencies is not None else self.dependencies
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
 
         # Use stream override value when necessary
         if stream is None:
@@ -3626,12 +3565,7 @@ class Agent:
                 merge_dictionaries(metadata, self.metadata)
 
         # Resolve retry parameters
-        run_retries = retries if retries is not None else self.retries
-        run_delay_between_retries = (
-            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
-        )
-        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
-        num_attempts = run_retries + 1
+        num_attempts = self.retries + 1
 
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context)
@@ -3696,10 +3630,10 @@ class Agent:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
-                    if run_exponential_backoff:
-                        delay = run_delay_between_retries * (2**attempt)
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
                     else:
-                        delay = run_delay_between_retries
+                        delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                     await async_sleep(delay)

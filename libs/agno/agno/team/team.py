@@ -1962,9 +1962,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[float] = None,
-        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1992,9 +1989,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[float] = None,
-        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2023,9 +2017,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[float] = None,
-        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2201,16 +2192,8 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
         # Set up retry logic
-        run_retries = retries if retries is not None else self.retries
-        run_delay_between_retries = (
-            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
-        )
-        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
-        num_attempts = run_retries + 1
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -2268,10 +2251,10 @@ class Team:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
-                    if run_exponential_backoff:
-                        delay = run_delay_between_retries * (2**attempt)
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
                     else:
-                        delay = run_delay_between_retries
+                        delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                     time.sleep(delay)
@@ -2864,9 +2847,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[float] = None,
-        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2894,9 +2874,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[float] = None,
-        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2925,9 +2902,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
-        delay_between_retries: Optional[float] = None,
-        exponential_backoff: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -3087,18 +3061,10 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
         yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
         # Resolve retry parameters
-        run_retries = retries if retries is not None else self.retries
-        run_delay_between_retries = (
-            delay_between_retries if delay_between_retries is not None else self.delay_between_retries
-        )
-        run_exponential_backoff = exponential_backoff if exponential_backoff is not None else self.exponential_backoff
-        num_attempts = run_retries + 1
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -3157,10 +3123,10 @@ class Team:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
-                    if run_exponential_backoff:
-                        delay = run_delay_between_retries * (2**attempt)
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
                     else:
-                        delay = run_delay_between_retries
+                        delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                     await asyncio.sleep(delay)

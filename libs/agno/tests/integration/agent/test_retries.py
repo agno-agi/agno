@@ -61,35 +61,9 @@ def test_agent_exponential_backoff():
             _ = agent.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays
-    # Attempt 1 fails -> sleep(1 * 2^0) = 1
-    # Attempt 2 fails -> sleep(1 * 2^1) = 2
-    # Attempt 3 succeeds
     assert mock_sleep.call_count == 2
     assert mock_sleep.call_args_list[0][0][0] == 1  # 2^0 * 1
     assert mock_sleep.call_args_list[1][0][0] == 2  # 2^1 * 1
-
-
-def test_agent_retry_parameter_overrides_agent_default():
-    """Test that retry parameter in run() overrides agent default."""
-    agent = Agent(
-        name="Retry Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        retries=1,  # Agent default
-        delay_between_retries=0,
-    )
-
-    attempt_count = {"count": 0}
-
-    def mock_run(*args, **kwargs):
-        attempt_count["count"] += 1
-        raise Exception("Simulated failure")
-
-    with patch.object(agent, "_run", side_effect=mock_run):
-        with pytest.raises(Exception):
-            agent.run("Test message", retries=3)  # Override to 3 retries
-
-    # Should have tried 4 times (initial + 3 retries)
-    assert attempt_count["count"] == 4
 
 
 def test_agent_keyboard_interrupt_stops_retries():
