@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test full catch-up functionality - reconnecting to a RUNNING workflow 
 and requesting ALL events from the start.
@@ -244,4 +243,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

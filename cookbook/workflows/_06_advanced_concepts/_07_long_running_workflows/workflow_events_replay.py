@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test replay functionality - reconnecting to a COMPLETED workflow.
 
@@ -212,4 +211,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

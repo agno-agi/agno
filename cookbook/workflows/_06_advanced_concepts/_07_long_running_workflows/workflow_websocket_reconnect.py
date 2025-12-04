@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script for WebSocket reconnection functionality.
 
@@ -298,4 +297,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
