@@ -52,11 +52,15 @@ agent = Agent(
     instructions="Use the search tools and always use the latest information and data.",
     db=SqliteDb(db_file="tmp/dbs/token_based_tool_call_compression.db"),
     compression_manager=compression_manager,
+    add_history_to_context=True,  # Add history to context
+    num_history_runs=10,
+    session_id="token_based_tool_call_compression",
+    debug_mode=True,
 )
 
 agent.print_response(
     """
-    Use the search tools and alwayd for the latest information and data.
+    Use the search tools and always use the latest information and data.
     Research recent activities (last 3 months) for these AI companies:
     
     1. OpenAI - product launches, partnerships, pricing

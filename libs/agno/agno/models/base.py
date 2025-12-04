@@ -312,7 +312,7 @@ class Model(ABC):
     ) -> int:
         from agno.utils.tokens import count_tokens
 
-        return count_tokens(messages, tools=list(tools) if tools else None, model=self.id)
+        return count_tokens(messages, tools=list(tools) if tools else None, model_id=self.id)
 
     def response(
         self,

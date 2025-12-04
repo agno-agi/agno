@@ -14,16 +14,16 @@ DEFAULT_IMAGE_HEIGHT = 1024
 
 
 @lru_cache(maxsize=16)
-def _get_tiktoken_encoding(model: str):
+def _get_tiktoken_encoding(model_id: str):
     try:
         import tiktoken
 
         # Use o200k_base for gpt-4o models
-        if "gpt-4o" in model.lower():
+        if "gpt-4o" in model_id.lower():
             return tiktoken.get_encoding("o200k_base")
 
         try:
-            return tiktoken.encoding_for_model(model)
+            return tiktoken.encoding_for_model(model_id)
         except KeyError:
             return tiktoken.get_encoding("cl100k_base")
     except ImportError:
@@ -32,22 +32,22 @@ def _get_tiktoken_encoding(model: str):
 
 
 @lru_cache(maxsize=16)
-def _get_huggingface_tokenizer(model: str):
+def _get_hf_tokenizer(model_id: str):
     try:
         from tokenizers import Tokenizer
 
-        model_lower = model.lower()
+        model_id = model_id.lower()
 
         # Llama-3 models
-        if "llama-3" in model_lower or "llama3" in model_lower:
+        if "llama-3" in model_id or "llama3" in model_id:
             return Tokenizer.from_pretrained("Xenova/llama-3-tokenizer")
 
         # Llama-2 models and Replicate models (LiteLLM uses llama tokenizer for replicate)
-        if "llama-2" in model_lower or "llama2" in model_lower or "replicate" in model_lower:
+        if "llama-2" in model_id or "llama2" in model_id or "replicate" in model_id:
             return Tokenizer.from_pretrained("hf-internal-testing/llama-tokenizer")
 
         # Cohere command-r models
-        if "command-r" in model_lower:
+        if "command-r" in model_id:
             return Tokenizer.from_pretrained("Xenova/c4ai-command-r-v01-tokenizer")
 
         return None
@@ -58,18 +58,19 @@ def _get_huggingface_tokenizer(model: str):
         return None
 
 
-def _select_tokenizer(model: str) -> Tuple[str, Any]:
-    # Try HuggingFace tokenizer first for specific models
-    hf_tokenizer = _get_huggingface_tokenizer(model)
+def _select_tokenizer(model_id: str) -> Tuple[str, Any]:
+    hf_tokenizer = _get_hf_tokenizer(model_id)
     if hf_tokenizer is not None:
         return ("huggingface", hf_tokenizer)
 
-    # Fall back to tiktoken
-    tiktoken_enc = _get_tiktoken_encoding(model)
+    tiktoken_enc = _get_tiktoken_encoding(model_id)
     if tiktoken_enc is not None:
         return ("tiktoken", tiktoken_enc)
 
     return ("none", None)
+
+
+# Tool token counting
 
 
 def _format_function_definitions(tools: List[Dict[str, Any]]) -> str:
@@ -141,6 +142,7 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
         return "any"
 
 
+# Multi-modal token counting
 def _get_image_type(data: bytes) -> Optional[str]:
     if len(data) < 12:
         return None
@@ -157,11 +159,12 @@ def _get_image_type(data: bytes) -> Optional[str]:
     return None
 
 
-def _parse_image_dimensions_from_bytes(data: bytes) -> Tuple[int, int]:
+def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = None) -> Tuple[int, int]:
     import io
     import struct
 
-    img_type = _get_image_type(data)
+    if img_type is None:
+        img_type = _get_image_type(data)
 
     if img_type == "png":
         return struct.unpack(">LL", data[16:24])
@@ -202,6 +205,11 @@ def _parse_image_dimensions_from_bytes(data: bytes) -> Tuple[int, int]:
 
 def _get_image_dimensions(image: Image) -> Tuple[int, int]:
     try:
+        # Get format from metadata if available
+        img_format = image.format
+        if not img_format and image.mime_type:
+            img_format = image.mime_type.split("/")[-1] if "/" in image.mime_type else None
+
         # Get raw bytes
         if image.content:
             data = image.content
@@ -216,22 +224,9 @@ def _get_image_dimensions(image: Image) -> Tuple[int, int]:
         else:
             return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
 
-        return _parse_image_dimensions_from_bytes(data)
+        return _parse_image_dimensions_from_bytes(data, img_format)
     except Exception:
         return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
-
-
-def _count_image_url_tokens(image_url: Union[str, Dict[str, Any]]) -> int:
-    if isinstance(image_url, dict):
-        detail = image_url.get("detail", "auto")
-    else:
-        detail = "auto"
-
-    if detail == "low":
-        return 85
-
-    # Default 1024x1024 high detail
-    return 765
 
 
 def count_file_tokens(file: File) -> int:
@@ -280,7 +275,7 @@ def count_file_tokens(file: File) -> int:
 
 def _count_tool_tokens(
     tools: List[Union[Function, Dict[str, Any]]],
-    model: str = "gpt-4o",
+    model_id: str = "gpt-4o",
     includes_system_message: bool = False,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> int:
@@ -297,7 +292,7 @@ def _count_tool_tokens(
 
     # Format tools in TypeScript namespace format and count
     formatted = _format_function_definitions(tool_dicts)
-    tokens = count_text_tokens(formatted, model) + 9
+    tokens = count_text_tokens(formatted, model_id) + 9
 
     if includes_system_message:
         tokens -= 4
@@ -309,18 +304,15 @@ def _count_tool_tokens(
         tokens += 7
         func_name = tool_choice.get("function", {}).get("name", "")
         if func_name:
-            tokens += count_text_tokens(func_name, model)
+            tokens += count_text_tokens(func_name, model_id)
 
     return tokens
 
 
-# Multi-modal token counting
-
-
-def count_text_tokens(text: str, model: str = "gpt-4o") -> int:
+def count_text_tokens(text: str, model_id: str = "gpt-4o") -> int:
     if not text:
         return 0
-    tokenizer_type, tokenizer = _select_tokenizer(model)
+    tokenizer_type, tokenizer = _select_tokenizer(model_id)
     if tokenizer_type == "huggingface":
         return len(tokenizer.encode(text).ids)
     elif tokenizer_type == "tiktoken":
@@ -407,51 +399,53 @@ def _count_media_tokens(message: Message) -> int:
 
 def _count_message_tokens(
     message: Message,
-    model: str = "gpt-4o",
+    model_id: str = "gpt-4o",
     tokens_per_message: int = 3,
     tokens_per_name: int = 1,
 ) -> int:
     tokens = tokens_per_message
 
     if message.role:
-        tokens += count_text_tokens(message.role, model)
+        tokens += count_text_tokens(message.role, model_id)
 
     content = message.get_content(use_compressed_content=True)
     if content:
         if isinstance(content, str):
-            tokens += count_text_tokens(content, model)
+            tokens += count_text_tokens(content, model_id)
         elif isinstance(content, list):
             for item in content:
                 if isinstance(item, str):
-                    tokens += count_text_tokens(item, model)
+                    tokens += count_text_tokens(item, model_id)
                 elif isinstance(item, dict):
                     item_type = item.get("type", "")
                     if item_type == "text":
-                        tokens += count_text_tokens(item.get("text", ""), model)
+                        tokens += count_text_tokens(item.get("text", ""), model_id)
                     elif item_type == "image_url":
-                        tokens += _count_image_url_tokens(item.get("image_url", {}))
+                        image_url_data = item.get("image_url", {})
+                        detail = image_url_data.get("detail", "auto") if isinstance(image_url_data, dict) else "auto"
+                        tokens += 85 if detail == "low" else 765
                     else:
-                        tokens += count_text_tokens(json.dumps(item), model)
+                        tokens += count_text_tokens(json.dumps(item), model_id)
         else:
-            tokens += count_text_tokens(str(content), model)
+            tokens += count_text_tokens(str(content), model_id)
 
     if message.tool_calls:
         for tool_call in message.tool_calls:
             if isinstance(tool_call, dict) and "function" in tool_call:
                 args = tool_call["function"].get("arguments", "")
-                tokens += count_text_tokens(str(args), model)
+                tokens += count_text_tokens(str(args), model_id)
 
     if message.tool_call_id:
-        tokens += count_text_tokens(message.tool_call_id, model)
+        tokens += count_text_tokens(message.tool_call_id, model_id)
 
     if message.reasoning_content:
-        tokens += count_text_tokens(message.reasoning_content, model)
+        tokens += count_text_tokens(message.reasoning_content, model_id)
 
     if message.redacted_reasoning_content:
-        tokens += count_text_tokens(message.redacted_reasoning_content, model)
+        tokens += count_text_tokens(message.redacted_reasoning_content, model_id)
 
     if message.name:
-        tokens += count_text_tokens(message.name, model)
+        tokens += count_text_tokens(message.name, model_id)
         tokens += tokens_per_name
 
     tokens += _count_media_tokens(message)
@@ -462,21 +456,21 @@ def _count_message_tokens(
 def count_tokens(
     messages: List[Message],
     tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
-    model: str = "gpt-4o",
+    model_id: str = "gpt-4o",
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> int:
     total = 0
 
     # Count message tokens
     if messages:
-        model_lower = model.lower()
-        if "gpt-3.5-turbo-0301" in model_lower:
+        model_id_lower = model_id.lower()
+        if "gpt-3.5-turbo-0301" in model_id_lower:
             tokens_per_message, tokens_per_name = 4, -1
         else:
             tokens_per_message, tokens_per_name = 3, 1
 
         for msg in messages:
-            total += _count_message_tokens(msg, model, tokens_per_message, tokens_per_name)
+            total += _count_message_tokens(msg, model_id, tokens_per_message, tokens_per_name)
 
     # Add 3 tokens for reply priming
     total += 3
@@ -484,6 +478,6 @@ def count_tokens(
     # Count tool tokens
     if tools:
         includes_system = any(msg.role == "system" for msg in messages)
-        total += _count_tool_tokens(tools, model, includes_system, tool_choice)
+        total += _count_tool_tokens(tools, model_id, includes_system, tool_choice)
 
     return total

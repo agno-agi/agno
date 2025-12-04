@@ -67,6 +67,7 @@ class CompressionManager:
             if tokens >= self.compress_tool_results_token_limit:
                 log_info(f"Token limit hit: {tokens} >= {self.compress_tool_results_token_limit}")
                 return True
+            return False
 
         # Count-based threshold check
         uncompressed_tools_count = len(
@@ -83,8 +84,9 @@ class CompressionManager:
             return None
 
         tool_name = tool_result.tool_name
+        # Gemini format
         if not tool_name and tool_result.tool_calls:
-            tool_names = [tc.get("tool_name") for tc in tool_result.tool_calls if tc.get("tool_name")]
+            tool_names = [str(tc.get("tool_name")) for tc in tool_result.tool_calls if tc.get("tool_name")]
             tool_name = ", ".join(tool_names) if tool_names else None
 
         tool_content = f"Tool: {tool_name or 'unknown'}\n{tool_result.content}"
@@ -141,7 +143,7 @@ class CompressionManager:
         # Extract tool name - check tool_calls if tool_name is None (Gemini combined format)
         tool_name = tool_result.tool_name
         if not tool_name and tool_result.tool_calls:
-            tool_names = [tc.get("tool_name") for tc in tool_result.tool_calls if tc.get("tool_name")]
+            tool_names = [str(tc.get("tool_name")) for tc in tool_result.tool_calls if tc.get("tool_name")]
             tool_name = ", ".join(tool_names) if tool_names else None
 
         tool_content = f"Tool: {tool_name or 'unknown'}\n{tool_result.content}"
