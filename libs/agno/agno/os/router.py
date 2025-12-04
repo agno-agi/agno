@@ -726,9 +726,9 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             )
 
             # Send all events
-            for idx, event in enumerate(all_events):
+            for idx, buffered_event in enumerate(all_events):
                 # Convert event to dict and add event_index
-                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                event_dict = buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
                 event_dict["event_index"] = idx
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
@@ -757,9 +757,9 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
 
             # Send missed events
             start_index = (last_event_index + 1) if last_event_index is not None else 0
-            for idx, event in enumerate(missed_events):
+            for idx, buffered_event in enumerate(missed_events):
                 # Convert event to dict and add event_index
-                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                event_dict = buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
                 event_dict["event_index"] = start_index + idx
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
