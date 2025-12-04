@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.tools.function import Function
+from agno.utils.log import log_warning
 
 DEFAULT_IMAGE_WIDTH = 1024
 DEFAULT_IMAGE_HEIGHT = 1024
@@ -26,6 +27,7 @@ def _get_tiktoken_encoding(model: str):
         except KeyError:
             return tiktoken.get_encoding("cl100k_base")
     except ImportError:
+        log_warning("tiktoken not installed. Please install it using `pip install tiktoken`.")
         return None
 
 
@@ -50,6 +52,7 @@ def _get_huggingface_tokenizer(model: str):
 
         return None
     except ImportError:
+        log_warning("tokenizers not installed. Please install it using `pip install tokenizers`.")
         return None
     except Exception:
         return None
