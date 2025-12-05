@@ -56,7 +56,6 @@ class CompressionManager:
         return False
 
     def compress(self, messages: List[Message], tools: Optional[List] = None) -> None:
-        # Context compression takes priority
         if self._should_compress_context(messages, tools):
             self._compress_context(messages)
         elif self._should_compress_tools(messages, tools):

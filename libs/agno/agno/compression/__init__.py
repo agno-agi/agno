@@ -7,6 +7,4 @@ __all__ = [
     "CompressedContext",
     "get_compressed_context",
     "set_compressed_context",
-    "TOOL_COMPRESSION_PROMPT",
-    "CONTEXT_COMPRESSION_PROMPT",
 ]

@@ -486,9 +486,9 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             while True:
-                # Compress tool results
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    compression_manager.compress(messages)
+                # Compress context or tool results BEFORE making API call
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    compression_manager.compress(messages, tools)
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -687,9 +687,9 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
-                # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    await compression_manager.acompress(messages)
+                # Compress context or tool results BEFORE making API call
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    await compression_manager.acompress(messages, tools)
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -1113,9 +1113,9 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
-                # Compress existing tool results BEFORE invoke
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    compression_manager.compress(messages)
+                # Compress context or tool results BEFORE invoke
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    compression_manager.compress(messages, tools)
 
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
@@ -1330,9 +1330,9 @@ class Model(ABC):
             function_call_count = 0
 
             while True:
-                # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    await compression_manager.acompress(messages)
+                # Compress context or tool results BEFORE making API call
+                if compression_manager and compression_manager.should_compress(messages, tools):
+                    await compression_manager.acompress(messages, tools)
 
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
