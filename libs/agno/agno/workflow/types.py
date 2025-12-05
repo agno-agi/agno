@@ -469,8 +469,8 @@ class WebSocketHandler:
             # Fallback to generic message event if parsing fails
             return f"event: message\ndata: {json_data}\n\n"
 
-    async def handle_event(self, event: Any) -> None:
-        """Handle an event object - serializes and sends via WebSocket"""
+    async def handle_event(self, event: Any, event_index: Optional[int] = None, run_id: Optional[str] = None) -> None:
+        """Handle an event object - serializes and sends via WebSocket with event_index for reconnection support"""
         if not self.websocket:
             return
 
@@ -484,8 +484,21 @@ class WebSocketHandler:
             else:
                 data = {"type": "message", "content": str(event)}
 
+            # Add event_index and run_id for reconnection support (if provided)
+            if event_index is not None:
+                data["event_index"] = event_index
+            if run_id:
+                data["run_id"] = run_id
+
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
+        except RuntimeError as e:
+            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
+                from agno.utils.log import log_debug
+
+                log_debug("WebSocket closed, event not sent (expected during disconnection)")
+            else:
+                log_warning(f"Failed to handle WebSocket event: {e}")
         except Exception as e:
             log_warning(f"Failed to handle WebSocket event: {e}")
 
@@ -496,6 +509,13 @@ class WebSocketHandler:
 
         try:
             await self.websocket.send_text(self.format_sse_event(message))
+        except RuntimeError as e:
+            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
+                from agno.utils.log import log_debug
+
+                log_debug("WebSocket closed, text not sent (expected during disconnection)")
+            else:
+                log_warning(f"Failed to send WebSocket text: {e}")
         except Exception as e:
             log_warning(f"Failed to send WebSocket text: {e}")
 
@@ -506,6 +526,13 @@ class WebSocketHandler:
 
         try:
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
+        except RuntimeError as e:
+            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
+                from agno.utils.log import log_debug
+
+                log_debug("WebSocket closed, dict not sent (expected during disconnection)")
+            else:
+                log_warning(f"Failed to send WebSocket dict: {e}")
         except Exception as e:
             log_warning(f"Failed to send WebSocket dict: {e}")
 
