@@ -28,7 +28,7 @@ from a2a.types import (
     AgentCard,
     AgentSkill,
 )
-
+import warnings
 def attach_routes(
     router: APIRouter,
     agents: Optional[List[Agent]] = None,
@@ -98,9 +98,9 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def run_agent(request: Request, id:str, stream: bool = False):
+    async def a2a_run_agent(request: Request, id:str, stream: bool = False):
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_run_message)
+        kwargs = await _get_request_kwargs(request, a2a_run_agent)
 
         # 1. Get the Agent, Team, or Workflow to run
         """
@@ -112,11 +112,11 @@ def attach_routes(
             )"""
         entity: Optional[Union[Agent, Team, Workflow]] = None
         if agents:
-            entity = get_agent_by_id(agent_id, agents)
+            entity = get_agent_by_id(id, agents)
         if not entity and teams:
-            entity = get_team_by_id(agent_id, teams)
+            entity = get_team_by_id(id, teams)
         if not entity and workflows:
-            entity = get_workflow_by_id(agent_id, workflows)
+            entity = get_workflow_by_id(id, workflows)
         if entity is None:
             raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
 
@@ -261,6 +261,7 @@ def attach_routes(
         response_model=SendMessageSuccessResponse,
     )
     async def a2a_send_message(request: Request):
+        warnings.warn("THIS ENDPOINT WILL BE DEPRECEATED SOON, USE /agents/{agents_id}", DeprecationWarning)
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_send_message)
 
@@ -366,6 +367,7 @@ def attach_routes(
         },
     )
     async def a2a_stream_message(request: Request):
+        warnings.warn("THIS ENDPOINT WILL BE DEPRECEATED SOON, USE /agents/{agents_id}", DeprecationWarning)
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_stream_message)
 
