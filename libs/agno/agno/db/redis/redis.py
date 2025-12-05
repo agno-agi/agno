@@ -1919,14 +1919,12 @@ class RedisDb(BaseDb):
                 filtered_traces.append(trace)
 
             total_count = len(filtered_traces)
-            log_debug(f"Total matching traces: {total_count}")
 
             # Sort by start_time descending
             filtered_traces.sort(key=lambda x: x.get("start_time", ""), reverse=True)
 
             # Apply pagination
             paginated_traces = apply_pagination(records=filtered_traces, limit=limit, page=page)
-            log_debug(f"Returning page {page} with {len(paginated_traces)} traces")
 
             traces = []
             for row in paginated_traces:
@@ -2025,11 +2023,9 @@ class RedisDb(BaseDb):
             stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
 
             total_count = len(stats_list)
-            log_debug(f"Total matching sessions: {total_count}")
 
             # Apply pagination
             paginated_stats = apply_pagination(records=stats_list, limit=limit, page=page)
-            log_debug(f"Returning page {page} with {len(paginated_stats)} session stats")
 
             # Convert ISO strings to datetime objects
             for stat in paginated_stats:

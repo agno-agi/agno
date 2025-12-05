@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from hashlib import md5
 from pathlib import Path
-from time import time
+from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
     Any,
@@ -24,7 +24,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgentRunException
+from agno.exceptions import AgentRunException, ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
@@ -146,9 +146,134 @@ class Model(ABC):
     cache_ttl: Optional[int] = None
     cache_dir: Optional[str] = None
 
+    # Retry configuration for model provider errors
+    # Number of retries to attempt when a ModelProviderError occurs
+    retries: int = 0
+    # Delay between retries (in seconds)
+    delay_between_retries: int = 1
+    # Exponential backoff: if True, the delay between retries is doubled each time
+    exponential_backoff: bool = False
+
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+
+    def _get_retry_delay(self, attempt: int) -> float:
+        """Calculate the delay before the next retry attempt."""
+        if self.exponential_backoff:
+            return self.delay_between_retries * (2**attempt)
+        return self.delay_between_retries
+
+    def _invoke_with_retry(self, **kwargs) -> ModelResponse:
+        """
+        Invoke the model with retry logic for ModelProviderError.
+
+        This method wraps the invoke() call and retries on ModelProviderError
+        with optional exponential backoff.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                return self.invoke(**kwargs)
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
+
+    async def _ainvoke_with_retry(self, **kwargs) -> ModelResponse:
+        """
+        Asynchronously invoke the model with retry logic for ModelProviderError.
+
+        This method wraps the ainvoke() call and retries on ModelProviderError
+        with optional exponential backoff.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                return await self.ainvoke(**kwargs)
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
+
+    def _invoke_stream_with_retry(self, **kwargs) -> Iterator[ModelResponse]:
+        """
+        Invoke the model stream with retry logic for ModelProviderError.
+
+        This method wraps the invoke_stream() call and retries on ModelProviderError
+        with optional exponential backoff. Note that retries restart the entire stream.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                yield from self.invoke_stream(**kwargs)
+                return  # Success, exit the retry loop
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
+
+    async def _ainvoke_stream_with_retry(self, **kwargs) -> AsyncIterator[ModelResponse]:
+        """
+        Asynchronously invoke the model stream with retry logic for ModelProviderError.
+
+        This method wraps the ainvoke_stream() call and retries on ModelProviderError
+        with optional exponential backoff. Note that retries restart the entire stream.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                async for response in self.ainvoke_stream(**kwargs):
+                    yield response
+                return  # Success, exit the retry loop
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
 
     def to_dict(self) -> Dict[str, Any]:
         fields = {"name", "id", "provider"}
@@ -734,8 +859,8 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Generate response
-        provider_response = self.invoke(
+        # Generate response with retry logic for ModelProviderError
+        provider_response = self._invoke_with_retry(
             assistant_message=assistant_message,
             messages=messages,
             response_format=response_format,
@@ -791,8 +916,8 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Generate response
-        provider_response = await self.ainvoke(
+        # Generate response with retry logic for ModelProviderError
+        provider_response = await self._ainvoke_with_retry(
             messages=messages,
             response_format=response_format,
             tools=tools,
@@ -913,10 +1038,10 @@ class Model(ABC):
         compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
-        Process a streaming response from the model.
+        Process a streaming response from the model with retry logic for ModelProviderError.
         """
 
-        for response_delta in self.invoke_stream(
+        for response_delta in self._invoke_stream_with_retry(
             messages=messages,
             assistant_message=assistant_message,
             response_format=response_format,
@@ -1132,9 +1257,9 @@ class Model(ABC):
         compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
-        Process a streaming response from the model.
+        Process a streaming response from the model with retry logic for ModelProviderError.
         """
-        async for response_delta in self.ainvoke_stream(
+        async for response_delta in self._ainvoke_stream_with_retry(
             messages=messages,
             assistant_message=assistant_message,
             response_format=response_format,
@@ -1142,7 +1267,7 @@ class Model(ABC):
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
             compress_tool_results=compress_tool_results,
-        ):  # type: ignore
+        ):
             for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
                 model_response_delta=response_delta,
