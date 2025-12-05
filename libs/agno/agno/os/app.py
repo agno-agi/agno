@@ -69,6 +69,13 @@ async def mcp_lifespan(_, mcp_tools):
         await tool.close()
 
 
+@asynccontextmanager
+async def async_db_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Initialize async databases in FastAPI's event loop"""
+    await agent_os._initialize_async_databases()
+    yield
+
+
 def _combine_app_lifespans(lifespans: list) -> Any:
     """Combine multiple FastAPI app lifespan context managers into one."""
     if len(lifespans) == 1:
@@ -469,41 +476,35 @@ class AgentOS:
             if self.enable_mcp_server and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
 
+            # The async database lifespan
+            lifespans.append(partial(async_db_lifespan, agent_os=self))
+
             # Combine lifespans and set them in the app
             if lifespans:
                 fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
 
         else:
+            lifespans = []
+            
+            # User provided lifespan
+            if self.lifespan:
+                lifespans.append(self._add_agent_os_to_lifespan_function(self.lifespan))
+            
+            # MCP tools lifespan
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+            
+            # MCP server lifespan
             if self.enable_mcp_server:
-                from contextlib import asynccontextmanager
-
                 from agno.os.mcp import get_mcp_server
-
                 self._mcp_app = get_mcp_server(self)
-
-                final_lifespan = self._mcp_app.lifespan  # type: ignore
-                if self.lifespan is not None:
-                    # Wrap the user lifespan with agent_os parameter
-                    wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
-
-                    # Combine both lifespans
-                    @asynccontextmanager
-                    async def combined_lifespan(app: FastAPI):
-                        # Run both lifespans
-                        async with wrapped_lifespan(app):  # type: ignore
-                            async with self._mcp_app.lifespan(app):  # type: ignore
-                                yield
-
-                    final_lifespan = combined_lifespan  # type: ignore
-
-                fastapi_app = self._make_app(lifespan=final_lifespan)
-            else:
-                # Wrap the user lifespan with agent_os parameter
-                wrapped_user_lifespan = None
-                if self.lifespan is not None:
-                    wrapped_user_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
-
-                fastapi_app = self._make_app(lifespan=wrapped_user_lifespan)
+                lifespans.append(self._mcp_app.lifespan)
+            
+            # Async database initialization lifespan
+            lifespans.append(partial(async_db_lifespan, agent_os=self))
+            
+            final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
+            fastapi_app = self._make_app(lifespan=final_lifespan)
 
         self._add_built_in_routes(app=fastapi_app)
 
@@ -668,76 +669,64 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-        # Initialize/scaffold all discovered databases
+        # Initialize all discovered databases
         if self.auto_provision_dbs:
-            import asyncio
-            import concurrent.futures
+            self._initialize_sync_databases()
+            # Store async dbs for later initialization
+            self._pending_async_db_init = True
 
-            try:
-                # If we're already in an event loop, run in a separate thread
-                asyncio.get_running_loop()
-
-                def run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(self._initialize_databases())
-                    finally:
-                        new_loop.close()
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(run_in_new_loop)
-                    future.result()  # Wait for completion
-
-            except RuntimeError:
-                # No event loop running, use asyncio.run
-                asyncio.run(self._initialize_databases())
-
-    async def _initialize_databases(self) -> None:
-        """Initialize all discovered databases and create all Agno tables that don't exist yet."""
+    def _initialize_sync_databases(self) -> None:
+        """Initialize all sync databases immediately."""
         from itertools import chain
 
-        # Collect all database instances and remove duplicates by identity
         unique_dbs = list(
             {
                 id(db): db
                 for db in chain(
-                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                    chain.from_iterable(self.dbs.values()), 
+                    chain.from_iterable(self.knowledge_dbs.values())
                 )
             }.values()
         )
 
-        # Separate sync and async databases
-        sync_dbs: List[Tuple[str, BaseDb]] = []
-        async_dbs: List[Tuple[str, AsyncBaseDb]] = []
+        for db in unique_dbs:
+            if isinstance(db, AsyncBaseDb):
+                continue  # Skip async dbs
+            
+            try:
+                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
+                    db._create_all_tables()
+            except Exception as e:
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+
+    async def _initialize_async_databases(self) -> None:
+        """Initialize async databases. Call this from FastAPI lifespan or first request."""
+        if not getattr(self, '_pending_async_db_init', False):
+            return
+            
+        from itertools import chain
+
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), 
+                    chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
 
         for db in unique_dbs:
-            target = async_dbs if isinstance(db, AsyncBaseDb) else sync_dbs
-            target.append((db.id, db))  # type: ignore
-
-        # Initialize sync databases
-        for db_id, db in sync_dbs:
+            if not isinstance(db, AsyncBaseDb):
+                continue
+                
             try:
-                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
-                    db._create_all_tables()
-                else:
-                    log_debug(f"No table initialization needed for {db.__class__.__name__}")
-
-            except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db_id}): {e}")
-
-        # Initialize async databases
-        for db_id, db in async_dbs:
-            try:
-                log_debug(f"Initializing async {db.__class__.__name__} (id: {db_id})")
-
-                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
-                else:
-                    log_debug(f"No table initialization needed for async {db.__class__.__name__}")
-
             except Exception as e:
-                log_warning(f"Failed to initialize async database {db.__class__.__name__} (id: {db_id}): {e}")
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+        
+        self._pending_async_db_init = False
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
