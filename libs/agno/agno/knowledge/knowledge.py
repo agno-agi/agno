@@ -52,6 +52,17 @@ class Knowledge:
 
         self.construct_readers()
 
+    def _run_sync(self, coro):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+
+        raise RuntimeError(
+            "Knowledge sync methods cannot be used from an async context. "
+            "Use `await add_content_async(...)` or `await add_contents_async(...)` instead."
+        )
+
     # --- Add Contents ---
     @overload
     async def add_contents_async(self, contents: List[ContentDict]) -> None: ...
@@ -218,7 +229,7 @@ class Knowledge:
             skip_if_exists: Whether to skip adding content if it already exists
             remote_content: Optional remote content (S3, GCS, etc.) to add
         """
-        asyncio.run(self.add_contents_async(*args, **kwargs))
+        self._run_sync(self.add_contents_async(*args, **kwargs))
 
     # --- Add Content ---
 
@@ -255,7 +266,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
@@ -345,7 +356,7 @@ class Knowledge:
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
         """
-        asyncio.run(
+        self._run_sync(
             self.add_content_async(
                 name=name,
                 description=description,
