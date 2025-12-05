@@ -46,7 +46,6 @@ class TeamSession:
         session_dict = asdict(self)
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
-        print(session_dict["runs"])
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict

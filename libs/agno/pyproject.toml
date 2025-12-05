@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.5"
+version = "2.3.7"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -101,12 +101,13 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp>=1.9.2"]
 mem0 = ["mem0ai"]
-memori = ["memorisdk==2.3.3"]
+memori = ["memorisdk==3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
 parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
+redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
@@ -229,7 +230,7 @@ tools = [
   "agno[parallel]",
   "agno[scrapegraph]",
   "agno[valyu]",
-  "agno[yfinance]",  
+  "agno[yfinance]",
   "agno[confluence]",
   "agno[notion]",
   "agno[oxylabs]",
@@ -238,6 +239,7 @@ tools = [
   "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
   "agno[neo4j]",
@@ -307,6 +309,7 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
+    "grpcio==1.74.0",
 ]
 
 # Models integration test dependencies
@@ -495,6 +498,7 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "parallel.*",
+  "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*"

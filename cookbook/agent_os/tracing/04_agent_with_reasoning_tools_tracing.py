@@ -65,4 +65,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="05_agent_with_reasoning_tools_tracing:app", reload=True)
+    agent_os.serve(app="04_agent_with_reasoning_tools_tracing:app", reload=True)

@@ -13,6 +13,7 @@ import json
 
 import httpx
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -64,17 +65,18 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories, send_email],
     markdown=True,
+    db=SqliteDb(db_file="tmp/confirmation_required_mixed_tools.db"),
 )
 
 run_response = agent.run(
     "Fetch the top 2 hackernews stories and email them to john@doe.com."
 )
 if run_response.is_paused:
-    for tool in run_response.tools:  # type: ignore
-        if tool.requires_confirmation:
+    for requirement in run_response.active_requirements:
+        if requirement.needs_confirmation:
             # Ask for confirmation
             console.print(
-                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+                f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] requires confirmation."
             )
             message = (
                 Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
@@ -83,16 +85,20 @@ if run_response.is_paused:
             )
 
             if message == "n":
-                tool.confirmed = False
+                requirement.reject()
             else:
-                # We update the tools in place
-                tool.confirmed = True
-        else:
+                requirement.confirm()
+
+    for requirement in run_response.active_requirements:  # type: ignore
+        if requirement.is_resolved():
             console.print(
-                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.duration:.2f}[/] seconds."  # type: ignore
+                f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] was completed in [bold green]{requirement.tool_execution.metrics.duration:.2f}[/] seconds."  # type: ignore
             )
 
-    run_response = agent.continue_run(run_response=run_response)
+    run_response = agent.continue_run(
+        run_id=run_response.run_id,
+        requirements=run_response.requirements,
+    )
     pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow
