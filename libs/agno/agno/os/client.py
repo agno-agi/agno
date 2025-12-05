@@ -54,7 +54,7 @@ class AgentOSClient:
         self,
         base_url: str,
         api_key: Optional[str] = None,
-        timeout: float = 300.0,
+        timeout: int = 60,
     ):
         """Initialize AgentOSClient.
 
@@ -77,18 +77,14 @@ class AgentOSClient:
         """Exit async context manager and cleanup resources."""
         await self.close()
 
-    async def connect(self) -> "AgentOSClient":
+    async def connect(self) -> None:
         """Explicitly create HTTP client connection.
 
         Use this when you need to manage the client lifecycle manually
         without using the async context manager.
-
-        Returns:
-            AgentOSClient: self for method chaining
         """
         if not self._http_client:
             self._http_client = AsyncClient(timeout=self.timeout)
-        return self
 
     async def close(self) -> None:
         """Close HTTP client connections."""
@@ -103,6 +99,48 @@ class AgentOSClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        as_form: bool = False,
+    ) -> Any:
+        """Execute HTTP request.
+
+        Args:
+            method: HTTP method (GET, POST, PATCH, DELETE)
+            endpoint: API endpoint path (without base URL)
+            data: Request body data (optional)
+            as_form: If True, send data as form data instead of JSON
+
+        Returns:
+            Parsed JSON response, or None for empty responses
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
+
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers()
+
+        kwargs: Dict[str, Any] = {"headers": headers}
+        if data is not None:
+            if as_form:
+                kwargs["data"] = data
+            else:
+                kwargs["json"] = data
+
+        response = await self._http_client.request(method, url, **kwargs)
+        response.raise_for_status()
+
+        # Return None for empty responses (204 No Content, etc.)
+        if not response.content:
+            return None
+        return response.json()
+
     async def _get(self, endpoint: str) -> Any:
         """Execute GET request.
 
@@ -115,18 +153,31 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        return await self._request("GET", endpoint)
 
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        response = await self._http_client.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-
-    async def _post(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Any:
+    async def _post(
+        self,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        as_form: bool = False,
+    ) -> Any:
         """Execute POST request.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            data: Request body data (optional)
+            as_form: If True, send data as form data instead of JSON
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        return await self._request("POST", endpoint, data, as_form=as_form)
+
+    async def _patch(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Any:
+        """Execute PATCH request.
 
         Args:
             endpoint: API endpoint path (without base URL)
@@ -138,38 +189,19 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        return await self._request("PATCH", endpoint, data)
 
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        response = await self._http_client.post(url, json=data, headers=headers)
-        response.raise_for_status()
-        return response.json()
-
-    async def _post_form_data(self, endpoint: str, data: Dict[str, Any]) -> Any:
-        """Execute POST request with form data (for runs endpoints).
+    async def _delete(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> None:
+        """Execute DELETE request.
 
         Args:
             endpoint: API endpoint path (without base URL)
-            data: Form data dictionary
-
-        Returns:
-            Parsed JSON response
+            data: Optional request body data
 
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        response = await self._http_client.post(url, data=data, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        await self._request("DELETE", endpoint, data)
 
     async def _stream_post_form_data(self, endpoint: str, data: Dict[str, Any]) -> AsyncIterator[str]:
         """Stream POST request with form data.
@@ -191,85 +223,6 @@ class AgentOSClient:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 yield line
-
-    async def _post_empty(self, endpoint: str) -> bool:
-        """Execute POST request with no body (for cancel endpoints).
-
-        Args:
-            endpoint: API endpoint path (without base URL)
-
-        Returns:
-            bool: True if successful
-        """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        async with self._http_client.stream("POST", url, headers=headers) as response:
-            response.raise_for_status()
-            return True
-
-    async def _patch(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Any:
-        """Execute PATCH request.
-
-        Args:
-            endpoint: API endpoint path (without base URL)
-            data: Request body data
-
-        Returns:
-            Parsed JSON response
-
-        Raises:
-            HTTPStatusError: On HTTP errors (4xx, 5xx)
-        """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        response = await self._http_client.patch(url, json=data, headers=headers)
-        response.raise_for_status()
-        return response.json()
-
-    async def _delete(self, endpoint: str) -> None:
-        """Execute DELETE request.
-
-        Args:
-            endpoint: API endpoint path (without base URL)
-
-        Raises:
-            HTTPStatusError: On HTTP errors (4xx, 5xx)
-        """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        response = await self._http_client.delete(url, headers=headers)
-        response.raise_for_status()
-
-    async def _delete_with_body(self, endpoint: str, data: Dict[str, Any]) -> None:
-        """Execute DELETE request with JSON body.
-
-        Args:
-            endpoint: API endpoint path (without base URL)
-            data: Request body data
-
-        Raises:
-            HTTPStatusError: On HTTP errors (4xx, 5xx)
-        """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-
-        url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
-
-        response = await self._http_client.request("DELETE", url, json=data, headers=headers)
-        response.raise_for_status()
 
     # Discovery & Configuration Operations
 
@@ -337,6 +290,198 @@ class AgentOSClient:
         data = await self._get(f"/agents/{agent_id}")
         return AgentResponse.model_validate(data)
 
+    async def run_agent(
+        self,
+        agent_id: str,
+        message: str,
+        stream: bool = False,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[Dict[str, Any]] = None,
+        videos: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> RunSchema:
+        """Execute an agent run.
+
+        Args:
+            agent_id: ID of the agent to run
+            message: The message/prompt for the agent
+            stream: Whether to stream the response (for non-streaming, use this; for streaming use stream_agent_run)
+            session_id: Optional session ID for context
+            user_id: Optional user ID
+            images: Optional list of images
+            audio: Optional audio data
+            videos: Optional list of videos
+            files: Optional list of files
+            context: Optional context dictionary
+
+        Returns:
+            RunSchema: The run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/agents/{agent_id}/runs"
+        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+        if images:
+            data["images"] = json.dumps(images)
+        if audio:
+            data["audio"] = json.dumps(audio)
+        if videos:
+            data["videos"] = json.dumps(videos)
+        if files:
+            data["files"] = json.dumps(files)
+        if context:
+            data["context"] = json.dumps(context)
+
+        response_data = await self._post(endpoint, data, as_form=True)
+        return RunSchema.model_validate(response_data)
+
+    async def stream_agent_run(
+        self,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[Dict[str, Any]] = None,
+        videos: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[str]:
+        """Stream an agent run response.
+
+        Args:
+            agent_id: ID of the agent to run
+            message: The message/prompt for the agent
+            session_id: Optional session ID for context
+            user_id: Optional user ID
+            images: Optional list of images
+            audio: Optional audio data
+            videos: Optional list of videos
+            files: Optional list of files
+            context: Optional context dictionary
+
+        Yields:
+            str: Server-sent event lines
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/agents/{agent_id}/runs"
+        data: Dict[str, Any] = {"message": message, "stream": "true"}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+        if images:
+            data["images"] = json.dumps(images)
+        if audio:
+            data["audio"] = json.dumps(audio)
+        if videos:
+            data["videos"] = json.dumps(videos)
+        if files:
+            data["files"] = json.dumps(files)
+        if context:
+            data["context"] = json.dumps(context)
+
+        async for line in self._stream_post_form_data(endpoint, data):
+            yield line
+
+    async def continue_agent_run(
+        self,
+        agent_id: str,
+        run_id: str,
+        tools: List[Dict[str, Any]],
+        stream: bool = False,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> RunSchema:
+        """Continue a paused agent run with tool results.
+
+        Args:
+            agent_id: ID of the agent
+            run_id: ID of the run to continue
+            tools: List of tool results to provide
+            stream: Whether to stream the response
+            session_id: Optional session ID
+            user_id: Optional user ID
+
+        Returns:
+            RunSchema: The continued run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
+        data: Dict[str, Any] = {"tools": json.dumps(tools), "stream": str(stream).lower()}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+
+        response_data = await self._post(endpoint, data, as_form=True)
+        return RunSchema.model_validate(response_data)
+
+    async def stream_continue_agent_run(
+        self,
+        agent_id: str,
+        run_id: str,
+        tools: List[Dict[str, Any]],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        """Stream a continued agent run response.
+
+        Args:
+            agent_id: ID of the agent
+            run_id: ID of the run to continue
+            tools: List of tool results to provide
+            session_id: Optional session ID
+            user_id: Optional user ID
+
+        Yields:
+            str: Server-sent event lines
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
+        data: Dict[str, Any] = {"tools": json.dumps(tools), "stream": "true"}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+
+        async for line in self._stream_post_form_data(endpoint, data):
+            yield line
+
+    async def cancel_agent_run(self, agent_id: str, run_id: str) -> None:
+        """Cancel an agent run.
+
+        Args:
+            agent_id: ID of the agent
+            run_id: ID of the run to cancel
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        await self._post(f"/agents/{agent_id}/runs/{run_id}/cancel")
+
     async def list_teams(self) -> List[TeamSummaryResponse]:
         """List all teams configured in the AgentOS instance.
 
@@ -369,6 +514,126 @@ class AgentOSClient:
         data = await self._get(f"/teams/{team_id}")
         return TeamResponse.model_validate(data)
 
+    async def run_team(
+        self,
+        team_id: str,
+        message: str,
+        stream: bool = False,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[Dict[str, Any]] = None,
+        videos: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> TeamRunSchema:
+        """Execute a team run.
+
+        Args:
+            team_id: ID of the team to run
+            message: The message/prompt for the team
+            stream: Whether to stream the response
+            session_id: Optional session ID for context
+            user_id: Optional user ID
+            images: Optional list of images
+            audio: Optional audio data
+            videos: Optional list of videos
+            files: Optional list of files
+            context: Optional context dictionary
+
+        Returns:
+            TeamRunSchema: The team run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/teams/{team_id}/runs"
+        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+        if images:
+            data["images"] = json.dumps(images)
+        if audio:
+            data["audio"] = json.dumps(audio)
+        if videos:
+            data["videos"] = json.dumps(videos)
+        if files:
+            data["files"] = json.dumps(files)
+        if context:
+            data["context"] = json.dumps(context)
+
+        response_data = await self._post(endpoint, data, as_form=True)
+        return TeamRunSchema.model_validate(response_data)
+
+    async def stream_team_run(
+        self,
+        team_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[Dict[str, Any]] = None,
+        videos: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[str]:
+        """Stream a team run response.
+
+        Args:
+            team_id: ID of the team to run
+            message: The message/prompt for the team
+            session_id: Optional session ID for context
+            user_id: Optional user ID
+            images: Optional list of images
+            audio: Optional audio data
+            videos: Optional list of videos
+            files: Optional list of files
+            context: Optional context dictionary
+
+        Yields:
+            str: Server-sent event lines
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/teams/{team_id}/runs"
+        data: Dict[str, Any] = {"message": message, "stream": "true"}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+        if images:
+            data["images"] = json.dumps(images)
+        if audio:
+            data["audio"] = json.dumps(audio)
+        if videos:
+            data["videos"] = json.dumps(videos)
+        if files:
+            data["files"] = json.dumps(files)
+        if context:
+            data["context"] = json.dumps(context)
+
+        async for line in self._stream_post_form_data(endpoint, data):
+            yield line
+
+    async def cancel_team_run(self, team_id: str, run_id: str) -> None:
+        """Cancel a team run.
+
+        Args:
+            team_id: ID of the team
+            run_id: ID of the run to cancel
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        await self._post(f"/teams/{team_id}/runs/{run_id}/cancel")
+
     async def list_workflows(self) -> List[WorkflowSummaryResponse]:
         """List all workflows configured in the AgentOS instance.
 
@@ -399,6 +664,126 @@ class AgentOSClient:
         """
         data = await self._get(f"/workflows/{workflow_id}")
         return WorkflowResponse.model_validate(data)
+
+    async def run_workflow(
+        self,
+        workflow_id: str,
+        message: str,
+        stream: bool = False,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[Dict[str, Any]] = None,
+        videos: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> WorkflowRunSchema:
+        """Execute a workflow run.
+
+        Args:
+            workflow_id: ID of the workflow to run
+            message: The message/prompt for the workflow
+            stream: Whether to stream the response
+            session_id: Optional session ID for context
+            user_id: Optional user ID
+            images: Optional list of images
+            audio: Optional audio data
+            videos: Optional list of videos
+            files: Optional list of files
+            context: Optional context dictionary
+
+        Returns:
+            WorkflowRunSchema: The workflow run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/workflows/{workflow_id}/runs"
+        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+        if images:
+            data["images"] = json.dumps(images)
+        if audio:
+            data["audio"] = json.dumps(audio)
+        if videos:
+            data["videos"] = json.dumps(videos)
+        if files:
+            data["files"] = json.dumps(files)
+        if context:
+            data["context"] = json.dumps(context)
+
+        response_data = await self._post(endpoint, data, as_form=True)
+        return WorkflowRunSchema.model_validate(response_data)
+
+    async def stream_workflow_run(
+        self,
+        workflow_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[List[Any]] = None,
+        audio: Optional[Dict[str, Any]] = None,
+        videos: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[str]:
+        """Stream a workflow run response.
+
+        Args:
+            workflow_id: ID of the workflow to run
+            message: The message/prompt for the workflow
+            session_id: Optional session ID for context
+            user_id: Optional user ID
+            images: Optional list of images
+            audio: Optional audio data
+            videos: Optional list of videos
+            files: Optional list of files
+            context: Optional context dictionary
+
+        Yields:
+            str: Server-sent event lines
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        import json
+
+        endpoint = f"/workflows/{workflow_id}/runs"
+        data: Dict[str, Any] = {"message": message, "stream": "true"}
+        if session_id:
+            data["session_id"] = session_id
+        if user_id:
+            data["user_id"] = user_id
+        if images:
+            data["images"] = json.dumps(images)
+        if audio:
+            data["audio"] = json.dumps(audio)
+        if videos:
+            data["videos"] = json.dumps(videos)
+        if files:
+            data["files"] = json.dumps(files)
+        if context:
+            data["context"] = json.dumps(context)
+
+        async for line in self._stream_post_form_data(endpoint, data):
+            yield line
+
+    async def cancel_workflow_run(self, workflow_id: str, run_id: str) -> None:
+        """Cancel a workflow run.
+
+        Args:
+            workflow_id: ID of the workflow
+            run_id: ID of the run to cancel
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        await self._post(f"/workflows/{workflow_id}/runs/{run_id}/cancel")
 
     async def create_memory(
         self,
@@ -642,7 +1027,7 @@ class AgentOSClient:
         if user_id:
             payload["user_id"] = user_id
 
-        await self._delete_with_body(endpoint, payload)
+        await self._delete(endpoint, payload)
 
     async def get_memory_topics(
         self,
@@ -802,23 +1187,16 @@ class AgentOSClient:
         if params:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        payload: Dict[str, Any] = {}
-        if session_id:
-            payload["session_id"] = session_id
-        if user_id:
-            payload["user_id"] = user_id
-        if session_name:
-            payload["session_name"] = session_name
-        if session_state:
-            payload["session_state"] = session_state
-        if metadata:
-            payload["metadata"] = metadata
-        if agent_id:
-            payload["agent_id"] = agent_id
-        if team_id:
-            payload["team_id"] = team_id
-        if workflow_id:
-            payload["workflow_id"] = workflow_id
+        payload: Dict[str, Any] = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "session_name": session_name,
+            "session_state": session_state,
+            "metadata": metadata,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "workflow_id": workflow_id,
+        }
 
         data = await self._post(endpoint, payload)
 
@@ -1035,7 +1413,7 @@ class AgentOSClient:
             "session_types": [st.value for st in session_types],
         }
 
-        await self._delete_with_body(endpoint, payload)
+        await self._delete(endpoint, payload)
 
     async def rename_session(
         self,
@@ -1263,7 +1641,7 @@ class AgentOSClient:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
         payload = {"eval_run_ids": eval_run_ids}
-        await self._delete_with_body(endpoint, payload)
+        await self._delete(endpoint, payload)
 
     async def update_eval_run(
         self,
@@ -1348,21 +1726,14 @@ class AgentOSClient:
         payload: Dict[str, Any] = {
             "eval_type": eval_type.value,
             "input": input_text,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "model_id": model_id,
+            "model_provider": model_provider,
+            "expected_output": expected_output,
+            "expected_tool_calls": expected_tool_calls,
+            "num_iterations": num_iterations,
         }
-        if agent_id:
-            payload["agent_id"] = agent_id
-        if team_id:
-            payload["team_id"] = team_id
-        if model_id:
-            payload["model_id"] = model_id
-        if model_provider:
-            payload["model_provider"] = model_provider
-        if expected_output:
-            payload["expected_output"] = expected_output
-        if expected_tool_calls:
-            payload["expected_tool_calls"] = expected_tool_calls
-        if num_iterations != 1:
-            payload["num_iterations"] = num_iterations
 
         data = await self._post(endpoint, payload)
         if data is None:
@@ -1749,437 +2120,3 @@ class AgentOSClient:
 
         data = await self._get(endpoint)
         return KnowledgeConfigResponse.model_validate(data)
-
-    async def run_agent(
-        self,
-        agent_id: str,
-        message: str,
-        stream: bool = False,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        audio: Optional[Dict[str, Any]] = None,
-        videos: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> RunSchema:
-        """Execute an agent run.
-
-        Args:
-            agent_id: ID of the agent to run
-            message: The message/prompt for the agent
-            stream: Whether to stream the response (for non-streaming, use this; for streaming use stream_agent_run)
-            session_id: Optional session ID for context
-            user_id: Optional user ID
-            images: Optional list of images
-            audio: Optional audio data
-            videos: Optional list of videos
-            files: Optional list of files
-            context: Optional context dictionary
-
-        Returns:
-            RunSchema: The run response
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/agents/{agent_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-        if images:
-            data["images"] = json.dumps(images)
-        if audio:
-            data["audio"] = json.dumps(audio)
-        if videos:
-            data["videos"] = json.dumps(videos)
-        if files:
-            data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
-
-        response_data = await self._post_form_data(endpoint, data)
-        return RunSchema.model_validate(response_data)
-
-    async def stream_agent_run(
-        self,
-        agent_id: str,
-        message: str,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        audio: Optional[Dict[str, Any]] = None,
-        videos: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> AsyncIterator[str]:
-        """Stream an agent run response.
-
-        Args:
-            agent_id: ID of the agent to run
-            message: The message/prompt for the agent
-            session_id: Optional session ID for context
-            user_id: Optional user ID
-            images: Optional list of images
-            audio: Optional audio data
-            videos: Optional list of videos
-            files: Optional list of files
-            context: Optional context dictionary
-
-        Yields:
-            str: Server-sent event lines
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/agents/{agent_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-        if images:
-            data["images"] = json.dumps(images)
-        if audio:
-            data["audio"] = json.dumps(audio)
-        if videos:
-            data["videos"] = json.dumps(videos)
-        if files:
-            data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
-
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
-
-    async def continue_agent_run(
-        self,
-        agent_id: str,
-        run_id: str,
-        tools: List[Dict[str, Any]],
-        stream: bool = False,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> RunSchema:
-        """Continue a paused agent run with tool results.
-
-        Args:
-            agent_id: ID of the agent
-            run_id: ID of the run to continue
-            tools: List of tool results to provide
-            stream: Whether to stream the response
-            session_id: Optional session ID
-            user_id: Optional user ID
-
-        Returns:
-            RunSchema: The continued run response
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps(tools), "stream": str(stream).lower()}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-
-        response_data = await self._post_form_data(endpoint, data)
-        return RunSchema.model_validate(response_data)
-
-    async def stream_continue_agent_run(
-        self,
-        agent_id: str,
-        run_id: str,
-        tools: List[Dict[str, Any]],
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> AsyncIterator[str]:
-        """Stream a continued agent run response.
-
-        Args:
-            agent_id: ID of the agent
-            run_id: ID of the run to continue
-            tools: List of tool results to provide
-            session_id: Optional session ID
-            user_id: Optional user ID
-
-        Yields:
-            str: Server-sent event lines
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps(tools), "stream": "true"}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
-
-    async def cancel_agent_run(self, agent_id: str, run_id: str) -> None:
-        """Cancel an agent run.
-
-        Args:
-            agent_id: ID of the agent
-            run_id: ID of the run to cancel
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        await self._post_empty(f"/agents/{agent_id}/runs/{run_id}/cancel")
-
-    # Team Run Operations
-
-    async def run_team(
-        self,
-        team_id: str,
-        message: str,
-        stream: bool = False,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        audio: Optional[Dict[str, Any]] = None,
-        videos: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> TeamRunSchema:
-        """Execute a team run.
-
-        Args:
-            team_id: ID of the team to run
-            message: The message/prompt for the team
-            stream: Whether to stream the response
-            session_id: Optional session ID for context
-            user_id: Optional user ID
-            images: Optional list of images
-            audio: Optional audio data
-            videos: Optional list of videos
-            files: Optional list of files
-            context: Optional context dictionary
-
-        Returns:
-            TeamRunSchema: The team run response
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/teams/{team_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-        if images:
-            data["images"] = json.dumps(images)
-        if audio:
-            data["audio"] = json.dumps(audio)
-        if videos:
-            data["videos"] = json.dumps(videos)
-        if files:
-            data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
-
-        response_data = await self._post_form_data(endpoint, data)
-        return TeamRunSchema.model_validate(response_data)
-
-    async def stream_team_run(
-        self,
-        team_id: str,
-        message: str,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        audio: Optional[Dict[str, Any]] = None,
-        videos: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> AsyncIterator[str]:
-        """Stream a team run response.
-
-        Args:
-            team_id: ID of the team to run
-            message: The message/prompt for the team
-            session_id: Optional session ID for context
-            user_id: Optional user ID
-            images: Optional list of images
-            audio: Optional audio data
-            videos: Optional list of videos
-            files: Optional list of files
-            context: Optional context dictionary
-
-        Yields:
-            str: Server-sent event lines
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/teams/{team_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-        if images:
-            data["images"] = json.dumps(images)
-        if audio:
-            data["audio"] = json.dumps(audio)
-        if videos:
-            data["videos"] = json.dumps(videos)
-        if files:
-            data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
-
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
-
-    async def cancel_team_run(self, team_id: str, run_id: str) -> None:
-        """Cancel a team run.
-
-        Args:
-            team_id: ID of the team
-            run_id: ID of the run to cancel
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        await self._post_empty(f"/teams/{team_id}/runs/{run_id}/cancel")
-
-    async def run_workflow(
-        self,
-        workflow_id: str,
-        message: str,
-        stream: bool = False,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        audio: Optional[Dict[str, Any]] = None,
-        videos: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> WorkflowRunSchema:
-        """Execute a workflow run.
-
-        Args:
-            workflow_id: ID of the workflow to run
-            message: The message/prompt for the workflow
-            stream: Whether to stream the response
-            session_id: Optional session ID for context
-            user_id: Optional user ID
-            images: Optional list of images
-            audio: Optional audio data
-            videos: Optional list of videos
-            files: Optional list of files
-            context: Optional context dictionary
-
-        Returns:
-            WorkflowRunSchema: The workflow run response
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/workflows/{workflow_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-        if images:
-            data["images"] = json.dumps(images)
-        if audio:
-            data["audio"] = json.dumps(audio)
-        if videos:
-            data["videos"] = json.dumps(videos)
-        if files:
-            data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
-
-        response_data = await self._post_form_data(endpoint, data)
-        return WorkflowRunSchema.model_validate(response_data)
-
-    async def stream_workflow_run(
-        self,
-        workflow_id: str,
-        message: str,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        audio: Optional[Dict[str, Any]] = None,
-        videos: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> AsyncIterator[str]:
-        """Stream a workflow run response.
-
-        Args:
-            workflow_id: ID of the workflow to run
-            message: The message/prompt for the workflow
-            session_id: Optional session ID for context
-            user_id: Optional user ID
-            images: Optional list of images
-            audio: Optional audio data
-            videos: Optional list of videos
-            files: Optional list of files
-            context: Optional context dictionary
-
-        Yields:
-            str: Server-sent event lines
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        import json
-
-        endpoint = f"/workflows/{workflow_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": "true"}
-        if session_id:
-            data["session_id"] = session_id
-        if user_id:
-            data["user_id"] = user_id
-        if images:
-            data["images"] = json.dumps(images)
-        if audio:
-            data["audio"] = json.dumps(audio)
-        if videos:
-            data["videos"] = json.dumps(videos)
-        if files:
-            data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
-
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
-
-    async def cancel_workflow_run(self, workflow_id: str, run_id: str) -> None:
-        """Cancel a workflow run.
-
-        Args:
-            workflow_id: ID of the workflow
-            run_id: ID of the run to cancel
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        await self._post_empty(f"/workflows/{workflow_id}/runs/{run_id}/cancel")
