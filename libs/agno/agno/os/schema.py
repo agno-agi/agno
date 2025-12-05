@@ -193,6 +193,7 @@ class AgentResponse(BaseModel):
     system_message: Optional[Dict[str, Any]] = None
     extra_messages: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
+    introduction: Optional[str] = None
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
@@ -417,6 +418,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
+            introduction=agent.introduction,
             metadata=agent.metadata,
             input_schema=get_agent_input_schema_dict(agent),
         )
@@ -429,6 +431,7 @@ class TeamResponse(BaseModel):
     description: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
+    introduction: Optional[str] = None
     sessions: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
     memory: Optional[Dict[str, Any]] = None
@@ -645,6 +648,7 @@ class TeamResponse(BaseModel):
             name=team.name,
             db_id=team.db.id if team.db else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
+            introduction=team.introduction,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
             knowledge=filter_meaningful_config(knowledge_info, team_defaults),
