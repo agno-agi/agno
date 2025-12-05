@@ -47,33 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-  "mypy==1.18.2", 
-  "ruff==0.14.3", 
-  "pytest", 
-  "pytest-asyncio", 
-  "pytest-cov", 
-  "pytest-mock", 
-  "timeout-decorator", 
-  "types-pyyaml", 
-  "types-aiofiles", 
-  "fastapi", 
-  "uvicorn", 
-  "PyJWT", 
-  "mcp", 
-  "openai",
-  "anthropic",
-  "exa_py",
-  "nest_asyncio",
-  "pgvector",
-  "psycopg[binary]",
-  "sqlalchemy",
-  "yfinance",
-  "youtube-transcript-api",
-  "opentelemetry-api",
-  "opentelemetry-sdk",
-  "openinference-instrumentation-agno"
-]
+dev = ["mypy==1.18.2", "ruff==0.14.3", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "PyJWT", "mcp", "openai"]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
 
