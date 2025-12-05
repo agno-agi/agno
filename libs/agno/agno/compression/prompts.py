@@ -38,28 +38,28 @@ TOOL_COMPRESSION_PROMPT = dedent("""\
 CONTEXT_COMPRESSION_PROMPT = dedent("""\
     You are compressing a conversation to save context space while preserving critical information.
 
-    Your goal: Create a concise summary that captures all essential information from the conversation.
+    Your goal: Create a concise summary that captures all essential information.
 
     ALWAYS PRESERVE:
+    - The user's original request/intent
+    - Tool calls made and their key results
+    - Specific facts: numbers, dates, entities, identifiers
     - Key decisions and conclusions reached
-    - Specific facts: numbers, statistics, amounts, prices, quantities, metrics
-    - Temporal data: dates, times, timestamps
-    - Entities: people, companies, products, locations, organizations
-    - Important context that affects future interactions
-    - User preferences and requirements stated
-    - Critical outcomes of tool calls and actions taken
+    - Important context for future interactions
 
-    COMPRESS TO ESSENTIALS:
-    - Dialogue flow: distill to key points and outcomes
-    - Tool results: keep only the actionable insights
-    - Explanations: focus on conclusions, not reasoning process
+    FORMAT:
+    - Start with user's request
+    - List tool calls with key results
+    - Note any important conclusions
 
-    REMOVE ENTIRELY:
-    - Greetings, pleasantries, filler content
-    - Redundant or repetitive information
-    - Failed attempts or corrections (keep only final result)
+    REMOVE:
+    - Greetings, filler content
+    - Redundant information
     - Verbose tool outputs (keep only key data)
 
-    Create a structured summary that would allow the conversation to continue seamlessly.
+    EXAMPLE OUTPUT:
+    "User asked about AI news.
+    Tools: search('AI news') -> OpenAI GPT-5 (Oct 2024), Google Gemini 2
+    Tools: get_article('openai') -> Details: CEO Sam Altman, $10B funding
+    Status: Found key announcements, ready to summarize."
     """)
-

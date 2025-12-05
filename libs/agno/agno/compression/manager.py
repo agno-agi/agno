@@ -81,28 +81,36 @@ class CompressionManager:
         return uncompressed >= self.compress_tool_results_limit
 
     def _compress_context(self, messages: List[Message]) -> None:
-        system_msg = messages[0] if messages and messages[0].role == "system" else None
-        msgs_to_compress = [m for m in messages if m.role != "system"]
+        if len(messages) < 2:
+            return
 
+        system_msg = messages[0] if messages[0].role == "system" else None
+        if not system_msg:
+            return
+
+        # Find last user message
+        latest_user = next((m for m in reversed(messages) if m.role == "user"), None)
+        if not latest_user:
+            return
+
+        # Compress everything except system and latest user
+        msgs_to_compress = [m for m in messages if m is not system_msg and m is not latest_user]
         if not msgs_to_compress:
             return
 
         summary = self._compress_messages(msgs_to_compress)
         if not summary:
-            log_warning("Failed to generate context summary")
             return
 
+        # Track message IDs
         all_ids: Set[str] = set(self.existing_compressed_ids or set())
         all_ids.update(m.id for m in msgs_to_compress)
 
+        # Rebuild: [system, context, original_user]
         messages.clear()
-        if system_msg:
-            messages.append(system_msg)
-        messages.append(Message(
-            role="assistant",
-            content=f"<context_summary>\n{summary}\n</context_summary>",
-            add_to_agent_memory=False,
-        ))
+        messages.append(system_msg)
+        messages.append(Message(role="user", content=f"<compressed_context>\n{summary}\n</compressed_context>"))
+        messages.append(latest_user)
 
         self.last_compressed_context = CompressedContext(
             content=summary,
@@ -112,28 +120,36 @@ class CompressionManager:
         log_info(f"Compressed {len(msgs_to_compress)} messages")
 
     async def _acompress_context(self, messages: List[Message]) -> None:
-        system_msg = messages[0] if messages and messages[0].role == "system" else None
-        msgs_to_compress = [m for m in messages if m.role != "system"]
+        if len(messages) < 2:
+            return
 
+        system_msg = messages[0] if messages[0].role == "system" else None
+        if not system_msg:
+            return
+
+        # Find last user message
+        latest_user = next((m for m in reversed(messages) if m.role == "user"), None)
+        if not latest_user:
+            return
+
+        # Compress everything except system and latest user
+        msgs_to_compress = [m for m in messages if m is not system_msg and m is not latest_user]
         if not msgs_to_compress:
             return
 
         summary = await self._acompress_messages(msgs_to_compress)
         if not summary:
-            log_warning("Failed to generate context summary")
             return
 
+        # Track message IDs
         all_ids: Set[str] = set(self.existing_compressed_ids or set())
         all_ids.update(m.id for m in msgs_to_compress)
 
+        # Rebuild: [system, context, original_user]
         messages.clear()
-        if system_msg:
-            messages.append(system_msg)
-        messages.append(Message(
-            role="assistant",
-            content=f"<context_summary>\n{summary}\n</context_summary>",
-            add_to_agent_memory=False,
-        ))
+        messages.append(system_msg)
+        messages.append(Message(role="user", content=f"<compressed_context>\n{summary}\n</compressed_context>"))
+        messages.append(latest_user)
 
         self.last_compressed_context = CompressedContext(
             content=summary,

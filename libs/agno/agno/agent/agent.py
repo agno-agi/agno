@@ -418,10 +418,6 @@ class Agent:
     compress_context: bool = False
     # Compression manager for compressing tool call results and context
     compression_manager: Optional[CompressionManager] = None
-    # If True, compress entire context when token limit is hit
-    compress_context: bool = False
-    # Token limit to trigger context compression
-    compress_context_token_limit: Optional[int] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -465,8 +461,6 @@ class Agent:
         compress_tool_results: bool = False,
         compress_context: bool = False,
         compression_manager: Optional[CompressionManager] = None,
-        compress_context: bool = False,
-        compress_context_token_limit: Optional[int] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -578,8 +572,6 @@ class Agent:
         self.compress_tool_results = compress_tool_results
         self.compress_context = compress_context
         self.compression_manager = compression_manager
-        self.compress_context = compress_context
-        self.compress_context_token_limit = compress_context_token_limit
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -865,7 +857,6 @@ class Agent:
                 model=self.model,
                 compress_tool_results=self.compress_tool_results,
                 compress_context=self.compress_context,
-                compress_context_token_limit=self.compress_context_token_limit,
             )
 
         if self.compression_manager is not None:
@@ -876,8 +867,6 @@ class Agent:
             # Sync context compression settings
             if self.compress_context:
                 self.compression_manager.compress_context = True
-                if self.compress_context_token_limit is not None:
-                    self.compression_manager.compress_context_token_limit = self.compress_context_token_limit
 
             # Check compression flags on the compression manager
             if self.compression_manager.compress_tool_results:
@@ -1152,9 +1141,7 @@ class Agent:
 
             # Set up compression manager with existing compressed IDs if context compression is enabled
             if self.compression_manager and self.compress_context:
-                from agno.compression.context import get_compressed_context
-
-                ctx = get_compressed_context(session)
+                ctx = session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
 
             model_response: ModelResponse = self.model.response(
@@ -1165,14 +1152,14 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager if (self.compress_tool_results or self.compress_context) else None,
+                compression_manager=self.compression_manager
+                if (self.compress_tool_results or self.compress_context)
+                else None,
             )
 
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
-                from agno.compression.context import set_compressed_context
-
-                set_compressed_context(session, self.compression_manager.last_compressed_context)
+                session.compressed_context = self.compression_manager.last_compressed_context
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model call
@@ -2065,9 +2052,7 @@ class Agent:
             # 9. Generate a response from the Model (includes running function calls)
             # Set up compression manager with existing compressed IDs if context compression is enabled
             if self.compression_manager and self.compress_context:
-                from agno.compression.context import get_compressed_context
-
-                ctx = get_compressed_context(agent_session)
+                ctx = agent_session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
 
             model_response: ModelResponse = await self.model.aresponse(
@@ -2078,14 +2063,14 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                compression_manager=self.compression_manager if (self.compress_tool_results or self.compress_context) else None,
+                compression_manager=self.compression_manager
+                if (self.compress_tool_results or self.compress_context)
+                else None,
             )
 
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
-                from agno.compression.context import set_compressed_context
-
-                set_compressed_context(agent_session, self.compression_manager.last_compressed_context)
+                agent_session.compressed_context = self.compression_manager.last_compressed_context
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model call
@@ -3232,9 +3217,7 @@ class Agent:
 
             # Set up compression manager with existing compressed IDs if context compression is enabled
             if self.compression_manager and self.compress_context:
-                from agno.compression.context import get_compressed_context
-
-                ctx = get_compressed_context(session)
+                ctx = session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
 
             model_response: ModelResponse = self.model.response(
@@ -3243,14 +3226,14 @@ class Agent:
                 tools=tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
-                compression_manager=self.compression_manager if (self.compress_tool_results or self.compress_context) else None,
+                compression_manager=self.compression_manager
+                if (self.compress_tool_results or self.compress_context)
+                else None,
             )
 
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
-                from agno.compression.context import set_compressed_context
-
-                set_compressed_context(session, self.compression_manager.last_compressed_context)
+                session.compressed_context = self.compression_manager.last_compressed_context
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model processing
@@ -3857,9 +3840,7 @@ class Agent:
             # 8. Get model response
             # Set up compression manager with existing compressed IDs if context compression is enabled
             if self.compression_manager and self.compress_context:
-                from agno.compression.context import get_compressed_context
-
-                ctx = get_compressed_context(agent_session)
+                ctx = agent_session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
 
             model_response: ModelResponse = await self.model.aresponse(
@@ -3868,14 +3849,14 @@ class Agent:
                 tools=_tools,
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
-                compression_manager=self.compression_manager if (self.compress_tool_results or self.compress_context) else None,
+                compression_manager=self.compression_manager
+                if (self.compress_tool_results or self.compress_context)
+                else None,
             )
 
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
-                from agno.compression.context import set_compressed_context
-
-                set_compressed_context(agent_session, self.compression_manager.last_compressed_context)
+                agent_session.compressed_context = self.compression_manager.last_compressed_context
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model call
@@ -5223,6 +5204,11 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Set up compression manager with existing compressed IDs if context compression is enabled
+        if self.compression_manager and self.compress_context:
+            ctx = session.compressed_context
+            self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5232,7 +5218,9 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager if self.compress_tool_results else None,
+            compression_manager=self.compression_manager
+            if (self.compress_tool_results or self.compress_context)
+            else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -5282,6 +5270,11 @@ class Agent:
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
 
+        # Store compressed context if compression occurred
+        if self.compression_manager and self.compression_manager.last_compressed_context:
+            session.compressed_context = self.compression_manager.last_compressed_context
+            self.compression_manager.last_compressed_context = None
+
     async def _ahandle_model_response_stream(
         self,
         session: AgentSession,
@@ -5310,6 +5303,11 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Set up compression manager with existing compressed IDs if context compression is enabled
+        if self.compression_manager and self.compress_context:
+            ctx = session.compressed_context
+            self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5319,7 +5317,9 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager if self.compress_tool_results else None,
+            compression_manager=self.compression_manager
+            if (self.compress_tool_results or self.compress_context)
+            else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -5370,6 +5370,11 @@ class Agent:
         # Update the run_response audio if streaming
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
+
+        # Store compressed context if compression occurred
+        if self.compression_manager and self.compression_manager.last_compressed_context:
+            session.compressed_context = self.compression_manager.last_compressed_context
+            self.compression_manager.last_compressed_context = None
 
     def _handle_model_response_chunk(
         self,
@@ -8375,10 +8380,8 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
-            from agno.compression.context import get_compressed_context
-
             # Check for compressed context and inject summary if present
-            compressed_ctx = get_compressed_context(session)
+            compressed_ctx = session.compressed_context
             if compressed_ctx:
                 summary_msg = Message(
                     role="assistant",
@@ -8606,10 +8609,8 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
-            from agno.compression.context import get_compressed_context
-
             # Check for compressed context and inject summary if present
-            compressed_ctx = get_compressed_context(session)
+            compressed_ctx = session.compressed_context
             if compressed_ctx:
                 summary_msg = Message(
                     role="assistant",
