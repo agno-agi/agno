@@ -5983,9 +5983,6 @@ class Team:
             if isinstance(self.system_message, str):
                 sys_message_content = self.system_message
             elif callable(self.system_message):
-<<<<<<< HEAD
-                sys_message_content = self.system_message(team=self)
-=======
                 sys_message_content = await aexecute_system_message(
                     system_message=self.system_message,
                     agent=self,
@@ -5993,7 +5990,6 @@ class Team:
                     session_state=session_state,
                     run_context=run_context,
                 )
->>>>>>> 147603050072ed047bd4b168b7ed0660229e37f4
                 if not isinstance(sys_message_content, str):
                     raise Exception("system_message must return a string")
 
