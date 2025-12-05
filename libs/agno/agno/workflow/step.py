@@ -644,7 +644,7 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             run_context=run_context,
                             **kwargs,
                         )
@@ -653,7 +653,7 @@ class Step:
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
-                                break
+                                continue
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events:
                                 enriched_event = self._enrich_event_with_context(
@@ -1174,7 +1174,7 @@ class Step:
                             stream=True,
                             stream_events=stream_events,
                             run_context=run_context,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             **kwargs,
                         )
 

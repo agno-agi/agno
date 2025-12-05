@@ -51,6 +51,7 @@ def test_tool_use_stream():
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
 
+
 @pytest.mark.asyncio
 @pytest.mark.skip(reason="This test fails often on CI for Groq")
 async def test_async_tool_use():
@@ -136,6 +137,7 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.currency is not None
 
 
+@pytest.mark.flaky(reruns=2)
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
@@ -158,7 +160,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert response.content is not None
 
 
-@pytest.mark.skip(reason="This test fails often on CI for Groq")
+@pytest.mark.flaky(reruns=2)
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """
@@ -187,6 +189,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert response.content is not None
 
 
+@pytest.mark.flaky(reruns=2)
 def test_tool_call_list_parameters():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),

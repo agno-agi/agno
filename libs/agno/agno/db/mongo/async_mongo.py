@@ -2265,14 +2265,6 @@ class AsyncMongoDb(AsyncBaseDb):
                 if trace.workflow_id is not None:
                     update_values["workflow_id"] = trace.workflow_id
 
-                log_debug(
-                    f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                    f"session_id={update_values.get('session_id', 'unchanged')}, "
-                    f"user_id={update_values.get('user_id', 'unchanged')}, "
-                    f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                    f"team_id={update_values.get('team_id', 'unchanged')}, "
-                )
-
                 await collection.update_one({"trace_id": trace.trace_id}, {"$set": update_values})
             else:
                 trace_dict = trace.to_dict()
@@ -2380,11 +2372,6 @@ class AsyncMongoDb(AsyncBaseDb):
         try:
             from agno.tracing.schemas import Trace as TraceSchema
 
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, "
-                f"user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
             collection = await self._get_collection(table_type="traces")
             if collection is None:
                 log_debug("Traces collection not found")
@@ -2398,7 +2385,6 @@ class AsyncMongoDb(AsyncBaseDb):
             if run_id:
                 query["run_id"] = run_id
             if session_id:
-                log_debug(f"Filtering by session_id={session_id}")
                 query["session_id"] = session_id
             if user_id:
                 query["user_id"] = user_id
@@ -2420,14 +2406,12 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             total_count = await collection.count_documents(query)
-            log_debug(f"Total matching traces: {total_count}")
 
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
             cursor = collection.find(query).sort("start_time", -1).skip(skip).limit(limit or 20)
 
             results = await cursor.to_list(length=None)
-            log_debug(f"Returning page {page} with {len(results)} traces")
 
             traces = []
             for row in results:
@@ -2481,12 +2465,6 @@ class AsyncMongoDb(AsyncBaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             collection = await self._get_collection(table_type="traces")
             if collection is None:
                 log_debug("Traces collection not found")
@@ -2532,7 +2510,6 @@ class AsyncMongoDb(AsyncBaseDb):
             count_pipeline = pipeline + [{"$count": "total"}]
             count_result = await collection.aggregate(count_pipeline).to_list(length=1)
             total_count = count_result[0]["total"] if count_result else 0
-            log_debug(f"Total matching sessions: {total_count}")
 
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
@@ -2540,7 +2517,6 @@ class AsyncMongoDb(AsyncBaseDb):
             pipeline.append({"$limit": limit or 20})
 
             results = await collection.aggregate(pipeline).to_list(length=None)
-            log_debug(f"Returning page {page} with {len(results)} session stats")
 
             # Convert to list of dicts with datetime objects
             stats_list = []
