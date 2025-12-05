@@ -557,8 +557,12 @@ class Agent:
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
 
-        self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
+
+        if session_summary_manager is not None:
+            self.session_summary_manager = session_summary_manager
+            self.enable_session_summaries = True
+
         self.add_session_summary_to_context = add_session_summary_to_context
 
         # Context compression settings
@@ -1085,7 +1089,12 @@ class Agent:
         # Start memory creation on a separate thread (runs concurrently with the main execution loop)
         memory_future = None
         # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
                 self._make_memories, run_messages=run_messages, user_id=user_id
@@ -1174,7 +1183,7 @@ class Agent:
             wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
             # 12. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
                 try:
@@ -1304,7 +1313,12 @@ class Agent:
         # Start memory creation on a separate thread (runs concurrently with the main execution loop)
         memory_future = None
         # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
                 self._make_memories, run_messages=run_messages, user_id=user_id
@@ -1449,7 +1463,7 @@ class Agent:
             )
 
             # 9. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
 
@@ -1981,7 +1995,12 @@ class Agent:
 
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background task.")
             memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2071,7 +2090,7 @@ class Agent:
             await await_for_open_threads(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
 
             # 15. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 agent_session.upsert_run(run=run_response)
                 try:
@@ -2261,7 +2280,12 @@ class Agent:
 
         # 7. Start memory creation as a background task (runs concurrently with the main execution)
         memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background task.")
             memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2397,7 +2421,7 @@ class Agent:
                 yield item
 
             # 12. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 agent_session.upsert_run(run=run_response)
 
@@ -3197,7 +3221,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 7. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
 
@@ -3333,7 +3357,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 4. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 session.upsert_run(run=run_response)
 
@@ -3455,7 +3479,7 @@ class Agent:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
-    async def acontinue_run(  # type: ignore
+    def acontinue_run(  # type: ignore
         self,
         run_response: Optional[RunOutput] = None,
         *,
@@ -3822,7 +3846,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 13. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 agent_session.upsert_run(run=run_response)
 
@@ -4095,7 +4119,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 9. Create session summary
-            if self.session_summary_manager is not None:
+            if self.session_summary_manager is not None and self.enable_session_summaries:
                 # Upsert the RunOutput to Agent Session before creating the session summary
                 agent_session.upsert_run(run=run_response)
 
@@ -5636,7 +5660,12 @@ class Agent:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and self.enable_user_memories
+        ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(  # type: ignore
                 message=user_message_str,
@@ -5664,7 +5693,7 @@ class Agent:
                 for msg in parsed_messages
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None:
+            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
                 self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
             else:
                 log_warning("Unable to add messages to memory")
@@ -5677,7 +5706,12 @@ class Agent:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and self.enable_user_memories
+        ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(  # type: ignore
                 message=user_message_str,
@@ -5705,7 +5739,7 @@ class Agent:
                 for msg in parsed_messages
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None:
+            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
                 await self.memory_manager.acreate_user_memories(  # type: ignore
                     messages=non_empty_messages, user_id=user_id, agent_id=self.id
                 )
@@ -7037,12 +7071,13 @@ class Agent:
             Optional[List[UserMemory]]: The user memories.
         """
         if self.memory_manager is None:
-            return None
+            self._set_memory_manager()
+
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
 
-        return self.memory_manager.get_user_memories(user_id=user_id)
+        return self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -7053,12 +7088,13 @@ class Agent:
             Optional[List[UserMemory]]: The user memories.
         """
         if self.memory_manager is None:
-            return None
+            self._set_memory_manager()
+
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
 
-        return await self.memory_manager.aget_user_memories(user_id=user_id)
+        return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural knowledge the agent has access to

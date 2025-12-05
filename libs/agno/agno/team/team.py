@@ -1553,7 +1553,12 @@ class Team:
 
         # 4. Start memory creation in background thread
         memory_future = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
                 self._make_memories, run_messages=run_messages, user_id=user_id
@@ -1760,7 +1765,12 @@ class Team:
 
         # 4. Start memory creation in background thread
         memory_future = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
                 self._make_memories, run_messages=run_messages, user_id=user_id
@@ -2055,6 +2065,7 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
+            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -2391,7 +2402,12 @@ class Team:
 
         # 6. Start memory creation in background task
         memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2629,7 +2645,12 @@ class Team:
 
         # 7. Start memory creation in background task
         memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2891,7 +2912,7 @@ class Team:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
-    async def arun(  # type: ignore
+    def arun(  # type: ignore
         self,
         input: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -2935,6 +2956,8 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -3072,7 +3095,7 @@ class Team:
             # Run the team
             try:
                 if stream:
-                    return await self._arun_stream(  # type: ignore
+                    return self._arun_stream(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3089,7 +3112,7 @@ class Team:
                         **kwargs,
                     )
                 else:
-                    return await self._arun(  # type: ignore
+                    return self._arun(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3129,7 +3152,7 @@ class Team:
                         delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    await asyncio.sleep(delay)
+                    time.sleep(delay)
                     continue
                 else:
                     # Final attempt failed - re-raise the exception
@@ -3788,7 +3811,12 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and self.enable_user_memories
+        ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
                 message=user_message_str,
@@ -3804,7 +3832,12 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and self.enable_user_memories
+        ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
                 message=user_message_str,
@@ -8864,12 +8897,13 @@ class Team:
             Optional[List[UserMemory]]: The user memories.
         """
         if self.memory_manager is None:
-            return None
+            self._set_memory_manager()
+
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
 
-        return self.memory_manager.get_user_memories(user_id=user_id)
+        return self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -8880,12 +8914,13 @@ class Team:
             Optional[List[UserMemory]]: The user memories.
         """
         if self.memory_manager is None:
-            return None
+            self._set_memory_manager()
+
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
 
-        return await self.memory_manager.aget_user_memories(user_id=user_id)
+        return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
     ###########################################################################
     # Handle reasoning content
