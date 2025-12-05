@@ -414,7 +414,9 @@ class Agent:
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
+    # If True, compress entire context when token limit is hit
+    compress_context: bool = False
+    # Compression manager for compressing tool call results and context
     compression_manager: Optional[CompressionManager] = None
 
     # --- Debug ---
@@ -457,6 +459,7 @@ class Agent:
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
+        compress_context: bool = False,
         compression_manager: Optional[CompressionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
@@ -565,8 +568,9 @@ class Agent:
 
         self.add_session_summary_to_context = add_session_summary_to_context
 
-        # Context compression settings
+        # Compression settings
         self.compress_tool_results = compress_tool_results
+        self.compress_context = compress_context
         self.compression_manager = compression_manager
 
         self.add_history_to_context = add_history_to_context
@@ -847,17 +851,22 @@ class Agent:
             )
 
     def _set_compression_manager(self) -> None:
-        if self.compress_tool_results and self.compression_manager is None:
+        if (self.compress_tool_results or self.compress_context) and self.compression_manager is None:
             self.compression_manager = CompressionManager(
                 model=self.model,
+                compress_tool_results=self.compress_tool_results,
+                compress_context=self.compress_context,
             )
 
-        if self.compression_manager is not None and self.compression_manager.model is None:
-            self.compression_manager.model = self.model
-
-        # Check compression flag on the compression manager
-        if self.compression_manager is not None and self.compression_manager.compress_tool_results:
-            self.compress_tool_results = True
+        if self.compression_manager is not None:
+            if self.compression_manager.model is None:
+                self.compression_manager.model = self.model
+            if self.compress_context:
+                self.compression_manager.compress_context = True
+            if self.compression_manager.compress_tool_results:
+                self.compress_tool_results = True
+            if self.compression_manager.compress_context:
+                self.compress_context = True
 
     def _has_async_db(self) -> bool:
         """Return True if the db the agent is equipped with is an Async implementation"""
@@ -891,7 +900,7 @@ class Agent:
             self._set_culture_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
-        if self.compress_tool_results or self.compression_manager is not None:
+        if self.compress_tool_results or self.compress_context or self.compression_manager is not None:
             self._set_compression_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
@@ -1132,7 +1141,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager if self.compress_tool_results else None,
+                compression_manager=self.compression_manager if (self.compress_tool_results or self.compress_context) else None,
             )
 
             # Check for cancellation after model call
@@ -2031,7 +2040,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                compression_manager=self.compression_manager if self.compress_tool_results else None,
+                compression_manager=self.compression_manager if (self.compress_tool_results or self.compress_context) else None,
             )
 
             # Check for cancellation after model call
