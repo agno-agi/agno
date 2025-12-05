@@ -203,7 +203,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                         )
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     async with self.db_engine.begin() as conn:
@@ -267,9 +269,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals"
-                )
+                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
             return self.eval_table
 
         if table_type == "knowledge":
@@ -309,7 +309,9 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+            table_is_available = await ais_table_available(
+                session=sess, table_name=table_name, db_schema=self.db_schema
+            )
 
         if not table_is_available:
             return await self._create_table(table_name=table_name, table_type=table_type)

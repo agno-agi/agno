@@ -30,7 +30,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, Index, UniqueConstraint, and_, cast, func, update, ForeignKey
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
