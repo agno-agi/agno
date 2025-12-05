@@ -485,24 +485,25 @@ class AgentOS:
 
         else:
             lifespans = []
-            
+
             # User provided lifespan
             if self.lifespan:
                 lifespans.append(self._add_agent_os_to_lifespan_function(self.lifespan))
-            
+
             # MCP tools lifespan
             if self.mcp_tools:
                 lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
-            
+
             # MCP server lifespan
             if self.enable_mcp_server:
                 from agno.os.mcp import get_mcp_server
+
                 self._mcp_app = get_mcp_server(self)
                 lifespans.append(self._mcp_app.lifespan)
-            
+
             # Async database initialization lifespan
             lifespans.append(partial(async_db_lifespan, agent_os=self))
-            
+
             final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
             fastapi_app = self._make_app(lifespan=final_lifespan)
 
@@ -683,8 +684,7 @@ class AgentOS:
             {
                 id(db): db
                 for db in chain(
-                    chain.from_iterable(self.dbs.values()), 
-                    chain.from_iterable(self.knowledge_dbs.values())
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
                 )
             }.values()
         )
@@ -692,7 +692,7 @@ class AgentOS:
         for db in unique_dbs:
             if isinstance(db, AsyncBaseDb):
                 continue  # Skip async dbs
-            
+
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
@@ -701,17 +701,16 @@ class AgentOS:
 
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases. Call this from FastAPI lifespan or first request."""
-        if not getattr(self, '_pending_async_db_init', False):
+        if not getattr(self, "_pending_async_db_init", False):
             return
-            
+
         from itertools import chain
 
         unique_dbs = list(
             {
                 id(db): db
                 for db in chain(
-                    chain.from_iterable(self.dbs.values()), 
-                    chain.from_iterable(self.knowledge_dbs.values())
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
                 )
             }.values()
         )
@@ -719,13 +718,13 @@ class AgentOS:
         for db in unique_dbs:
             if not isinstance(db, AsyncBaseDb):
                 continue
-                
+
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
-        
+
         self._pending_async_db_init = False
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
