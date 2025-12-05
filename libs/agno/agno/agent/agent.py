@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import warnings
 from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
@@ -39,10 +40,8 @@ from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.exceptions import (
     InputCheckError,
-    ModelProviderError,
     OutputCheckError,
     RunCancelledException,
-    StopAgentRun,
 )
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
@@ -72,6 +71,7 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -687,6 +687,7 @@ class Agent:
         self._hooks_normalised = False
 
         self._mcp_tools_initialized_on_run: List[Any] = []
+        self._connectable_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -916,15 +917,47 @@ class Agent:
                     and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
-                    # Connect the MCP server
-                    await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    try:
+                        # Connect the MCP server
+                        await tool.connect()  # type: ignore
+                        self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
         for tool in self._mcp_tools_initialized_on_run:
-            await tool.close()
+            try:
+                await tool.close()
+            except Exception as e:
+                log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
+
+    def _connect_connectable_tools(self) -> None:
+        """Connect tools that require connection management (e.g., database connections)."""
+        if self.tools:
+            for tool in self.tools:
+                if (
+                    hasattr(tool, "requires_connect")
+                    and tool.requires_connect
+                    and hasattr(tool, "connect")
+                    and tool not in self._connectable_tools_initialized_on_run
+                ):
+                    try:
+                        tool.connect()  # type: ignore
+                        self._connectable_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
+
+    def _disconnect_connectable_tools(self) -> None:
+        """Disconnect tools that require connection management."""
+        for tool in self._connectable_tools_initialized_on_run:
+            if hasattr(tool, "close"):
+                try:
+                    tool.close()  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error disconnecting tool: {str(e)}")
+        self._connectable_tools_initialized_on_run = []
 
     def _initialize_session(
         self,
@@ -1179,6 +1212,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1497,6 +1532,8 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1516,7 +1553,6 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1544,7 +1580,6 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1573,7 +1608,6 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -1676,159 +1710,163 @@ class Agent:
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
 
-        # Resolve dependencies
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
-
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
-        # Prepare arguments for the model
-        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
-        self.model = cast(Model, self.model)
-
-        # Merge agent metadata with run metadata
-        if self.metadata is not None and metadata is not None:
-            merge_dictionaries(metadata, self.metadata)
-
-        # Create a new run_response for this attempt
-        run_response = RunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            agent_id=self.id,
-            user_id=user_id,
-            agent_name=self.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        last_exception = None
-        num_attempts = retries + 1
-
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        # Set up retry logic
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
+            log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
-                if stream:
-                    response_iterator = self._run_stream(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_output=yield_run_output,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                    return response_iterator
-                else:
-                    response = self._run(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                    return response
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
+                # Resolve dependencies
+                if run_context.dependencies is not None:
+                    self._resolve_run_dependencies(run_context=run_context)
 
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
+                add_dependencies = (
+                    add_dependencies_to_context
+                    if add_dependencies_to_context is not None
+                    else self.add_dependencies_to_context
+                )
+                add_session_state = (
+                    add_session_state_to_context
+                    if add_session_state_to_context is not None
+                    else self.add_session_state_to_context
+                )
+                add_history = (
+                    add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+                )
 
-                if stream:
-                    return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(
-                            from_run_response=run_response,
-                            reason="Operation cancelled by user",
+                # When filters are passed manually
+                if self.knowledge_filters or knowledge_filters:
+                    run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+
+                # Use stream override value when necessary
+                if stream is None:
+                    stream = False if self.stream is None else self.stream
+
+                # Considering both stream_events and stream_intermediate_steps (deprecated)
+                if stream_intermediate_steps is not None:
+                    warnings.warn(
+                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                stream_events = stream_events or stream_intermediate_steps
+
+                # Can't stream events if streaming is disabled
+                if stream is False:
+                    stream_events = False
+
+                if stream_events is None:
+                    stream_events = False if self.stream_events is None else self.stream_events
+
+                self.stream = self.stream or stream
+                self.stream_events = self.stream_events or stream_events
+
+                # Prepare arguments for the model
+                response_format = (
+                    self._get_response_format(run_context=run_context) if self.parser_model is None else None
+                )
+                self.model = cast(Model, self.model)
+
+                # Merge agent metadata with run metadata
+                if self.metadata is not None and metadata is not None:
+                    merge_dictionaries(metadata, self.metadata)
+
+                # Create a new run_response for this attempt
+                run_response = RunOutput(
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=self.id,
+                    user_id=user_id,
+                    agent_name=self.name,
+                    metadata=run_context.metadata,
+                    session_state=run_context.session_state,
+                    input=run_input,
+                )
+
+                run_response.model = self.model.id if self.model is not None else None
+                run_response.model_provider = self.model.provider if self.model is not None else None
+
+                # Start the run metrics timer, to calculate the run duration
+                run_response.metrics = Metrics()
+                run_response.metrics.start_timer()
+
+                yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
+                try:
+                    if stream:
+                        response_iterator = self._run_stream(
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            add_history_to_context=add_history,
+                            add_dependencies_to_context=add_dependencies,
+                            add_session_state_to_context=add_session_state,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            yield_run_output=yield_run_output,
+                            debug_mode=debug_mode,
+                            background_tasks=background_tasks,
+                            **kwargs,
                         )
-                    )
-                else:
-                    return run_response
+                        return response_iterator
+                    else:
+                        response = self._run(
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            add_history_to_context=add_history,
+                            add_dependencies_to_context=add_dependencies,
+                            add_session_state_to_context=add_session_state,
+                            response_format=response_format,
+                            debug_mode=debug_mode,
+                            background_tasks=background_tasks,
+                            **kwargs,
+                        )
+                        return response
+                except (InputCheckError, OutputCheckError) as e:
+                    log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                    raise e
+                except KeyboardInterrupt:
+                    run_response.content = "Operation cancelled by user"
+                    run_response.status = RunStatus.cancelled
 
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
+                    if stream:
+                        return generator_wrapper(  # type: ignore
+                            create_run_cancelled_event(
+                                from_run_response=run_response,
+                                reason="Operation cancelled by user",
+                            )
+                        )
+                    else:
+                        return run_response
+                except Exception as e:
+                    # Check if this is the last attempt
+                    if attempt < num_attempts - 1:
+                        # Calculate delay with exponential backoff if enabled
+                        if self.exponential_backoff:
+                            delay = self.delay_between_retries * (2**attempt)
+                        else:
+                            delay = self.delay_between_retries
 
-            raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
+                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        # Final attempt failed - re-raise the exception
+                        log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                        raise
+            except Exception as e:
+                log_error(f"Unexpected error: {str(e)}")
+                if attempt == num_attempts - 1:
+                    if stream:
+                        return generator_wrapper(create_run_error_event(run_response, error=str(e)))  # type: ignore
+                    raise e
+
+        # If we get here, all retries failed (shouldn't happen with current logic)
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -2079,6 +2117,8 @@ class Agent:
             return run_response
 
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -2446,6 +2486,8 @@ class Agent:
                 user_id=user_id,
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -2483,7 +2525,6 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2510,7 +2551,6 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2539,7 +2579,6 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2676,9 +2715,6 @@ class Agent:
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
 
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
         # Create a new run_response for this attempt
         run_response = RunOutput(
             run_id=run_id,
@@ -2698,12 +2734,13 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        last_exception = None
-        num_attempts = retries + 1
-
         yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
+        # Set up retry logic
+        num_attempts = self.retries + 1
+
         for attempt in range(num_attempts):
+            log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
                 # Pass the new run_response to _arun
                 if stream:
@@ -2736,23 +2773,9 @@ class Agent:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
-
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -2766,20 +2789,27 @@ class Agent:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    if stream:
+                        return async_generator_wrapper(create_run_error_event(run_response, error=str(e)))  # type: ignore
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     @overload
     def continue_run(
@@ -2788,16 +2818,17 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
     ) -> RunOutput: ...
 
     @overload
@@ -2807,16 +2838,17 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
     ) -> Iterator[RunOutputEvent]: ...
 
     def continue_run(
@@ -2825,36 +2857,37 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
         **kwargs,
-    ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
             run_context: The run context to use for the run.
-            retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for the run.
             metadata: The metadata to use for the run.
             debug_mode: Whether to enable debug mode.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -2903,106 +2936,129 @@ class Agent:
             dependencies=dependencies,
         )
 
-        # Resolve dependencies
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
+        # Resolve retry parameters
+        num_attempts = self.retries + 1
 
-        # When filters are passed manually
-        if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Merge agent metadata with run metadata
-        run_context.metadata = metadata
-        if self.metadata is not None:
-            if run_context.metadata is None:
-                run_context.metadata = self.metadata
-            else:
-                merge_dictionaries(run_context.metadata, self.metadata)
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
-        # Run can be continued from previous run response or from passed run_response context
-        if run_response is not None:
-            # The run is continued from a provided run_response. This contains the updated tools.
-            input = run_response.messages or []
-        elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
-
-            runs = agent_session.runs
-            run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
-            if run_response is None:
-                raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
-            input = run_response.messages or []
-        else:
-            raise ValueError("Either run_response or run_id must be provided.")
-
-        # Prepare arguments for the model
-        self._set_default_model()
-        response_format = self._get_response_format(run_context=run_context)
-        self.model = cast(Model, self.model)
-
-        processed_tools = self.get_tools(
-            run_response=run_response,
-            run_context=run_context,
-            session=agent_session,
-            user_id=user_id,
-        )
-
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            processed_tools=processed_tools,
-            run_response=run_response,
-            run_context=run_context,
-            session=agent_session,
-        )
-
-        last_exception = None
-        num_attempts = retries + 1
         for attempt in range(num_attempts):
-            run_response = cast(RunOutput, run_response)
-
-            log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-
-            # Prepare run messages
-            run_messages = self._get_continue_run_messages(
-                input=input,
-            )
-
-            # Reset the run state
-            run_response.status = RunStatus.running
+            log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
+                # Resolve dependencies
+                if run_context.dependencies is not None:
+                    self._resolve_run_dependencies(run_context=run_context)
+
+                # When filters are passed manually
+                if self.knowledge_filters or run_context.knowledge_filters or knowledge_filters:
+                    run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+
+                # Merge agent metadata with run metadata
+                run_context.metadata = metadata
+                if self.metadata is not None:
+                    if run_context.metadata is None:
+                        run_context.metadata = self.metadata
+                    else:
+                        merge_dictionaries(run_context.metadata, self.metadata)
+
+                # Use stream override value when necessary
+                if stream is None:
+                    stream = False if self.stream is None else self.stream
+
+                # Considering both stream_events and stream_intermediate_steps (deprecated)
+                if stream_intermediate_steps is not None:
+                    warnings.warn(
+                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                stream_events = stream_events or stream_intermediate_steps
+
+                # Can't stream events if streaming is disabled
+                if stream is False:
+                    stream_events = False
+
+                if stream_events is None:
+                    stream_events = False if self.stream_events is None else self.stream_events
+
+                # Can't stream events if streaming is disabled
+                if stream is False:
+                    stream_events = False
+
+                self.stream = self.stream or stream
+                self.stream_events = self.stream_events or stream_events
+
+                # Run can be continued from previous run response or from passed run_response context
+                if run_response is not None:
+                    # The run is continued from a provided run_response. This contains the updated tools.
+                    input = run_response.messages or []
+                elif run_id is not None:
+                    # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
+                    if updated_tools is None and requirements is None:
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided."
+                        )
+
+                    runs = agent_session.runs
+                    run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+                    if run_response is None:
+                        raise RuntimeError(f"No runs found for run ID {run_id}")
+
+                    input = run_response.messages or []
+
+                    # If we have updated_tools, set them in the run_response
+                    if updated_tools is not None:
+                        warnings.warn(
+                            "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
+                        run_response.tools = updated_tools
+
+                    # If we have requirements, get the updated tools and set them in the run_response
+                    elif requirements is not None:
+                        run_response.requirements = requirements
+                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                        if updated_tools and run_response.tools:
+                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                            run_response.tools = [
+                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
+                            ]
+                        else:
+                            run_response.tools = updated_tools
+                else:
+                    raise ValueError("Either run_response or run_id must be provided.")
+
+                # Prepare arguments for the model
+                self._set_default_model()
+                response_format = self._get_response_format(run_context=run_context)
+                self.model = cast(Model, self.model)
+
+                processed_tools = self.get_tools(
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=agent_session,
+                    user_id=user_id,
+                )
+
+                _tools = self._determine_tools_for_model(
+                    model=self.model,
+                    processed_tools=processed_tools,
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=agent_session,
+                )
+
+                run_response = cast(RunOutput, run_response)
+
+                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+                # Prepare run messages
+                run_messages = self._get_continue_run_messages(
+                    input=input,
+                )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
+
                 if stream:
                     response_iterator = self._continue_run_stream(
                         run_response=run_response,
@@ -3013,6 +3069,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_events=stream_events,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
                         **kwargs,
@@ -3032,42 +3089,34 @@ class Agent:
                         **kwargs,
                     )
                     return response
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 if stream:
                     return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(run_response, "Operation cancelled by user")
+                        create_run_cancelled_event(run_response, "Operation cancelled by user")  # type: ignore
                     )
                 else:
-                    run_response.content = "Operation cancelled by user"
-                    run_response.status = RunStatus.cancelled
-                    return run_response
+                    run_response.content = "Operation cancelled by user"  # type: ignore
+                    run_response.status = RunStatus.cancelled  # type: ignore
+                    return run_response  # type: ignore
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _continue_run(
         self,
@@ -3186,6 +3235,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3200,9 +3251,10 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
         background_tasks: Optional[Any] = None,
         **kwargs,
-    ) -> Iterator[RunOutputEvent]:
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
 
         Steps:
@@ -3335,6 +3387,9 @@ class Agent:
             if stream_events:
                 yield completed_event  # type: ignore
 
+            if yield_run_output:
+                yield run_response
+
             # Log Agent Telemetry
             self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
@@ -3359,6 +3414,8 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3372,9 +3429,9 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3392,9 +3449,9 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3402,19 +3459,19 @@ class Agent:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
-    def acontinue_run(  # type: ignore
+    async def acontinue_run(  # type: ignore
         self,
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
-        retries: Optional[int] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3427,19 +3484,20 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
             session_id: The session id to continue the run for.
             run_context: The run context to use for the run.
-            retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
             dependencies: The dependencies to use for continuing the run.
             metadata: The metadata to use for continuing the run.
             debug_mode: Whether to enable debug mode.
             yield_run_output: Whether to yield the run response.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -3447,6 +3505,12 @@ class Agent:
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
+        if updated_tools is not None:
+            warnings.warn(
+                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
@@ -3463,9 +3527,6 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         dependencies = dependencies if dependencies is not None else self.dependencies
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
 
         # Use stream override value when necessary
         if stream is None:
@@ -3506,6 +3567,9 @@ class Agent:
             else:
                 merge_dictionaries(metadata, self.metadata)
 
+        # Resolve retry parameters
+        num_attempts = self.retries + 1
+
         # Prepare arguments for the model
         response_format = self._get_response_format(run_context=run_context)
         self.model = cast(Model, self.model)
@@ -3521,15 +3585,16 @@ class Agent:
             metadata=metadata,
         )
 
-        last_exception = None
-        num_attempts = retries + 1
         for attempt in range(num_attempts):
+            log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
                 if stream:
                     return self._acontinue_run_stream(
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         session_id=session_id,
@@ -3546,6 +3611,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         response_format=response_format,
@@ -3553,19 +3619,6 @@ class Agent:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 if stream:
@@ -3576,19 +3629,25 @@ class Agent:
                     run_response.content = "Operation cancelled by user"
                     run_response.status = RunStatus.cancelled
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_run_error_event(run_response, error=str(last_exception)))  # type: ignore
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _acontinue_run(
         self,
@@ -3596,6 +3655,7 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3648,15 +3708,29 @@ class Agent:
             input = run_response.messages or []
         elif run_id is not None:
             # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3795,6 +3869,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -3807,6 +3883,7 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3856,17 +3933,32 @@ class Agent:
         if run_response is not None:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
+
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id. This requires the updated tools or requirements to be passed.
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -4085,6 +4177,8 @@ class Agent:
                 user_id=user_id,
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -4500,6 +4594,7 @@ class Agent:
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
+                requirements=run_response.requirements,
             ),
             run_response,
             events_to_skip=self.events_to_skip,  # type: ignore
@@ -4548,6 +4643,7 @@ class Agent:
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
+                requirements=run_response.requirements,
             ),
             run_response,
             events_to_skip=self.events_to_skip,  # type: ignore
@@ -5363,7 +5459,7 @@ class Agent:
                                 run_response.images = []
                             run_response.images.append(image)
 
-            # Handle tool interruption events
+            # Handle tool interruption events (HITL flow)
             elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
                 # Add tool calls to the run_response
                 tool_executions_list = model_response_event.tool_executions
@@ -5373,6 +5469,10 @@ class Agent:
                         run_response.tools = tool_executions_list
                     else:
                         run_response.tools.extend(tool_executions_list)
+                    # Add requirement to the run_response
+                    if run_response.requirements is None:
+                        run_response.requirements = []
+                    run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
 
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif (
@@ -5653,6 +5753,9 @@ class Agent:
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
+
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
@@ -5699,6 +5802,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=False,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5707,6 +5811,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=False,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
 
@@ -5724,6 +5829,9 @@ class Agent:
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
 
         # Connect MCP tools
         await self._connect_mcp_tools()
@@ -5787,6 +5895,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5795,6 +5904,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
 
@@ -7824,7 +7934,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -7998,7 +8108,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -8579,6 +8689,7 @@ class Agent:
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
@@ -8588,12 +8699,16 @@ class Agent:
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
             validate_filters (bool): Whether to validate the filters against known valid filter keys.
+            run_context (Optional[RunContext]): Runtime context containing dependencies and other context.
             **kwargs: Additional keyword arguments.
 
         Returns:
             Optional[List[Dict[str, Any]]]: List of relevant document dicts.
         """
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8626,6 +8741,11 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -8664,10 +8784,14 @@ class Agent:
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8700,6 +8824,11 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
 
@@ -10042,6 +10171,7 @@ class Agent:
         run_response: RunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -10058,7 +10188,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -10089,7 +10221,9 @@ class Agent:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -10118,6 +10252,7 @@ class Agent:
         run_response: RunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -10138,7 +10273,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, validate_filters=True
+                query=query, filters=search_filters, validate_filters=True, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
@@ -10175,7 +10310,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, validate_filters=True
+                query=query, filters=search_filters, validate_filters=True, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(

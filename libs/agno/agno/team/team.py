@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import warnings
 from collections import ChainMap, deque
 from copy import copy
@@ -40,7 +41,6 @@ from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.exceptions import (
     InputCheckError,
-    ModelProviderError,
     OutputCheckError,
     RunCancelledException,
 )
@@ -119,7 +119,6 @@ from agno.utils.events import (
     create_team_run_cancelled_event,
     create_team_run_completed_event,
     create_team_run_content_completed_event,
-    create_team_run_error_event,
     create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_session_summary_completed_event,
@@ -727,6 +726,8 @@ class Team:
 
         # List of MCP tools that were initialized on the last run
         self._mcp_tools_initialized_on_run: List[Any] = []
+        # List of connectable tools that were initialized on the last run
+        self._connectable_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -1050,15 +1051,47 @@ class Team:
                     and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
-                    # Connect the MCP server
-                    await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    try:
+                        # Connect the MCP server
+                        await tool.connect()  # type: ignore
+                        self._mcp_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
         for tool in self._mcp_tools_initialized_on_run:
-            await tool.close()
+            try:
+                await tool.close()
+            except Exception as e:
+                log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
+
+    def _connect_connectable_tools(self) -> None:
+        """Connect tools that require connection management (e.g., database connections)."""
+        if self.tools:
+            for tool in self.tools:
+                if (
+                    hasattr(tool, "requires_connect")
+                    and tool.requires_connect
+                    and hasattr(tool, "connect")
+                    and tool not in self._connectable_tools_initialized_on_run
+                ):
+                    try:
+                        tool.connect()  # type: ignore
+                        self._connectable_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
+
+    def _disconnect_connectable_tools(self) -> None:
+        """Disconnect tools that require connection management."""
+        for tool in self._connectable_tools_initialized_on_run:
+            if hasattr(tool, "close"):
+                try:
+                    tool.close()  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error disconnecting tool: {str(e)}")
+        self._connectable_tools_initialized_on_run = []
 
     def _execute_pre_hooks(
         self,
@@ -1629,6 +1662,8 @@ class Team:
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             cleanup_run(run_response.run_id)  # type: ignore
 
     def _run_stream(
@@ -1915,6 +1950,8 @@ class Team:
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1929,7 +1966,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1957,7 +1993,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1986,7 +2021,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2162,18 +2196,11 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
-        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+        # Set up retry logic
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            # Initialize the current run
-
+            log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
             # Run the team
             try:
                 if stream:
@@ -2212,18 +2239,6 @@ class Team:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                import time
-
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -2236,21 +2251,24 @@ class Team:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -2479,6 +2497,8 @@ class Team:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
@@ -2805,6 +2825,8 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
@@ -2829,7 +2851,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2857,7 +2878,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2875,7 +2895,7 @@ class Team:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
-    def arun(  # type: ignore
+    async def arun(  # type: ignore
         self,
         input: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -2886,7 +2906,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -3046,20 +3065,18 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
         yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
+        # Resolve retry parameters
+        num_attempts = self.retries + 1
+
         for attempt in range(num_attempts):
+            log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             # Run the team
             try:
                 if stream:
-                    response_iterator = self._arun_stream(
+                    return await self._arun_stream(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3075,9 +3092,8 @@ class Team:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
-                    return response_iterator  # type: ignore
                 else:
-                    return self._arun(  # type: ignore
+                    return await self._arun(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3095,17 +3111,6 @@ class Team:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -3118,21 +3123,25 @@ class Team:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _update_run_response(
         self,
@@ -5337,6 +5346,9 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Function, dict]]:
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
+
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -5386,6 +5398,7 @@ class Team:
                             run_response=run_response,
                             knowledge_filters=run_context.knowledge_filters,
                             async_mode=async_mode,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5394,6 +5407,7 @@ class Team:
                             run_response=run_response,
                             knowledge_filters=run_context.knowledge_filters,
                             async_mode=async_mode,
+                            run_context=run_context,
                         )
                     )
 
@@ -6583,7 +6597,10 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content,
+                            filters=run_context.knowledge_filters,
+                            run_context=run_context,
+                            **kwargs,
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -6738,7 +6755,10 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content,
+                            filters=run_context.knowledge_filters,
+                            run_context=run_context,
+                            **kwargs,
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -9004,10 +9024,14 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -9040,6 +9064,11 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -9071,10 +9100,14 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -9107,6 +9140,11 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
 
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
@@ -9191,6 +9229,7 @@ class Team:
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9206,7 +9245,9 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9233,7 +9274,9 @@ class Team:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9260,6 +9303,7 @@ class Team:
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9279,7 +9323,9 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9310,7 +9356,9 @@ class Team:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
