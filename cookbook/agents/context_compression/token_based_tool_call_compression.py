@@ -53,7 +53,7 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/dbs/token_based_tool_call_compression.db"),
     compression_manager=compression_manager,
     add_history_to_context=True,  # Add history to context
-    num_history_runs=10,
+    num_history_runs=3,
     session_id="token_based_tool_call_compression",
 )
 

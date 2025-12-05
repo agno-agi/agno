@@ -48,8 +48,8 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
 class CompressionManager:
     model: Optional[Model] = None
     compress_tool_results: bool = True
-    compress_tool_results_limit: int = 3
-    compress_tool_results_token_limit: Optional[int] = None  # Compress when token count >= this limit
+    compress_tool_results_limit: Optional[int] = None
+    compress_tool_results_token_limit: Optional[int] = None
     compress_tool_call_instructions: Optional[str] = None
 
     stats: Dict[str, Any] = field(default_factory=dict)
@@ -72,15 +72,15 @@ class CompressionManager:
             if tokens >= self.compress_tool_results_token_limit:
                 log_info(f"Token limit hit: {tokens} >= {self.compress_tool_results_token_limit}")
                 return True
-            return False
 
         # Count-based threshold check
-        uncompressed_tools_count = len(
-            [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
-        )
-        if uncompressed_tools_count >= self.compress_tool_results_limit:
-            log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
-            return True
+        if self.compress_tool_results_limit is not None:
+            uncompressed_tools_count = len(
+                [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
+            )
+            if uncompressed_tools_count >= self.compress_tool_results_limit:
+                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
+                return True
 
         return False
 
@@ -126,8 +126,11 @@ class CompressionManager:
             compressed = self._compress_tool_result(tool_msg)
             if compressed:
                 tool_msg.compressed_content = compressed
-                # Track stats
-                self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + 1
+                # Count actual tool results (Gemini combines multiple in one message)
+                tool_results_count = len(tool_msg.tool_calls) if tool_msg.tool_calls else 1
+                self.stats["tool_results_compressed"] = (
+                    self.stats.get("tool_results_compressed", 0) + tool_results_count
+                )
                 self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
                 self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
             else:
@@ -182,8 +185,11 @@ class CompressionManager:
         for msg, compressed, original_len in zip(uncompressed_tools, results, original_sizes):
             if compressed:
                 msg.compressed_content = compressed
-                # Track stats
-                self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + 1
+                # Count actual tool results (Gemini combines multiple in one message)
+                tool_results_count = len(msg.tool_calls) if msg.tool_calls else 1
+                self.stats["tool_results_compressed"] = (
+                    self.stats.get("tool_results_compressed", 0) + tool_results_count
+                )
                 self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
                 self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
             else:
