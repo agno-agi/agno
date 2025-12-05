@@ -68,6 +68,7 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -683,6 +684,7 @@ class Agent:
         self._hooks_normalised = False
 
         self._mcp_tools_initialized_on_run: List[Any] = []
+        self._connectable_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -912,15 +914,47 @@ class Agent:
                     and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
-                    # Connect the MCP server
-                    await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    try:
+                        # Connect the MCP server
+                        await tool.connect()  # type: ignore
+                        self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
         for tool in self._mcp_tools_initialized_on_run:
-            await tool.close()
+            try:
+                await tool.close()
+            except Exception as e:
+                log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
+
+    def _connect_connectable_tools(self) -> None:
+        """Connect tools that require connection management (e.g., database connections)."""
+        if self.tools:
+            for tool in self.tools:
+                if (
+                    hasattr(tool, "requires_connect")
+                    and tool.requires_connect
+                    and hasattr(tool, "connect")
+                    and tool not in self._connectable_tools_initialized_on_run
+                ):
+                    try:
+                        tool.connect()  # type: ignore
+                        self._connectable_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
+
+    def _disconnect_connectable_tools(self) -> None:
+        """Disconnect tools that require connection management."""
+        for tool in self._connectable_tools_initialized_on_run:
+            if hasattr(tool, "close"):
+                try:
+                    tool.close()  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error disconnecting tool: {str(e)}")
+        self._connectable_tools_initialized_on_run = []
 
     def _initialize_session(
         self,
@@ -1175,6 +1209,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1493,6 +1529,8 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1645,7 +1683,10 @@ class Agent:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
@@ -1866,7 +1907,7 @@ class Agent:
         self._update_metadata(session=agent_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2072,6 +2113,8 @@ class Agent:
             return run_response
 
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -2144,7 +2187,7 @@ class Agent:
         self._update_metadata(session=agent_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2439,6 +2482,8 @@ class Agent:
                 user_id=user_id,
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -2781,6 +2826,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2791,6 +2837,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
     ) -> RunOutput: ...
 
     @overload
@@ -2800,6 +2847,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2810,6 +2858,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
     ) -> Iterator[RunOutputEvent]: ...
 
     def continue_run(
@@ -2818,6 +2867,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2829,14 +2879,15 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
         **kwargs,
-    ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
@@ -2848,6 +2899,7 @@ class Agent:
             metadata: The metadata to use for the run.
             debug_mode: Whether to enable debug mode.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -2947,16 +2999,35 @@ class Agent:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
+            if updated_tools is None and requirements is None:
+                raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                warnings.warn(
+                    "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3006,6 +3077,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_events=stream_events,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
                         **kwargs,
@@ -3179,6 +3251,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3193,9 +3267,10 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
         background_tasks: Optional[Any] = None,
         **kwargs,
-    ) -> Iterator[RunOutputEvent]:
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
 
         Steps:
@@ -3328,6 +3403,9 @@ class Agent:
             if stream_events:
                 yield completed_event  # type: ignore
 
+            if yield_run_output:
+                yield run_response
+
             # Log Agent Telemetry
             self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
@@ -3352,6 +3430,8 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3365,6 +3445,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -3385,6 +3466,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -3401,6 +3483,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -3420,7 +3503,8 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
@@ -3433,6 +3517,7 @@ class Agent:
             debug_mode: Whether to enable debug mode.
             yield_run_output: Whether to yield the run response.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -3440,6 +3525,12 @@ class Agent:
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
+        if updated_tools is not None:
+            warnings.warn(
+                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
@@ -3523,6 +3614,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         session_id=session_id,
@@ -3539,6 +3631,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         response_format=response_format,
@@ -3589,6 +3682,7 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3641,15 +3735,29 @@ class Agent:
             input = run_response.messages or []
         elif run_id is not None:
             # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3788,6 +3896,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -3800,6 +3910,7 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3849,17 +3960,32 @@ class Agent:
         if run_response is not None:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
+
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id. This requires the updated tools or requirements to be passed.
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -4078,6 +4204,8 @@ class Agent:
                 user_id=user_id,
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -4493,6 +4621,7 @@ class Agent:
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
+                requirements=run_response.requirements,
             ),
             run_response,
             events_to_skip=self.events_to_skip,  # type: ignore
@@ -4541,6 +4670,7 @@ class Agent:
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
+                requirements=run_response.requirements,
             ),
             run_response,
             events_to_skip=self.events_to_skip,  # type: ignore
@@ -5356,7 +5486,7 @@ class Agent:
                                 run_response.images = []
                             run_response.images.append(image)
 
-            # Handle tool interruption events
+            # Handle tool interruption events (HITL flow)
             elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
                 # Add tool calls to the run_response
                 tool_executions_list = model_response_event.tool_executions
@@ -5366,6 +5496,10 @@ class Agent:
                         run_response.tools = tool_executions_list
                     else:
                         run_response.tools.extend(tool_executions_list)
+                    # Add requirement to the run_response
+                    if run_response.requirements is None:
+                        run_response.requirements = []
+                    run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
 
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif (
@@ -5646,6 +5780,9 @@ class Agent:
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
+
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
@@ -5692,6 +5829,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=False,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5700,6 +5838,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=False,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
 
@@ -5717,6 +5856,9 @@ class Agent:
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
 
         # Connect MCP tools
         await self._connect_mcp_tools()
@@ -5780,6 +5922,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5788,6 +5931,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
 
@@ -6988,7 +7132,7 @@ class Agent:
 
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
-            session_state or {},
+            session_state if session_state is not None else {},
             dependencies or {},
             metadata or {},
             {"user_id": user_id} if user_id is not None else {},
@@ -7817,7 +7961,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -7991,7 +8135,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -8572,6 +8716,7 @@ class Agent:
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
@@ -8581,12 +8726,16 @@ class Agent:
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
             validate_filters (bool): Whether to validate the filters against known valid filter keys.
+            run_context (Optional[RunContext]): Runtime context containing dependencies and other context.
             **kwargs: Additional keyword arguments.
 
         Returns:
             Optional[List[Dict[str, Any]]]: List of relevant document dicts.
         """
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8619,6 +8768,11 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -8657,10 +8811,14 @@ class Agent:
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8693,6 +8851,11 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
 
@@ -10035,6 +10198,7 @@ class Agent:
         run_response: RunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -10051,7 +10215,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -10082,7 +10248,10 @@ class Agent:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            dependencies = run_context.dependencies if run_context else None
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -10111,6 +10280,7 @@ class Agent:
         run_response: RunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -10131,7 +10301,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, validate_filters=True
+                query=query, filters=search_filters, validate_filters=True, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
@@ -10168,7 +10338,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, validate_filters=True
+                query=query, filters=search_filters, validate_filters=True, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(

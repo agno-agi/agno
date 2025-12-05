@@ -1,7 +1,10 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
@@ -23,7 +26,6 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.tracing.schemas import Span, Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
@@ -31,6 +33,7 @@ try:
     from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, select, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import ProgrammingError
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import text
@@ -1080,9 +1083,14 @@ class PostgresDb(BaseDb):
                 return []
 
             with self.Session() as sess, sess.begin():
-                stmt = select(func.json_array_elements_text(table.c.topics))
-
-                result = sess.execute(stmt).fetchall()
+                try:
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
+                    result = sess.execute(stmt).fetchall()
+                except ProgrammingError:
+                    # Retrying with json_array_elements_text. This works in older versions,
+                    # where the topics column was of type JSON instead of JSONB
+                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    result = sess.execute(stmt).fetchall()
 
                 return list(set([record[0] for record in result]))
 
