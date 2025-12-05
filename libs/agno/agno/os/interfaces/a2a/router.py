@@ -98,7 +98,7 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_run_message(request: Request, agent_id:str, stream: bool = False):
+    async def run_agent(request: Request, id:str, stream: bool = False):
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_run_message)
 
