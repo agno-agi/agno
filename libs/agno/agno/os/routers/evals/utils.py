@@ -36,7 +36,10 @@ async def run_accuracy_eval(
         model=default_model,
     )
 
-    result = accuracy_eval.run(print_results=False, print_summary=False)
+    if isinstance(db, AsyncBaseDb):
+        result = await accuracy_eval.arun(print_results=False, print_summary=False)
+    else:
+        result = accuracy_eval.run(print_results=False, print_summary=False)
     if not result:
         raise HTTPException(status_code=500, detail="Failed to run accuracy evaluation")
 
@@ -86,7 +89,11 @@ async def run_performance_eval(
         model_id=model_id,
         model_provider=model_provider,
     )
-    result = performance_eval.run(print_results=False, print_summary=False)
+
+    if isinstance(db, AsyncBaseDb):
+        result = await performance_eval.arun(print_results=False, print_summary=False)
+    else:
+        result = performance_eval.run(print_results=False, print_summary=False)
     if not result:
         raise HTTPException(status_code=500, detail="Failed to run performance evaluation")
 
@@ -141,7 +148,10 @@ async def run_reliability_eval(
         model_id = team.model.id if team and team.model else None
         model_provider = team.model.provider if team and team.model else None
 
-    result = reliability_eval.run(print_results=False)
+    if isinstance(db, AsyncBaseDb):
+        result = await reliability_eval.arun(print_results=False)
+    else:
+        result = reliability_eval.run(print_results=False)
     if not result:
         raise HTTPException(status_code=500, detail="Failed to run reliability evaluation")
 

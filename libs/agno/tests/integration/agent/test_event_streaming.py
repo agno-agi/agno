@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from textwrap import dedent
 
 import pytest
@@ -6,7 +7,7 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from agno.run.agent import RunEvent, RunInput, RunOutput
+from agno.run.agent import CustomEvent, RunEvent, RunInput, RunOutput
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
@@ -156,6 +157,49 @@ def test_intermediate_steps_with_tools(shared_db):
     assert run_response_from_storage.events[2].event == RunEvent.tool_call_completed
     assert run_response_from_storage.events[3].event == RunEvent.run_content_completed
     assert run_response_from_storage.events[4].event == RunEvent.run_completed
+
+
+def test_intermediate_steps_with_custom_events():
+    """Test that the agent streams events."""
+
+    @dataclass
+    class WeatherRequestEvent(CustomEvent):
+        city: str = ""
+        temperature: int = 0
+
+    def get_weather(city: str):
+        yield WeatherRequestEvent(city=city, temperature=70)
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        telemetry=False,
+    )
+
+    response_generator = agent.run("What is the weather in Tokyo?", stream=True, stream_events=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.custom_event,
+        RunEvent.tool_call_completed,
+        RunEvent.run_content,
+        RunEvent.run_content_completed,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_content]) > 1
+    assert len(events[RunEvent.custom_event]) == 1
+    assert events[RunEvent.custom_event][0].city == "Tokyo"
+    assert events[RunEvent.custom_event][0].temperature == 70
+    assert events[RunEvent.custom_event][0].to_dict()["city"] == "Tokyo"
+    assert events[RunEvent.custom_event][0].to_dict()["temperature"] == 70
 
 
 def test_intermediate_steps_with_reasoning():

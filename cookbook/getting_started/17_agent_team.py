@@ -107,14 +107,19 @@ agent_team = Team(
 )
 
 # Example usage with diverse queries
+# Member responses are hidden (show_members_responses=False)
 agent_team.print_response(
     input="Summarize analyst recommendations and share the latest news for NVDA",
     stream=True,
 )
+
+# You can override to show member responses for a specific call
 agent_team.print_response(
     input="What's the market outlook and financial performance of AI semiconductor companies?",
     stream=True,
+    show_member_responses=True,  # Show responses from members
 )
+
 agent_team.print_response(
     input="Analyze recent developments and financial performance of TSLA",
     stream=True,

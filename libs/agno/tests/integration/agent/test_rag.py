@@ -21,7 +21,7 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture()
 async def loaded_knowledge_base():
     knowledge = Knowledge(
         vector_db=LanceDb(

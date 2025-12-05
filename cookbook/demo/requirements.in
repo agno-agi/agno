@@ -10,3 +10,6 @@ psycopg[binary]
 sqlalchemy
 yfinance
 youtube-transcript-api
+opentelemetry-api
+opentelemetry-sdk
+openinference-instrumentation-agno

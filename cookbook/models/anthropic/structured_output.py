@@ -26,11 +26,12 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=Claude(id="claude-sonnet-4-5-20250929"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )
 
-# Get the response in a variable
-run: RunOutput = movie_agent.run("New York")
-pprint(run.content)
+movie_agent.print_response("New York")
+
+# You can also get the response in a variable:
+# run: RunOutput = movie_agent.run("New York")
