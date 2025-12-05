@@ -35,7 +35,7 @@ def attach_routes(
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
     @router.post(
-        "/message/send",
+        "/message/send/{agent_id}",
         operation_id="send_message",
         name="send_message",
         description="Send a message to an Agno Agent, Team, or Workflow. "
@@ -73,7 +73,7 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_send_message(request: Request):
+    async def a2a_send_message(request: Request, agent_id: str):
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_send_message)
 

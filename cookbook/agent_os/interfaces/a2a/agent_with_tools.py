@@ -1,11 +1,12 @@
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openrouter import OpenRouter
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     name="Agent with Tools",
-    model=OpenAIChat(id="gpt-4o"),
+    id="tools_agent",
+    model=OpenRouter(id="openai/gpt-oss-20b:free"),
     tools=[DuckDuckGoTools()],
     instructions="""
     You are a versatile AI assistant with the following capabilities:
