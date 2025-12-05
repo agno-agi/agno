@@ -74,11 +74,7 @@ class Llama(Model):
         if not self.api_key:
             self.api_key = getenv("LLAMA_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
-                    message="LLAMA_API_KEY not set. Please set the LLAMA_API_KEY environment variable.",
-                    model_name=self.name,
-                    model_id=self.id,
-                )
+                log_error("LLAMA_API_KEY not set. Please set the LLAMA_API_KEY environment variable.")
 
         # Define base client params
         base_params = {
