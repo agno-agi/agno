@@ -182,8 +182,7 @@ class Model(ABC):
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. "
-                        f"Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. Retrying in {delay}s..."
                     )
                     sleep(delay)
                 else:
@@ -209,8 +208,7 @@ class Model(ABC):
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. "
-                        f"Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. Retrying in {delay}s..."
                     )
                     await asyncio.sleep(delay)
                 else:
@@ -488,8 +486,8 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
 
             while True:
-                # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools):
+                # Compress tool results
+                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
                     compression_manager.compress(messages)
 
                 # Get response from model
@@ -690,7 +688,7 @@ class Model(ABC):
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools):
+                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
                     await compression_manager.acompress(messages)
 
                 # Get response from model
@@ -1116,7 +1114,7 @@ class Model(ABC):
 
             while True:
                 # Compress existing tool results BEFORE invoke
-                if compression_manager and compression_manager.should_compress(messages, tools):
+                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
                     compression_manager.compress(messages)
 
                 assistant_message = Message(role=self.assistant_message_role)
@@ -1333,7 +1331,7 @@ class Model(ABC):
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools):
+                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
                     await compression_manager.acompress(messages)
 
                 # Create assistant message and stream data

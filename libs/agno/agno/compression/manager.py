@@ -57,13 +57,18 @@ class CompressionManager:
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
 
-    def should_compress(self, messages: List[Message], tools: Optional[List] = None) -> bool:
+    def should_compress(
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        main_model: Optional[Model] = None,
+    ) -> bool:
         if not self.compress_tool_results:
             return False
 
         # Token-based threshold check
-        if self.compress_tool_results_token_limit is not None and self.model is not None:
-            tokens = self.model.count_tokens(messages, tools)
+        if self.compress_tool_results_token_limit is not None and main_model is not None:
+            tokens = main_model.count_tokens(messages, tools)
             if tokens >= self.compress_tool_results_token_limit:
                 log_info(f"Token limit hit: {tokens} >= {self.compress_tool_results_token_limit}")
                 return True
@@ -83,13 +88,7 @@ class CompressionManager:
         if not tool_result:
             return None
 
-        tool_name = tool_result.tool_name
-        # Gemini format
-        if not tool_name and tool_result.tool_calls:
-            tool_names = [str(tc.get("tool_name")) for tc in tool_result.tool_calls if tc.get("tool_name")]
-            tool_name = ", ".join(tool_names) if tool_names else None
-
-        tool_content = f"Tool: {tool_name or 'unknown'}\n{tool_result.content}"
+        tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
 
         self.model = get_model(self.model)
         if not self.model:
@@ -140,13 +139,7 @@ class CompressionManager:
         if not tool_result:
             return None
 
-        # Extract tool name - check tool_calls if tool_name is None (Gemini combined format)
-        tool_name = tool_result.tool_name
-        if not tool_name and tool_result.tool_calls:
-            tool_names = [str(tc.get("tool_name")) for tc in tool_result.tool_calls if tc.get("tool_name")]
-            tool_name = ", ".join(tool_names) if tool_names else None
-
-        tool_content = f"Tool: {tool_name or 'unknown'}\n{tool_result.content}"
+        tool_content = f"Tool: {tool_result.tool_name or 'unknown'}\n{tool_result.content}"
 
         self.model = get_model(self.model)
         if not self.model:

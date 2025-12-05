@@ -867,6 +867,8 @@ class Gemini(Model):
         """
         combined_original_content: List = []
         combined_function_result: List = []
+        tool_names: List[str] = []
+
         message_metrics = Metrics()
 
         if len(function_call_results) > 0:
@@ -876,13 +878,18 @@ class Gemini(Model):
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
+                if result.tool_name:
+                    tool_names.append(result.tool_name)
                 message_metrics += result.metrics
+
+        tool_name = ", ".join(tool_names) if tool_names else None
 
         if combined_original_content:
             messages.append(
                 Message(
                     role="tool",
                     content=combined_original_content,
+                    tool_name=tool_name,
                     tool_calls=combined_function_result,
                     metrics=message_metrics,
                 )

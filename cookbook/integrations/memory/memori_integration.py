@@ -3,10 +3,9 @@ import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from dotenv import load_dotenv
+from memori import Memori
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
-from memori import Memori
 
 load_dotenv()
 
