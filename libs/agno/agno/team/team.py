@@ -8217,8 +8217,10 @@ class Team:
                         run_id=str(uuid4()),
                         team_id=self.id,
                         session_id=session_id,
+                        user_id=user_id,
+                        team_name=self.name,
                         content=self.introduction,
-                        messages=[Message(role="assistant", content=self.introduction)],
+                        messages=[Message(role=self.model.assistant_message_role, content=self.introduction)],  # type: ignore
                     )
                 )
 
@@ -8275,8 +8277,10 @@ class Team:
                         run_id=str(uuid4()),
                         team_id=self.id,
                         session_id=session_id,
+                        user_id=user_id,
+                        team_name=self.name,
                         content=self.introduction,
-                        messages=[Message(role="assistant", content=self.introduction)],
+                        messages=[Message(role=self.model.assistant_message_role, content=self.introduction)],  # type: ignore
                     )
                 )
 

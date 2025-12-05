@@ -6355,6 +6355,11 @@ class Agent:
             if self.introduction is not None:
                 agent_session.upsert_run(
                     RunOutput(
+                        run_id=str(uuid4()),
+                        session_id=session_id,
+                        agent_id=self.id,
+                        agent_name=self.name,
+                        user_id=user_id,
                         content=self.introduction,
                         messages=[
                             Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
@@ -6407,6 +6412,11 @@ class Agent:
             if self.introduction is not None:
                 agent_session.upsert_run(
                     RunOutput(
+                        run_id=str(uuid4()),
+                        session_id=session_id,
+                        agent_id=self.id,
+                        agent_name=self.name,
+                        user_id=user_id,
                         content=self.introduction,
                         messages=[
                             Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
