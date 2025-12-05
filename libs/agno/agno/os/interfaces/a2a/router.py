@@ -61,8 +61,8 @@ def attach_routes(
         )
     @router.post(
         "/agents/{agent_id}",
-        operation_id="send_message",
-        name="send_message",
+        operation_id="run_message",
+        name="run_message",
         description="Send a message to an Agno Agent, Team, or Workflow. "
         "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
