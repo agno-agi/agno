@@ -71,7 +71,7 @@ async def mcp_lifespan(_, mcp_tools):
 
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initialize async databases in FastAPI's event loop"""
+    """Initializes databases in the event loop"""
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
