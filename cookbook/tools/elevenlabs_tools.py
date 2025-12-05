@@ -2,32 +2,47 @@
 pip install elevenlabs
 """
 
+import base64
+from textwrap import dedent
+
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.google import Gemini
 from agno.tools.eleven_labs import ElevenLabsTools
+from agno.utils.media import save_base64_data
 
 audio_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Gemini(id="gemini-2.5-pro"),
     tools=[
         ElevenLabsTools(
             voice_id="21m00Tcm4TlvDq8ikWAM",
             model_id="eleven_multilingual_v2",
-            target_directory="audio_generations",
         )
     ],
     description="You are an AI agent that can generate audio using the ElevenLabs API.",
     instructions=[
-        "When the user asks you to generate audio, use the `generate_audio` tool to generate the audio.",
-        "You'll generate the appropriate prompt to send to the tool to generate audio.",
-        "You don't need to find the appropriate voice first, I already specified the voice to user."
-        "Return the audio file name in your response. Don't convert it to markdown.",
-        "The audio should be long and detailed.",
+        dedent(
+            """
+            You have access to the ElevenLabs toolkit:
+            - Use the `text_to_speech` tool to convert text or speech content into natural voice audio.
+            - Use the `generate_sound_effect` tool to create sound effects from text descriptions.
+            Keep the audio prompt as defined by the user.
+            """
+        ),
     ],
     markdown=True,
-    debug_mode=True,
-    show_tool_calls=True,
 )
 
-audio_agent.print_response("Generate a very long audio of history of french revolution")
+response = audio_agent.run(
+    "Generate a very long audio of history of french revolution and tell me which subject it belongs to.",
+)
 
-audio_agent.print_response("Generate a kick sound effect")
+if response.audio:
+    print("Agent response:", response.content)
+    base64_audio = base64.b64encode(response.audio[0].content).decode("utf-8")
+    save_base64_data(base64_audio, "tmp/french_revolution.mp3")
+
+# response2 = audio_agent.run("Generate a glass breaking sound effect" , debug_mode=True)
+# if response2.audio:
+#     print("Agent response:", response2.content)
+#     base64_audio = base64.b64encode(response2.audio[0].content).decode("utf-8")
+#     save_base64_data(base64_audio, "tmp/glass_breaking_sound_effect.mp3")

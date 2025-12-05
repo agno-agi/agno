@@ -14,11 +14,17 @@ class NewspaperTools(Toolkit):
         get_article_text (bool): Whether to get the text of an article from a URL.
     """
 
-    def __init__(self, get_article_text: bool = True, **kwargs):
-        super().__init__(name="newspaper_toolkit", **kwargs)
+    def __init__(
+        self,
+        enable_get_article_text: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
+        tools = []
+        if all or enable_get_article_text:
+            tools.append(self.get_article_text)
 
-        if get_article_text:
-            self.register(self.get_article_text)
+        super().__init__(name="newspaper_toolkit", tools=tools, **kwargs)
 
     def get_article_text(self, url: str) -> str:
         """Get the text of an article from a URL.

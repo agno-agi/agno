@@ -1,0 +1,110 @@
+[project]
+name = "agno-infra"
+version = "1.0.5"
+description = "A lightweight framework and CLI for managing Agentic Infrastructure"
+requires-python = ">=3.7,<4"
+readme = "README.md"
+license-files = ["LICENSE"]
+authors = [
+  {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
+]
+keywords = [
+  "infrastructure",
+  "aws",
+  "docker",
+  "framework",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+  "gitpython",
+  "httpx",
+  "python-dotenv",
+  "python-multipart",
+  "pydantic-settings",
+  "pydantic",
+  "rich",
+  "tomli",
+  "typer",
+  "typing-extensions",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy==1.18.2",
+  "ruff==0.14.3",
+  "pytest",
+  "pytest-asyncio",
+]
+
+# Dependencies for Docker
+docker = ["docker"]
+
+# Dependencies for AWS
+aws = ["boto3"]
+
+
+[project.scripts]
+ag = "agno.cli.entrypoint:agno_cli"
+agno = "agno.cli.entrypoint:agno_cli"
+
+
+[project.urls]
+homepage = "https://agno.com"
+documentation = "https://docs.agno.com"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools.packages.find]
+include = ["agno*"]
+
+[tool.setuptools.package-data]
+agno = ["py.typed"]
+include = ["LICENSE"]
+
+[tool.pytest.ini_options]
+log_cli = true
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = "tests"
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+# Ignore `F401` (import violations) in all `__init__.py` files
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_configs = true
+disable_error_code = ["override"]
+plugins = ["pydantic.mypy"]
+exclude = ["tests*"]
+
+[[tool.mypy.overrides]]
+module = [
+  "agno.*",
+  "boto3.*",
+  "botocore.*",
+  "docker.*",
+  "tomllib.*",
+  "yaml.*",
+]
+ignore_missing_imports = true

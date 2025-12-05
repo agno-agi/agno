@@ -26,7 +26,6 @@ agent = Agent(
         "5. Handle errors gracefully and provide meaningful feedback",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example 1: Financial Statements

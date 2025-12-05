@@ -25,13 +25,12 @@ class SQLTools(Toolkit):
         schema: Optional[str] = None,
         dialect: Optional[str] = None,
         tables: Optional[Dict[str, Any]] = None,
-        list_tables: bool = True,
-        describe_table: bool = True,
-        run_sql_query: bool = True,
+        enable_list_tables: bool = True,
+        enable_describe_table: bool = True,
+        enable_run_sql_query: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="sql_tools", **kwargs)
-
         # Get the database engine
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
@@ -49,16 +48,20 @@ class SQLTools(Toolkit):
         self.db_engine: Engine = _engine
         self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)
 
+        self.schema = schema
+
         # Tables this toolkit can access
         self.tables: Optional[Dict[str, Any]] = tables
 
-        # Register functions in the toolkit
-        if list_tables:
-            self.register(self.list_tables)
-        if describe_table:
-            self.register(self.describe_table)
-        if run_sql_query:
-            self.register(self.run_sql_query)
+        tools: List[Any] = []
+        if enable_list_tables or all:
+            tools.append(self.list_tables)
+        if enable_describe_table or all:
+            tools.append(self.describe_table)
+        if enable_run_sql_query or all:
+            tools.append(self.run_sql_query)
+
+        super().__init__(name="sql_tools", tools=tools, **kwargs)
 
     def list_tables(self) -> str:
         """Use this function to get a list of table names in the database.
@@ -71,7 +74,11 @@ class SQLTools(Toolkit):
 
         try:
             log_debug("listing tables in the database")
-            table_names = inspect(self.db_engine).get_table_names()
+            inspector = inspect(self.db_engine)
+            if self.schema:
+                table_names = inspector.get_table_names(schema=self.schema)
+            else:
+                table_names = inspector.get_table_names()
             log_debug(f"table_names: {table_names}")
             return json.dumps(table_names)
         except Exception as e:
@@ -90,9 +97,14 @@ class SQLTools(Toolkit):
 
         try:
             log_debug(f"Describing table: {table_name}")
-            table_names = inspect(self.db_engine)
-            table_schema = table_names.get_columns(table_name)
-            return json.dumps([str(column) for column in table_schema])
+            inspector = inspect(self.db_engine)
+            table_schema = inspector.get_columns(table_name, schema=self.schema)
+            return json.dumps(
+                [
+                    {"name": column["name"], "type": str(column["type"]), "nullable": column["nullable"]}
+                    for column in table_schema
+                ]
+            )
         except Exception as e:
             logger.error(f"Error getting table schema: {e}")
             return f"Error getting table schema: {e}"

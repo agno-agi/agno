@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.deepinfra import DeepInfra  # noqa
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -29,11 +29,11 @@ class MovieScript(BaseModel):
 agent = Agent(
     model=DeepInfra(id="microsoft/phi-4"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable
-# response: RunResponse = agent.run("New York")
+# response: RunOutput = agent.run("New York")
 # pprint(response.content)
 
 agent.print_response("New York")

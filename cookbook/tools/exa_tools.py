@@ -1,16 +1,43 @@
 from agno.agent import Agent
 from agno.tools.exa import ExaTools
 
+# Example 1: Enable all tools
+agent_all = Agent(
+    tools=[
+        ExaTools(
+            all=True,  # Enable all exa tools
+            show_results=True,
+        )
+    ],
+    markdown=True,
+)
+
+# Example 2: Enable specific tools only
+agent_specific = Agent(
+    tools=[
+        ExaTools(
+            enable_search=True,
+            enable_answer=True,
+            enable_get_contents=False,
+            enable_find_similar=False,
+            enable_research=False,
+            include_domains=["cnbc.com", "reuters.com", "bloomberg.com"],
+            show_results=True,
+            text=False,
+        )
+    ],
+    markdown=True,
+)
+
+# Example 3: Default behavior (most functions enabled by default)
 agent = Agent(
     tools=[
         ExaTools(
             include_domains=["cnbc.com", "reuters.com", "bloomberg.com"],
             show_results=True,
             text=False,
-            highlights=False,
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -23,7 +50,6 @@ agent = Agent(
             show_results=True,
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

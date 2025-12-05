@@ -4,7 +4,7 @@ from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
@@ -13,7 +13,7 @@ agent.print_response(
     "Tell me about this image and search the web for more information.",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg"
+            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
         ),
     ],
     stream=True,

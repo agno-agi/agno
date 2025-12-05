@@ -4,7 +4,7 @@ This example shows how to create an AI news reporter agent that can search the w
 for real-time news and present them with a distinctive NYC personality. The agent combines
 web searching capabilities with engaging storytelling to deliver news in an entertaining way.
 
-Run `pip install openai duckduckgo-search agno` to install dependencies.
+Run `pip install openai ddgs agno` to install dependencies.
 """
 
 from textwrap import dedent
@@ -41,7 +41,6 @@ agent = Agent(
         Remember: Always verify facts through web searches and maintain that authentic NYC energy!\
     """),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

@@ -12,16 +12,15 @@ class CsvTools(Toolkit):
         self,
         csvs: Optional[List[Union[str, Path]]] = None,
         row_limit: Optional[int] = None,
-        read_csvs: bool = True,
-        list_csvs: bool = True,
-        query_csvs: bool = True,
-        read_column_names: bool = True,
         duckdb_connection: Optional[Any] = None,
         duckdb_kwargs: Optional[Dict[str, Any]] = None,
+        enable_read_csv_file: bool = True,
+        enable_list_csv_files: bool = True,
+        enable_get_columns: bool = True,
+        enable_query_csv_file: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="csv_tools", **kwargs)
-
         self.csvs: List[Path] = []
         if csvs:
             for _csv in csvs:
@@ -35,18 +34,22 @@ class CsvTools(Toolkit):
         self.duckdb_connection: Optional[Any] = duckdb_connection
         self.duckdb_kwargs: Optional[Dict[str, Any]] = duckdb_kwargs
 
-        if read_csvs:
-            self.register(self.read_csv_file)
-        if list_csvs:
-            self.register(self.list_csv_files)
-        if read_column_names:
-            self.register(self.get_columns)
-        if query_csvs:
+        tools: List[Any] = []
+        if all or enable_read_csv_file:
+            tools.append(self.read_csv_file)
+        if all or enable_list_csv_files:
+            tools.append(self.list_csv_files)
+        if all or enable_get_columns:
+            tools.append(self.get_columns)
+        if all or enable_query_csv_file:
             try:
                 import duckdb  # noqa: F401
+
+                tools.append(self.query_csv_file)
             except ImportError:
-                raise ImportError("`duckdb` not installed. Please install using `pip install duckdb`.")
-            self.register(self.query_csv_file)
+                logger.warning("`duckdb` not installed. Query functionality disabled.")
+
+        super().__init__(name="csv_tools", tools=tools, **kwargs)
 
     def list_csv_files(self) -> str:
         """Returns a list of available csv files
@@ -147,7 +150,9 @@ class CsvTools(Toolkit):
                 return "Error connecting to DuckDB, please check the connection."
 
             # Create a table from the csv file
-            con.execute(f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv_auto('{file_path}')")
+            con.execute(
+                f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv('{file_path}', ignore_errors=false, auto_detect=true)"
+            )
 
             # -*- Format the SQL Query
             # Remove backticks

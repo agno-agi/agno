@@ -1,7 +1,7 @@
+import json
 from functools import partial
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.utils.log import log_debug, log_exception
 
 try:
@@ -12,7 +12,8 @@ except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
 
-from agno.media import ImageArtifact
+from agno.media import Image
+from agno.tools.function import ToolResult
 
 
 def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
@@ -27,29 +28,87 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
         Callable: The entrypoint function for the tool
     """
 
-    async def call_tool(agent: Agent, tool_name: str, **kwargs) -> str:
+    async def call_tool(tool_name: str, **kwargs) -> ToolResult:
+        try:
+            await session.send_ping()
+        except Exception as e:
+            log_exception(e)
+
         try:
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
             result: CallToolResult = await session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:
-                raise Exception(f"Error from MCP tool '{tool_name}': {result.content}")
+                return ToolResult(content=f"Error from MCP tool '{tool_name}': {result.content}")
 
             # Process the result content
             response_str = ""
+            images = []
+
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
-                    response_str += content_item.text + "\n"
+                    text_content = content_item.text
+
+                    # Parse as JSON to check for custom image format
+                    try:
+                        parsed_json = json.loads(text_content)
+                        if (
+                            isinstance(parsed_json, dict)
+                            and parsed_json.get("type") == "image"
+                            and "data" in parsed_json
+                        ):
+                            log_debug("Found custom JSON image format in TextContent")
+
+                            # Extract image data
+                            image_data = parsed_json.get("data")
+                            mime_type = parsed_json.get("mimeType", "image/png")
+
+                            if image_data and isinstance(image_data, str):
+                                import base64
+
+                                try:
+                                    image_bytes = base64.b64decode(image_data)
+                                except Exception as e:
+                                    log_debug(f"Failed to decode base64 image data: {e}")
+                                    image_bytes = None
+
+                                if image_bytes:
+                                    img_artifact = Image(
+                                        id=str(uuid4()),
+                                        url=None,
+                                        content=image_bytes,
+                                        mime_type=mime_type,
+                                    )
+                                    images.append(img_artifact)
+                                    response_str += "Image has been generated and added to the response.\n"
+                                    continue
+
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                    response_str += text_content + "\n"
+
                 elif isinstance(content_item, ImageContent):
-                    # Handle image content if present
-                    img_artifact = ImageArtifact(
+                    # Handle standard MCP ImageContent
+                    image_data = getattr(content_item, "data", None)
+
+                    if image_data and isinstance(image_data, str):
+                        import base64
+
+                        try:
+                            image_data = base64.b64decode(image_data)
+                        except Exception as e:
+                            log_debug(f"Failed to decode base64 image data: {e}")
+                            image_data = None
+
+                    img_artifact = Image(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
-                        content=getattr(content_item, "data", None),
+                        content=image_data,
                         mime_type=getattr(content_item, "mimeType", "image/png"),
                     )
-                    agent.add_image(img_artifact)
+                    images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
@@ -58,9 +117,98 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
-            return response_str.strip()
+            return ToolResult(
+                content=response_str.strip(),
+                images=images if images else None,
+            )
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")
 
-    return partial(call_tool, tool_name=tool.name, tool_description=tool.description)
+    return partial(call_tool, tool_name=tool.name)
+
+
+def prepare_command(command: str) -> list[str]:
+    """Sanitize a command and split it into parts before using it to run a MCP server."""
+    import os
+    import shutil
+    from shlex import split
+
+    # Block dangerous characters
+    if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")"]):
+        raise ValueError("MCP command can't contain shell metacharacters")
+
+    parts = split(command)
+    if not parts:
+        raise ValueError("MCP command can't be empty")
+
+    # Only allow specific executables
+    ALLOWED_COMMANDS = {
+        # Python
+        "python",
+        "python3",
+        "uv",
+        "uvx",
+        "pipx",
+        # Node
+        "node",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        # Other runtimes
+        "deno",
+        "java",
+        "ruby",
+        "docker",
+    }
+
+    executable = parts[0].split("/")[-1]
+
+    # Check if it's a relative path starting with ./ or ../
+    if executable.startswith("./") or executable.startswith("../"):
+        # Allow relative paths to binaries
+        return parts
+
+    # Check if it's an absolute path to a binary
+    if executable.startswith("/") and os.path.isfile(executable):
+        # Allow absolute paths to existing files
+        return parts
+
+    # Check if it's a binary in current directory without ./
+    if "/" not in executable and os.path.isfile(executable):
+        # Allow binaries in current directory
+        return parts
+
+    # Check if it's a binary in PATH
+    if shutil.which(executable):
+        return parts
+
+    if executable not in ALLOWED_COMMANDS:
+        raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
+
+    first_part = parts[0]
+    executable = first_part.split("/")[-1]
+
+    # Allow known commands
+    if executable in ALLOWED_COMMANDS:
+        return parts
+
+    # Allow relative paths to custom binaries
+    if first_part.startswith(("./", "../")):
+        return parts
+
+    # Allow absolute paths to existing files
+    if first_part.startswith("/") and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in current directory without ./
+    if "/" not in first_part and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in PATH
+    if shutil.which(first_part):
+        return parts
+
+    raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")

@@ -1,6 +1,6 @@
 from datetime import datetime
 from os import getenv
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -18,11 +18,13 @@ class CalComTools(Toolkit):
         api_key: Optional[str] = None,
         event_type_id: Optional[int] = None,
         user_timezone: Optional[str] = None,
-        get_available_slots: bool = True,
-        create_booking: bool = True,
-        get_upcoming_bookings: bool = True,
-        reschedule_booking: bool = True,
-        cancel_booking: bool = True,
+        # Enable flags for <6 functions
+        enable_get_available_slots: bool = True,
+        enable_create_booking: bool = True,
+        enable_get_upcoming_bookings: bool = True,
+        enable_reschedule_booking: bool = True,
+        enable_cancel_booking: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize the Cal.com toolkit.
@@ -32,7 +34,6 @@ class CalComTools(Toolkit):
             event_type_id: Default event type ID for bookings
             user_timezone: User's timezone in IANA format (e.g., 'Asia/Kolkata')
         """
-        super().__init__(name="calcom", **kwargs)
 
         # Get credentials from environment if not provided
         self.api_key = api_key or getenv("CALCOM_API_KEY")
@@ -49,17 +50,19 @@ class CalComTools(Toolkit):
 
         self.user_timezone = user_timezone or "America/New_York"
 
-        # Register all methods
-        if get_available_slots:
-            self.register(self.get_available_slots)
-        if create_booking:
-            self.register(self.create_booking)
-        if get_upcoming_bookings:
-            self.register(self.get_upcoming_bookings)
-        if reschedule_booking:
-            self.register(self.reschedule_booking)
-        if cancel_booking:
-            self.register(self.cancel_booking)
+        tools: List[Any] = []
+        if all or enable_get_available_slots:
+            tools.append(self.get_available_slots)
+        if all or enable_create_booking:
+            tools.append(self.create_booking)
+        if all or enable_get_upcoming_bookings:
+            tools.append(self.get_upcoming_bookings)
+        if all or enable_reschedule_booking:
+            tools.append(self.reschedule_booking)
+        if all or enable_cancel_booking:
+            tools.append(self.cancel_booking)
+
+        super().__init__(name="calcom", tools=tools, **kwargs)
 
     def _convert_to_user_timezone(self, utc_time: str) -> str:
         """Convert UTC time to user's timezone.

@@ -3,96 +3,107 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
-from agno.memory import AgentMemory
-from agno.memory.classifier import MemoryClassifier
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.manager import MemoryManager
-from agno.memory.summarizer import MemorySummarizer
 from agno.models.openai import OpenAIResponses
-from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
-def _assert_metrics(response: RunResponse):
+@pytest.fixture(scope="module")
+def openai_responses_model():
+    """Fixture that provides an OpenAI Responses model and reuses it across all tests in the module."""
+    return OpenAIResponses(id="gpt-4o-mini")
+
+
+def _assert_metrics(response: RunOutput):
     """
     Assert that the response metrics are valid and consistent.
 
     Args:
-        response: The RunResponse to validate metrics for
+        response: The RunOutput to validate metrics for
     """
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
-def test_basic():
+def test_basic(openai_responses_model):
     """Test basic functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=openai_responses_model, markdown=True, telemetry=False)
 
     # Run a simple query
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
     _assert_metrics(response)
 
 
-def test_basic_stream():
+def test_basic_stream(openai_responses_model, shared_db):
     """Test basic streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=openai_responses_model, db=shared_db, markdown=True, telemetry=False)
 
-    response_stream = agent.run("Share a 2 sentence horror story", stream=True)
+    run_stream = agent.run("Say 'hi'", stream=True)
+    for chunk in run_stream:
+        assert chunk.content is not None or chunk.model_provider_data is not None
 
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert isinstance(response, RunResponse)
-        assert response.content is not None
-
-    _assert_metrics(agent.run_response)
+    run_output = agent.get_last_run_output()
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 @pytest.mark.asyncio
-async def test_async_basic():
+async def test_async_basic(openai_responses_model):
     """Test basic async functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=openai_responses_model, markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream():
+async def test_async_basic_stream(openai_responses_model, shared_db):
     """Test basic async streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=openai_responses_model, db=shared_db, markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
+        assert response.content is not None or response.model_provider_data is not None
 
-    async for response in response_stream:
-        assert isinstance(response, RunResponse)
-        assert response.content is not None
-    _assert_metrics(agent.run_response)
+    run_output = agent.get_last_run_output()
+    assert run_output.content is not None
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    assert [m.role for m in run_output.messages] == ["system", "user", "assistant"]
+    assert run_output.messages[2].content is not None
+    assert run_output.messages[2].role == "assistant"
+    assert run_output.messages[2].metrics.input_tokens is not None
+    assert run_output.messages[2].metrics.output_tokens is not None
+    assert run_output.messages[2].metrics.total_tokens is not None
 
 
 def test_exception_handling():
     """Test proper error handling for invalid model IDs."""
-    agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False)
 
     with pytest.raises(ModelProviderError) as exc:
         agent.run("Share a 2 sentence horror story")
@@ -102,15 +113,14 @@ def test_exception_handling():
     assert exc.value.status_code == 400
 
 
-def test_with_memory():
+def test_with_memory(openai_responses_model):
     """Test that the model retains context from previous interactions."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        model=openai_responses_model,
+        db=SqliteDb(db_file="tmp/openai/responses/test_with_memory.db"),
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -119,17 +129,18 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John Smith" in response2.content
+    assert response2.content is not None and "John Smith" in response2.content
 
     # Verify memories were created
-    assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+    messages = agent.get_session_messages()
+    assert len(messages) == 5
+    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
     _assert_metrics(response2)
 
 
-def test_structured_output_json_mode():
+def test_structured_output_json_mode(openai_responses_model):
     """Test structured output with Pydantic models."""
 
     class MovieScript(BaseModel):
@@ -139,11 +150,10 @@ def test_structured_output_json_mode():
         release_date: Optional[str] = Field(None, description="Release date of the movie")
 
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        model=openai_responses_model,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -155,7 +165,7 @@ def test_structured_output_json_mode():
     assert response.content.plot is not None
 
 
-def test_structured_output():
+def test_structured_output(openai_responses_model):
     """Test native structured output with the responses API."""
 
     class MovieScript(BaseModel):
@@ -165,10 +175,9 @@ def test_structured_output():
         release_date: Optional[str] = Field(None, description="Release date of the movie")
 
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        model=openai_responses_model,
+        output_schema=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -180,55 +189,71 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
-def test_history():
+def test_history(openai_responses_model):
     """Test conversation history in the agent."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        model=openai_responses_model,
+        db=SqliteDb(db_file="tmp/openai/responses/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8
+
+
+def test_client_persistence(openai_responses_model):
+    """Test that the same OpenAI Responses client instance is reused across multiple calls"""
+    agent = Agent(model=openai_responses_model, markdown=True, telemetry=False)
+
+    # First call should create a new client
     agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    first_client = openai_responses_model.client
+    assert first_client is not None
+
+    # Second call should reuse the same client
+    agent.run("Hello again")
+    second_client = openai_responses_model.client
+    assert second_client is not None
+    assert first_client is second_client, "Client should be persisted and reused"
+
+    # Third call should also reuse the same client
+    agent.run("Hello once more")
+    third_client = openai_responses_model.client
+    assert third_client is not None
+    assert first_client is third_client, "Client should still be the same instance"
 
 
-def test_persistent_memory():
-    """Test persistent memory with the Responses API."""
-    agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
-        markdown=True,
-        show_tool_calls=True,
-        telemetry=False,
-        monitoring=False,
-        instructions=[
-            "You can search the internet with DuckDuckGo.",
-        ],
-        storage=SqliteAgentStorage(table_name="responses_agent", db_file="tmp/agent_storage.db"),
-        # Adds the current date and time to the instructions
-        add_datetime_to_instructions=True,
-        # Adds the history of the conversation to the messages
-        add_history_to_messages=True,
-        # Number of history responses to add to the messages
-        num_history_responses=15,
-        memory=AgentMemory(
-            db=SqliteMemoryDb(db_file="tmp/responses_agent_memory.db"),
-            create_user_memories=True,
-            create_session_summary=True,
-            update_user_memories_after_run=True,
-            update_session_summary_after_run=True,
-            classifier=MemoryClassifier(model=OpenAIResponses(id="gpt-4o-mini")),
-            summarizer=MemorySummarizer(model=OpenAIResponses(id="gpt-4o-mini")),
-            manager=MemoryManager(model=OpenAIResponses(id="gpt-4o-mini")),
-        ),
-    )
+@pytest.mark.asyncio
+async def test_async_client_persistence(openai_responses_model):
+    """Test that the same async OpenAI Responses client instance is reused across multiple calls"""
+    agent = Agent(model=openai_responses_model, markdown=True, telemetry=False)
 
-    response = agent.run("What is current news in France?")
-    assert response.content is not None
+    # First call should create a new async client
+    await agent.arun("Hello")
+    first_client = openai_responses_model.async_client
+    assert first_client is not None
+
+    # Second call should reuse the same async client
+    await agent.arun("Hello again")
+    second_client = openai_responses_model.async_client
+    assert second_client is not None
+    assert first_client is second_client, "Async client should be persisted and reused"
+
+    # Third call should also reuse the same async client
+    await agent.arun("Hello once more")
+    third_client = openai_responses_model.async_client
+    assert third_client is not None
+    assert first_client is third_client, "Async client should still be the same instance"

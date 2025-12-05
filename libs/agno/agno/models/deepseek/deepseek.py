@@ -1,8 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -11,14 +11,19 @@ class DeepSeek(OpenAILike):
     """
     A class for interacting with DeepSeek models.
 
-    For more information, see: https://api-docs.deepseek.com/
+    Attributes:
+        id (str): The model id. Defaults to "deepseek-chat".
+        name (str): The model name. Defaults to "DeepSeek".
+        provider (str): The provider name. Defaults to "DeepSeek".
+        api_key (Optional[str]): The API key.
+        base_url (str): The base URL. Defaults to "https://api.deepseek.com".
     """
 
     id: str = "deepseek-chat"
     name: str = "DeepSeek"
     provider: str = "DeepSeek"
 
-    api_key: Optional[str] = getenv("DEEPSEEK_API_KEY", None)
+    api_key: Optional[str] = field(default_factory=lambda: getenv("DEEPSEEK_API_KEY"))
     base_url: str = "https://api.deepseek.com"
 
     # Their support for structured outputs is currently broken
@@ -30,10 +35,9 @@ class DeepSeek(OpenAILike):
             self.api_key = getenv("DEEPSEEK_API_KEY")
             if not self.api_key:
                 # Raise error immediately if key is missing
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="DEEPSEEK_API_KEY not set. Please set the DEEPSEEK_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
 
         # Define base client params

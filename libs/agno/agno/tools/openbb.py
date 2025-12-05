@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -17,15 +17,14 @@ class OpenBBTools(Toolkit):
         obb: Optional[Any] = None,
         openbb_pat: Optional[str] = None,
         provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = "yfinance",
-        stock_price: bool = True,
-        search_symbols: bool = False,
-        company_news: bool = False,
-        company_profile: bool = False,
-        price_targets: bool = False,
+        enable_get_stock_price: bool = True,
+        enable_search_company_symbol: bool = False,
+        enable_get_company_news: bool = False,
+        enable_get_company_profile: bool = False,
+        enable_get_price_targets: bool = False,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="yfinance_tools", **kwargs)
-
         self.obb = obb or openbb_app
         try:
             if openbb_pat or getenv("OPENBB_PAT"):
@@ -35,16 +34,19 @@ class OpenBBTools(Toolkit):
 
         self.provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = provider
 
-        if stock_price:
-            self.register(self.get_stock_price)
-        if search_symbols:
-            self.register(self.search_company_symbol)
-        if company_news:
-            self.register(self.get_company_news)
-        if company_profile:
-            self.register(self.get_company_profile)
-        if price_targets:
-            self.register(self.get_price_targets)
+        tools: List[Any] = []
+        if enable_get_stock_price or all:
+            tools.append(self.get_stock_price)
+        if enable_search_company_symbol or all:
+            tools.append(self.search_company_symbol)
+        if enable_get_company_news or all:
+            tools.append(self.get_company_news)
+        if enable_get_company_profile or all:
+            tools.append(self.get_company_profile)
+        if enable_get_price_targets or all:
+            tools.append(self.get_price_targets)
+
+        super().__init__(name="openbb_tools", tools=tools, **kwargs)
 
     def get_stock_price(self, symbol: str) -> str:
         """Use this function to get the current stock price for a stock symbol or list of symbols.

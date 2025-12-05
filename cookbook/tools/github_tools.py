@@ -29,13 +29,51 @@ GitHub Authentication Setup Guide
 from agno.agent import Agent
 from agno.tools.github import GithubTools
 
+# Example 1: Include specific GitHub functions
 agent = Agent(
     instructions=[
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "Do not create any issues or pull requests unless explicitly asked to do so",
     ],
+    tools=[
+        GithubTools(
+            include_tools=[
+                "search_repositories",
+                "get_repository",
+                "list_repositories",
+                "get_pull_requests",
+                "list_issues",
+            ]
+        )
+    ],
+)
+
+# Example 2: Exclude dangerous functions
+agent_safe = Agent(
+    instructions=[
+        "Use your tools to answer questions about the repo: agno-agi/agno",
+        "You can only read repository data, not modify anything",
+    ],
+    tools=[
+        GithubTools(
+            exclude_tools=[
+                "delete_repository",
+                "create_repository",
+                "create_issue",
+                "create_pull_request",
+                "delete_file",
+            ]
+        )
+    ],
+)
+
+# Example 3: Include all functions (default behavior)
+agent_full = Agent(
+    instructions=[
+        "Use your tools to answer questions about the repo: agno-agi/agno",
+        "You have full access to GitHub repository management",
+    ],
     tools=[GithubTools()],
-    show_tool_calls=True,
 )
 
 # Basic repository listing
@@ -144,6 +182,21 @@ agent.print_response("List open pull requests", markdown=True)
 
 # # Example usage: Create a Repo
 # agent.print_response("Create a repo called agno-test and add description hello", markdown=True)
+
+# # Example usage: Get repository stars
+# agent.print_response("How many stars does the agno-agi/agno repository have?", markdown=True)
+
+# # Example usage: Get pull requests by query parameters
+# agent.print_response("Get open pull requests from the agno-agi/agno repository on the main branch sorted by creation date", markdown=True)
+
+# # Example usage: Get pull request comments
+# agent.print_response("Show me all review comments on pull request #100 in the agno-agi/agno repository", markdown=True)
+
+# # Example usage: Create a pull request comment
+# agent.print_response("Add a comment 'Nice work!' to line 10 of file.py in the latest commit of PR #100 in the agno-agi/agno repository", markdown=True)
+
+# # Example usage: Edit a pull request comment
+# agent.print_response("Update comment #1057297855 in the agno-agi/agno repository to say 'Updated: This looks good now'", markdown=True)
 
 # # Example usage: Get repository stars
 # agent.print_response("How many stars does the agno-agi/agno repository have?", markdown=True)

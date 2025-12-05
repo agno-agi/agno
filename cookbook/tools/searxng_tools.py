@@ -1,8 +1,8 @@
 from agno.agent import Agent
-from agno.tools.searxng import Searxng
+from agno.tools.searxng import SearxngTools
 
 # Initialize Searxng with your Searxng instance URL
-searxng = Searxng(
+searxng = SearxngTools(
     host="http://localhost:53153",
     engines=[],
     fixed_max_results=5,

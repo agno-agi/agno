@@ -2,7 +2,7 @@
 
 Describe key changes, mention related issues or motivation for the changes.
 
-(If applicable, issue number: #____)
+(If applicable, issue number: #\_\_\_\_)
 
 ## Type of change
 

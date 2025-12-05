@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -10,12 +10,22 @@ except ImportError:
 
 
 class PandasTools(Toolkit):
-    def __init__(self, **kwargs):
-        super().__init__(name="pandas_tools", **kwargs)
-
+    def __init__(
+        self,
+        enable_create_pandas_dataframe: bool = True,
+        enable_run_dataframe_operation: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
         self.dataframes: Dict[str, pd.DataFrame] = {}
-        self.register(self.create_pandas_dataframe)
-        self.register(self.run_dataframe_operation)
+
+        tools: List[Any] = []
+        if all or enable_create_pandas_dataframe:
+            tools.append(self.create_pandas_dataframe)
+        if all or enable_run_dataframe_operation:
+            tools.append(self.run_dataframe_operation)
+
+        super().__init__(name="pandas_tools", tools=tools, **kwargs)
 
     def create_pandas_dataframe(
         self, dataframe_name: str, create_using_function: str, function_parameters: Dict[str, Any]

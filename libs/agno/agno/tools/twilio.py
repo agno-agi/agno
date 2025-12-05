@@ -22,6 +22,10 @@ class TwilioTools(Toolkit):
         region: Optional[str] = None,
         edge: Optional[str] = None,
         debug: bool = False,
+        enable_send_sms: bool = True,
+        enable_get_call_details: bool = True,
+        enable_list_messages: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize the Twilio toolkit.
@@ -39,8 +43,6 @@ class TwilioTools(Toolkit):
             edge: Optional Twilio edge location (e.g. 'sydney')
             debug: Enable debug logging
         """
-        super().__init__(name="twilio", **kwargs)
-
         # Get credentials from environment if not provided
         self.account_sid = account_sid or getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = auth_token or getenv("TWILIO_AUTH_TOKEN")
@@ -85,9 +87,15 @@ class TwilioTools(Toolkit):
             logging.basicConfig()
             self.client.http_client.logger.setLevel(logging.INFO)
 
-        self.register(self.send_sms)
-        self.register(self.get_call_details)
-        self.register(self.list_messages)
+        tools: List[Any] = []
+        if all or enable_send_sms:
+            tools.append(self.send_sms)
+        if all or enable_get_call_details:
+            tools.append(self.get_call_details)
+        if all or enable_list_messages:
+            tools.append(self.list_messages)
+
+        super().__init__(name="twilio", tools=tools, **kwargs)
 
     @staticmethod
     def validate_phone_number(phone: str) -> bool:

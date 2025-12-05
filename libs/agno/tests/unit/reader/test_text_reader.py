@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.document.base import Document
-from agno.document.reader.text_reader import TextReader
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.text_reader import TextReader
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_chunking():
 
     assert len(documents) == 2
     assert all(doc.name.startswith("test_chunk_") for doc in documents)
-    assert all(doc.id.startswith("test_chunk_") for doc in documents)
+    assert all(doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1") for doc in documents)
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
@@ -193,7 +193,11 @@ async def test_async_chunking():
 
     assert len(documents) == 2
     assert all(doc.name.startswith("test_chunk_") for doc in documents)
-    assert all(doc.id.startswith("test_chunk_") for doc in documents)
+    assert all(
+        doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1")
+        # Check if the id ends with "_chunk_0" or "_chunk_1"
+        for doc in documents
+    )
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
@@ -274,7 +278,7 @@ async def test_async_without_aiofiles(tmp_path):
     text_path = tmp_path / "test.txt"
     text_path.write_text(test_data)
 
-    with patch("agno.document.reader.text_reader.aiofiles", create=True) as mock_aiofiles:
+    with patch("agno.knowledge.reader.text_reader.aiofiles", create=True) as mock_aiofiles:
         mock_aiofiles.open.side_effect = ImportError
 
         reader = TextReader()
@@ -327,7 +331,7 @@ async def test_async_parallel_chunking():
         documents = await reader.async_read(text_bytes)
         assert len(documents) == 2  # Should return 2 chunks
         assert all(doc.name.startswith("test_chunk_") for doc in documents)
-        assert all(doc.id.startswith("test_chunk_") for doc in documents)
+        assert all(doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1") for doc in documents)
         assert all("chunk" in doc.meta_data for doc in documents)
     finally:
         # Restore original processor

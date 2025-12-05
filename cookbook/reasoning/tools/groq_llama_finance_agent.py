@@ -2,19 +2,14 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.groq import Groq
-from agno.tools.thinking import ThinkingTools
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.reasoning import ReasoningTools
 
 thinking_llama = Agent(
     model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
     tools=[
-        ThinkingTools(),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        ReasoningTools(),
+        DuckDuckGoTools(),
     ],
     instructions=dedent("""\
     ## General Instructions
@@ -30,7 +25,6 @@ thinking_llama = Agent(
     - Check if all required information is collected and is valid
     - Verify that the planned action completes the task\
     """),
-    show_tool_calls=True,
     markdown=True,
 )
 thinking_llama.print_response("Write a report comparing NVDA to TSLA", stream=True)

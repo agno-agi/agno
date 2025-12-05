@@ -5,29 +5,52 @@ try:
 except ImportError:
     raise ImportError("`spider-client` not installed. Please install using `pip install spider-client`")
 
-from typing import Optional
+from typing import Any, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
 
 class SpiderTools(Toolkit):
+    """
+    Spider is a toolkit for web searching, scraping, and crawling.
+
+    Args:
+        enable_search (bool): Enable web search functionality. Default is True.
+        enable_scrape (bool): Enable web scraping functionality. Default is True.
+        enable_crawl (bool): Enable web crawling functionality. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        max_results (Optional[int]): Default maximum number of results.
+        url (Optional[str]): Default URL for operations.
+        optional_params (Optional[dict]): Additional parameters for operations.
+    """
+
     def __init__(
         self,
         max_results: Optional[int] = None,
         url: Optional[str] = None,
         optional_params: Optional[dict] = None,
+        enable_search: bool = True,
+        enable_scrape: bool = True,
+        enable_crawl: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="spider", **kwargs)
         self.max_results = max_results
         self.url = url
         self.optional_params = optional_params or {}
-        self.register(self.search)
-        self.register(self.scrape)
-        self.register(self.crawl)
 
-    def search(self, query: str, max_results: int = 5) -> str:
+        tools: List[Any] = []
+        if enable_search or all:
+            tools.append(self.search_web)
+        if enable_scrape or all:
+            tools.append(self.scrape)
+        if enable_crawl or all:
+            tools.append(self.crawl)
+
+        super().__init__(name="spider", tools=tools, **kwargs)
+
+    def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.

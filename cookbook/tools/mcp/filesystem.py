@@ -46,7 +46,6 @@ async def run_agent(message: str) -> None:
                 - Be concise and focus on relevant information\
             """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         # Run the agent

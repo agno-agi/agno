@@ -53,9 +53,7 @@ agent = Agent(
     - published on {date} in dd/mm/yyyy
     """),
     markdown=True,
-    show_tool_calls=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     save_response_to_file=str(tmp.joinpath("{message}.md")),
-    # debug_mode=True,
 )
 agent.print_response("Llama 3.3 running on Groq", stream=True)

@@ -3,21 +3,22 @@ from agno.media import File, Image
 from agno.models.anthropic import Claude
 
 
-def test_image_input():
-    agent = Agent(model=Claude(id="claude-3-5-sonnet-20241022"), markdown=True, telemetry=False, monitoring=False)
+def test_image_input(image_path):
+    agent = Agent(model=Claude(id="claude-sonnet-4-20250514"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
 
+    assert response.content is not None
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
 
 
 def test_file_upload():
     agent = Agent(
-        model=Claude(id="claude-3-5-sonnet-20241022"),
+        model=Claude(id="claude-sonnet-4-20250514"),
         markdown=True,
     )
 
