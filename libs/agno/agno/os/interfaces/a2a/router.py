@@ -35,7 +35,7 @@ def attach_routes(
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
     @router.post(
-        "/message/send/{agent_id}",
+        "/agents/{agent_id}",
         operation_id="send_message",
         name="send_message",
         description="Send a message to an Agno Agent, Team, or Workflow. "
@@ -73,7 +73,7 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_send_message(request: Request, agent_id: str):
+    async def a2a_send_message(request: Request, agent_id:str, stream: bool = False):
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_send_message)
 
@@ -102,59 +102,98 @@ def attach_routes(
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the agent, team, or workflow
-        try:
-            if isinstance(entity, Workflow):
-                response = await entity.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
-                    user_id=user_id,
-                    **kwargs,
+
+        if stream:
+            try:
+                if isinstance(entity, Workflow):
+                    event_stream = entity.arun(
+                        input=run_input.input_content,
+                        images=list(run_input.images) if run_input.images else None,
+                        videos=list(run_input.videos) if run_input.videos else None,
+                        audio=list(run_input.audios) if run_input.audios else None,
+                        files=list(run_input.files) if run_input.files else None,
+                        session_id=context_id,
+                        user_id=user_id,
+                        stream=True,
+                        stream_events=True,
+                        **kwargs,
+                    )
+                else:
+                    event_stream = entity.arun(  # type: ignore[assignment]
+                        input=run_input.input_content,
+                        images=run_input.images,
+                        videos=run_input.videos,
+                        audio=run_input.audios,
+                        files=run_input.files,
+                        session_id=context_id,
+                        user_id=user_id,
+                        stream=True,
+                        stream_events=True,
+                        **kwargs,
+                    )
+
+                # 4. Stream the response
+                return StreamingResponse(
+                    stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
+                    media_type="application/x-ndjson",
                 )
-            else:
-                response = await entity.arun(
-                    input=run_input.input_content,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    audio=run_input.audios,
-                    files=run_input.files,
-                    session_id=context_id,
-                    user_id=user_id,
-                    **kwargs,
+
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+        else:
+            try:
+                if isinstance(entity, Workflow):
+                    response = await entity.arun(
+                        input=run_input.input_content,
+                        images=list(run_input.images) if run_input.images else None,
+                        videos=list(run_input.videos) if run_input.videos else None,
+                        audio=list(run_input.audios) if run_input.audios else None,
+                        files=list(run_input.files) if run_input.files else None,
+                        session_id=context_id,
+                        user_id=user_id,
+                        **kwargs,
+                    )
+                else:
+                    response = await entity.arun(
+                        input=run_input.input_content,
+                        images=run_input.images,
+                        videos=run_input.videos,
+                        audio=run_input.audios,
+                        files=run_input.files,
+                        session_id=context_id,
+                        user_id=user_id,
+                        **kwargs,
+                    )
+
+                # 4. Send the response
+                a2a_task = map_run_output_to_a2a_task(response)
+                return SendMessageSuccessResponse(
+                    id=request_body.get("id", "unknown"),
+                    result=a2a_task,
                 )
 
-            # 4. Send the response
-            a2a_task = map_run_output_to_a2a_task(response)
-            return SendMessageSuccessResponse(
-                id=request_body.get("id", "unknown"),
-                result=a2a_task,
-            )
+            # Handle all critical errors
+            except Exception as e:
+                from a2a.types import Message as A2AMessage
+                from a2a.types import Part, Role, TextPart
 
-        # Handle all critical errors
-        except Exception as e:
-            from a2a.types import Message as A2AMessage
-            from a2a.types import Part, Role, TextPart
+                error_message = A2AMessage(
+                    message_id=str(uuid4()),
+                    role=Role.agent,
+                    parts=[Part(root=TextPart(text=f"Error: {str(e)}"))],
+                    context_id=context_id or str(uuid4()),
+                )
+                failed_task = Task(
+                    id=str(uuid4()),
+                    context_id=context_id or str(uuid4()),
+                    status=TaskStatus(state=TaskState.failed),
+                    history=[error_message],
+                )
 
-            error_message = A2AMessage(
-                message_id=str(uuid4()),
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=f"Error: {str(e)}"))],
-                context_id=context_id or str(uuid4()),
-            )
-            failed_task = Task(
-                id=str(uuid4()),
-                context_id=context_id or str(uuid4()),
-                status=TaskStatus(state=TaskState.failed),
-                history=[error_message],
-            )
-
-            return SendMessageSuccessResponse(
-                id=request_body.get("id", "unknown"),
-                result=failed_task,
-            )
+                return SendMessageSuccessResponse(
+                    id=request_body.get("id", "unknown"),
+                    result=failed_task,
+                )
 
     @router.post(
         "/message/stream",
