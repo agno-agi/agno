@@ -2205,6 +2205,8 @@ class Team:
         # Set up retry logic
         num_attempts = self.retries + 1
 
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         for attempt in range(num_attempts):
             log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
             # Run the team
@@ -3085,6 +3087,8 @@ class Team:
 
         # Resolve retry parameters
         num_attempts = self.retries + 1
+
+        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -8900,7 +8904,7 @@ class Team:
         if user_id is None:
             user_id = "default"
 
-        return self.memory_manager.get_user_memories(user_id=user_id)
+        return self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -8917,7 +8921,7 @@ class Team:
         if user_id is None:
             user_id = "default"
 
-        return await self.memory_manager.aget_user_memories(user_id=user_id)
+        return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
     ###########################################################################
     # Handle reasoning content

@@ -7077,7 +7077,7 @@ class Agent:
         if user_id is None:
             user_id = "default"
 
-        return self.memory_manager.get_user_memories(user_id=user_id)
+        return self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -7094,7 +7094,7 @@ class Agent:
         if user_id is None:
             user_id = "default"
 
-        return await self.memory_manager.aget_user_memories(user_id=user_id)
+        return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural knowledge the agent has access to
