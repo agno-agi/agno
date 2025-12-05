@@ -4,6 +4,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from enum import Enum
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model
+from agno.models.base import Model, ModelRetryRequest, RetryReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -50,6 +51,27 @@ except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
     )
+
+
+class GeminiFinishReason(Enum):
+    """Gemini API finish reasons that may require special handling."""
+
+    STOP = "STOP"
+    MAX_TOKENS = "MAX_TOKENS"
+    SAFETY = "SAFETY"
+    RECITATION = "RECITATION"
+    MALFORMED_FUNCTION_CALL = "MALFORMED_FUNCTION_CALL"
+    OTHER = "OTHER"
+
+
+# Guidance message for MALFORMED_FUNCTION_CALL retry
+MALFORMED_FUNCTION_CALL_GUIDANCE = """The previous function call was malformed. Please try again with a valid function call.
+
+Guidelines:
+- Generate the function call JSON directly, do not generate code
+- Use the function name exactly as defined (no namespace prefixes like 'default_api.')
+- Ensure all required parameters are provided with correct types
+"""
 
 
 @dataclass
@@ -111,6 +133,9 @@ class Gemini(Model):
     project_id: Optional[str] = None
     location: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
+
+    # Retry configuration
+    malformed_function_call_retries: int = 3  # Max retries for MALFORMED_FUNCTION_CALL errors
 
     # Gemini client
     client: Optional[GeminiClient] = None
@@ -863,10 +888,10 @@ class Gemini(Model):
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelResponse.
+        Parse the Gemini response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Raw response from Gemini
 
         Returns:
             ModelResponse: Parsed response data
@@ -875,8 +900,26 @@ class Gemini(Model):
 
         # Get response message
         response_message = Content(role="model", parts=[])
-        if response.candidates and response.candidates[0].content:
-            response_message = response.candidates[0].content
+        if response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+
+            # Check for malformed function call (non-streaming)
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                try:
+                    finish_reason = GeminiFinishReason(candidate.finish_reason)
+                    if finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL:
+                        self.request_retry(
+                            ModelRetryRequest(
+                                reason=RetryReason.MALFORMED_FUNCTION_CALL,
+                                guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
+                                max_retries=self.malformed_function_call_retries,
+                            )
+                        )
+                except ValueError:
+                    pass  # Unknown finish reason, ignore
+
+            if candidate.content:
+                response_message = candidate.content
 
         # Add role
         if response_message.role is not None:
@@ -1023,7 +1066,24 @@ class Gemini(Model):
         model_response = ModelResponse()
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
-            candidate_content = response_delta.candidates[0].content
+            candidate = response_delta.candidates[0]
+            candidate_content = candidate.content
+
+            # Check for malformed function call using enum
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                try:
+                    finish_reason = GeminiFinishReason(candidate.finish_reason)
+                    if finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL:
+                        self.request_retry(
+                            ModelRetryRequest(
+                                reason=RetryReason.MALFORMED_FUNCTION_CALL,
+                                guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
+                                max_retries=self.malformed_function_call_retries,
+                            )
+                        )
+                except ValueError:
+                    pass  # Unknown finish reason, ignore
+
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:
                 response_message = candidate_content
