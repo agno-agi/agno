@@ -38,4 +38,5 @@ agent = Agent(
 - **[PPTX](./pptx_reader.py)** - PowerPoint presentation files
 - **[PPTX Async](./pptx_reader_async.py)** - Asynchronous PowerPoint processing
 - **[Web](./web_reader.py)** - Website crawling and scraping
-- 
+- **[VLLM PDF Reader](./vllm_pdf_reader.py)** - PDF Reader with use of VLLM for images caption
+-
