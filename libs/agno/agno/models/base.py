@@ -26,8 +26,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException, ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import MessageMetrics, ToolCallMetrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -54,7 +54,7 @@ class MessageData:
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
 
-    response_metrics: Optional[Metrics] = None
+    response_metrics: Optional[MessageMetrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -429,6 +429,19 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
+        """
+        Ensure message metrics are initialized and timer is started.
+        This should be called before making model API calls.
+
+        Args:
+            assistant_message: The assistant message to initialize metrics for
+        """
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
+        if assistant_message.metrics.timer is None or assistant_message.metrics.timer.start_time is None:
+            assistant_message.metrics.start_timer()
+
     def response(
         self,
         messages: List[Message],
@@ -480,6 +493,9 @@ class Model(ABC):
             while True:
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
+                # Initialize message metrics and start timer before model call
+                assistant_message.metrics = MessageMetrics()
+                assistant_message.metrics.start_timer()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -977,6 +993,9 @@ class Model(ABC):
         # Add content to assistant message
         if provider_response.content is not None:
             assistant_message.content = provider_response.content
+            # Set time_to_first_token when we receive content if not already set
+            if assistant_message.metrics is not None and assistant_message.metrics.time_to_first_token is None:
+                assistant_message.metrics.set_time_to_first_token()
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
@@ -1020,9 +1039,21 @@ class Model(ABC):
         if provider_response.citations is not None:
             assistant_message.citations = provider_response.citations
 
-        # Add usage metrics if provided
+        # Add usage metrics if provided - convert Metrics to MessageMetrics
         if provider_response.response_usage is not None:
-            assistant_message.metrics += provider_response.response_usage
+            if assistant_message.metrics is None:
+                # Initialize if not already initialized (shouldn't happen, but safety check)
+                assistant_message.metrics = MessageMetrics()
+                assistant_message.metrics.start_timer()
+            # Update MessageMetrics with usage data from response
+            usage = provider_response.response_usage
+            # Convert Metrics to MessageMetrics for addition
+            usage_metrics = MessageMetrics.from_metrics(usage)
+            # Use in-place addition to preserve timer automatically
+            assistant_message.metrics += usage_metrics
+            # Set time_to_first_token if we have content and it's not already set
+            if provider_response.content is not None and assistant_message.metrics.time_to_first_token is None:
+                assistant_message.metrics.set_time_to_first_token()
 
         return assistant_message
 
@@ -1110,6 +1141,9 @@ class Model(ABC):
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
+                # Initialize message metrics and start timer before model call
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
                 model_response = ModelResponse()
                 if stream_model_response:
                     # Generate response
@@ -1506,12 +1540,22 @@ class Model(ABC):
 
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
-                stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+                # Initialize if not already initialized (shouldn't happen, but safety check)
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
+            # Update MessageMetrics with usage data from response
+            usage = model_response_delta.response_usage
+            # Convert Metrics to MessageMetrics for addition
+            usage_metrics = MessageMetrics.from_metrics(usage)
+            # Use in-place addition to preserve timer automatically
+            stream_data.response_metrics += usage_metrics
 
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
+            # Set time_to_first_token on first content chunk if not already set
+            if stream_data.response_metrics is not None and stream_data.response_metrics.time_to_first_token is None:
+                stream_data.response_metrics.set_time_to_first_token()
             should_yield = True
 
         if model_response_delta.reasoning_content is not None:
@@ -1645,9 +1689,8 @@ class Model(ABC):
         function_execution_result: Optional[FunctionExecutionResult] = None,
     ) -> Message:
         """Create a function call result message."""
-        kwargs = {}
-        if timer is not None:
-            kwargs["metrics"] = Metrics(duration=timer.elapsed)
+        kwargs: Dict[str, Any] = {}
+        # Tool messages don't get metrics - only assistant messages do
 
         # Include media artifacts from function execution result in the tool message
         images = None
@@ -1811,6 +1854,20 @@ class Model(ABC):
         # Override stop_after_tool_call if set by exception
         if stop_after_tool_call_from_exception:
             function_call_result.stop_after_tool_call = True
+
+        # Create ToolCallMetrics for the tool execution
+        tool_metrics = None
+        if function_call_timer is not None and function_call_timer.elapsed > 0:
+            from time import time
+
+            tool_metrics = ToolCallMetrics()
+            tool_metrics.timer = function_call_timer
+            tool_metrics.duration = function_call_timer.elapsed
+            # Calculate Unix timestamps (Timer uses perf_counter which is relative)
+            current_time = time()
+            tool_metrics.end_time = current_time
+            tool_metrics.start_time = current_time - function_call_timer.elapsed
+
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
@@ -1821,7 +1878,7 @@ class Model(ABC):
                     tool_call_error=function_call_result.tool_call_error,
                     result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
-                    metrics=function_call_result.metrics,
+                    metrics=tool_metrics,
                 )
             ],
             event=ModelResponseEvent.tool_call_completed.value,
@@ -2335,6 +2392,20 @@ class Model(ABC):
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:
                 function_call_result.stop_after_tool_call = True
+
+            # Create ToolCallMetrics for the tool execution
+            tool_metrics = None
+            if function_call_timer is not None and function_call_timer.elapsed > 0:
+                from time import time
+
+                tool_metrics = ToolCallMetrics()
+                tool_metrics.timer = function_call_timer
+                tool_metrics.duration = function_call_timer.elapsed
+                # Calculate Unix timestamps (Timer uses perf_counter which is relative)
+                current_time = time()
+                tool_metrics.end_time = current_time
+                tool_metrics.start_time = current_time - function_call_timer.elapsed
+
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[
@@ -2345,7 +2416,7 @@ class Model(ABC):
                         tool_call_error=function_call_result.tool_call_error,
                         result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
-                        metrics=function_call_result.metrics,
+                        metrics=tool_metrics,
                     )
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,

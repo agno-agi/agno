@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 from agno.filters import FilterExpr
 from agno.media import Audio, Image, Video
+from agno.metrics import Metrics
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
 

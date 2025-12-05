@@ -8,9 +8,9 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import File
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -537,10 +537,8 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
@@ -610,10 +608,8 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
@@ -684,10 +680,8 @@ class OpenAIResponses(Model):
             )
             tool_use: Dict[str, Any] = {}
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
@@ -761,10 +755,8 @@ class OpenAIResponses(Model):
             )
             tool_use: Dict[str, Any] = {}
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
@@ -953,8 +945,9 @@ class OpenAIResponses(Model):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data["response_id"] = stream_event.response.id
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
+            if assistant_message.metrics is not None:
+                if not assistant_message.metrics.time_to_first_token:
+                    assistant_message.metrics.set_time_to_first_token()
 
         # 2. Add citations
         elif stream_event.type == "response.output_text.annotation.added":

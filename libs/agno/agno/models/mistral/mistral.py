@@ -5,20 +5,20 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
 from agno.utils.models.mistral import format_messages
 
 try:
-    from mistralai import CompletionEvent
-    from mistralai import Mistral as MistralClient
+    from mistralai import CompletionEvent  # type: ignore[attr-defined]
+    from mistralai import Mistral as MistralClient  # type: ignore[attr-defined]
     from mistralai.extra import response_format_from_pydantic_model
     from mistralai.extra.struct_chat import ParsedChatCompletionResponse
-    from mistralai.models import (
+    from mistralai.models import (  # type: ignore[attr-defined]
         AssistantMessage,
         HTTPValidationError,
         SDKError,
@@ -187,10 +187,8 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
 
                 response = self.get_client().chat.complete(
                     model=self.id,
@@ -199,10 +197,8 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 response = self.get_client().chat.complete(
                     model=self.id,
                     messages=mistral_messages,
@@ -237,10 +233,9 @@ class MistralChat(Model):
         """
         mistral_messages = format_messages(messages, compress_tool_results)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
+        # Initialize MessageMetrics if None
 
-        assistant_message.metrics.start_timer()
+        self._ensure_message_metrics_initialized(assistant_message)
 
         try:
             for chunk in self.get_client().chat.stream(
@@ -280,9 +275,8 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
@@ -290,9 +284,8 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
-                if run_response and run_response.metrics:
-                    run_response.metrics.set_time_to_first_token()
-                assistant_message.metrics.start_timer()
+                # Initialize MessageMetrics and start timer
+                self._ensure_message_metrics_initialized(assistant_message)
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
@@ -326,10 +319,9 @@ class MistralChat(Model):
         """
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async for chunk in await self.get_client().chat.stream_async(
                 model=self.id,

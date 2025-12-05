@@ -13,9 +13,9 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
@@ -326,10 +326,9 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
@@ -373,10 +372,9 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             for response in self.get_client().models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
@@ -418,10 +416,9 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
@@ -465,10 +462,9 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await self.get_client().aio.models.generate_content_stream(
                 model=self.id,
@@ -1184,8 +1180,7 @@ class Gemini(Model):
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 
-        if response_usage.traffic_type is not None:
-            metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
+        # traffic_type removed - provider_metrics no longer supported
 
         return metrics
 

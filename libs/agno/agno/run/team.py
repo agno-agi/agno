@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import Metrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
@@ -627,6 +627,9 @@ class TeamRunOutput:
 
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
+
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
 
         return _dict
 

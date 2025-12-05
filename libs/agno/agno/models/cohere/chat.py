@@ -6,9 +6,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -193,10 +193,8 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().chat(
                 model=self.id,
                 messages=format_messages(messages, compress_tool_results),  # type: ignore
@@ -228,12 +226,10 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for response in self.get_client().chat_stream(
                 model=self.id,
@@ -265,10 +261,8 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_async_client().chat(
                 model=self.id,
                 messages=format_messages(messages, compress_tool_results),  # type: ignore
@@ -300,12 +294,10 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             tool_use: Dict[str, Any] = {}
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async for response in self.get_async_client().chat_stream(
                 model=self.id,

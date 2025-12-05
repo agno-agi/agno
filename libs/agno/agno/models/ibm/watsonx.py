@@ -5,9 +5,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -173,9 +173,6 @@ class WatsonX(Model):
         Send a chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             client = self.get_client()
 
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
@@ -183,7 +180,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             response = client.chat(messages=formatted_messages, **request_params)
             assistant_message.metrics.stop_timer()
 
@@ -209,9 +207,6 @@ class WatsonX(Model):
         Sends an asynchronous chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 
@@ -219,7 +214,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await client.achat(messages=formatted_messages, **request_params)
             assistant_message.metrics.stop_timer()
 
@@ -252,10 +248,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in client.chat_stream(messages=formatted_messages, **request_params):
                 yield self._parse_provider_response_delta(chunk)
@@ -280,9 +274,6 @@ class WatsonX(Model):
         Sends an asynchronous streaming chat completion request to the WatsonX API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             client = self.get_client()
             formatted_messages = [self._format_message(m, compress_tool_results) for m in messages]
 
@@ -291,7 +282,8 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
             async for chunk in async_stream:

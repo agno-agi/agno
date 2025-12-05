@@ -44,18 +44,9 @@ class ToolCallMetrics:
     duration: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        from datetime import datetime
-
         metrics_dict = asdict(self)
         # Remove the timer util if present
         metrics_dict.pop("timer", None)
-
-        # Convert start_time and end_time from Unix timestamps to ISO format strings
-        if metrics_dict.get("start_time") is not None:
-            metrics_dict["start_time"] = datetime.fromtimestamp(metrics_dict["start_time"]).isoformat()
-        if metrics_dict.get("end_time") is not None:
-            metrics_dict["end_time"] = datetime.fromtimestamp(metrics_dict["end_time"]).isoformat()
-
         metrics_dict = {
             k: v for k, v in metrics_dict.items() if v is not None and (not isinstance(v, (int, float)) or v != 0)
         }
@@ -77,36 +68,6 @@ class ToolCallMetrics:
                 self.duration = self.timer.elapsed
         if self.end_time is None:
             self.end_time = time()
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ToolCallMetrics":
-        """Create ToolCallMetrics from dict, handling ISO format strings for start_time and end_time."""
-        from datetime import datetime
-
-        metrics_data = data.copy()
-
-        # Convert ISO format strings back to Unix timestamps if needed
-        if "start_time" in metrics_data and isinstance(metrics_data["start_time"], str):
-            try:
-                metrics_data["start_time"] = datetime.fromisoformat(metrics_data["start_time"]).timestamp()
-            except (ValueError, AttributeError):
-                # If parsing fails, try as float (backward compatibility)
-                try:
-                    metrics_data["start_time"] = float(metrics_data["start_time"])
-                except (ValueError, TypeError):
-                    metrics_data["start_time"] = None
-
-        if "end_time" in metrics_data and isinstance(metrics_data["end_time"], str):
-            try:
-                metrics_data["end_time"] = datetime.fromisoformat(metrics_data["end_time"]).timestamp()
-            except (ValueError, AttributeError):
-                # If parsing fails, try as float (backward compatibility)
-                try:
-                    metrics_data["end_time"] = float(metrics_data["end_time"])
-                except (ValueError, TypeError):
-                    metrics_data["end_time"] = None
-
-        return cls(**metrics_data)
 
 
 @dataclass
@@ -175,27 +136,6 @@ class MessageMetrics:
 
         return result
 
-    def __iadd__(self, other: "MessageMetrics") -> "MessageMetrics":
-        """In-place addition - modifies self and preserves timer."""
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.total_tokens += other.total_tokens
-        self.audio_total_tokens += other.audio_total_tokens
-        self.audio_input_tokens += other.audio_input_tokens
-        self.audio_output_tokens += other.audio_output_tokens
-        self.cache_read_tokens += other.cache_read_tokens
-        self.cache_write_tokens += other.cache_write_tokens
-        self.reasoning_tokens += other.reasoning_tokens
-
-        # Sum time to first token if both exist
-        if self.time_to_first_token is not None and other.time_to_first_token is not None:
-            self.time_to_first_token = self.time_to_first_token + other.time_to_first_token
-        elif other.time_to_first_token is not None:
-            self.time_to_first_token = other.time_to_first_token
-
-        # Timer is preserved automatically since we're modifying self in place
-        return self
-
     def start_timer(self):
         """Start the timer for message processing."""
         if self.timer is None:
@@ -211,28 +151,6 @@ class MessageMetrics:
         """Set time to first token from the timer."""
         if self.timer is not None:
             self.time_to_first_token = self.timer.elapsed
-
-    @classmethod
-    def from_metrics(cls, metrics: "Metrics") -> "MessageMetrics":
-        """Create MessageMetrics from a Metrics object (e.g., from provider response usage).
-
-        Args:
-            metrics: A Metrics object containing token usage information
-
-        Returns:
-            A new MessageMetrics instance with token fields copied from the Metrics object
-        """
-        return cls(
-            input_tokens=metrics.input_tokens,
-            output_tokens=metrics.output_tokens,
-            total_tokens=metrics.total_tokens,
-            audio_input_tokens=metrics.audio_input_tokens,
-            audio_output_tokens=metrics.audio_output_tokens,
-            audio_total_tokens=metrics.audio_total_tokens,
-            cache_read_tokens=metrics.cache_read_tokens,
-            cache_write_tokens=metrics.cache_write_tokens,
-            reasoning_tokens=metrics.reasoning_tokens,
-        )
 
 
 @dataclass
@@ -304,8 +222,6 @@ class SessionMetrics:
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
-        # Remove the timer util if present (shouldn't be in SessionMetrics, but safety check)
-        metrics_dict.pop("timer", None)
         # Convert details SessionModelMetrics to dicts
         if metrics_dict.get("details") is not None:
             details_list = [

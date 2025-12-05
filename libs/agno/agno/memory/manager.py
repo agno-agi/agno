@@ -369,6 +369,8 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
+        run_messages: Optional[Any] = None,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -409,6 +411,8 @@ class MemoryManager:
             db=self.db,
             update_memories=self.update_memories,
             add_memories=self.add_memories,
+            run_response=run_response,
+            run_messages=run_messages,
         )
 
         # We refresh from the DB
@@ -422,6 +426,8 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
+        run_messages: Optional[Any] = None,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -461,6 +467,8 @@ class MemoryManager:
             db=self.db,
             update_memories=self.update_memories,
             add_memories=self.add_memories,
+            run_response=run_response,
+            run_messages=run_messages,
         )
 
         # We refresh from the DB
@@ -1040,6 +1048,8 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
+        run_response: Optional[Any] = None,
+        run_messages: Optional[Any] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1084,7 +1094,16 @@ class MemoryManager:
         response = model_copy.response(
             messages=messages_for_model,
             tools=_tools,
+            run_response=run_response,
         )
+
+        # Extract assistant message from messages_for_model (added by model.response())
+        # and add to run_messages.memory_model_messages for metrics tracking
+        if run_messages is not None and messages_for_model:
+            # The last message should be the assistant message created by model.response()
+            assistant_message = messages_for_model[-1]
+            if assistant_message.role == "assistant" and assistant_message.metrics is not None:
+                run_messages.memory_model_messages.append(assistant_message)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -1102,6 +1121,8 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
+        run_response: Optional[Any] = None,
+        run_messages: Optional[Any] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1161,7 +1182,16 @@ class MemoryManager:
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=_tools,
+            run_response=run_response,
         )
+
+        # Extract assistant message from messages_for_model (added by model.aresponse())
+        # and add to run_messages.memory_model_messages for metrics tracking
+        if run_messages is not None and messages_for_model:
+            # The last message should be the assistant message created by model.aresponse()
+            assistant_message = messages_for_model[-1]
+            if assistant_message.role == "assistant" and assistant_message.metrics is not None:
+                run_messages.memory_model_messages.append(assistant_message)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True

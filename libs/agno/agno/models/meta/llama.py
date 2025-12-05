@@ -7,9 +7,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -222,7 +222,8 @@ class Llama(Model):
         """
         Send a chat completion request to the Llama API.
         """
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
@@ -251,10 +252,8 @@ class Llama(Model):
         """
         Sends an asynchronous chat completion request to the Llama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -283,11 +282,10 @@ class Llama(Model):
         """
         Send a streaming chat completion request to the Llama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         try:
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics if None
+
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
@@ -319,10 +317,8 @@ class Llama(Model):
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         try:
             async for chunk in await self.get_async_client().chat.completions.create(

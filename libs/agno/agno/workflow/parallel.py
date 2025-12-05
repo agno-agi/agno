@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.models.metrics import Metrics
+from agno.metrics import Metrics
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent

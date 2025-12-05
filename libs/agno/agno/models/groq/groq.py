@@ -7,9 +7,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -294,10 +294,9 @@ class Groq(Model):
         Send a chat completion request to the Groq API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
@@ -335,10 +334,9 @@ class Groq(Model):
         Sends an asynchronous chat completion request to the Groq API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m, response_format, compress_tool_results) for m in messages],  # type: ignore
@@ -376,10 +374,9 @@ class Groq(Model):
         Send a streaming chat completion request to the Groq API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
@@ -418,10 +415,9 @@ class Groq(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -569,18 +565,6 @@ class Groq(Model):
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
-        # Additional time metrics offered by Groq
-        if completion_time := response_usage.completion_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["completion_time"] = completion_time
-        if prompt_time := response_usage.prompt_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["prompt_time"] = prompt_time
-        if queue_time := response_usage.queue_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["queue_time"] = queue_time
-        if total_time := response_usage.total_time:
-            metrics.provider_metrics = metrics.provider_metrics or {}
-            metrics.provider_metrics["total_time"] = total_time
+        # Additional time metrics offered by Groq (removed - provider_metrics no longer supported)
 
         return metrics
