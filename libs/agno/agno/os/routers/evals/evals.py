@@ -4,7 +4,7 @@ from typing import List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
@@ -16,7 +16,10 @@ from agno.os.routers.evals.schemas import (
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
-from agno.os.schema import (
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
+from agno.remote.base import BaseRemote
+from agno.schema.os.os import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -26,10 +29,7 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
-from agno.runner.base import BaseRunner
-from agno.team.team import Team
+from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 def get_eval_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
-    agents: Optional[List[Union[Agent, BaseRunner]]] = None,
-    teams: Optional[List[Union[Team, BaseRunner]]] = None,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
@@ -59,8 +59,8 @@ def get_eval_router(
 def attach_routes(
     router: APIRouter,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
-    agents: Optional[List[Union[Agent, BaseRunner]]] = None,
-    teams: Optional[List[Union[Team, BaseRunner]]] = None,
+    agents: Optional[List[Union[Agent, BaseRemote]]] = None,
+    teams: Optional[List[Union[Team, BaseRemote]]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -398,7 +398,7 @@ def attach_routes(
 
         # Run the evaluation
         if eval_run_input.eval_type == EvalType.ACCURACY:
-            if isinstance(agent, BaseRunner) or isinstance(team, BaseRunner):
+            if isinstance(agent, BaseRemote) or isinstance(team, BaseRemote):
                 # TODO: Handle remote evaluation
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None
@@ -407,7 +407,7 @@ def attach_routes(
             )
 
         elif eval_run_input.eval_type == EvalType.PERFORMANCE:
-            if isinstance(agent, BaseRunner) or isinstance(team, BaseRunner):
+            if isinstance(agent, BaseRemote) or isinstance(team, BaseRemote):
                 # TODO: Handle remote evaluation
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None
@@ -416,7 +416,7 @@ def attach_routes(
             )
 
         else:
-            if isinstance(agent, BaseRunner) or isinstance(team, BaseRunner):
+            if isinstance(agent, BaseRemote) or isinstance(team, BaseRemote):
                 # TODO: Handle remote evaluation
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None

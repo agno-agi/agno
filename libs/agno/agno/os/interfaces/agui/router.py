@@ -21,19 +21,20 @@ from agno.os.interfaces.agui.utils import (
     convert_agui_messages_to_agno_messages,
     validate_agui_state,
 )
+from agno.remote.base import BaseRemote
 from agno.team.team import Team
-from agno.runner.base import BaseRunner
 
 logger = logging.getLogger(__name__)
 
 
-async def run_agent(agent: Union[Agent, BaseRunner], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_agent(agent: Union[Agent, BaseRemote], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
         # Preparing the input for the Agent and emitting the run started event
         messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Look for user_id in run_input.forwarded_props
@@ -68,7 +69,7 @@ async def run_agent(agent: Union[Agent, BaseRunner], run_input: RunAgentInput) -
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-async def run_team(team: Union[Team, BaseRunner], input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_team(team: Union[Team, BaseRemote], input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
@@ -105,7 +106,9 @@ async def run_team(team: Union[Team, BaseRunner], input: RunAgentInput) -> Async
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def attach_routes(router: APIRouter, agent: Optional[Union[Agent, BaseRunner]] = None, team: Optional[Union[Team, BaseRunner]] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter, agent: Optional[Union[Agent, BaseRemote]] = None, team: Optional[Union[Team, BaseRemote]] = None
+) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 

@@ -1,6 +1,5 @@
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
@@ -9,10 +8,16 @@ from pydantic import BaseModel, Field
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
+from agno.memory.strategies import MemoryOptimizationStrategy
+from agno.memory.strategies.types import (
+    MemoryOptimizationStrategyFactory,
+    MemoryOptimizationStrategyType,
+)
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.tools.function import Function
+from agno.utils.dttm import now_epoch_s
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -89,9 +94,6 @@ class MemoryManager:
         self.clear_memories = clear_memories
         self.debug_mode = debug_mode
 
-        self._get_models()
-
-    def _get_models(self) -> None:
         if self.model is not None:
             self.model = get_model(self.model)
 
@@ -227,7 +229,7 @@ class MemoryManager:
             memory.user_id = user_id
 
             if not memory.updated_at:
-                memory.updated_at = datetime.now()
+                memory.updated_at = now_epoch_s()
 
             self._upsert_db_memory(memory=memory)
             return memory.memory_id
@@ -255,7 +257,7 @@ class MemoryManager:
                 user_id = "default"
 
             if not memory.updated_at:
-                memory.updated_at = datetime.now()
+                memory.updated_at = now_epoch_s()
 
             memory.memory_id = memory_id
             memory.user_id = user_id
@@ -290,6 +292,74 @@ class MemoryManager:
         else:
             log_warning("Memory DB not provided.")
             return None
+
+    def clear_user_memories(self, user_id: Optional[str] = None) -> None:
+        """Clear all memories for a specific user.
+
+        Args:
+            user_id (Optional[str]): The user id to clear memories for. If not provided, clears memories for the "default" user.
+        """
+        if user_id is None:
+            log_warning("Using default user id.")
+            user_id = "default"
+
+        if not self.db:
+            log_warning("Memory DB not provided.")
+            return
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError(
+                "clear_user_memories() is not supported with an async DB. Please use aclear_user_memories() instead."
+            )
+
+        # TODO: This is inefficient - we fetch all memories just to get their IDs.
+        # Extend delete_user_memories() to accept just user_id and delete all memories
+        # for that user directly without requiring a list of memory_ids.
+        memories = self.get_user_memories(user_id=user_id)
+        if not memories:
+            log_debug(f"No memories found for user {user_id}")
+            return
+
+        # Extract memory IDs
+        memory_ids = [mem.memory_id for mem in memories if mem.memory_id]
+
+        if memory_ids:
+            # Delete all memories in a single batch operation
+            self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
+            log_debug(f"Cleared {len(memory_ids)} memories for user {user_id}")
+
+    async def aclear_user_memories(self, user_id: Optional[str] = None) -> None:
+        """Clear all memories for a specific user (async).
+
+        Args:
+            user_id (Optional[str]): The user id to clear memories for. If not provided, clears memories for the "default" user.
+        """
+        if user_id is None:
+            user_id = "default"
+
+        if not self.db:
+            log_warning("Memory DB not provided.")
+            return
+
+        if isinstance(self.db, AsyncBaseDb):
+            memories = await self.aget_user_memories(user_id=user_id)
+        else:
+            memories = self.get_user_memories(user_id=user_id)
+
+        if not memories:
+            log_debug(f"No memories found for user {user_id}")
+            return
+
+        # Extract memory IDs
+        memory_ids = [mem.memory_id for mem in memories if mem.memory_id]
+
+        if memory_ids:
+            # Delete all memories in a single batch operation
+            if isinstance(self.db, AsyncBaseDb):
+                await self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
+            else:
+                self.db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
+            log_debug(f"Cleared {len(memory_ids)} memories for user {user_id}")
 
     # -*- Agent Functions
     def create_user_memories(
@@ -671,7 +741,7 @@ class MemoryManager:
             # If updated_at is None, place at the beginning of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.min,
+                key=lambda m: m.updated_at if m.updated_at is not None else 0,
             )
         else:
             sorted_memories_list = []
@@ -694,6 +764,7 @@ class MemoryManager:
         if memories is None:
             memories = {}
 
+        MAX_UNIX_TS = 2**63 - 1
         memories_list = memories.get(user_id, [])
         # Sort memories by updated_at timestamp if available
         if memories_list:
@@ -701,7 +772,7 @@ class MemoryManager:
             # If updated_at is None, place at the end of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.updated_at or datetime.max,
+                key=lambda m: m.updated_at if m.updated_at is not None else MAX_UNIX_TS,
             )
 
         else:
@@ -711,6 +782,150 @@ class MemoryManager:
             sorted_memories_list = sorted_memories_list[:limit]
 
         return sorted_memories_list
+
+    def optimize_memories(
+        self,
+        user_id: Optional[str] = None,
+        strategy: Union[
+            MemoryOptimizationStrategyType, MemoryOptimizationStrategy
+        ] = MemoryOptimizationStrategyType.SUMMARIZE,
+        apply: bool = True,
+    ) -> List[UserMemory]:
+        """Optimize user memories using the specified strategy.
+
+        Args:
+            user_id: User ID to optimize memories for. Defaults to "default".
+            strategy: Optimization strategy. Can be:
+                - Enum: MemoryOptimizationStrategyType.SUMMARIZE
+                - Instance: Custom MemoryOptimizationStrategy instance
+            apply: If True, automatically replace memories in database.
+
+        Returns:
+            List of optimized UserMemory objects.
+        """
+        if user_id is None:
+            user_id = "default"
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError(
+                "optimize_memories() is not supported with an async DB. Please use aoptimize_memories() instead."
+            )
+
+        # Get user memories
+        memories = self.get_user_memories(user_id=user_id)
+        if not memories:
+            log_debug("No memories to optimize")
+            return []
+
+        # Get strategy instance
+        if isinstance(strategy, MemoryOptimizationStrategyType):
+            strategy_instance = MemoryOptimizationStrategyFactory.create_strategy(strategy)
+        else:
+            # Already a strategy instance
+            strategy_instance = strategy
+
+        # Optimize memories using strategy
+        optimization_model = self.get_model()
+        optimized_memories = strategy_instance.optimize(memories=memories, model=optimization_model)
+
+        # Apply to database if requested
+        if apply:
+            log_debug(f"Applying optimized memories to database for user {user_id}")
+
+            if not self.db:
+                log_warning("Memory DB not provided. Cannot apply optimized memories.")
+                return optimized_memories
+
+            # Clear all existing memories for the user
+            self.clear_user_memories(user_id=user_id)
+
+            # Add all optimized memories
+            for opt_mem in optimized_memories:
+                # Ensure memory has an ID (generate if needed for new memories)
+                if not opt_mem.memory_id:
+                    from uuid import uuid4
+
+                    opt_mem.memory_id = str(uuid4())
+
+                self.db.upsert_user_memory(memory=opt_mem)
+
+        optimized_tokens = strategy_instance.count_tokens(optimized_memories)
+        log_debug(f"Optimization complete. New token count: {optimized_tokens}")
+
+        return optimized_memories
+
+    async def aoptimize_memories(
+        self,
+        user_id: Optional[str] = None,
+        strategy: Union[
+            MemoryOptimizationStrategyType, MemoryOptimizationStrategy
+        ] = MemoryOptimizationStrategyType.SUMMARIZE,
+        apply: bool = True,
+    ) -> List[UserMemory]:
+        """Async version of optimize_memories.
+
+        Args:
+            user_id: User ID to optimize memories for. Defaults to "default".
+            strategy: Optimization strategy. Can be:
+                - Enum: MemoryOptimizationStrategyType.SUMMARIZE
+                - Instance: Custom MemoryOptimizationStrategy instance
+            apply: If True, automatically replace memories in database.
+
+        Returns:
+            List of optimized UserMemory objects.
+        """
+        if user_id is None:
+            user_id = "default"
+
+        # Get user memories - handle both sync and async DBs
+        if isinstance(self.db, AsyncBaseDb):
+            memories = await self.aget_user_memories(user_id=user_id)
+        else:
+            memories = self.get_user_memories(user_id=user_id)
+
+        if not memories:
+            log_debug("No memories to optimize")
+            return []
+
+        # Get strategy instance
+        if isinstance(strategy, MemoryOptimizationStrategyType):
+            strategy_instance = MemoryOptimizationStrategyFactory.create_strategy(strategy)
+        else:
+            # Already a strategy instance
+            strategy_instance = strategy
+
+        # Optimize memories using strategy (async)
+        optimization_model = self.get_model()
+        optimized_memories = await strategy_instance.aoptimize(memories=memories, model=optimization_model)
+
+        # Apply to database if requested
+        if apply:
+            log_debug(f"Optimizing memories for user {user_id}")
+
+            if not self.db:
+                log_warning("Memory DB not provided. Cannot apply optimized memories.")
+                return optimized_memories
+
+            # Clear all existing memories for the user
+            await self.aclear_user_memories(user_id=user_id)
+
+            # Add all optimized memories
+            for opt_mem in optimized_memories:
+                # Ensure memory has an ID (generate if needed for new memories)
+                if not opt_mem.memory_id:
+                    from uuid import uuid4
+
+                    opt_mem.memory_id = str(uuid4())
+
+                if isinstance(self.db, AsyncBaseDb):
+                    await self.db.upsert_user_memory(memory=opt_mem)
+                elif isinstance(self.db, BaseDb):
+                    self.db.upsert_user_memory(memory=opt_mem)
+
+        optimized_tokens = strategy_instance.count_tokens(optimized_memories)
+        log_debug(f"Memory optimization complete. New token count: {optimized_tokens}")
+
+        return optimized_memories
 
     # --Memory Manager Functions--
     def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:

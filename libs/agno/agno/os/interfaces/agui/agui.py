@@ -7,8 +7,8 @@ from fastapi.routing import APIRouter
 from agno.agent import Agent
 from agno.os.interfaces.agui.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
+from agno.remote.base import BaseRemote
 from agno.team import Team
-from agno.runner.base import BaseRunner
 
 
 class AGUI(BaseInterface):
@@ -18,8 +18,8 @@ class AGUI(BaseInterface):
 
     def __init__(
         self,
-        agent: Optional[Union[Agent, BaseRunner]] = None,
-        team: Optional[Union[Team, BaseRunner]] = None,
+        agent: Optional[Union[Agent, BaseRemote]] = None,
+        team: Optional[Union[Team, BaseRemote]] = None,
         prefix: str = "",
         tags: Optional[List[str]] = None,
     ):

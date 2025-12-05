@@ -3,6 +3,7 @@ from typing import Any, Dict
 
 import pytest
 
+import agno.utils.os
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
@@ -134,14 +135,14 @@ def test_get_chat_history_with_default_session_id(test_team):
     assert len(chat_history) >= 4
 
 
-# Tests for get_messages_for_session()
-def test_get_messages_for_session(test_team):
-    """Test get_messages_for_session returns all messages."""
+# Tests for get_session_messages()
+def test_get_session_messages(test_team):
+    """Test get_session_messages returns all messages."""
     session_id = str(uuid.uuid4())
     test_team.run("Hello", session_id=session_id)
     test_team.run("How are you?", session_id=session_id)
 
-    messages = test_team.get_messages_for_session(session_id=session_id)
+    messages = test_team.get_session_messages(session_id=session_id)
     assert len(messages) >= 4
 
 
@@ -155,7 +156,7 @@ def test_set_session_name(test_team):
     assert updated_session.session_data["session_name"] == "Test Session"
 
     # Verify it's persisted
-    name = test_team.get_session_name(session_id=session_id)
+    name = agno.utils.os.get_session_name(session_id=session_id)
     assert name == "Test Session"
 
 
@@ -176,7 +177,7 @@ def test_get_session_name(test_team):
     test_team.run("Hello", session_id=session_id)
     test_team.set_session_name(session_id=session_id, session_name="My Session")
 
-    name = test_team.get_session_name(session_id=session_id)
+    name = agno.utils.os.get_session_name(session_id=session_id)
     assert name == "My Session"
 
 

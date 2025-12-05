@@ -16,7 +16,7 @@ def _get_audio_input() -> Union[bytes, Any]:
     return response.content
 
 
-def test_image_input():
+def test_image_input(image_path):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
@@ -26,7 +26,7 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
 
     assert response.content is not None and "golden" in response.content.lower()

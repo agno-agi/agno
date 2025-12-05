@@ -77,6 +77,17 @@ class AgnoError(Exception):
         return str(self.message)
 
 
+class ModelAuthenticationError(AgnoError):
+    """Raised when model authentication fails."""
+
+    def __init__(self, message: str, status_code: int = 401, model_name: Optional[str] = None):
+        super().__init__(message, status_code)
+        self.model_name = model_name
+
+        self.type = "model_authentication_error"
+        self.error_id = "model_authentication_error"
+
+
 class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 

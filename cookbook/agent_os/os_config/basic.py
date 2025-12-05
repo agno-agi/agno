@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.config import (
+from agno.schema.os.config import (
     AgentOSConfig,
     ChatConfig,
     DatabaseConfig,

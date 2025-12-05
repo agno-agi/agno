@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from agno.os.schema import HealthResponse
+from agno.schema.os.os import HealthResponse
 
 
 def get_health_router(health_endpoint: str = "/health") -> APIRouter:

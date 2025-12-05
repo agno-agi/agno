@@ -7,7 +7,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.auth import get_authentication_dependency
-from agno.os.schema import (
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db
+from agno.schema.os.os import (
     AgentSessionDetailSchema,
     BadRequestResponse,
     CreateSessionRequest,
@@ -27,8 +29,6 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 logger = logging.getLogger(__name__)

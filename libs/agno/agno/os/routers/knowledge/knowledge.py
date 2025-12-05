@@ -23,7 +23,9 @@ from agno.os.routers.knowledge.schemas import (
     VectorSearchRequestSchema,
     VectorSearchResult,
 )
-from agno.os.schema import (
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_knowledge_instance_by_db_id
+from agno.schema.os.os import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -33,8 +35,6 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
 from agno.utils.string import generate_id
 
@@ -617,7 +617,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         "/knowledge/config",
         status_code=200,
         operation_id="get_knowledge_config",
-        summary="Get Knowledge Configuration",
+        summary="Get Config",
         description=(
             "Retrieve available readers, chunkers, and configuration options for content processing. "
             "This endpoint provides metadata about supported file types, processing strategies, and filters."
@@ -942,7 +942,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
-            filters=knowledge.get_filters(),
+            filters=knowledge.get_valid_filters(),
         )
 
     return router

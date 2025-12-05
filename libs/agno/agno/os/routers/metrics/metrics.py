@@ -8,15 +8,15 @@ from fastapi.routing import APIRouter
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
-from agno.os.schema import (
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db
+from agno.schema.os.os import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 
 logger = logging.getLogger(__name__)
 

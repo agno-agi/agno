@@ -11,10 +11,29 @@ from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
-from agno.os.config import (
+from agno.os.interfaces.base import BaseInterface
+from agno.os.router import get_base_router, get_websocket_router
+from agno.os.routers.evals import get_eval_router
+from agno.os.routers.health import get_health_router
+from agno.os.routers.home import get_home_router
+from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.memory import get_memory_router
+from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.session import get_session_router
+from agno.os.routers.traces import get_traces_router
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import (
+    collect_mcp_tools_from_team,
+    collect_mcp_tools_from_workflow,
+    find_conflicting_routes,
+    load_yaml_config,
+    setup_tracing_for_os,
+    update_cors_middleware,
+)
+from agno.schema.os.config import (
     AgentOSConfig,
     DatabaseConfig,
     EvalsConfig,
@@ -27,29 +46,13 @@ from agno.os.config import (
     MetricsDomainConfig,
     SessionConfig,
     SessionDomainConfig,
+    TracesConfig,
+    TracesDomainConfig,
 )
-from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
-from agno.os.routers.evals import get_eval_router
-from agno.os.routers.health import get_health_router
-from agno.os.routers.home import get_home_router
-from agno.os.routers.knowledge import get_knowledge_router
-from agno.os.routers.memory import get_memory_router
-from agno.os.routers.metrics import get_metrics_router
-from agno.os.routers.session import get_session_router
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import (
-    collect_mcp_tools_from_team,
-    collect_mcp_tools_from_workflow,
-    find_conflicting_routes,
-    load_yaml_config,
-    update_cors_middleware,
-)
-from agno.runner.base import BaseRunner
-from agno.team.team import Team
+from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
-from agno.workflow.workflow import Workflow
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 @asynccontextmanager
@@ -97,9 +100,9 @@ class AgentOS:
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
-        agents: Optional[List[Union[Agent, BaseRunner]]] = None,
-        teams: Optional[List[Union[Team, BaseRunner]]] = None,
-        workflows: Optional[List[Union[Workflow, BaseRunner]]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+        teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+        workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -110,11 +113,10 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         telemetry: bool = True,
+        tracing: bool = False,
+        tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
-        os_id: Optional[str] = None,  # Deprecated
-        enable_mcp: bool = False,  # Deprecated
-        fastapi_app: Optional[FastAPI] = None,  # Deprecated
-        replace_routes: Optional[bool] = None,  # Deprecated
+        run_hooks_in_background: bool = False,
     ):
         """Initialize AgentOS.
 
@@ -136,6 +138,10 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             telemetry: Whether to enable telemetry
+            tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
+            tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
+                       If not provided and tracing=True, the first available db from agents/teams/workflows is used.
+            run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -143,9 +149,9 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Union[Agent, BaseRunner]]] = agents
-        self.workflows: Optional[List[Union[Workflow, BaseRunner]]] = workflows
-        self.teams: Optional[List[Union[Team, BaseRunner]]] = teams
+        self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
+        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
+        self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
@@ -157,13 +163,6 @@ class AgentOS:
             self.base_app: Optional[FastAPI] = base_app
             self._app_set = True
             self.on_route_conflict = on_route_conflict
-        elif fastapi_app:
-            self.base_app = fastapi_app
-            self._app_set = True
-            if replace_routes is not None:
-                self.on_route_conflict = "preserve_agentos" if replace_routes else "preserve_base_app"
-            else:
-                self.on_route_conflict = on_route_conflict
         else:
             self.base_app = None
             self._app_set = False
@@ -173,7 +172,7 @@ class AgentOS:
 
         self.name = name
 
-        self.id = id or os_id
+        self.id = id
         if not self.id:
             self.id = generate_id(self.name) if self.name else str(uuid4())
 
@@ -181,9 +180,14 @@ class AgentOS:
         self.description = description
 
         self.telemetry = telemetry
+        self.tracing = tracing
+        self.tracing_db = tracing_db
 
-        self.enable_mcp_server = enable_mcp or enable_mcp_server
+        self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
+
+        # If True, run agent/team hooks as FastAPI background tasks
+        self.run_hooks_in_background = run_hooks_in_background
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
@@ -192,6 +196,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        if self.tracing:
+            self._setup_tracing()
 
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_telemetry
@@ -247,6 +254,7 @@ class AgentOS:
             get_session_router(dbs=self.dbs),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_traces_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
         ]
@@ -328,23 +336,26 @@ class AgentOS:
         """Initialize and configure all agents for AgentOS usage."""
         if not self.agents:
             return
-
         for agent in self.agents:
-            if isinstance(agent, BaseRunner):
+            if isinstance(agent, RemoteAgent):
                 continue
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
-                    # Checking if the tool is a MCPTools or MultiMCPTools instance
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
-                        if tool not in self.mcp_tools:
-                            self.mcp_tools.append(tool)
+                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    if hasattr(type(tool), "__mro__"):
+                        mro_names = {cls.__name__ for cls in type(tool).__mro__}
+                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                            if tool not in self.mcp_tools:
+                                self.mcp_tools.append(tool)
 
             agent.initialize_agent()
 
             # Required for the built-in routes to work
             agent.store_events = True
+
+            # Propagate run_hooks_in_background setting from AgentOS to agents
+            agent._run_hooks_in_background = self.run_hooks_in_background
 
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
@@ -352,7 +363,7 @@ class AgentOS:
             return
 
         for team in self.teams:
-            if isinstance(team, BaseRunner):
+            if isinstance(team, RemoteTeam):
                 continue
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
@@ -369,6 +380,9 @@ class AgentOS:
             # Required for the built-in routes to work
             team.store_events = True
 
+            # Propagate run_hooks_in_background setting to team and all nested members
+            team.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
         if not self.workflows:
@@ -376,7 +390,7 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
-                if isinstance(workflow, BaseRunner):
+                if isinstance(workflow, RemoteWorkflow):
                     continue
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
@@ -386,6 +400,49 @@ class AgentOS:
 
                 # Required for the built-in routes to work
                 workflow.store_events = True
+
+                # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+                workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
+    def _setup_tracing(self) -> None:
+        """Set up OpenTelemetry tracing for this AgentOS.
+
+        Uses tracing_db if provided, otherwise falls back to the first available
+        database from agents/teams/workflows.
+        """
+        # Use tracing_db if explicitly provided
+        if self.tracing_db is not None:
+            setup_tracing_for_os(db=self.tracing_db)
+            return
+
+        # Fall back to finding the first available database
+        db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+
+        for agent in self.agents or []:
+            if agent.db:
+                db = agent.db
+                break
+
+        if db is None:
+            for team in self.teams or []:
+                if team.db:
+                    db = team.db
+                    break
+
+        if db is None:
+            for workflow in self.workflows or []:
+                if workflow.db:
+                    db = workflow.db
+                    break
+
+        if db is None:
+            log_warning(
+                "tracing=True but no database found. "
+                "Provide 'tracing_db' parameter or 'db' parameter to at least one agent/team/workflow."
+            )
+            return
+
+        setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
         if self.base_app:
@@ -465,6 +522,7 @@ class AgentOS:
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_traces_router(dbs=self.dbs),
         ]
 
         for router in routers:
@@ -593,7 +651,7 @@ class AgentOS:
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
-            if isinstance(agent, BaseRunner):
+            if isinstance(agent, RemoteAgent):
                 # TODO: Fetch config from remote AgentOS
                 continue
             if agent.db:
@@ -602,7 +660,7 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
-            if isinstance(team, BaseRunner):
+            if isinstance(team, RemoteTeam):
                 # TODO: Fetch config from remote AgentOS
                 continue
             if team.db:
@@ -611,7 +669,7 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
-            if isinstance(workflow, BaseRunner):
+            if isinstance(workflow, RemoteWorkflow):
                 # TODO: Fetch config from remote AgentOS
                 continue
             if workflow.db:
@@ -626,6 +684,10 @@ class AgentOS:
                 self._register_db_with_validation(dbs, interface.agent.db)
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
+
+        # Register tracing_db if provided (for traces reading)
+        if self.tracing_db is not None:
+            self._register_db_with_validation(dbs, self.tracing_db)
 
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
@@ -738,14 +800,14 @@ class AgentOS:
             knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
-            if isinstance(agent, BaseRunner):
+            if isinstance(agent, RemoteAgent):
                 # TODO: Fetch config from remote AgentOS
                 continue
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
-            if isinstance(team, BaseRunner):
+            if isinstance(team, RemoteTeam):
                 # TODO: Fetch config from remote AgentOS
                 continue
             if team.knowledge:
@@ -862,6 +924,36 @@ class AgentOS:
                 )
 
         return evals_config
+
+    def _get_traces_config(self) -> TracesConfig:
+        traces_config = self.config.traces if self.config and self.config.traces else TracesConfig()
+
+        if traces_config.dbs is None:
+            traces_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in traces_config.dbs]
+
+        # If tracing_db is explicitly set, only use that database for traces
+        if self.tracing_db is not None:
+            if self.tracing_db.id not in dbs_with_specific_config:
+                traces_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=self.tracing_db.id,
+                        domain_config=TracesDomainConfig(display_name=self.tracing_db.id),
+                    )
+                )
+        else:
+            # Fall back to all discovered databases
+            for db_id in self.dbs.keys():
+                if db_id not in dbs_with_specific_config:
+                    traces_config.dbs.append(
+                        DatabaseConfig(
+                            db_id=db_id,
+                            domain_config=TracesDomainConfig(display_name=db_id),
+                        )
+                    )
+
+        return traces_config
 
     def serve(
         self,

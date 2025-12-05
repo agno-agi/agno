@@ -1,10 +1,14 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
+
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -27,12 +31,12 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Index, UniqueConstraint, and_, func, update
+    from sqlalchemy import Index, UniqueConstraint, and_, func, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -50,6 +54,9 @@ class SingleStoreDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a SingleStore database.
@@ -70,7 +77,7 @@ class SingleStoreDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
-
+            versions_table (Optional[str]): Name of the table to store schema versions.
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
@@ -89,6 +96,9 @@ class SingleStoreDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            versions_table=versions_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -106,7 +116,7 @@ class SingleStoreDb(BaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.db_schema: Optional[str] = db_schema
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -124,7 +134,7 @@ class SingleStoreDb(BaseDb):
         with self.Session() as sess:
             return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
-    def _create_table_structure_only(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
+    def _create_table_structure_only(self, table_name: str, table_type: str) -> Table:
         """
         Create a table structure definition without actually creating the table in the database.
         Used to avoid autoload issues with SingleStore JSON types.
@@ -132,7 +142,6 @@ class SingleStoreDb(BaseDb):
         Args:
             table_name (str): Name of the table
             table_type (str): Type of table (used to get schema definition)
-            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object with column definitions
@@ -158,13 +167,12 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object without constraints to avoid autoload issues
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             return table
 
         except Exception as e:
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             log_error(f"Could not create table structure for {table_ref}: {e}")
             raise
 
@@ -176,28 +184,26 @@ class SingleStoreDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
         ]
 
         for table_name, table_type in tables_to_create:
-            self._create_table(table_name=table_name, table_type=table_type, db_schema=self.db_schema)
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
-    def _create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
+    def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
         """
-        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+        table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
         try:
             table_schema = get_table_schema_definition(table_type)
-
-            log_debug(f"Creating table {table_ref} with schema: {table_schema}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -220,8 +226,7 @@ class SingleStoreDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -235,48 +240,52 @@ class SingleStoreDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create schema if one is specified
-            if db_schema is not None:
+            if self.db_schema is not None:
                 with self.Session() as sess, sess.begin():
-                    create_schema(session=sess, db_schema=db_schema)
+                    create_schema(session=sess, db_schema=self.db_schema)
 
             # SingleStore has a limitation on the number of unique multi-field constraints per table.
             # We need to work around that limitation for the sessions table.
-            if table_type == "sessions":
-                with self.Session() as sess, sess.begin():
-                    # Build column definitions
-                    columns_sql = []
-                    for col in table.columns:
-                        col_sql = f"{col.name} {col.type.compile(self.db_engine.dialect)}"
-                        if not col.nullable:
-                            col_sql += " NOT NULL"
-                        columns_sql.append(col_sql)
+            table_created = False
+            if not self.table_exists(table_name):
+                if table_type == "sessions":
+                    with self.Session() as sess, sess.begin():
+                        # Build column definitions
+                        columns_sql = []
+                        for col in table.columns:
+                            col_sql = f"{col.name} {col.type.compile(self.db_engine.dialect)}"
+                            if not col.nullable:
+                                col_sql += " NOT NULL"
+                            columns_sql.append(col_sql)
 
-                    columns_def = ", ".join(columns_sql)
+                        columns_def = ", ".join(columns_sql)
 
-                    # Add shard key and single unique constraint
-                    table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
-                        {columns_def},
-                        SHARD KEY (session_id),
-                        UNIQUE KEY uq_session_type (session_id, session_type)
-                    )"""
+                        # Add shard key and single unique constraint
+                        table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
+                            {columns_def},
+                            SHARD KEY (session_id),
+                            UNIQUE KEY uq_session_type (session_id, session_type)
+                        )"""
 
-                    sess.execute(text(table_sql))
+                        sess.execute(text(table_sql))
+                else:
+                    table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{table_ref}'")
+                table_created = True
             else:
-                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Table '{table_ref}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
                 try:
-                    log_debug(f"Creating index: {idx.name}")
-
                     # Check if index already exists
                     with self.Session() as sess:
-                        if db_schema is not None:
+                        if self.db_schema is not None:
                             exists_query = text(
                                 "SELECT 1 FROM information_schema.statistics WHERE table_schema = :schema AND index_name = :index_name"
                             )
                             exists = (
-                                sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
+                                sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name}).scalar()
                                 is not None
                             )
                         else:
@@ -290,10 +299,15 @@ class SingleStoreDb(BaseDb):
 
                     idx.create(self.db_engine)
 
+                    log_debug(f"Created index: {idx.name} for table {table_ref}")
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_debug(f"Successfully created table {table_ref}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
             return table
 
         except Exception as e:
@@ -305,7 +319,6 @@ class SingleStoreDb(BaseDb):
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type="sessions",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
@@ -314,7 +327,6 @@ class SingleStoreDb(BaseDb):
             self.memory_table = self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.memory_table
@@ -323,7 +335,6 @@ class SingleStoreDb(BaseDb):
             self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
@@ -332,7 +343,6 @@ class SingleStoreDb(BaseDb):
             self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.eval_table
@@ -341,7 +351,6 @@ class SingleStoreDb(BaseDb):
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
@@ -350,10 +359,35 @@ class SingleStoreDb(BaseDb):
             self.culture_table = self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
-                db_schema=self.db_schema,
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.culture_table
+
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
+        if table_type == "traces":
+            self.traces_table = self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.traces_table
+
+        if table_type == "spans":
+            # Ensure traces table exists first (for foreign key)
+            self._get_table(table_type="traces", create_table_if_not_found=create_table_if_not_found)
+            self.spans_table = self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -361,7 +395,6 @@ class SingleStoreDb(BaseDb):
         self,
         table_name: str,
         table_type: str,
-        db_schema: Optional[str],
         create_table_if_not_found: Optional[bool] = False,
     ) -> Optional[Table]:
         """
@@ -370,36 +403,77 @@ class SingleStoreDb(BaseDb):
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
         with self.Session() as sess, sess.begin():
-            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+
+            # Also store the schema version for the created table
+            if table_name != self.versions_table_name:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
+            return self._create_table(table_name=table_name, table_type=table_type)
 
         if not is_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             raise ValueError(f"Table {table_ref} has an invalid schema")
 
         try:
-            return self._create_table_structure_only(table_name=table_name, table_type=table_type, db_schema=db_schema)
+            return self._create_table_structure_only(table_name=table_name, table_type=table_type)
 
         except Exception as e:
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
             log_error(f"Error loading existing table {table_ref}: {e}")
             raise
+
+    def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = mysql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_duplicate_key_update(
+                version=version,
+                updated_at=current_datetime,
+            )
+            sess.execute(stmt)
 
     # -- Session methods --
     def delete_session(self, session_id: str) -> bool:
@@ -1247,13 +1321,14 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1276,16 +1351,17 @@ class SingleStoreDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -1339,6 +1415,8 @@ class SingleStoreDb(BaseDb):
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
+                current_time = int(time.time())
+
                 stmt = mysql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
@@ -1347,7 +1425,9 @@ class SingleStoreDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    updated_at=int(time.time()),
+                    feedback=memory.feedback,
+                    created_at=memory.created_at,
+                    updated_at=current_time,
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=stmt.inserted.memory,
@@ -1356,7 +1436,10 @@ class SingleStoreDb(BaseDb):
                     user_id=stmt.inserted.user_id,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
-                    updated_at=int(time.time()),
+                    feedback=stmt.inserted.feedback,
+                    updated_at=stmt.inserted.updated_at,
+                    # Preserve created_at on update - don't overwrite existing value
+                    created_at=table.c.created_at,
                 )
 
                 sess.execute(stmt)
@@ -1404,11 +1487,13 @@ class SingleStoreDb(BaseDb):
             # Prepare data for bulk insert
             memory_data = []
             current_time = int(time.time())
+
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
                 # Use preserved updated_at if flag is set, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
+
                 memory_data.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1418,6 +1503,8 @@ class SingleStoreDb(BaseDb):
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
                 )
@@ -1434,7 +1521,10 @@ class SingleStoreDb(BaseDb):
                         user_id=stmt.inserted.user_id,
                         agent_id=stmt.inserted.agent_id,
                         team_id=stmt.inserted.team_id,
+                        feedback=stmt.inserted.feedback,
                         updated_at=stmt.inserted.updated_at,
+                        # Preserve created_at on update
+                        created_at=table.c.created_at,
                     )
                     sess.execute(stmt, memory_data)
 
@@ -2270,3 +2360,500 @@ class SingleStoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
+
+    # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
+    def create_trace(self, trace: "Trace") -> None:
+        """Create a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                existing = sess.execute(select(table).where(table.c.trace_id == trace.trace_id)).fetchone()
+
+                if existing:
+                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+
+                    def get_component_level(workflow_id, team_id, agent_id, name):
+                        # Check if name indicates a root span
+                        is_root_name = ".run" in name or ".arun" in name
+
+                        if not is_root_name:
+                            return 0  # Child span (not a root)
+                        elif workflow_id:
+                            return 3  # Workflow root
+                        elif team_id:
+                            return 2  # Team root
+                        elif agent_id:
+                            return 1  # Agent root
+                        else:
+                            return 0  # Unknown
+
+                    existing_level = get_component_level(
+                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
+                    )
+                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+
+                    # Only update name if new trace is from a higher or equal level
+                    should_update_name = new_level > existing_level
+
+                    # Parse existing start_time to calculate correct duration
+                    existing_start_time_str = existing.start_time
+                    if isinstance(existing_start_time_str, str):
+                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                    else:
+                        existing_start_time = trace.start_time
+
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                    update_values = {
+                        "end_time": trace.end_time.isoformat(),
+                        "duration_ms": recalculated_duration_ms,
+                        "status": trace.status,
+                        "name": trace.name if should_update_name else existing.name,
+                    }
+
+                    # Update context fields ONLY if new value is not None (preserve non-null values)
+                    if trace.run_id is not None:
+                        update_values["run_id"] = trace.run_id
+                    if trace.session_id is not None:
+                        update_values["session_id"] = trace.session_id
+                    if trace.user_id is not None:
+                        update_values["user_id"] = trace.user_id
+                    if trace.agent_id is not None:
+                        update_values["agent_id"] = trace.agent_id
+                    if trace.team_id is not None:
+                        update_values["team_id"] = trace.team_id
+                    if trace.workflow_id is not None:
+                        update_values["workflow_id"] = trace.workflow_id
+
+                    log_debug(
+                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
+                        f"session_id={update_values.get('session_id', 'unchanged')}, "
+                        f"user_id={update_values.get('user_id', 'unchanged')}, "
+                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
+                        f"team_id={update_values.get('team_id', 'unchanged')}, "
+                    )
+
+                    update_stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
+                    sess.execute(update_stmt)
+                else:
+                    trace_dict = trace.to_dict()
+                    trace_dict.pop("total_spans", None)
+                    trace_dict.pop("error_count", None)
+                    insert_stmt = mysql.insert(table).values(trace_dict)
+                    sess.execute(insert_stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return None
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = sess.execute(stmt).fetchone()
+
+                if result:
+                    return Trace.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            log_debug(
+                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    log_debug(f"Filtering by session_id={session_id}")
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching traces: {total_count}")
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        try:
+            log_debug(
+                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
+                f"workflow_id={workflow_id}, team_id={team_id}, "
+                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
+            )
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            with self.Session() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        table.c.team_id,
+                        table.c.workflow_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+                log_debug(f"Total matching sessions: {total_count}")
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+                log_debug(f"Returning page {page} with {len(results)} session stats")
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects (handle None values)
+                    first_trace_at = None
+                    last_trace_at = None
+                    if first_trace_at_str is not None:
+                        first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    if last_trace_at_str is not None:
+                        last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = mysql.insert(table).values(span.to_dict())
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                for span in spans:
+                    stmt = mysql.insert(table).values(span.to_dict())
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []
