@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
+from agno.compression.context import CompressedContext
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -37,6 +38,8 @@ class AgentSession:
     runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
+    # Compressed context from context compression
+    compressed_context: Optional["CompressedContext"] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -48,6 +51,7 @@ class AgentSession:
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
+        session_dict["compressed_context"] = self.compressed_context.to_dict() if self.compressed_context else None
 
         return session_dict
 
@@ -70,6 +74,10 @@ class AgentSession:
         if summary is not None and isinstance(summary, dict):
             summary = SessionSummary.from_dict(summary)
 
+        compressed_context = data.get("compressed_context")
+        if compressed_context is not None and isinstance(compressed_context, dict):
+            compressed_context = CompressedContext.from_dict(compressed_context)
+
         metadata = data.get("metadata")
 
         return cls(
@@ -85,6 +93,7 @@ class AgentSession:
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
             summary=summary,
+            compressed_context=compressed_context,
         )
 
     def upsert_run(self, run: RunOutput):

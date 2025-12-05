@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
+from agno.compression.context import CompressedContext
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
@@ -36,6 +37,8 @@ class TeamSession:
     runs: Optional[list[Union[TeamRunOutput, RunOutput]]] = None
     # Summary of the session
     summary: Optional[SessionSummary] = None
+    # Compressed context from context compression
+    compressed_context: Optional[CompressedContext] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -47,6 +50,7 @@ class TeamSession:
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
+        session_dict["compressed_context"] = self.compressed_context.to_dict() if self.compressed_context else None
 
         return session_dict
 
@@ -58,7 +62,11 @@ class TeamSession:
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
-            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
+            summary = SessionSummary.from_dict(summary)
+
+        compressed_context = data.get("compressed_context")
+        if compressed_context is not None and isinstance(compressed_context, dict):
+            compressed_context = CompressedContext.from_dict(compressed_context)
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
@@ -80,7 +88,8 @@ class TeamSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
-            summary=data.get("summary"),
+            summary=summary,
+            compressed_context=compressed_context,
         )
 
     def get_run(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
