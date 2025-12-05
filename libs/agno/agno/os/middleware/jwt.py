@@ -188,18 +188,20 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
             # Extract dependency claims
             dependencies = {}
-            for claim in self.dependencies_claims:
-                if claim in payload:
-                    dependencies[claim] = payload[claim]
+            if self.dependencies_claims:
+                for claim in self.dependencies_claims:
+                    if claim in payload:
+                        dependencies[claim] = payload[claim]
 
             if dependencies:
                 request.state.dependencies = dependencies
 
             # Extract session state claims
             session_state = {}
-            for claim in self.session_state_claims:
-                if claim in payload:
-                    session_state[claim] = payload[claim]
+            if self.session_state_claims:
+                for claim in self.session_state_claims:
+                    if claim in payload:
+                        session_state[claim] = payload[claim]
 
             if session_state:
                 request.state.session_state = session_state
