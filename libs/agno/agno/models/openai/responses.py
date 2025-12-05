@@ -307,6 +307,8 @@ class OpenAIResponses(Model):
 
     def _upload_file(self, file: File) -> Optional[str]:
         """Upload a file to the OpenAI vector database."""
+        from pathlib import Path
+        from urllib.parse import urlparse
 
         if file.url is not None:
             file_content_tuple = file.file_url_content
@@ -314,13 +316,12 @@ class OpenAIResponses(Model):
                 file_content = file_content_tuple[0]
             else:
                 return None
-            file_name = file.url.split("/")[-1]
+            file_name = Path(urlparse(file.url).path).name or "file"
             file_tuple = (file_name, file_content)
             result = self.get_client().files.create(file=file_tuple, purpose="assistants")
             return result.id
         elif file.filepath is not None:
             import mimetypes
-            from pathlib import Path
 
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
