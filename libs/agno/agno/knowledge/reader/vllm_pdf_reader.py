@@ -6,7 +6,7 @@ import uuid
 from typing import List, Optional
 
 try:
-    import fitz  # PyMuPDF
+    import fitz  # type: ignore
 except ImportError:
     raise ImportError("`pymupdf` is required for VllmPDFReader. Install with: pip install pymupdf")
 from agno.knowledge.document.base import Document
