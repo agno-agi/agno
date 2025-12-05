@@ -13,6 +13,7 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
@@ -398,6 +399,26 @@ class Claude(Model):
             _client_params["http_client"] = get_default_async_client()
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, dict]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = self.get_client().messages.count_tokens(**kwargs)
+        return response.input_tokens
 
     def get_request_params(
         self,
@@ -1014,7 +1035,7 @@ class Claude(Model):
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
 
-        if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
+        if hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
 
         # Capture the Beta response
@@ -1055,5 +1076,11 @@ class Claude(Model):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}
                 metrics.provider_metrics["service_tier"] = response_usage.service_tier
+
+        log_debug(
+            f"Anthropic response metrics: input_tokens={metrics.input_tokens}, "
+            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}, "
+            f"cache_read={metrics.cache_read_tokens}, cache_write={metrics.cache_write_tokens}"
+        )
 
         return metrics

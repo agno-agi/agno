@@ -149,3 +149,18 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_count_tokens():
+    from agno.models.message import Message
+
+    model = LiteLLM(id="gpt-4o")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100

@@ -18,6 +18,7 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -307,6 +308,32 @@ class Gemini(Model):
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, dict]]] = None,
+    ) -> int:
+        if not self.vertexai:
+            return super().count_tokens(messages, tools)
+
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+
+        config: Dict[str, Any] = {}
+        if system_instruction:
+            config["system_instruction"] = system_instruction
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            gemini_tools = format_function_definitions(formatted_tools)
+            if gemini_tools:
+                config["tools"] = [gemini_tools]
+
+        response = self.get_client().models.count_tokens(
+            model=self.id,
+            contents=contents,
+            config=config if config else None,  # type: ignore
+        )
+        return response.total_tokens or 0
 
     def invoke(
         self,
@@ -840,6 +867,8 @@ class Gemini(Model):
         """
         combined_original_content: List = []
         combined_function_result: List = []
+        tool_names: List[str] = []
+
         message_metrics = Metrics()
 
         if len(function_call_results) > 0:
@@ -849,13 +878,18 @@ class Gemini(Model):
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
+                if result.tool_name:
+                    tool_names.append(result.tool_name)
                 message_metrics += result.metrics
+
+        tool_name = ", ".join(tool_names) if tool_names else None
 
         if combined_original_content:
             messages.append(
                 Message(
                     role="tool",
                     content=combined_original_content,
+                    tool_name=tool_name,
                     tool_calls=combined_function_result,
                     metrics=message_metrics,
                 )

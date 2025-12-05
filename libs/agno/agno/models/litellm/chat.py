@@ -476,3 +476,15 @@ class LiteLLM(Model):
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        formatted_messages = self._format_messages(messages, compress_tool_results=True)
+        return litellm.token_counter(
+            model=self.id,
+            messages=formatted_messages,
+            tools=tools,  # type: ignore
+        )

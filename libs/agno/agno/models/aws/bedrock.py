@@ -357,6 +357,23 @@ class AwsBedrock(Model):
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        try:
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            converse_input: Dict[str, Any] = {"messages": formatted_messages}
+            if system_message:
+                converse_input["system"] = system_message
+
+            response = self.get_client().count_tokens(modelId=self.id, input={"converse": converse_input})
+            return response.get("inputTokens", 0)
+        except Exception as e:
+            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            return super().count_tokens(messages, tools)
+
     def invoke(
         self,
         messages: List[Message],
@@ -718,5 +735,10 @@ class AwsBedrock(Model):
         metrics.input_tokens = response_usage.get("inputTokens", 0) or 0
         metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        log_debug(
+            f"Bedrock response metrics: input_tokens={metrics.input_tokens}, "
+            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}"
+        )
 
         return metrics
