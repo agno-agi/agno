@@ -200,3 +200,17 @@ async def test_async_client_persistence(claude_model):
     third_client = claude_model.async_client
     assert third_client is not None
     assert first_client is third_client, "Async client should still be the same instance"
+
+
+def test_count_tokens(claude_model):
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = claude_model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100

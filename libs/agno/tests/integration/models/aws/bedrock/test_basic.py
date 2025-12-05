@@ -256,3 +256,18 @@ async def test_async_history():
     run_output = await agent.arun("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_count_tokens():
+    from agno.models.message import Message
+
+    model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100

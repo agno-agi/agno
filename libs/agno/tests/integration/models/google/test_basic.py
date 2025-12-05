@@ -247,3 +247,18 @@ def test_custom_client_params():
         telemetry=False,
     )
     agent.print_response("what is the best ice cream?", stream=True)
+
+
+def test_count_tokens():
+    from agno.models.message import Message
+
+    model = Gemini(id="gemini-2.0-flash")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
