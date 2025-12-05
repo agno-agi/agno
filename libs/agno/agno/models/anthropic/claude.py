@@ -8,9 +8,9 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.metrics import Metrics
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.metrics import MessageMetrics, Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -520,7 +520,6 @@ class Claude(Model):
         Send a request to the Anthropic API to generate a response.
         """
         try:
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -591,7 +590,6 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
         try:
-
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
                 # Initialize MessageMetrics and start timer
@@ -645,7 +643,6 @@ class Claude(Model):
         Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 
@@ -711,7 +708,6 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         try:
-
             chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
             request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
 

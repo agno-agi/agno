@@ -52,7 +52,7 @@ print("=" * 80)
 if run_output.metrics:
     print(f"Type: {type(run_output.metrics).__name__}")
     pprint(run_output.metrics.to_dict())
-    
+
     # Print per-model metrics breakdown if details exist
     if run_output.metrics.details:
         print("\n" + "-" * 80)
@@ -69,7 +69,11 @@ else:
 print("\n" + "=" * 80)
 print("2. MESSAGE METRICS (MessageMetrics class - only on assistant messages)")
 print("=" * 80)
-assistant_messages = [m for m in run_output.messages if m.role == "assistant"] if run_output.messages else []
+assistant_messages = (
+    [m for m in run_output.messages if m.role == "assistant"]
+    if run_output.messages
+    else []
+)
 for i, message in enumerate(assistant_messages, 1):
     print(f"\nTeam Leader Assistant Message {i}:")
     if message.metrics is not None:
@@ -79,7 +83,9 @@ for i, message in enumerate(assistant_messages, 1):
         print("  No metrics (this shouldn't happen for assistant messages)")
 
 # Check user messages don't have metrics
-user_messages = [m for m in run_output.messages if m.role == "user"] if run_output.messages else []
+user_messages = (
+    [m for m in run_output.messages if m.role == "user"] if run_output.messages else []
+)
 print(f"\nUser Messages (should have None metrics): {len(user_messages)}")
 for i, message in enumerate(user_messages, 1):
     print(f"  User Message {i} metrics: {message.metrics}")
@@ -105,7 +111,7 @@ session_metrics = team.get_session_metrics(session_id="team_metrics_demo")
 if session_metrics:
     print(f"Type: {type(session_metrics).__name__}")
     pprint(session_metrics.to_dict())
-    
+
     # Print per-model session metrics breakdown if details exist
     if session_metrics.details:
         print("\n" + "-" * 80)
@@ -114,7 +120,7 @@ if session_metrics:
         for i, model_metrics in enumerate(session_metrics.details, 1):
             print(f"\nModel Instance {i}:")
             pprint(model_metrics.to_dict())
-    
+
     print("\nSession-level stats:")
     print(f"  Total runs: {session_metrics.total_runs}")
     print(
@@ -132,14 +138,16 @@ print("=" * 80)
 if run_output.member_responses:
     for i, member_response in enumerate(run_output.member_responses, 1):
         print(f"\nMember Response {i}:")
-        if hasattr(member_response, 'run_id'):
+        if hasattr(member_response, "run_id"):
             print(f"  Run ID: {member_response.run_id}")
         if member_response.metrics:
             print(f"  Run Metrics Type: {type(member_response.metrics).__name__}")
             pprint(member_response.metrics.to_dict())
-        
+
         if member_response.messages:
-            assistant_messages = [m for m in member_response.messages if m.role == "assistant"]
+            assistant_messages = [
+                m for m in member_response.messages if m.role == "assistant"
+            ]
             for j, message in enumerate(assistant_messages, 1):
                 print(f"\n  Member Assistant Message {j}:")
                 if message.metrics is not None:

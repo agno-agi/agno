@@ -26,7 +26,9 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
     ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
-def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None) -> Optional[Message]:  # type: ignore  # noqa: F821
+def get_openai_reasoning(
+    reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None
+) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
     # Update system message role to "system"
@@ -73,7 +75,7 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message], main
         adjusted_time_to_first_token = reasoning_metrics.time_to_first_token
         if reasoning_metrics.time_to_first_token is not None and reasoning_start_elapsed_time is not None:
             adjusted_time_to_first_token = reasoning_start_elapsed_time + reasoning_metrics.time_to_first_token
-        
+
         # Create a copy of the metrics to avoid sharing the same object reference
         # This ensures the reasoning message has its own metrics instance
         reasoning_message.metrics = MessageMetrics(
@@ -87,14 +89,15 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message], main
             cache_write_tokens=reasoning_metrics.cache_write_tokens,
             reasoning_tokens=reasoning_metrics.reasoning_tokens,
             time_to_first_token=adjusted_time_to_first_token,
-            duration=reasoning_metrics.duration,
             # Don't copy the timer - it's specific to the original message context
         )
-    
+
     return reasoning_message
 
 
-async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None) -> Optional[Message]:  # type: ignore  # noqa: F821
+async def aget_openai_reasoning(
+    reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None
+) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
     # Update system message role to "system"
@@ -140,7 +143,7 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
         adjusted_time_to_first_token = reasoning_metrics.time_to_first_token
         if reasoning_metrics.time_to_first_token is not None and reasoning_start_elapsed_time is not None:
             adjusted_time_to_first_token = reasoning_start_elapsed_time + reasoning_metrics.time_to_first_token
-        
+
         # Create a copy of the metrics to avoid sharing the same object reference
         # This ensures the reasoning message has its own metrics instance
         reasoning_message.metrics = MessageMetrics(
@@ -154,8 +157,7 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
             cache_write_tokens=reasoning_metrics.cache_write_tokens,
             reasoning_tokens=reasoning_metrics.reasoning_tokens,
             time_to_first_token=adjusted_time_to_first_token,
-            duration=reasoning_metrics.duration,
             # Don't copy the timer - it's specific to the original message context
         )
-    
+
     return reasoning_message

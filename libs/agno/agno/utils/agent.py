@@ -2,8 +2,8 @@ from asyncio import Future, Task
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Union
 
 from agno.media import Audio, File, Image, Video
-from agno.models.message import Message
 from agno.metrics import Metrics, SessionMetrics, SessionModelMetrics
+from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent

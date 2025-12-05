@@ -26,8 +26,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
-from agno.models.message import Citations, Message
 from agno.metrics import MessageMetrics, ToolCallMetrics
+from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -308,7 +308,7 @@ class Model(ABC):
         """
         Ensure message metrics are initialized and timer is started.
         This should be called before making model API calls.
-        
+
         Args:
             assistant_message: The assistant message to initialize metrics for
         """
@@ -923,17 +923,7 @@ class Model(ABC):
             # Update MessageMetrics with usage data from response
             usage = provider_response.response_usage
             # Convert Metrics to MessageMetrics for addition
-            usage_metrics = MessageMetrics(
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                total_tokens=usage.total_tokens,
-                audio_input_tokens=usage.audio_input_tokens,
-                audio_output_tokens=usage.audio_output_tokens,
-                audio_total_tokens=usage.audio_total_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-                reasoning_tokens=usage.reasoning_tokens,
-            )
+            usage_metrics = MessageMetrics.from_metrics(usage)
             # Use in-place addition to preserve timer automatically
             assistant_message.metrics += usage_metrics
             # Set time_to_first_token if we have content and it's not already set
@@ -1431,17 +1421,7 @@ class Model(ABC):
             # Update MessageMetrics with usage data from response
             usage = model_response_delta.response_usage
             # Convert Metrics to MessageMetrics for addition
-            usage_metrics = MessageMetrics(
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                total_tokens=usage.total_tokens,
-                audio_input_tokens=usage.audio_input_tokens,
-                audio_output_tokens=usage.audio_output_tokens,
-                audio_total_tokens=usage.audio_total_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-                reasoning_tokens=usage.reasoning_tokens,
-            )
+            usage_metrics = MessageMetrics.from_metrics(usage)
             # Use in-place addition to preserve timer automatically
             stream_data.response_metrics += usage_metrics
 
@@ -2287,11 +2267,12 @@ class Model(ABC):
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:
                 function_call_result.stop_after_tool_call = True
-            
+
             # Create ToolCallMetrics for the tool execution
             tool_metrics = None
             if function_call_timer is not None and function_call_timer.elapsed > 0:
                 from time import time
+
                 tool_metrics = ToolCallMetrics()
                 tool_metrics.timer = function_call_timer
                 tool_metrics.duration = function_call_timer.elapsed
@@ -2299,7 +2280,7 @@ class Model(ABC):
                 current_time = time()
                 tool_metrics.end_time = current_time
                 tool_metrics.start_time = current_time - function_call_timer.elapsed
-            
+
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[

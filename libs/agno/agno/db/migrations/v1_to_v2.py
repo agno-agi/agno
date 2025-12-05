@@ -95,6 +95,8 @@ def _is_metrics_dict(data: Dict[str, Any]) -> bool:
         "prompt_tokens",
         "completion_tokens",
         "time_to_first_token",
+        "provider_metrics",
+        "additional_metrics",
     }
 
     # Deprecated v1 fields that are strong indicators this is a metrics dict

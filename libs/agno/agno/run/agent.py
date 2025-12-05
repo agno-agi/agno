@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.message import Citations, Message
 from agno.metrics import Metrics
+from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
@@ -751,11 +751,11 @@ class RunOutput:
             # Handle details field which contains ModelMetrics lists
             if "details" in metrics and metrics["details"]:
                 from agno.metrics import ModelMetrics
+
                 details_dict = {}
                 for model_type, model_metrics_list in metrics["details"].items():
                     details_dict[model_type] = [
-                        ModelMetrics(**m) if isinstance(m, dict) else m
-                        for m in model_metrics_list
+                        ModelMetrics(**m) if isinstance(m, dict) else m for m in model_metrics_list
                     ]
                 metrics["details"] = details_dict
             metrics = Metrics(**metrics)

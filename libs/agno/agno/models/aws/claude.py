@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
-from agno.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client

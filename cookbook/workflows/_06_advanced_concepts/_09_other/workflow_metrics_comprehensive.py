@@ -16,7 +16,6 @@ from typing import AsyncIterator
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowRunOutput
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -131,10 +130,12 @@ async def main():
         print(f"Type: {type(workflow_run_output.metrics).__name__}")
         metrics_dict = workflow_run_output.metrics.to_dict()
         pprint(metrics_dict)
-        
+
         print("\nWorkflow-level stats:")
         if workflow_run_output.metrics.duration:
-            print(f"  Total workflow duration: {workflow_run_output.metrics.duration:.4f}s")
+            print(
+                f"  Total workflow duration: {workflow_run_output.metrics.duration:.4f}s"
+            )
         print(f"  Number of steps: {len(workflow_run_output.metrics.steps)}")
     else:
         print("No workflow metrics available")
@@ -150,13 +151,16 @@ async def main():
             if step_metrics.metrics:
                 print(f"  Metrics Type: {type(step_metrics.metrics).__name__}")
                 pprint(step_metrics.metrics.to_dict())
-                
+
                 # Show per-model metrics breakdown if details exist
                 if step_metrics.metrics.details:
                     print("\n  " + "-" * 76)
                     print("  PER-MODEL METRICS (details field):")
                     print("  " + "-" * 76)
-                    for model_type, model_metrics_list in step_metrics.metrics.details.items():
+                    for (
+                        model_type,
+                        model_metrics_list,
+                    ) in step_metrics.metrics.details.items():
                         print(f"\n  {model_type}:")
                         for i, model_metrics in enumerate(model_metrics_list, 1):
                             print(f"    Instance {i}:")
@@ -185,18 +189,24 @@ async def main():
     print("=" * 80)
     try:
         # Check if database supports async operations
-        if hasattr(content_creation_workflow, '_has_async_db') and content_creation_workflow._has_async_db():
+        if (
+            hasattr(content_creation_workflow, "_has_async_db")
+            and content_creation_workflow._has_async_db()
+        ):
             # Use async method for async databases
             session_metrics = await content_creation_workflow.aget_session_metrics()
         else:
             # Use sync method for sync databases (run in executor to avoid blocking)
             import asyncio
-            session_metrics = await asyncio.to_thread(content_creation_workflow.get_session_metrics)
-        
+
+            session_metrics = await asyncio.to_thread(
+                content_creation_workflow.get_session_metrics
+            )
+
         if session_metrics:
             print(f"Type: {type(session_metrics).__name__}")
             pprint(session_metrics.to_dict())
-            
+
             print("\nSession-level stats:")
             print(f"  Total tokens: {session_metrics.total_tokens}")
             print(f"  Input tokens: {session_metrics.input_tokens}")
@@ -205,8 +215,12 @@ async def main():
             print("No session metrics available")
     except Exception as e:
         print(f"Could not retrieve session metrics: {e}")
-        print("Note: Session metrics are created after the first workflow run completes.")
-        print("      Make sure the workflow has a database configured and the session was saved.")
+        print(
+            "Note: Session metrics are created after the first workflow run completes."
+        )
+        print(
+            "      Make sure the workflow has a database configured and the session was saved."
+        )
 
     print("\n" + "=" * 80)
     print("5. WORKFLOW RUN SUMMARY")
@@ -225,4 +239,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

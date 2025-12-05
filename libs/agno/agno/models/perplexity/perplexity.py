@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
-from agno.models.message import Citations, UrlCitation
 from agno.metrics import Metrics
+from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 

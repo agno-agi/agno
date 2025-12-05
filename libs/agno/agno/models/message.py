@@ -430,11 +430,14 @@ class Message(BaseModel):
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
 
             # Time related metrics
-            if self.metrics.duration is not None and self.metrics.duration > 0:
-                _logger(f"* Duration:                    {self.metrics.duration:.4f}s")
-            if self.metrics.output_tokens and self.metrics.duration and self.metrics.duration > 0:
+            duration = None
+            if self.metrics.timer is not None and self.metrics.timer.elapsed is not None:
+                duration = self.metrics.timer.elapsed
+            if duration is not None and duration > 0:
+                _logger(f"* Duration:                    {duration:.4f}s")
+            if self.metrics.output_tokens and duration and duration > 0:
                 _logger(
-                    f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.duration:.4f} tokens/s"
+                    f"* Tokens per second:           {self.metrics.output_tokens / duration:.4f} tokens/s"
                 )
             if self.metrics.time_to_first_token is not None and self.metrics.time_to_first_token > 0:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")

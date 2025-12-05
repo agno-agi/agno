@@ -19,7 +19,7 @@ class ModelMetrics:
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         # Only include valid fields (filter out any old fields like provider_metrics, additional_metrics)
-        valid_fields = {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'time_to_first_token'}
+        valid_fields = {"id", "provider", "input_tokens", "output_tokens", "total_tokens", "time_to_first_token"}
         metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
         metrics_dict = {
             k: v
@@ -45,17 +45,17 @@ class ToolCallMetrics:
 
     def to_dict(self) -> Dict[str, Any]:
         from datetime import datetime
-        
+
         metrics_dict = asdict(self)
         # Remove the timer util if present
         metrics_dict.pop("timer", None)
-        
+
         # Convert start_time and end_time from Unix timestamps to ISO format strings
         if metrics_dict.get("start_time") is not None:
             metrics_dict["start_time"] = datetime.fromtimestamp(metrics_dict["start_time"]).isoformat()
         if metrics_dict.get("end_time") is not None:
             metrics_dict["end_time"] = datetime.fromtimestamp(metrics_dict["end_time"]).isoformat()
-        
+
         metrics_dict = {
             k: v for k, v in metrics_dict.items() if v is not None and (not isinstance(v, (int, float)) or v != 0)
         }
@@ -82,9 +82,9 @@ class ToolCallMetrics:
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCallMetrics":
         """Create ToolCallMetrics from dict, handling ISO format strings for start_time and end_time."""
         from datetime import datetime
-        
+
         metrics_data = data.copy()
-        
+
         # Convert ISO format strings back to Unix timestamps if needed
         if "start_time" in metrics_data and isinstance(metrics_data["start_time"], str):
             try:
@@ -95,7 +95,7 @@ class ToolCallMetrics:
                     metrics_data["start_time"] = float(metrics_data["start_time"])
                 except (ValueError, TypeError):
                     metrics_data["start_time"] = None
-        
+
         if "end_time" in metrics_data and isinstance(metrics_data["end_time"], str):
             try:
                 metrics_data["end_time"] = datetime.fromisoformat(metrics_data["end_time"]).timestamp()
@@ -105,7 +105,7 @@ class ToolCallMetrics:
                     metrics_data["end_time"] = float(metrics_data["end_time"])
                 except (ValueError, TypeError):
                     metrics_data["end_time"] = None
-        
+
         return cls(**metrics_data)
 
 
@@ -136,8 +136,6 @@ class MessageMetrics:
     timer: Optional[Timer] = None
     # Time from message start to first token generation, in seconds
     time_to_first_token: Optional[float] = None
-    # Total message processing time, in seconds
-    duration: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
@@ -167,14 +165,6 @@ class MessageMetrics:
         # Preserve timer from self (left operand)
         result.timer = self.timer
 
-        # Sum durations if both exist
-        if self.duration is not None and other.duration is not None:
-            result.duration = self.duration + other.duration
-        elif self.duration is not None:
-            result.duration = self.duration
-        elif other.duration is not None:
-            result.duration = other.duration
-
         # Sum time to first token if both exist
         if self.time_to_first_token is not None and other.time_to_first_token is not None:
             result.time_to_first_token = self.time_to_first_token + other.time_to_first_token
@@ -197,12 +187,6 @@ class MessageMetrics:
         self.cache_write_tokens += other.cache_write_tokens
         self.reasoning_tokens += other.reasoning_tokens
 
-        # Sum durations if both exist
-        if self.duration is not None and other.duration is not None:
-            self.duration = self.duration + other.duration
-        elif other.duration is not None:
-            self.duration = other.duration
-
         # Sum time to first token if both exist
         if self.time_to_first_token is not None and other.time_to_first_token is not None:
             self.time_to_first_token = self.time_to_first_token + other.time_to_first_token
@@ -219,16 +203,36 @@ class MessageMetrics:
         self.timer.start()
 
     def stop_timer(self, set_duration: bool = True):
-        """Stop the timer and set duration."""
+        """Stop the timer."""
         if self.timer is not None:
             self.timer.stop()
-            if set_duration:
-                self.duration = self.timer.elapsed
 
     def set_time_to_first_token(self):
         """Set time to first token from the timer."""
         if self.timer is not None:
             self.time_to_first_token = self.timer.elapsed
+
+    @classmethod
+    def from_metrics(cls, metrics: "Metrics") -> "MessageMetrics":
+        """Create MessageMetrics from a Metrics object (e.g., from provider response usage).
+
+        Args:
+            metrics: A Metrics object containing token usage information
+
+        Returns:
+            A new MessageMetrics instance with token fields copied from the Metrics object
+        """
+        return cls(
+            input_tokens=metrics.input_tokens,
+            output_tokens=metrics.output_tokens,
+            total_tokens=metrics.total_tokens,
+            audio_input_tokens=metrics.audio_input_tokens,
+            audio_output_tokens=metrics.audio_output_tokens,
+            audio_total_tokens=metrics.audio_total_tokens,
+            cache_read_tokens=metrics.cache_read_tokens,
+            cache_write_tokens=metrics.cache_write_tokens,
+            reasoning_tokens=metrics.reasoning_tokens,
+        )
 
 
 @dataclass
@@ -248,7 +252,15 @@ class SessionModelMetrics:
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         # Only include valid fields
-        valid_fields = {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'average_duration', 'total_runs'}
+        valid_fields = {
+            "id",
+            "provider",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "average_duration",
+            "total_runs",
+        }
         metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
         metrics_dict = {
             k: v
@@ -297,15 +309,32 @@ class SessionMetrics:
         # Convert details SessionModelMetrics to dicts
         if metrics_dict.get("details") is not None:
             details_list = [
-                m.to_dict() if isinstance(m, SessionModelMetrics)
-                else {k: v for k, v in m.items() if k in {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'average_duration', 'total_runs'} and v is not None}
+                m.to_dict()
+                if isinstance(m, SessionModelMetrics)
+                else {
+                    k: v
+                    for k, v in m.items()
+                    if k
+                    in {
+                        "id",
+                        "provider",
+                        "input_tokens",
+                        "output_tokens",
+                        "total_tokens",
+                        "average_duration",
+                        "total_runs",
+                    }
+                    and v is not None
+                }
                 for m in metrics_dict["details"]
             ]
             metrics_dict["details"] = details_list
         metrics_dict = {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, (dict, list)) or len(v) > 0)
+            if v is not None
+            and (not isinstance(v, (int, float)) or v != 0)
+            and (not isinstance(v, (dict, list)) or len(v) > 0)
         }
         return metrics_dict
 
@@ -330,7 +359,7 @@ class SessionMetrics:
             merged_details = []
             # Create a dict keyed by (provider, id) for efficient lookup
             details_dict: Dict[Tuple[str, str], SessionModelMetrics] = {}
-            
+
             # Add self.details
             if self.details:
                 for model_metrics in self.details:
@@ -356,9 +385,13 @@ class SessionMetrics:
                             if existing.average_duration is None:
                                 existing.average_duration = model_metrics.average_duration
                             else:
-                                total_duration = (existing.average_duration * existing.total_runs) + (model_metrics.average_duration * model_metrics.total_runs)
-                                existing.average_duration = total_duration / existing.total_runs if existing.total_runs > 0 else None
-            
+                                total_duration = (existing.average_duration * existing.total_runs) + (
+                                    model_metrics.average_duration * model_metrics.total_runs
+                                )
+                                existing.average_duration = (
+                                    total_duration / existing.total_runs if existing.total_runs > 0 else None
+                                )
+
             # Add other.details
             if other.details:
                 for model_metrics in other.details:
@@ -384,9 +417,13 @@ class SessionMetrics:
                             if existing.average_duration is None:
                                 existing.average_duration = model_metrics.average_duration
                             else:
-                                total_duration = (existing.average_duration * existing.total_runs) + (model_metrics.average_duration * model_metrics.total_runs)
-                                existing.average_duration = total_duration / existing.total_runs if existing.total_runs > 0 else None
-            
+                                total_duration = (existing.average_duration * existing.total_runs) + (
+                                    model_metrics.average_duration * model_metrics.total_runs
+                                )
+                                existing.average_duration = (
+                                    total_duration / existing.total_runs if existing.total_runs > 0 else None
+                                )
+
             merged_details = list(details_dict.values())
 
         result = SessionMetrics(
@@ -448,18 +485,35 @@ class Metrics:
         metrics_dict.pop("timer", None)
         # Remove any old fields that no longer exist in the dataclass (e.g., from deserialized old data)
         valid_fields = {
-            'input_tokens', 'output_tokens', 'total_tokens', 'audio_input_tokens', 'audio_output_tokens',
-            'audio_total_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens',
-            'time_to_first_token', 'duration', 'details'
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "audio_input_tokens",
+            "audio_output_tokens",
+            "audio_total_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "reasoning_tokens",
+            "time_to_first_token",
+            "duration",
+            "details",
         }
         metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
         # Convert details ModelMetrics to dicts
         if metrics_dict.get("details") is not None:
             details_dict = {}
-            valid_model_metrics_fields = {'id', 'provider', 'input_tokens', 'output_tokens', 'total_tokens', 'time_to_first_token'}
+            valid_model_metrics_fields = {
+                "id",
+                "provider",
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "time_to_first_token",
+            }
             for model_type, model_metrics_list in metrics_dict["details"].items():
                 details_dict[model_type] = [
-                    m.to_dict() if isinstance(m, ModelMetrics) 
+                    m.to_dict()
+                    if isinstance(m, ModelMetrics)
                     else {k: v for k, v in m.items() if k in valid_model_metrics_fields and v is not None}
                     for m in model_metrics_list
                 ]

@@ -1,21 +1,22 @@
 """Test all four metrics types: ToolCallMetrics, MessageMetrics, Metrics, SessionMetrics"""
 
 from agno.agent import Agent
-from agno.db.in_memory import InMemoryDb
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.models.openai.responses import OpenAIResponses
+from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
+
 class Response(BaseModel):
     story_name: str = Field(description="The name of the story")
     story_description: str = Field(description="The description of the story")
     story_content: str = Field(description="The content of the story")
+
 
 agent = Agent(
     id="basic-stream-metrics-agent",
@@ -30,7 +31,6 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     session_id="metrics-test-session",
     output_schema=Response,
-    
 )
 
 # Run the agent to generate metrics
@@ -51,7 +51,7 @@ if run_output.metrics:
     print(f"Type: {type(run_output.metrics).__name__}")
     metrics_dict = run_output.metrics.to_dict()
     pprint(metrics_dict)
-    
+
     # Show details if available
     if run_output.metrics.details:
         print("\n" + "-" * 80)

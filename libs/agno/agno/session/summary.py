@@ -229,8 +229,10 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
-        summary_response = self.model.response(messages=messages, response_format=response_format, run_response=run_response)
-        
+        summary_response = self.model.response(
+            messages=messages, response_format=response_format, run_response=run_response
+        )
+
         # Extract assistant message from messages (added by model.response())
         # and add to run_messages.session_summary_model_messages for metrics tracking
         if run_messages is not None and messages:
@@ -238,7 +240,7 @@ class SessionSummaryManager:
             # model.response() always appends an assistant message to the messages list
             assistant_message = messages[-1]
             run_messages.session_summary_model_messages.append(assistant_message)
-        
+
         session_summary = self._process_summary_response(summary_response, self.model)
 
         if session is not None and session_summary is not None:
@@ -268,8 +270,10 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
-        summary_response = await self.model.aresponse(messages=messages, response_format=response_format, run_response=run_response)
-        
+        summary_response = await self.model.aresponse(
+            messages=messages, response_format=response_format, run_response=run_response
+        )
+
         # Extract assistant message from messages (added by model.aresponse())
         # and add to run_messages.session_summary_model_messages for metrics tracking
         if run_messages is not None and messages:
@@ -277,7 +281,7 @@ class SessionSummaryManager:
             # model.aresponse() always appends an assistant message to the messages list
             assistant_message = messages[-1]
             run_messages.session_summary_model_messages.append(assistant_message)
-        
+
         session_summary = self._process_summary_response(summary_response, self.model)
 
         if session is not None and session_summary is not None:

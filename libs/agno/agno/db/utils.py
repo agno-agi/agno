@@ -4,8 +4,8 @@ import json
 from datetime import date, datetime
 from uuid import UUID
 
-from agno.models.message import Message
 from agno.metrics import Metrics
+from agno.models.message import Message
 
 
 class CustomJSONEncoder(json.JSONEncoder):

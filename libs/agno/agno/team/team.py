@@ -46,9 +46,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
+from agno.metrics import Metrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.metrics import Metrics, SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -4716,6 +4716,7 @@ class Team:
                     # Handle details deserialization if present
                     if "details" in metrics_dict and isinstance(metrics_dict["details"], list):
                         from agno.models.metrics import SessionModelMetrics
+
                         details_list = []
                         for detail_dict in metrics_dict["details"]:
                             if isinstance(detail_dict, dict):
@@ -4728,6 +4729,7 @@ class Team:
                     # Ensure details are SessionModelMetrics objects, not dicts
                     if session_metrics_from_db.details:
                         from agno.models.metrics import SessionModelMetrics
+
                         details_list = []
                         for detail in session_metrics_from_db.details:
                             if isinstance(detail, dict):
