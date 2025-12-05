@@ -2,21 +2,22 @@ import asyncio
 import base64
 import os
 import re
-from pathlib import Path
 import tempfile
+import uuid
+from pathlib import Path
 from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
-import uuid
+
+import fitz
 
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
-import fitz
+from agno.utils.log import log_debug, log_error
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -437,8 +438,10 @@ class PDFImageReader(BasePDFReader):
         # Read and chunk.
         return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=True)
 
+
 def img_to_base64(bytes_data: bytes) -> str:
     return base64.b64encode(bytes_data).decode("utf-8")
+
 
 class VlmPDFReader(BasePDFReader):
     """
@@ -454,13 +457,7 @@ class VlmPDFReader(BasePDFReader):
     def get_supported_content_types(cls):
         return ["pdf"]
 
-    def read(
-        self,
-        pdf: str,
-        name: Optional[str] = None,
-        password: Optional[str] = None
-    ) -> List[Document]:
-
+    def read(self, pdf: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         doc_name = name or os.path.basename(pdf)
         log_debug(f"Reading PDF with VLM: {doc_name}")
 
@@ -474,7 +471,6 @@ class VlmPDFReader(BasePDFReader):
         tmp_dir = tempfile.mkdtemp(prefix="pdf_img_")
 
         for page_index, page in enumerate(pdf_reader):
-
             text = page.get_text("text") or ""
             text = text.strip()
             if text:
@@ -500,7 +496,7 @@ class VlmPDFReader(BasePDFReader):
                 msg = Message(
                     role="user",
                     content="Describe this image in detail.",
-                    images=[{"content": img_bytes, "mime_type": f"image/{img_ext}"}]
+                    images=[{"content": img_bytes, "mime_type": f"image/{img_ext}"}],
                 )
 
                 try:
@@ -522,12 +518,7 @@ class VlmPDFReader(BasePDFReader):
 
         return self._build_chunked_documents(documents)
 
-    async def async_read(
-        self,
-        pdf: str,
-        name: Optional[str] = None,
-        password: Optional[str] = None
-    ) -> List[Document]:
+    async def async_read(self, pdf: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         """
         Asynchronous version of read().
         - Opens PDF in a worker thread (fitz is not async)
@@ -546,8 +537,7 @@ class VlmPDFReader(BasePDFReader):
         tmp_dir = tempfile.mkdtemp(prefix="pdf_img_")
 
         tasks = [
-            self._process_page_async(page_index, page, tmp_dir, doc_name)
-            for page_index, page in enumerate(pdf_reader)
+            self._process_page_async(page_index, page, tmp_dir, doc_name) for page_index, page in enumerate(pdf_reader)
         ]
 
         all_pages = await asyncio.gather(*tasks)
@@ -604,7 +594,7 @@ class VlmPDFReader(BasePDFReader):
         msg = Message(
             role="user",
             content="Describe this image in detail.",
-            images=[{"content": img_bytes, "mime_type": f"image/{img_ext}"}]
+            images=[{"content": img_bytes, "mime_type": f"image/{img_ext}"}],
         )
         try:
             assistant_msg = Message(role="assistant", content=None)
