@@ -2186,14 +2186,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if trace.workflow_id is not None:
                         update_values["workflow_id"] = trace.workflow_id
 
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     await sess.execute(stmt)
                 else:
@@ -2293,10 +2285,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             from agno.tracing.schemas import Trace
 
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
             table = await self._get_table(table_type="traces")
 
             # Get spans table for JOIN
@@ -2310,7 +2298,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2378,12 +2365,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             table = await self._get_table(table_type="traces")
 
             async with self.async_session_factory() as sess:
@@ -2424,7 +2405,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
-                log_debug(f"Total matching sessions: {total_count}")
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
@@ -2432,7 +2412,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
-                log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
                 stats_list = []

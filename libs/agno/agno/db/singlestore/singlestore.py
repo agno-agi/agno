@@ -2461,14 +2461,6 @@ class SingleStoreDb(BaseDb):
                     if trace.workflow_id is not None:
                         update_values["workflow_id"] = trace.workflow_id
 
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
                     update_stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     sess.execute(update_stmt)
                 else:
@@ -2589,7 +2581,6 @@ class SingleStoreDb(BaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2611,14 +2602,12 @@ class SingleStoreDb(BaseDb):
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching traces: {total_count}")
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} traces")
 
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
