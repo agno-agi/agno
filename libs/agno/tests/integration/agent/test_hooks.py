@@ -10,8 +10,10 @@ import pytest
 from agno.agent import Agent
 from agno.exceptions import CheckTrigger, InputCheckError, OutputCheckError
 from agno.models.base import Model
+from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.agent import RunInput, RunOutput
+from agno.run.agent import RunEvent, RunInput, RunOutput
 from agno.session.agent import AgentSession
 
 
@@ -118,14 +120,20 @@ class MockTestModel(Model):
         self._mock_response.content = self._model_response_content
         self._mock_response.role = "assistant"
         self._mock_response.reasoning_content = None
+        self._mock_response.redacted_reasoning_content = None
+        self._mock_response.tool_calls = None
         self._mock_response.tool_executions = None
         self._mock_response.images = None
         self._mock_response.videos = None
         self._mock_response.audios = None
+        self._mock_response.audio = None
         self._mock_response.files = None
         self._mock_response.citations = None
         self._mock_response.references = None
         self._mock_response.metadata = None
+        self._mock_response.provider_data = None
+        self._mock_response.extra = None
+        self._mock_response.response_usage = Metrics()
 
         # Create Mock objects for response methods to track call_args
         self.response = Mock(return_value=self._mock_response)
@@ -862,3 +870,118 @@ async def test_async_hooks_modify_input_and_output():
 
     # The output should be modified by the async post-hook
     assert result.content == "Async output (async modified)"
+
+
+def test_streaming_with_hooks():
+    """Test that hook events are emitted as expected when streaming."""
+
+    def dummy_pre_hook(run_input: RunInput) -> None:
+        """Pre-hook that modifies the input_content."""
+        return
+
+    def dummy_post_hook(run_output: RunOutput) -> None:
+        """Post-hook that modifies the output content."""
+        return
+
+    session_id = "hook_events_persistence_test"
+    agent = create_test_agent(pre_hooks=[dummy_pre_hook], post_hooks=[dummy_post_hook])
+
+    pre_hook_started_event_seen = False
+    post_hook_started_event_seen = False
+    pre_hook_completed_event_seen = False
+    post_hook_completed_event_seen = False
+
+    # Running the agent and tracking seen events
+    for event in agent.run(
+        input=Message(role="user", content="This is a test run"),
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if event.event == RunEvent.pre_hook_started:
+            pre_hook_started_event_seen = True
+        if event.event == RunEvent.post_hook_started:
+            post_hook_started_event_seen = True
+        if event.event == RunEvent.pre_hook_completed:
+            pre_hook_completed_event_seen = True
+        if event.event == RunEvent.post_hook_completed:
+            post_hook_completed_event_seen = True
+
+    # Assert the hook events were seen
+    assert pre_hook_started_event_seen is True
+    assert post_hook_started_event_seen is True
+    assert pre_hook_completed_event_seen is True
+    assert post_hook_completed_event_seen is True
+
+
+@pytest.mark.asyncio
+async def test_streaming_with_hooks_async():
+    """Test that hook events are emitted as expected when streaming."""
+
+    def dummy_pre_hook(run_input: RunInput) -> None:
+        """Pre-hook that modifies the input_content."""
+        return
+
+    def dummy_post_hook(run_output: RunOutput) -> None:
+        """Post-hook that modifies the output content."""
+        return
+
+    session_id = "hook_events_persistence_test"
+    agent = create_test_agent(pre_hooks=[dummy_pre_hook], post_hooks=[dummy_post_hook])
+
+    pre_hook_started_event_seen = False
+    post_hook_started_event_seen = False
+    pre_hook_completed_event_seen = False
+    post_hook_completed_event_seen = False
+
+    # Running the agent and tracking seen events
+    async for event in agent.arun(
+        input=Message(role="user", content="This is a test run"),
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if event.event == RunEvent.pre_hook_started:
+            pre_hook_started_event_seen = True
+        if event.event == RunEvent.post_hook_started:
+            post_hook_started_event_seen = True
+        if event.event == RunEvent.pre_hook_completed:
+            pre_hook_completed_event_seen = True
+        if event.event == RunEvent.post_hook_completed:
+            post_hook_completed_event_seen = True
+
+    # Assert the hook events were seen
+    assert pre_hook_started_event_seen is True
+    assert post_hook_started_event_seen is True
+    assert pre_hook_completed_event_seen is True
+    assert post_hook_completed_event_seen is True
+
+
+def test_session_persistence_with_hooks(shared_db):
+    """Test that session persistence works for sessions containing hook events."""
+
+    def dummy_pre_hook(run_input: RunInput) -> None:
+        """Pre-hook that modifies the input_content."""
+        return
+
+    def dummy_post_hook(run_output: RunOutput) -> None:
+        """Post-hook that modifies the output content."""
+        return
+
+    session_id = "hook_events_persistence_test"
+    agent = create_test_agent(pre_hooks=[dummy_pre_hook], post_hooks=[dummy_post_hook])
+    agent.db = shared_db
+
+    for _ in agent.run(
+        input=Message(role="user", content="This is a test run"),
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        pass
+
+    # Assert the session was persisted
+    session = agent.get_session(session_id=session_id)
+    assert session is not None
+    assert session.runs is not None
+    assert session.runs[0].messages[1].content == "This is a test run"  # type: ignore

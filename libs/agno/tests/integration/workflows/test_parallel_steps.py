@@ -1,6 +1,8 @@
 """Integration tests for Parallel steps functionality."""
 
 import pytest
+from contextvars import ContextVar
+from secrets import token_hex
 
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Workflow
@@ -127,6 +129,94 @@ def test_parallel_direct_single_step():
     # Single step should still be in the steps field
     assert len(result.steps) == 1
     assert result.steps[0].content == "Output A"
+
+
+# ============================================================================
+# CONTEXT PROPAGATION TESTS
+# ============================================================================
+
+# ContextVar for testing context propagation to child threads
+_test_context_var: ContextVar[str] = ContextVar("test_context_var", default="not_set")
+
+
+def _step_read_context(step_input: StepInput) -> StepOutput:
+    """Step that reads a context variable to verify propagation."""
+    value = _test_context_var.get()
+    return StepOutput(content=f"context_value={value}")
+
+
+def test_parallel_context_propagation():
+    """Test that context variables are propagated to parallel step threads.
+
+    This verifies that copy_context().run() is used when submitting tasks
+    to the ThreadPoolExecutor, ensuring contextvars are available in child threads.
+    """
+    # Set context variable in main thread
+    value = token_hex(16)
+    token = _test_context_var.set(value)
+
+    try:
+        parallel = Parallel(
+            _step_read_context,
+            _step_read_context,
+            name="Context Propagation Test",
+        )
+        step_input = StepInput(input="context test")
+
+        result = parallel.execute(step_input)
+
+        # Both parallel steps should have received the context variable
+        assert len(result.steps) == 2
+        for step_result in result.steps:
+            assert f"context_value={value}" in step_result.content, (
+                f"Context variable was not propagated to child thread. "
+                f"Got: {step_result.content}"
+            )
+    finally:
+        _test_context_var.reset(token)
+
+
+def test_parallel_context_propagation_streaming():
+    """Test context propagation in streaming parallel execution."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    value = token_hex(16)
+    token = _test_context_var.set(value)
+
+    try:
+        parallel = Parallel(
+            _step_read_context,
+            _step_read_context,
+            name="Context Stream Test",
+        )
+        step_input = StepInput(input="context stream test")
+
+        mock_response = WorkflowRunOutput(
+            run_id="test-run",
+            workflow_name="test-workflow",
+            workflow_id="test-id",
+            session_id="test-session",
+            content="",
+        )
+
+        events = list(
+            parallel.execute_stream(
+                step_input, workflow_run_response=mock_response, stream_events=True
+            )
+        )
+        step_outputs = [e for e in events if isinstance(e, StepOutput)]
+
+        assert len(step_outputs) == 1
+        parallel_output = step_outputs[0]
+        assert len(parallel_output.steps) == 2
+
+        for step_result in parallel_output.steps:
+            assert f"context_value={value}" in step_result.content, (
+                f"Context variable was not propagated in streaming mode. "
+                f"Got: {step_result.content}"
+            )
+    finally:
+        _test_context_var.reset(token)
 
 
 # ============================================================================
