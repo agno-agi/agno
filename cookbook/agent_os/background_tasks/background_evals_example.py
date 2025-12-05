@@ -1,64 +1,61 @@
 """
-Example: Per-Hook Background Control in AgentOS
+Example: Per-Hook Background Control with CriteriaEval in AgentOS
 
 This example demonstrates fine-grained control over which hooks run in background:
 - Set eval.run_in_background = True for eval instances
+- CriteriaEval evaluates output quality based on custom criteria
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
-from agno.eval.performance import PerformanceEval
-from agno.eval.reliability import ReliabilityEval
+from agno.eval.criteria import CriteriaEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.calculator import CalculatorTools
 
 # Setup database
-db = AsyncSqliteDb(db_file="tmp/evals.db")
+db = AsyncSqliteDb(db_file="tmp/criteria_evals.db")
 
-
-# Function to benchmark
-async def count_to_100():
-    import asyncio
-
-    await asyncio.sleep(2)
-    total = 0
-    for i in range(1, 101):
-        total += i
-    return total
-
-
-# PerformanceEval - runs in background
-performance_eval = PerformanceEval(
-    func=count_to_100,
-    num_iterations=5,
-    warmup_runs=2,
+# CriteriaEval for accuracy - runs synchronously (blocks response)
+accuracy_criteria = CriteriaEval(
     db=db,
-    print_results=False,
-    print_summary=True,  # Just show summary
-    telemetry=False,
-)
-performance_eval.run_in_background = True
-
-# ReliabilityEval - runs synchronously (default)
-reliability_eval = ReliabilityEval(
-    expected_tool_calls=["add", "multiply", "divide"],
-    db=db,
+    name="Accuracy Check",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    criteria="Response should be factually correct and complete",
+    threshold=7,
+    num_iterations=2,
     print_results=True,
-    telemetry=False,
+    print_summary=True,
+    telemetry=True,
 )
-# reliability_eval.run_in_background = True
+# accuracy_criteria.run_in_background = False (default - blocks)
+
+# CriteriaEval for quality - runs in background (non-blocking)
+quality_criteria = CriteriaEval(
+    db=db,
+    name="Quality Assessment",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    criteria="Response should be well-structured, concise, and professional",
+    threshold=8,
+    num_iterations=2,
+    additional_guidelines=[
+        "Check if response is easy to understand",
+        "Verify response is not overly verbose",
+    ],
+    print_results=True,
+    print_summary=True,
+    telemetry=True,
+)
+quality_criteria.run_in_background = True
 
 agent = Agent(
-    id="math-agent",
-    name="MathAgent",
+    id="geography-agent",
+    name="GeographyAgent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="You are a helpful math assistant. Always use the Calculator tools.",
-    tools=[CalculatorTools()],
+    instructions="You are a helpful geography assistant. Provide accurate and concise answers.",
     db=db,
     post_hooks=[
-        reliability_eval,  # run_in_background=False - runs first, blocks
-        performance_eval,  # run_in_background=True - runs after response
+        accuracy_criteria,  # run_in_background=False - runs first, blocks
+        quality_criteria,  # run_in_background=True - runs after response
     ],
     markdown=True,
     telemetry=False,
@@ -70,12 +67,13 @@ app = agent_os.get_app()
 
 # Flow:
 # 1. Agent processes request
-# 2. Sync hooks run (reliability_eval)
+# 2. Sync hooks run (accuracy_criteria)
 # 3. Response sent to user
-# 4. Background hooks run (performance_eval)
+# 4. Background hooks run (quality_criteria)
 
-# curl -X POST http://localhost:7777/agents/math-agent/runs \
-#   -F "message=What is 2+2?" -F "stream=false"
+# Test with:
+# curl -X POST http://localhost:7777/agents/geography-agent/runs \
+#   -F "message=What is the capital of France?" -F "stream=false"
 
 if __name__ == "__main__":
     agent_os.serve(app="background_evals_example:app", port=7777, reload=True)

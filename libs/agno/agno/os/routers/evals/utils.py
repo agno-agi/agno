@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.accuracy import AccuracyEval
+from agno.eval.criteria import CriteriaEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 from agno.models.base import Model
@@ -44,6 +45,73 @@ async def run_accuracy_eval(
         raise HTTPException(status_code=500, detail="Failed to run accuracy evaluation")
 
     eval_run = EvalSchema.from_accuracy_eval(accuracy_eval=accuracy_eval, result=result)
+
+    if default_model is not None:
+        if agent is not None:
+            agent.model = default_model
+        elif team is not None:
+            team.model = default_model
+
+    return eval_run
+
+
+async def run_criteria_eval(
+    eval_run_input: EvalRunInput,
+    db: Union[BaseDb, AsyncBaseDb],
+    agent: Optional[Agent] = None,
+    team: Optional[Team] = None,
+    default_model: Optional[Model] = None,
+) -> EvalSchema:
+    """Run a Criteria evaluation for the given agent or team"""
+    if not eval_run_input.criteria:
+        raise HTTPException(status_code=400, detail="criteria is required for criteria evaluation")
+
+    # Run agent/team to get output
+    if agent:
+        agent_response = agent.run(eval_run_input.input)
+        output = str(agent_response.content) if agent_response.content else ""
+        model_id = agent.model.id if agent and agent.model else None
+        model_provider = agent.model.provider if agent and agent.model else None
+        agent_id = agent.id
+        team_id = None
+    elif team:
+        team_response = team.run(eval_run_input.input)
+        output = str(team_response.content) if team_response.content else ""
+        model_id = team.model.id if team and team.model else None
+        model_provider = team.model.provider if team and team.model else None
+        agent_id = None
+        team_id = team.id
+    else:
+        raise HTTPException(status_code=400, detail="Either agent_id or team_id must be provided")
+
+    criteria_eval = CriteriaEval(
+        db=db,
+        criteria=eval_run_input.criteria,
+        threshold=eval_run_input.threshold or 7,
+        additional_guidelines=eval_run_input.additional_guidelines,
+        additional_context=eval_run_input.additional_context,
+        num_iterations=eval_run_input.num_iterations,
+        name=eval_run_input.name,
+        model=default_model,
+    )
+
+    if isinstance(db, AsyncBaseDb):
+        result = await criteria_eval.arun(
+            input=eval_run_input.input, output=output, print_results=False, print_summary=False
+        )
+    else:
+        result = criteria_eval.run(input=eval_run_input.input, output=output, print_results=False, print_summary=False)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to run criteria evaluation")
+
+    eval_run = EvalSchema.from_criteria_eval(
+        criteria_eval=criteria_eval,
+        result=result,
+        agent_id=agent_id,
+        team_id=team_id,
+        model_id=model_id,
+        model_provider=model_provider,
+    )
 
     if default_model is not None:
         if agent is not None:

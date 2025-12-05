@@ -1,5 +1,8 @@
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+
+if TYPE_CHECKING:
+    from agno.eval.base import BaseEval
 
 from agno.guardrails.base import BaseGuardrail
 from agno.hooks.decorator import HOOK_RUN_IN_BACKGROUND_ATTR
@@ -54,15 +57,18 @@ def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
 
 
 def normalize_hooks(
-    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]],
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]],
     async_mode: bool = False,
+    hook_mode: str = "post",
 ) -> Optional[List[Callable[..., Any]]]:
     """Normalize hooks to a list format
 
     Args:
-        hooks: List of hook functions or hook instances
+        hooks: List of hook functions, guardrails, or eval instances
         async_mode: Whether to use async versions of methods
+        hook_mode: Either "pre" or "post" - determines which eval method to use
     """
+    from agno.eval.base import BaseEval
 
     result_hooks: List[Callable[..., Any]] = []
 
@@ -73,6 +79,19 @@ def normalize_hooks(
                     result_hooks.append(hook.async_check)
                 else:
                     result_hooks.append(hook.check)
+            elif isinstance(hook, BaseEval):
+                # Extract the method based on hook_mode
+                if hook_mode == "pre":
+                    method = hook.async_pre_check if async_mode else hook.pre_check
+                else:
+                    method = hook.async_post_check if async_mode else hook.post_check  # type: ignore[assignment]
+
+                from functools import partial
+
+                wrapped = partial(method)
+                wrapped.__name__ = method.__name__  # type: ignore
+                setattr(wrapped, HOOK_RUN_IN_BACKGROUND_ATTR, getattr(hook, "run_in_background", False))
+                result_hooks.append(wrapped)
             else:
                 # Check if the hook is async and used within sync methods
                 if not async_mode:
