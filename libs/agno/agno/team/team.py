@@ -2065,6 +2065,7 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
+            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -2204,8 +2205,6 @@ class Team:
 
         # Set up retry logic
         num_attempts = self.retries + 1
-
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -2958,6 +2957,8 @@ class Team:
                 stacklevel=2,
             )
 
+            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
@@ -3087,8 +3088,6 @@ class Team:
 
         # Resolve retry parameters
         num_attempts = self.retries + 1
-
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         for attempt in range(num_attempts):
             log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
