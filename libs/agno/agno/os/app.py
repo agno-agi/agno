@@ -70,9 +70,11 @@ async def mcp_lifespan(_, mcp_tools):
 
 
 @asynccontextmanager
-async def async_db_lifespan(app: FastAPI, agent_os: "AgentOS"):
+async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initialize async databases in FastAPI's event loop"""
-    await agent_os._initialize_async_databases()
+    if agent_os.auto_provision_dbs:
+        agent_os._initialize_sync_databases()
+        await agent_os._initialize_async_databases()
     yield
 
 
@@ -203,6 +205,7 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+        self._pending_async_db_init: bool = False
 
         if self.tracing:
             self._setup_tracing()
@@ -477,7 +480,7 @@ class AgentOS:
                 lifespans.append(self._mcp_app.lifespan)
 
             # The async database lifespan
-            lifespans.append(partial(async_db_lifespan, agent_os=self))
+            lifespans.append(partial(db_lifespan, agent_os=self))
 
             # Combine lifespans and set them in the app
             if lifespans:
@@ -502,7 +505,7 @@ class AgentOS:
                 lifespans.append(self._mcp_app.lifespan)
 
             # Async database initialization lifespan
-            lifespans.append(partial(async_db_lifespan, agent_os=self))
+            lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
             final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
             fastapi_app = self._make_app(lifespan=final_lifespan)
@@ -672,8 +675,6 @@ class AgentOS:
 
         # Initialize all discovered databases
         if self.auto_provision_dbs:
-            self._initialize_sync_databases()
-            # Store async dbs for later initialization
             self._pending_async_db_init = True
 
     def _initialize_sync_databases(self) -> None:
