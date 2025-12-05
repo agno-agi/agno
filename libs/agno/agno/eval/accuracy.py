@@ -359,10 +359,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
+                agent_session_id = f"eval_{self.eval_id}_{i + 1}"
+
                 if self.agent is not None:
-                    output = self.agent.run(input=eval_input).content
+                    output = self.agent.run(input=eval_input, session_id=agent_session_id).content
                 elif self.team is not None:
-                    output = self.team.run(input=eval_input).content
+                    output = self.team.run(input=eval_input, session_id=agent_session_id).content
 
                 if not output:
                     logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
@@ -500,11 +502,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
+                agent_session_id = f"eval_{self.eval_id}_{i + 1}"
+
                 if self.agent is not None:
-                    response = await self.agent.arun(input=eval_input)
+                    response = await self.agent.arun(input=eval_input, session_id=agent_session_id)
                     output = response.content
                 elif self.team is not None:
-                    response = await self.team.arun(input=eval_input)  # type: ignore
+                    response = await self.team.arun(input=eval_input, session_id=agent_session_id)  # type: ignore
                     output = response.content
 
                 if not output:
@@ -612,11 +616,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
         self.result = AccuracyResult()
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         evaluator_agent = self.get_evaluator_agent()
         eval_input = self.get_eval_input()
@@ -721,7 +728,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 ),
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun_with_output(
@@ -732,11 +739,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
         self.result = AccuracyResult()
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         evaluator_agent = self.get_evaluator_agent()
         eval_input = self.get_eval_input()
@@ -820,7 +830,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 eval_input=log_eval_input,
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:

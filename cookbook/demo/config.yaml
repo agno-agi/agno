@@ -16,14 +16,14 @@ chat:
       - "What can you do?"
 
     finance-agent:
-      - "AAPL stock price."
       - "Summarize key financial metrics for TSLA."
       - "Analyze the automotive industry: Tesla, Ford, General Motors, and Toyota."
+      - "Give me a quick research summary on Nvidia. What changed recently and what should an analyst focus on."
 
     reasoning-finance-agent:
-      - "AAPL stock price."
       - "Summarize key financial metrics for TSLA."
       - "Analyze the automotive industry: Tesla, Ford, General Motors, and Toyota."
+      - "Give me a quick research summary on Nvidia. What changed recently and what should an analyst focus on."
 
     finance-team:
       - "Analyze current sentiment around AI stocks."

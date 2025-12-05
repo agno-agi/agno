@@ -55,10 +55,10 @@ class SemanticChunking(ChunkingStrategy):
                     # Fallback to model id
                     params["embedding_model"] = getattr(self.embedder, "id", None) or "text-embedding-3-small"
 
-                self.chunker = SemanticChunker(**params)
+                self.chunker = SemanticChunker(**params)  # type: ignore
             except Exception:
                 # As a final fallback, use the original behavior
-                self.chunker = SemanticChunker(
+                self.chunker = SemanticChunker(  # type: ignore
                     embedding_model=getattr(self.embedder, "id", None) or "text-embedding-3-small",
                     chunk_size=self.chunk_size,
                     threshold=self.similarity_threshold,

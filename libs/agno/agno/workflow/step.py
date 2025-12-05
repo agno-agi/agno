@@ -229,6 +229,7 @@ class Step:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -347,6 +348,10 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
@@ -470,6 +475,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -609,6 +615,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -720,6 +730,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -870,6 +881,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -945,6 +960,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -1127,6 +1143,10 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import json
@@ -76,8 +78,8 @@ from agno.utils.agent import (
     aget_session_state_util,
     aset_session_name_util,
     aupdate_session_state_util,
-    await_for_background_tasks,
-    await_for_background_tasks_stream,
+    await_for_open_threads,
+    await_for_thread_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
@@ -96,8 +98,8 @@ from agno.utils.agent import (
     store_media_util,
     update_session_state_util,
     validate_media_object_id,
-    wait_for_background_tasks,
-    wait_for_background_tasks_stream,
+    wait_for_open_threads,
+    wait_for_thread_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -122,7 +124,7 @@ from agno.utils.events import (
     create_team_tool_call_started_event,
     handle_event,
 )
-from agno.utils.hooks import filter_hook_args, normalize_hooks
+from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -344,6 +346,8 @@ class Team:
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: Optional[bool] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -636,7 +640,7 @@ class Team:
         self.tool_call_limit = tool_call_limit
         self.tool_hooks = tool_hooks
 
-        # Initialize hooks with backward compatibility
+        # Initialize hooks
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
@@ -719,6 +723,8 @@ class Team:
 
         # List of MCP tools that were initialized on the last run
         self._mcp_tools_initialized_on_run: List[Any] = []
+        # List of connectable tools that were initialized on the last run
+        self._connectable_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -752,8 +758,13 @@ class Team:
             self.id = generate_id_from_name(self.name)
 
     def _set_debug(self, debug_mode: Optional[bool] = None) -> None:
+        # Get the debug level from the environment variable or the default debug level
+        debug_level: Literal[1, 2] = (
+            cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+        )
+        # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            set_log_level_to_debug(source_type="team", level=self.debug_level)
+            set_log_level_to_debug(source_type="team", level=debug_level)
         else:
             set_log_level_to_info(source_type="team")
 
@@ -836,6 +847,26 @@ class Team:
             # Then let the sub-team initialize its own members so they inherit from the sub-team
             for sub_member in member.members:
                 member._initialize_member(sub_member, debug_mode=debug_mode)
+
+    def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_hooks_in_background setting to this team and all nested members recursively.
+
+        This method sets _run_hooks_in_background on the team and all its members (agents and nested teams).
+        For nested teams, it recursively propagates the setting to their members as well.
+
+        Args:
+            run_in_background: Whether hooks should run in background. Defaults to True.
+        """
+        self._run_hooks_in_background = run_in_background
+
+        for member in self.members:
+            if hasattr(member, "_run_hooks_in_background"):
+                member._run_hooks_in_background = run_in_background
+
+            # If it's a nested team, recursively propagate to its members
+            if isinstance(member, Team):
+                member.propagate_run_hooks_in_background(run_in_background)
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -1017,15 +1048,47 @@ class Team:
                     and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
-                    # Connect the MCP server
-                    await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)
+                    try:
+                        # Connect the MCP server
+                        await tool.connect()  # type: ignore
+                        self._mcp_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
         for tool in self._mcp_tools_initialized_on_run:
-            await tool.close()
+            try:
+                await tool.close()
+            except Exception as e:
+                log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
+
+    def _connect_connectable_tools(self) -> None:
+        """Connect tools that require connection management (e.g., database connections)."""
+        if self.tools:
+            for tool in self.tools:
+                if (
+                    hasattr(tool, "requires_connect")
+                    and tool.requires_connect
+                    and hasattr(tool, "connect")
+                    and tool not in self._connectable_tools_initialized_on_run
+                ):
+                    try:
+                        tool.connect()  # type: ignore
+                        self._connectable_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
+
+    def _disconnect_connectable_tools(self) -> None:
+        """Disconnect tools that require connection management."""
+        for tool in self._connectable_tools_initialized_on_run:
+            if hasattr(tool, "close"):
+                try:
+                    tool.close()  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error disconnecting tool: {str(e)}")
+        self._connectable_tools_initialized_on_run = []
 
     def _execute_pre_hooks(
         self,
@@ -1037,13 +1100,14 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for hooks
         all_args = {
             "run_input": run_input,
             "run_context": run_context,
@@ -1055,9 +1119,32 @@ class Team:
             "dependencies": run_context.dependencies,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -1105,13 +1192,14 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for hooks
         all_args = {
             "run_input": run_input,
             "run_context": run_context,
@@ -1123,9 +1211,32 @@ class Team:
             "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -1178,13 +1289,14 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for hooks
         all_args = {
             "run_output": run_output,
             "run_context": run_context,
@@ -1196,9 +1308,31 @@ class Team:
             "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL post_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -1241,13 +1375,14 @@ class Team:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for hooks
         all_args = {
             "run_output": run_output,
             "run_context": run_context,
@@ -1259,9 +1394,31 @@ class Team:
             "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL post_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -1310,6 +1467,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
@@ -1330,9 +1488,6 @@ class Team:
         13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
         """
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
@@ -1346,6 +1501,7 @@ class Team:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             # Consume the generator without yielding
@@ -1458,13 +1614,14 @@ class Team:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 deque(iterator, maxlen=0)
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation
-            wait_for_background_tasks(memory_future=memory_future)
+            wait_for_open_threads(memory_future=memory_future)
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1502,6 +1659,8 @@ class Team:
             self._cleanup_and_store(run_response=run_response, session=session)
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             cleanup_run(run_response.run_id)  # type: ignore
 
     def _run_stream(
@@ -1517,6 +1676,7 @@ class Team:
         stream_events: bool = False,
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response iterator.
@@ -1533,8 +1693,6 @@ class Team:
         9. Create session summary
         10. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
@@ -1550,6 +1708,7 @@ class Team:
                 user_id=user_id,
                 debug_mode=debug_mode,
                 stream_events=stream_events,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             for pre_hook_event in pre_hook_iterator:
@@ -1702,12 +1861,13 @@ class Team:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 8. Wait for background memory creation
-            yield from wait_for_background_tasks_stream(
+            yield from wait_for_thread_tasks_stream(
                 run_response=run_response,
                 memory_future=memory_future,
                 stream_events=stream_events,
@@ -1787,6 +1947,8 @@ class Team:
             # Add the RunOutput to Team Session even when cancelled
             self._cleanup_and_store(run_response=run_response, session=session)
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1879,6 +2041,10 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
@@ -1894,8 +2060,11 @@ class Team:
                 stacklevel=2,
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -1929,7 +2098,10 @@ class Team:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=team_session, session_state=session_state)
@@ -2051,6 +2223,7 @@ class Team:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -2066,6 +2239,7 @@ class Team:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -2123,6 +2297,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
@@ -2146,8 +2321,6 @@ class Team:
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        register_run(run_response.run_id)  # type: ignore
-
         if run_context.dependencies is not None:
             await self._aresolve_run_dependencies(run_context=run_context)
 
@@ -2161,7 +2334,7 @@ class Team:
         self._update_metadata(session=team_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2184,6 +2357,7 @@ class Team:
                 session=team_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -2241,9 +2415,6 @@ class Team:
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         try:
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 7. Reason about the task if reasoning is enabled
@@ -2299,6 +2470,7 @@ class Team:
                     session=team_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     pass
@@ -2306,7 +2478,7 @@ class Team:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 13. Wait for background memory creation
-            await await_for_background_tasks(memory_task=memory_task)
+            await await_for_open_threads(memory_task=memory_task)
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 14. Create session summary
@@ -2341,6 +2513,8 @@ class Team:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
@@ -2367,6 +2541,7 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
@@ -2401,7 +2576,7 @@ class Team:
         self._update_metadata(session=team_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2425,6 +2600,7 @@ class Team:
                 user_id=user_id,
                 debug_mode=debug_mode,
                 stream_events=stream_events,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             async for pre_hook_event in pre_hook_iterator:
@@ -2476,9 +2652,6 @@ class Team:
         if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         try:
             # Considering both stream_events and stream_intermediate_steps (deprecated)
@@ -2579,13 +2752,14 @@ class Team:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     yield event
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
             # 11. Wait for background memory creation
-            async for event in await_for_background_tasks_stream(
+            async for event in await_for_thread_tasks_stream(
                 run_response=run_response,
                 memory_task=memory_task,
                 stream_events=stream_events,
@@ -2667,6 +2841,8 @@ class Team:
             await self._acleanup_and_store(run_response=run_response, session=team_session)
 
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             await self._disconnect_mcp_tools()
             # Cancel the memory task if it's still running
             if memory_task is not None and not memory_task.done():
@@ -2767,6 +2943,10 @@ class Team:
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
@@ -2779,8 +2959,11 @@ class Team:
                 stacklevel=2,
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -2927,6 +3110,7 @@ class Team:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response_iterator  # type: ignore
@@ -2942,6 +3126,7 @@ class Team:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -3047,7 +3232,9 @@ class Team:
         run_response.messages = messages_for_run_response
 
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if model_response.tool_executions:
             for tool_call in model_response.tool_executions:
@@ -3141,7 +3328,9 @@ class Team:
         # Update the TeamRunOutput messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Update the run_response audio if streaming
         if full_model_response.audio is not None:
@@ -3225,7 +3414,9 @@ class Team:
         # Update the TeamRunOutput messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunOutput metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -3600,7 +3791,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session)
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
         self.save_session(session=session)
@@ -3617,7 +3808,7 @@ class Team:
         session.upsert_run(run_response=run_response)
 
         # Calculate session metrics
-        self._update_session_metrics(session=session)
+        self._update_session_metrics(session=session, run_response=run_response)
 
         # Save session to memory
         await self.asave_session(session=session)
@@ -3957,7 +4148,9 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     async def _agenerate_response_with_output_model(
         self, model_response: ModelResponse, run_messages: RunMessages
@@ -4022,7 +4215,9 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._calculate_metrics(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(
+            messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     def _handle_event(
         self,
@@ -4458,42 +4653,41 @@ class Team:
             async for item in reason_generator:
                 yield item
 
-    def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
-        """Sum the metrics of the given messages into a Metrics object"""
-        session_metrics = Metrics()
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-
-        # Get metrics of the team leader's messages
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
-                session_metrics += m.metrics
-
-        return session_metrics
-
-    def _calculate_metrics(self, messages: List[Message]) -> Metrics:
-        metrics = Metrics()
+    def _calculate_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
+        metrics = current_run_metrics or Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
 
+        # If the run metrics were already initialized, keep the time related metrics
+        if current_run_metrics is not None:
+            metrics.timer = current_run_metrics.timer
+            metrics.duration = current_run_metrics.duration
+            metrics.time_to_first_token = current_run_metrics.time_to_first_token
+
         return metrics
 
-    def _update_session_metrics(self, session: TeamSession):
+    def _get_session_metrics(self, session: TeamSession) -> Metrics:
+        # Get the session_metrics from the database
+        if session.session_data is not None and "session_metrics" in session.session_data:
+            session_metrics_from_db = session.session_data.get("session_metrics")
+            if session_metrics_from_db is not None:
+                if isinstance(session_metrics_from_db, dict):
+                    return Metrics(**session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, Metrics):
+                    return session_metrics_from_db
+
+        return Metrics()
+
+    def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
         """Calculate session metrics"""
-
-        session_messages: List[Message] = []
-        for run in session.runs or []:
-            if run.messages is not None:
-                for m in run.messages:
-                    # Skipping messages from history to avoid duplicates
-                    if not m.from_history:
-                        session_messages.append(m)
-
-        # Calculate initial metrics
-        session_metrics = self._calculate_session_metrics(session_messages)
-
+        session_metrics = self._get_session_metrics(session=session)
+        # Add the metrics for the current run to the session metrics
+        if run_response.metrics is not None:
+            session_metrics += run_response.metrics
+        session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
 
@@ -5181,6 +5375,9 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Function, dict]]:
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
+
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -5230,6 +5427,7 @@ class Team:
                             run_response=run_response,
                             knowledge_filters=run_context.knowledge_filters,
                             async_mode=async_mode,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5238,6 +5436,7 @@ class Team:
                             run_response=run_response,
                             knowledge_filters=run_context.knowledge_filters,
                             async_mode=async_mode,
+                            run_context=run_context,
                         )
                     )
 
@@ -6427,7 +6626,10 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content,
+                            filters=run_context.knowledge_filters,
+                            run_context=run_context,
+                            **kwargs,
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -6582,7 +6784,10 @@ class Team:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=run_context.knowledge_filters, **kwargs
+                            query=user_msg_content,
+                            filters=run_context.knowledge_filters,
+                            run_context=run_context,
+                            **kwargs,
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -6728,7 +6933,7 @@ class Team:
             return message
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
-            session_state or {},
+            session_state if session_state is not None else {},
             dependencies or {},
             metadata or {},
             {"user_id": user_id} if user_id is not None else {},
@@ -8848,10 +9053,14 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8884,6 +9093,11 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -8915,10 +9129,14 @@ class Team:
         query: str,
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8951,6 +9169,11 @@ class Team:
                     knowledge_retriever_kwargs = {"team": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
 
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
@@ -9035,6 +9258,7 @@ class Team:
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9050,7 +9274,9 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9077,7 +9303,9 @@ class Team:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9104,6 +9332,7 @@ class Team:
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9123,7 +9352,9 @@ class Team:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -9154,7 +9385,9 @@ class Team:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=search_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)

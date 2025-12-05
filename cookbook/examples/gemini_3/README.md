@@ -1,13 +1,18 @@
-# Google Examples
+# Google Gemini 3 Agents
 
-> Showcasing Google-specific AI capabilities with Agno
+> **Build fast, reasoning-capable agents with Agno and Google Gemini 3.**
 
-This directory contains examples demonstrating Google's unique AI features:
+This directory showcases how to leverage the native capabilities of **Google Gemini 3** within the **Agno** framework. It demonstrates advanced features like **NanoBanana** (native image generation), **Google Grounding** (real-time web search), and **URL Context** (direct web page analysis) to build specialized agents.
 
-- **NanoBanana**: Native image generation using `gemini-3-pro-image-preview`
-- **Google Grounding**: Real-time web search with source citations
-- **URL Context**: Analyze and extract content from web pages
-- **Google Search**: Search integration for Gemini 2.0+ models
+## Agents
+
+This cookbook contains three specialized agents designed to show off Gemini 3's multimodal and reasoning speeds:
+
+| Agent | File | Key Features | Description |
+| :--- | :--- | :--- | :--- |
+| **Creative Studio** | `creative_studio_agent.py` | **NanoBanana** | Generates high-quality images natively using the `gemini-3-pro-image-preview` model and NanoBanana tools. |
+| **Research Agent** | `research_agent.py` | **Grounding** | Performs deep web searches with `search=True`, providing factual answers with source citations. |
+| **Product Comparison** | `product_comparison_agent.py` | **URL Context** | Reads content directly from URLs (`url_context=True`) to compare products or articles side-by-side. |
 
 ## Why is Gemini 3 the best model for this example?
 
