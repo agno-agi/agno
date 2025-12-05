@@ -218,7 +218,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_debug(f"Successfully created table {table_name} in schema {self.db_schema}")
 
             # Store the schema version for the created table
-            if table_name != self.versions_table_name:
+            if table_name != self.versions_table_name and table_created:
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
                 log_info(
