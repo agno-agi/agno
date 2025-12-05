@@ -1,8 +1,9 @@
 """Integration tests for Parallel steps functionality."""
 
-import pytest
 from contextvars import ContextVar
 from secrets import token_hex
+
+import pytest
 
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Workflow
@@ -169,8 +170,7 @@ def test_parallel_context_propagation():
         assert len(result.steps) == 2
         for step_result in result.steps:
             assert f"context_value={value}" in step_result.content, (
-                f"Context variable was not propagated to child thread. "
-                f"Got: {step_result.content}"
+                f"Context variable was not propagated to child thread. Got: {step_result.content}"
             )
     finally:
         _test_context_var.reset(token)
@@ -199,11 +199,7 @@ def test_parallel_context_propagation_streaming():
             content="",
         )
 
-        events = list(
-            parallel.execute_stream(
-                step_input, workflow_run_response=mock_response, stream_events=True
-            )
-        )
+        events = list(parallel.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
         step_outputs = [e for e in events if isinstance(e, StepOutput)]
 
         assert len(step_outputs) == 1
@@ -212,8 +208,7 @@ def test_parallel_context_propagation_streaming():
 
         for step_result in parallel_output.steps:
             assert f"context_value={value}" in step_result.content, (
-                f"Context variable was not propagated in streaming mode. "
-                f"Got: {step_result.content}"
+                f"Context variable was not propagated in streaming mode. Got: {step_result.content}"
             )
     finally:
         _test_context_var.reset(token)

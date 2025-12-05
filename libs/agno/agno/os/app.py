@@ -205,7 +205,6 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
-        self._pending_async_db_init: bool = False
 
         if self.tracing:
             self._setup_tracing()
@@ -678,7 +677,7 @@ class AgentOS:
             self._pending_async_db_init = True
 
     def _initialize_sync_databases(self) -> None:
-        """Initialize all sync databases immediately."""
+        """Initialize sync databases."""
         from itertools import chain
 
         unique_dbs = list(
@@ -701,9 +700,7 @@ class AgentOS:
                 log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
 
     async def _initialize_async_databases(self) -> None:
-        """Initialize async databases. Call this from FastAPI lifespan or first request."""
-        if not getattr(self, "_pending_async_db_init", False):
-            return
+        """Initialize async databases."""
 
         from itertools import chain
 
@@ -718,15 +715,13 @@ class AgentOS:
 
         for db in unique_dbs:
             if not isinstance(db, AsyncBaseDb):
-                continue
+                continue  # Skip sync dbs
 
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
-
-        self._pending_async_db_init = False
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
