@@ -114,11 +114,11 @@ async def test_team_async_retry():
     attempt_count = {"count": 0}
     original_arun = team._arun
 
-    async def mock_arun(self, *args, **kwargs):
+    def mock_arun(self, *args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return await original_arun(*args, **kwargs)
+        return original_arun(*args, **kwargs)
 
     # Properly bind the async method
     team._arun = types.MethodType(mock_arun, team)
