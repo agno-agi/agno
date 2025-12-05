@@ -68,6 +68,7 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -83,8 +84,8 @@ from agno.utils.agent import (
     aget_session_state_util,
     aset_session_name_util,
     aupdate_session_state_util,
-    await_for_background_tasks,
-    await_for_background_tasks_stream,
+    await_for_open_threads,
+    await_for_thread_tasks_stream,
     collect_joint_audios,
     collect_joint_files,
     collect_joint_images,
@@ -103,8 +104,8 @@ from agno.utils.agent import (
     store_media_util,
     update_session_state_util,
     validate_media_object_id,
-    wait_for_background_tasks,
-    wait_for_background_tasks_stream,
+    wait_for_open_threads,
+    wait_for_thread_tasks_stream,
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
@@ -131,7 +132,7 @@ from agno.utils.events import (
     create_tool_call_started_event,
     handle_event,
 )
-from agno.utils.hooks import filter_hook_args, normalize_hooks
+from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -273,6 +274,8 @@ class Agent:
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -594,7 +597,6 @@ class Agent:
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
 
-        # Initialize hooks with backward compatibility
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
@@ -682,6 +684,7 @@ class Agent:
         self._hooks_normalised = False
 
         self._mcp_tools_initialized_on_run: List[Any] = []
+        self._connectable_tools_initialized_on_run: List[Any] = []
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
@@ -911,15 +914,47 @@ class Agent:
                     and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
                     and not tool.initialized  # type: ignore
                 ):
-                    # Connect the MCP server
-                    await tool.connect()  # type: ignore
-                    self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    try:
+                        # Connect the MCP server
+                        await tool.connect()  # type: ignore
+                        self._mcp_tools_initialized_on_run.append(tool)  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
 
     async def _disconnect_mcp_tools(self) -> None:
         """Disconnect the MCP tools from the agent."""
         for tool in self._mcp_tools_initialized_on_run:
-            await tool.close()
+            try:
+                await tool.close()
+            except Exception as e:
+                log_warning(f"Error disconnecting tool: {str(e)}")
         self._mcp_tools_initialized_on_run = []
+
+    def _connect_connectable_tools(self) -> None:
+        """Connect tools that require connection management (e.g., database connections)."""
+        if self.tools:
+            for tool in self.tools:
+                if (
+                    hasattr(tool, "requires_connect")
+                    and tool.requires_connect
+                    and hasattr(tool, "connect")
+                    and tool not in self._connectable_tools_initialized_on_run
+                ):
+                    try:
+                        tool.connect()  # type: ignore
+                        self._connectable_tools_initialized_on_run.append(tool)
+                    except Exception as e:
+                        log_warning(f"Error connecting tool: {str(e)}")
+
+    def _disconnect_connectable_tools(self) -> None:
+        """Disconnect tools that require connection management."""
+        for tool in self._connectable_tools_initialized_on_run:
+            if hasattr(tool, "close"):
+                try:
+                    tool.close()  # type: ignore
+                except Exception as e:
+                    log_warning(f"Error disconnecting tool: {str(e)}")
+        self._connectable_tools_initialized_on_run = []
 
     def _initialize_session(
         self,
@@ -971,6 +1006,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> RunOutput:
         """Run the Agent and return the RunOutput.
@@ -991,9 +1027,6 @@ class Agent:
         13. Cleanup and store the run response and session
         """
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         # 1. Execute pre-hooks
         run_input = cast(RunInput, run_response.input)
         self.model = cast(Model, self.model)
@@ -1007,6 +1040,7 @@ class Agent:
                 session=session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             # Consume the generator without yielding
@@ -1109,9 +1143,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                wait_for_background_tasks(
-                    memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
-                )
+                wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
@@ -1131,6 +1163,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 deque(post_hook_iterator, maxlen=0)
@@ -1139,7 +1172,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 11. Wait for background memory creation and cultural knowledge creation
-            wait_for_background_tasks(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
+            wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
             # 12. Create session summary
             if self.session_summary_manager is not None:
@@ -1176,6 +1209,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1192,6 +1227,7 @@ class Agent:
         stream_events: bool = False,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
@@ -1209,9 +1245,6 @@ class Agent:
         10. Cleanup and store the run response and session
         """
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         # 1. Execute pre-hooks
         run_input = cast(RunInput, run_response.input)
         self.model = cast(Model, self.model)
@@ -1226,6 +1259,7 @@ class Agent:
                 user_id=user_id,
                 debug_mode=debug_mode,
                 stream_events=stream_events,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             for event in pre_hook_iterator:
@@ -1369,7 +1403,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                yield from wait_for_background_tasks_stream(
+                yield from wait_for_thread_tasks_stream(
                     memory_future=memory_future,
                     cultural_knowledge_future=cultural_knowledge_future,
                     stream_events=stream_events,
@@ -1403,11 +1437,12 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
 
             # 8. Wait for background memory creation and cultural knowledge creation
-            yield from wait_for_background_tasks_stream(
+            yield from wait_for_thread_tasks_stream(
                 memory_future=memory_future,
                 cultural_knowledge_future=cultural_knowledge_future,
                 stream_events=stream_events,
@@ -1494,6 +1529,8 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -1589,6 +1626,10 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
@@ -1601,8 +1642,11 @@ class Agent:
                 stacklevel=2,
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -1639,7 +1683,10 @@ class Agent:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
@@ -1754,6 +1801,7 @@ class Agent:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response_iterator
@@ -1768,6 +1816,7 @@ class Agent:
                         add_session_state_to_context=add_session_state,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response
@@ -1826,6 +1875,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> RunOutput:
         """Run the Agent and return the RunOutput.
@@ -1850,9 +1900,6 @@ class Agent:
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
-
         # 1. Read or create session. Reads from the database if provided.
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
@@ -1860,7 +1907,7 @@ class Agent:
         self._update_metadata(session=agent_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -1888,6 +1935,7 @@ class Agent:
                 session=agent_session,
                 user_id=user_id,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             # Consume the async iterator without yielding
@@ -1990,9 +2038,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                await await_for_background_tasks(
-                    memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
-                )
+                await await_for_open_threads(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
                 return await self._ahandle_agent_run_paused(
                     run_response=run_response, session=agent_session, user_id=user_id
                 )
@@ -2013,6 +2059,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     pass
@@ -2021,7 +2068,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 14. Wait for background memory creation
-            await await_for_background_tasks(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
+            await await_for_open_threads(memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task)
 
             # 15. Create session summary
             if self.session_summary_manager is not None:
@@ -2066,6 +2113,8 @@ class Agent:
             return run_response
 
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -2100,6 +2149,7 @@ class Agent:
         stream_events: bool = False,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
@@ -2137,7 +2187,7 @@ class Agent:
         self._update_metadata(session=agent_session)
         # Initialize session state
         run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state or {},
+            session_state=run_context.session_state if run_context.session_state is not None else {},
             user_id=user_id,
             session_id=session_id,
             run_id=run_response.run_id,
@@ -2166,6 +2216,7 @@ class Agent:
                 user_id=user_id,
                 debug_mode=debug_mode,
                 stream_events=stream_events,
+                background_tasks=background_tasks,
                 **kwargs,
             )
             async for event in pre_hook_iterator:
@@ -2223,9 +2274,6 @@ class Agent:
         ):
             log_debug("Starting cultural knowledge creation in background task.")
             cultural_knowledge_task = create_task(self._acreate_cultural_knowledge(run_messages=run_messages))
-
-        # Register run for cancellation tracking
-        register_run(run_response.run_id)  # type: ignore
 
         try:
             # 8. Reason about the task if reasoning is enabled
@@ -2308,7 +2356,7 @@ class Agent:
 
             # Break out of the run function if a tool call is paused
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                async for item in await_for_background_tasks_stream(
+                async for item in await_for_thread_tasks_stream(
                     memory_task=memory_task,
                     cultural_knowledge_task=cultural_knowledge_task,
                     stream_events=stream_events,
@@ -2332,12 +2380,13 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     yield event
 
             # 11. Wait for background memory creation
-            async for item in await_for_background_tasks_stream(
+            async for item in await_for_thread_tasks_stream(
                 memory_task=memory_task,
                 cultural_knowledge_task=cultural_knowledge_task,
                 stream_events=stream_events,
@@ -2433,6 +2482,8 @@ class Agent:
                 user_id=user_id,
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -2541,6 +2592,10 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
+        # Create a run_id for this specific run and register immediately for cancellation tracking
+        run_id = str(uuid4())
+        register_run(run_id)
+
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
@@ -2553,8 +2608,11 @@ class Agent:
                 stacklevel=2,
             )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # 2. Validate input against input_schema if provided
         validated_input = self._validate_input(input)
@@ -2699,6 +2757,7 @@ class Agent:
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )  # type: ignore[assignment]
                 else:
@@ -2712,6 +2771,7 @@ class Agent:
                         add_dependencies_to_context=add_dependencies,
                         add_session_state_to_context=add_session_state,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
 
@@ -2766,6 +2826,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2776,6 +2837,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
     ) -> RunOutput: ...
 
     @overload
@@ -2785,6 +2847,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2795,6 +2858,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
     ) -> Iterator[RunOutputEvent]: ...
 
     def continue_run(
@@ -2803,6 +2867,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2814,14 +2879,15 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
         **kwargs,
-    ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
@@ -2833,6 +2899,7 @@ class Agent:
             metadata: The metadata to use for the run.
             debug_mode: Whether to enable debug mode.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -2842,6 +2909,12 @@ class Agent:
 
         if self._has_async_db():
             raise Exception("continue_run() is not supported with an async DB. Please use acontinue_arun() instead.")
+
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         session_id = run_response.session_id if run_response else session_id
         run_id: str = run_response.run_id if run_response else run_id  # type: ignore
@@ -2926,16 +2999,35 @@ class Agent:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
+            if updated_tools is None and requirements is None:
+                raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                warnings.warn(
+                    "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -2985,7 +3077,9 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_events=stream_events,
+                        yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response_iterator
@@ -2999,6 +3093,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                     return response
@@ -3049,6 +3144,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
@@ -3113,6 +3209,7 @@ class Agent:
                     session=session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
                 deque(post_hook_iterator, maxlen=0)
@@ -3154,6 +3251,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3168,8 +3267,10 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         debug_mode: Optional[bool] = None,
+        yield_run_output: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs,
-    ) -> Iterator[RunOutputEvent]:
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
 
         Steps:
@@ -3244,6 +3345,7 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 )
 
@@ -3301,6 +3403,9 @@ class Agent:
             if stream_events:
                 yield completed_event  # type: ignore
 
+            if yield_run_output:
+                yield run_response
+
             # Log Agent Telemetry
             self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
@@ -3325,6 +3430,8 @@ class Agent:
                 run_response=run_response, session=session, run_context=run_context, user_id=user_id
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
@@ -3338,6 +3445,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -3345,6 +3453,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> RunOutput: ...
 
     @overload
@@ -3357,6 +3466,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -3364,6 +3474,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
     def acontinue_run(  # type: ignore
@@ -3372,6 +3483,7 @@ class Agent:
         *,
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -3391,7 +3503,8 @@ class Agent:
         Args:
             run_response: The run response to continue.
             run_id: The run id to continue. Alternative to passing run_response.
-            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+
+            requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
             stream: Whether to stream the response.
             stream_events: Whether to stream all events.
             user_id: The user id to continue the run for.
@@ -3404,12 +3517,25 @@ class Agent:
             debug_mode: Whether to enable debug mode.
             yield_run_output: Whether to yield the run response.
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
+            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
         if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
+
+        if updated_tools is not None:
+            warnings.warn(
+                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        background_tasks = kwargs.pop("background_tasks", None)
+        if background_tasks is not None:
+            from fastapi import BackgroundTasks
+
+            background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         session_id, user_id = self._initialize_session(
             session_id=session_id,
@@ -3488,6 +3614,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         session_id=session_id,
@@ -3495,6 +3622,7 @@ class Agent:
                         stream_events=stream_events,
                         yield_run_output=yield_run_output,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
                 else:
@@ -3503,10 +3631,12 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         updated_tools=updated_tools,
+                        requirements=requirements,
                         run_id=run_id,
                         user_id=user_id,
                         response_format=response_format,
                         debug_mode=debug_mode,
+                        background_tasks=background_tasks,
                         **kwargs,
                     )
             except ModelProviderError as e:
@@ -3552,10 +3682,12 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> RunOutput:
         """Continue a previous run.
@@ -3603,15 +3735,29 @@ class Agent:
             input = run_response.messages or []
         elif run_id is not None:
             # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3698,6 +3844,7 @@ class Agent:
                     session=agent_session,
                     user_id=user_id,
                     debug_mode=debug_mode,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     pass
@@ -3749,6 +3896,8 @@ class Agent:
 
             return run_response
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -3761,12 +3910,14 @@ class Agent:
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
@@ -3809,17 +3960,32 @@ class Agent:
         if run_response is not None:
             # The run is continued from a provided run_response. This contains the updated tools.
             input = run_response.messages or []
+
         elif run_id is not None:
-            # The run is continued from a run_id. This requires the updated tools to be passed.
-            if updated_tools is None:
-                raise ValueError("Updated tools are required to continue a run from a run_id.")
+            # The run is continued from a run_id. This requires the updated tools or requirements to be passed.
+            if updated_tools is None and requirements is None:
+                raise ValueError("Either updated tools or requirements are required to continue a run from a run_id.")
 
             runs = agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
-            run_response.tools = updated_tools
+
             input = run_response.messages or []
+
+            # If we have updated_tools, set them in the run_response
+            if updated_tools is not None:
+                run_response.tools = updated_tools
+
+            # If we have requirements, get the updated tools and set them in the run_response
+            elif requirements is not None:
+                run_response.requirements = requirements
+                updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+                if updated_tools and run_response.tools:
+                    updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+                    run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+                else:
+                    run_response.tools = updated_tools
         else:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -3952,6 +4118,7 @@ class Agent:
                     user_id=user_id,
                     debug_mode=debug_mode,
                     stream_events=stream_events,
+                    background_tasks=background_tasks,
                     **kwargs,
                 ):
                     yield event
@@ -4037,6 +4204,8 @@ class Agent:
                 user_id=user_id,
             )
         finally:
+            # Always disconnect connectable tools
+            self._disconnect_connectable_tools()
             # Always disconnect MCP tools
             await self._disconnect_mcp_tools()
 
@@ -4053,13 +4222,13 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession."""
         if hooks is None:
             return
-
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_input": run_input,
             "run_context": run_context,
@@ -4071,9 +4240,32 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -4125,13 +4317,13 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple pre-hook functions in succession (async version)."""
         if hooks is None:
             return
-
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_input": run_input,
             "agent": self,
@@ -4143,9 +4335,32 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        # Note: Pre-hooks running in background may not be able to modify run_input
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL pre_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_response,
@@ -4200,13 +4415,14 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
             "agent": self,
@@ -4218,9 +4434,31 @@ class Agent:
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
         }
+
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Schedule ALL post_hooks as background tasks
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -4265,13 +4503,14 @@ class Agent:
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = None,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Execute multiple post-hook functions in succession (async version)."""
         if hooks is None:
             return
 
-        # Prepare all possible arguments once
+        # Prepare arguments for this hook
         all_args = {
             "run_output": run_output,
             "agent": self,
@@ -4283,9 +4522,29 @@ class Agent:
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
+        # Check if background_tasks is available and ALL hooks should run in background
+        if self._run_hooks_in_background is True and background_tasks is not None:
+            # Copy args to prevent race conditions
+            bg_args = copy_args_for_background(all_args)
+            for hook in hooks:
+                # Filter arguments to only include those that the hook accepts
+                filtered_args = filter_hook_args(hook, bg_args)
+
+                # Add to background tasks (both sync and async hooks supported)
+                background_tasks.add_task(hook, **filtered_args)
+            return
+
         all_args.update(kwargs)
 
         for i, hook in enumerate(hooks):
+            # Check if this specific hook should run in background (via @hook decorator)
+            if should_run_hook_in_background(hook) and background_tasks is not None:
+                # Copy args to prevent race conditions
+                bg_args = copy_args_for_background(all_args)
+                filtered_args = filter_hook_args(hook, bg_args)
+                background_tasks.add_task(hook, **filtered_args)
+                continue
+
             if stream_events:
                 yield handle_event(  # type: ignore
                     run_response=run_output,
@@ -4362,6 +4621,7 @@ class Agent:
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
+                requirements=run_response.requirements,
             ),
             run_response,
             events_to_skip=self.events_to_skip,  # type: ignore
@@ -4410,6 +4670,7 @@ class Agent:
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
+                requirements=run_response.requirements,
             ),
             run_response,
             events_to_skip=self.events_to_skip,  # type: ignore
@@ -5225,7 +5486,7 @@ class Agent:
                                 run_response.images = []
                             run_response.images.append(image)
 
-            # Handle tool interruption events
+            # Handle tool interruption events (HITL flow)
             elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
                 # Add tool calls to the run_response
                 tool_executions_list = model_response_event.tool_executions
@@ -5235,6 +5496,10 @@ class Agent:
                         run_response.tools = tool_executions_list
                     else:
                         run_response.tools.extend(tool_executions_list)
+                    # Add requirement to the run_response
+                    if run_response.requirements is None:
+                        run_response.requirements = []
+                    run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
 
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif (
@@ -5515,6 +5780,9 @@ class Agent:
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
+
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
@@ -5561,6 +5829,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=False,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5569,6 +5838,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=False,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
 
@@ -5586,6 +5856,9 @@ class Agent:
         check_mcp_tools: bool = True,
     ) -> List[Union[Toolkit, Callable, Function, Dict]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Connect tools that require connection management
+        self._connect_connectable_tools()
 
         # Connect MCP tools
         await self._connect_mcp_tools()
@@ -5649,6 +5922,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
                 else:
@@ -5657,6 +5931,7 @@ class Agent:
                             run_response=run_response,
                             async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
+                            run_context=run_context,
                         )
                     )
 
@@ -6857,7 +7132,7 @@ class Agent:
 
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
-            session_state or {},
+            session_state if session_state is not None else {},
             dependencies or {},
             metadata or {},
             {"user_id": user_id} if user_id is not None else {},
@@ -7686,7 +7961,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -7860,7 +8135,7 @@ class Agent:
                         retrieval_timer = Timer()
                         retrieval_timer.start()
                         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                            query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
                         )
                         if docs_from_knowledge is not None:
                             references = MessageReferences(
@@ -8441,6 +8716,7 @@ class Agent:
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
@@ -8450,12 +8726,16 @@ class Agent:
             num_documents (Optional[int]): Number of documents to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
             validate_filters (bool): Whether to validate the filters against known valid filter keys.
+            run_context (Optional[RunContext]): Runtime context containing dependencies and other context.
             **kwargs: Additional keyword arguments.
 
         Returns:
             Optional[List[Dict[str, Any]]]: List of relevant document dicts.
         """
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8488,6 +8768,11 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
@@ -8526,10 +8811,14 @@ class Agent:
         num_documents: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         validate_filters: bool = False,
+        run_context: Optional[RunContext] = None,
         **kwargs,
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.knowledge.document import Document
+
+        # Extract dependencies from run_context if available
+        dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.max_results
@@ -8562,6 +8851,11 @@ class Agent:
                     knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
                     knowledge_retriever_kwargs["filters"] = filters
+                if "run_context" in sig.parameters:
+                    knowledge_retriever_kwargs["run_context"] = run_context
+                elif "dependencies" in sig.parameters:
+                    # Backward compatibility: support dependencies parameter
+                    knowledge_retriever_kwargs["dependencies"] = dependencies
                 knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.knowledge_retriever(**knowledge_retriever_kwargs)
 
@@ -8668,6 +8962,7 @@ class Agent:
         # Update fields if provided
         if update:
             fields_for_new_agent.update(update)
+
         # Create a new Agent
         new_agent = self.__class__(**fields_for_new_agent)
         log_debug(f"Created new {self.__class__.__name__}")
@@ -9903,6 +10198,7 @@ class Agent:
         run_response: RunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9919,7 +10215,9 @@ class Agent:
             # Get the relevant documents from the knowledge base, passing filters
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, run_context=run_context
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9950,7 +10248,10 @@ class Agent:
             """
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            dependencies = run_context.dependencies if run_context else None
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                query=query, filters=knowledge_filters, dependencies=dependencies
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query,
@@ -9979,6 +10280,7 @@ class Agent:
         run_response: RunOutput,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         async_mode: bool = False,
+        run_context: Optional[RunContext] = None,
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
@@ -9999,7 +10301,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, validate_filters=True
+                query=query, filters=search_filters, validate_filters=True, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
@@ -10036,7 +10338,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
-                query=query, filters=search_filters, validate_filters=True
+                query=query, filters=search_filters, validate_filters=True, run_context=run_context
             )
             if docs_from_knowledge is not None:
                 references = MessageReferences(

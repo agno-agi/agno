@@ -6,6 +6,10 @@ from agno.utils.log import log_debug, log_warning, logger
 
 
 class Toolkit:
+    # Set to True for toolkits that require connection management (e.g., database connections)
+    # When True, the Agent will automatically call connect() before using tools and close() after
+    _requires_connect: bool = False
+
     def __init__(
         self,
         name: str = "toolkit",
@@ -138,6 +142,27 @@ class Toolkit:
         except Exception as e:
             logger.warning(f"Failed to create Function for: {function.__name__}")
             raise e
+
+    @property
+    def requires_connect(self) -> bool:
+        """Whether the toolkit requires connection management."""
+        return self._requires_connect
+
+    def connect(self) -> None:
+        """
+        Establish any required connections for the toolkit.
+        Override this method in subclasses that require connection management.
+        Called automatically by the Agent when _requires_connect is True.
+        """
+        pass
+
+    def close(self) -> None:
+        """
+        Close any open connections for the toolkit.
+        Override this method in subclasses that require connection management.
+        Called automatically by the Agent when _requires_connect is True.
+        """
+        pass
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"

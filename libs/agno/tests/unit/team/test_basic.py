@@ -1,6 +1,8 @@
 import pytest
 
 from agno.agent import Agent
+from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
@@ -9,8 +11,6 @@ from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.string import is_valid_uuid
-from agno.models.metrics import Metrics
-from agno.models.message import Message
 
 
 @pytest.fixture
