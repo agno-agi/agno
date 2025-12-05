@@ -5,8 +5,10 @@ import tempfile
 import uuid
 from typing import List, Optional
 
-import fitz  # type: ignore
-
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    raise ImportError("`pymupdf` is required for VllmPDFReader. Install with: pip install pymupdf")
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.pdf_reader import BasePDFReader
 from agno.models.message import Message

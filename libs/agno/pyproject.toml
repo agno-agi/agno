@@ -149,6 +149,7 @@ upstash = ["upstash-vector"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
+pymupdf = ["pymupdf"]
 docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
@@ -277,6 +278,7 @@ vectordbs = [
 # All knowledge
 knowledge = [
   "agno[pdf]",
+  "agno[pymupdf]",
   "agno[docx]",
   "agno[pptx]",
   "agno[text]",
