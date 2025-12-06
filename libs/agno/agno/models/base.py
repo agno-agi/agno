@@ -1741,6 +1741,7 @@ class Model(ABC):
                         or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
                     ):
                         # We only capture content events for output accumulation
+                        # NOTE: CustomEvent instances are yielded below but intentionally never touch function_call_output.
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
@@ -1750,9 +1751,6 @@ class Model(ABC):
 
                             if function_call.function.show_result and item.content is not None:
                                 yield ModelResponse(content=item.content)
-
-                        if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
 
                         # For WorkflowCompletedEvent, extract content for final output
                         from agno.run.workflow import WorkflowCompletedEvent
@@ -2153,6 +2151,7 @@ class Model(ABC):
                         + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
+                        # Custom events are telemetry-only; they get forwarded without changing function_call_output.
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
@@ -2163,9 +2162,6 @@ class Model(ABC):
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
-
-                        if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
 
                             # For WorkflowCompletedEvent, extract content for final output
                             from agno.run.workflow import WorkflowCompletedEvent
