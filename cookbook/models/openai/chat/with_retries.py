@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
-
 agent = Agent(
     model=OpenAIChat(
         id="gpt-wrong-id",  # Deliberately wrong model ID to trigger retries
