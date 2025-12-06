@@ -34,6 +34,7 @@ agent = Agent(
 - **[ChromaDB](./chroma_db/)** - Embedded vector database
 - **[ClickHouse](./clickhouse_db/)** - Columnar database with vector functions
 - **[Couchbase](./couchbase_db/)** - NoSQL database with vector search
+- **[Gemini File Search](./gemini_file_search/)** - Google's managed vector database with Gemini integration
 - **[LanceDB](./lance_db/)** - Fast columnar vector database
 - **[LangChain](./langchain/)** - Use any LangChain vector store
 - **[LightRAG](./lightrag/)** - Graph-based RAG system
