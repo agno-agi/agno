@@ -15,7 +15,7 @@ from agno.os.routers.evals.schemas import (
     EvalSchema,
     UpdateEvalRunRequest,
 )
-from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
+from agno.os.routers.evals.utils import run_accuracy_eval, run_criteria_eval, run_performance_eval, run_reliability_eval
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -304,7 +304,7 @@ def attach_routes(
         operation_id="run_eval",
         summary="Execute Evaluation",
         description=(
-            "Run evaluation tests on agents or teams. Supports accuracy, performance, and reliability evaluations. "
+            "Run evaluation tests on agents or teams. Supports accuracy, criteria, performance, and reliability evaluations. "
             "Requires either agent_id or team_id, but not both."
         ),
         responses={
@@ -400,6 +400,11 @@ def attach_routes(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
+        elif eval_run_input.eval_type == EvalType.CRITERIA:
+            return await run_criteria_eval(
+                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+            )
+
         elif eval_run_input.eval_type == EvalType.PERFORMANCE:
             return await run_performance_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
@@ -416,8 +421,8 @@ def attach_routes(
 def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
-        description="Comma-separated eval types (accuracy,performance,reliability)",
-        examples=["accuracy,performance"],
+        description="Comma-separated eval types (accuracy,criteria,performance,reliability)",
+        examples=["accuracy,criteria,performance"],
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""
