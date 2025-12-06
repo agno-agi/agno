@@ -18,7 +18,12 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
+from agno.utils.gemini import (
+    format_function_definitions,
+    format_image_for_message,
+    is_gemini_or_gcs_file_uri,
+    prepare_response_schema,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -642,6 +647,11 @@ class Gemini(Model):
 
         # Case 2: Audio is an url
         elif audio.url is not None:
+            # Check if the URL is a Gemini or GCS file URI
+            if is_gemini_or_gcs_file_uri(audio.url):
+                mime_type = audio.mime_type or (f"audio/{audio.format}" if audio.format else "audio/mp3")
+                return Part.from_uri(file_uri=audio.url, mime_type=mime_type)
+
             audio_bytes = audio.get_content_bytes()  # type: ignore
             if audio_bytes is not None:
                 mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
