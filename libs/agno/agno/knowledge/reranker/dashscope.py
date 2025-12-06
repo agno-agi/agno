@@ -28,12 +28,10 @@ class DashScopeReranker(Reranker):
             return []
 
         if not self.api_key:
-            self.api_key = getenv("DASHSCOPE_API_KEY")
-            if not self.api_key:
-                raise ModelAuthenticationError(
-                    message="DASHSCOPE_API_KEY not set. Please set the DASHSCOPE_API_KEY environment variable.",
-                    model_name=self.name,
-                )
+            raise ModelAuthenticationError(
+                message="DASHSCOPE_API_KEY not set. Please set the DASHSCOPE_API_KEY environment variable.",
+                model_name=self.name,
+            )
 
         top_n = self.top_n
         if top_n and not (0 < top_n):
