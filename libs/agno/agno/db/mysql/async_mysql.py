@@ -179,9 +179,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
-            # Create the table object
-            table_metadata = MetaData(schema=self.db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=self.db_schema)
+            # Create the table object - use self.metadata to maintain FK references
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -265,81 +264,109 @@ class AsyncMySQLDb(AsyncBaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            await self._get_or_create_table(table_name=table_name, table_type=table_type)
+            await self._get_or_create_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=True
+            )
 
-    async def _get_table(self, table_type: str) -> Table:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions"
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories"
+                    table_name=self.memory_table_name,
+                    table_type="memories",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics"
+                    table_name=self.metrics_table_name,
+                    table_type="metrics",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
-                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
+                self.eval_table = await self._get_or_create_table(
+                    table_name=self.eval_table_name,
+                    table_type="evals",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge"
+                    table_name=self.knowledge_table_name,
+                    table_type="knowledge",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture"
+                    table_name=self.culture_table_name,
+                    table_type="culture",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.culture_table
 
         if table_type == "versions":
             if not hasattr(self, "versions_table"):
                 self.versions_table = await self._get_or_create_table(
-                    table_name=self.versions_table_name, table_type="versions"
+                    table_name=self.versions_table_name,
+                    table_type="versions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.versions_table
 
         if table_type == "traces":
             if not hasattr(self, "traces_table"):
                 self.traces_table = await self._get_or_create_table(
-                    table_name=self.trace_table_name, table_type="traces"
+                    table_name=self.trace_table_name,
+                    table_type="traces",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.traces_table
 
         if table_type == "spans":
             if not hasattr(self, "spans_table"):
-                self.spans_table = await self._get_or_create_table(table_name=self.span_table_name, table_type="spans")
+                # Ensure traces table exists first (spans has FK to traces)
+                await self._get_table(table_type="traces", create_table_if_not_found=True)
+                self.spans_table = await self._get_or_create_table(
+                    table_name=self.span_table_name,
+                    table_type="spans",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
             return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
+    async def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
+            create_table_if_not_found (bool): Whether to create the table if it doesn't exist
 
         Returns:
-            Table: SQLAlchemy Table object representing the schema.
+            Optional[Table]: SQLAlchemy Table object representing the schema, or None if not found.
         """
 
         async with self.async_session_factory() as sess, sess.begin():
@@ -347,7 +374,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 session=sess, table_name=table_name, db_schema=self.db_schema
             )
 
-        if not table_is_available:
+        if (not table_is_available) and create_table_if_not_found:
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
@@ -373,7 +400,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
     async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         async with self.async_session_factory() as sess:
             # Latest version for the given table
             stmt = select(table).where(table.c.table_name == table_name).order_by(table.c.version.desc()).limit(1)  # type: ignore
@@ -386,7 +413,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
     async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         current_datetime = datetime.now().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
             stmt = mysql.insert(table).values(  # type: ignore
@@ -694,7 +721,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
