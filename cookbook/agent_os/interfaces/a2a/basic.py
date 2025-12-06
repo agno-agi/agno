@@ -5,6 +5,7 @@ from agno.os import AgentOS
 chat_agent = Agent(
     name="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
+    id="basic_agent",
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
     markdown=True,

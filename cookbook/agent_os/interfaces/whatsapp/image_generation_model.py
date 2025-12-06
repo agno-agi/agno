@@ -9,7 +9,7 @@ image_agent = Agent(
     id="image_generation_model",
     db=agent_db,
     model=Gemini(
-        id="gemini-2.0-flash-exp-image-generation",
+        id="models/gemini-2.5-flash-image",
         response_modalities=["Text", "Image"],
     ),
     debug_mode=True,
