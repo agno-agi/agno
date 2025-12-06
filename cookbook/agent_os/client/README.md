@@ -18,7 +18,26 @@ The `AgentOSClient` provides programmatic access to AgentOS API endpoints, allow
 
 ## Quick Start
 
-### 1. Start an AgentOS Server
+### 1. Start the AgentOS Server
+
+Use the included `server.py` which has all features needed for the examples:
+
+```bash
+# From the repository root
+uv run python cookbook/agent_os/client/server.py
+
+# Or if running from this directory
+python server.py
+```
+
+The server runs on http://localhost:7777 and includes:
+- **Agents**: `assistant` (calculator, memory, knowledge), `researcher` (web search)
+- **Teams**: `researchteam` (coordinates both agents)
+- **Workflows**: `qaworkflow` (Q&A using assistant)
+- **Knowledge**: LanceDB vector store with contents database
+
+<details>
+<summary>Alternative: Create a minimal server inline</summary>
 
 ```python
 from agno.agent import Agent
@@ -34,6 +53,9 @@ agent = Agent(
 agent_os = AgentOS(agents=[agent])
 agent_os.serve()  # Runs on http://localhost:7777
 ```
+
+Note: This minimal setup won't support all cookbook examples (e.g., memory, teams, workflows).
+</details>
 
 ### 2. Connect with AgentOSClient
 
