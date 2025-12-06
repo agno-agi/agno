@@ -136,9 +136,9 @@ class AzureAIFoundry(Model):
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_ENDPOINT")
 
         if not self.api_key:
-            raise ValueError("API key is required")
+            log_error("AZURE_API_KEY not set. Please set the AZURE_API_KEY environment variable.")
         if not self.azure_endpoint:
-            raise ValueError("Endpoint URL is required")
+            log_error("AZURE_ENDPOINT not set. Please set the AZURE_ENDPOINT environment variable.")
 
         base_params = {
             "endpoint": self.azure_endpoint,
