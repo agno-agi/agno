@@ -22,6 +22,7 @@ SESSION_TABLE_SCHEMA = {
     "metadata": {"type": JSONB, "nullable": True},
     "runs": {"type": JSONB, "nullable": True},
     "summary": {"type": JSONB, "nullable": True},
+    "compressed_context": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "_unique_constraints": [

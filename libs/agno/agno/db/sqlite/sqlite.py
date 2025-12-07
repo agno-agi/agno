@@ -699,6 +699,7 @@ class SqliteDb(BaseDb):
                         metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
                         summary=serialized_session.get("summary"),
+                        compressed_context=serialized_session.get("compressed_context"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
                     )
@@ -709,6 +710,7 @@ class SqliteDb(BaseDb):
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
                             summary=serialized_session.get("summary"),
+                            compressed_context=serialized_session.get("compressed_context"),
                             agent_data=serialized_session.get("agent_data"),
                             session_data=serialized_session.get("session_data"),
                             metadata=serialized_session.get("metadata"),
