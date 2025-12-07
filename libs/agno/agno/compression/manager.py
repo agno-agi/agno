@@ -216,10 +216,15 @@ class CompressionManager:
 
         compressed_count = 0
         for msg in uncompressed:
+            original_size = len(str(msg.content)) if msg.content else 0
             compressed = self._compress_tool_result(msg)
             if compressed:
                 msg.compressed_content = compressed
                 compressed_count += 1
+                # Track stats for display
+                self.stats["tool_results_compressed"] = self.stats.get("tool_results_compressed", 0) + 1
+                self.stats["original_size"] = self.stats.get("original_size", 0) + original_size
+                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
 
         log_debug(f"[Compression] Successfully compressed {compressed_count}/{len(uncompressed)} tool results")
 
@@ -230,13 +235,20 @@ class CompressionManager:
             return
 
         log_debug(f"[Compression] Async compressing {len(uncompressed)} tool results")
+
+        # Track original sizes before compression
+        original_sizes = [len(str(msg.content)) if msg.content else 0 for msg in uncompressed]
         results = await asyncio.gather(*[self._acompress_tool_result(m) for m in uncompressed])
 
         compressed_count = 0
-        for msg, compressed in zip(uncompressed, results):
+        for msg, compressed, original_size in zip(uncompressed, results, original_sizes):
             if compressed:
                 msg.compressed_content = compressed
                 compressed_count += 1
+                # Track stats for display
+                self.stats["tool_results_compressed"] = self.stats.get("tool_results_compressed", 0) + 1
+                self.stats["original_size"] = self.stats.get("original_size", 0) + original_size
+                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
 
         log_debug(f"[Compression] Successfully compressed {compressed_count}/{len(uncompressed)} tool results")
 
