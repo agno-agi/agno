@@ -101,8 +101,10 @@ class FirecrawlTools(Toolkit):
             The results of the crawling.
         """
         params: Dict[str, Any] = {}
-        # max limit is the toolkit's configured limit
-        params["limit"] = min(limit, self.limit) if limit is not None else self.limit
+        if self.limit is not None:
+            params["limit"] = self.limit
+        elif limit is not None:
+            params["limit"] = limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
 
@@ -129,8 +131,10 @@ class FirecrawlTools(Toolkit):
             limit (int): The maximum number of results to return.
         """
         params: Dict[str, Any] = {}
-        # max limit is the toolkit's configured limit
-        params["limit"] = min(limit, self.limit) if limit is not None else self.limit
+        if self.limit is not None:
+            params["limit"] = self.limit
+        elif limit is not None:
+            params["limit"] = limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
         if self.search_params:
