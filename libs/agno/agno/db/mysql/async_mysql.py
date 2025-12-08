@@ -1,24 +1,21 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-if TYPE_CHECKING:
-    from agno.tracing.schemas import Span, Trace
-
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
+    abulk_upsert_metrics,
+    acreate_schema,
+    ais_table_available,
+    ais_valid_table,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
-    create_schema,
     deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    is_table_available,
-    is_valid_table,
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.schemas.culture import CulturalKnowledge
@@ -30,35 +27,32 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, update
+    from sqlalchemy import TEXT, Index, UniqueConstraint, and_, cast, func, update
     from sqlalchemy.dialects import mysql
-    from sqlalchemy.engine import Engine, create_engine
-    from sqlalchemy.orm import scoped_session, sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
-class MySQLDb(BaseDb):
+class AsyncMySQLDb(AsyncBaseDb):
     def __init__(
         self,
         id: Optional[str] = None,
-        db_engine: Optional[Engine] = None,
-        db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
+        db_engine: Optional[AsyncEngine] = None,
+        db_schema: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        traces_table: Optional[str] = None,
-        spans_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
     ):
         """
-        Interface for interacting with a MySQL database.
+        Async interface for interacting with a MySQL database.
 
         The following order is used to determine the database connection:
             1. Use the db_engine if provided
@@ -66,18 +60,16 @@ class MySQLDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
-            id (Optional[str]): ID of the database.
-            db_url (Optional[str]): The database URL to connect to.
-            db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
+            id (Optional[str]): The ID of the database.
+            db_url (Optional[str]): The database URL to connect to. Should use asyncmy driver (e.g. mysql+asyncmy://...)
+            db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_schema (Optional[str]): The database schema to use.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
-            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
-            traces_table (Optional[str]): Name of the table to store run traces.
-            spans_table (Optional[str]): Name of the table to store span events.
+            culture_table (Optional[str]): Name of the table to store cultural knowledge.
             versions_table (Optional[str]): Name of the table to store schema versions.
 
         Raises:
@@ -85,7 +77,7 @@ class MySQLDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         if id is None:
-            base_seed = db_url or str(db_engine.url)  # type: ignore
+            base_seed = db_url or str(db_engine.url) if db_engine else ""  # type: ignore
             schema_suffix = db_schema if db_schema is not None else "ai"
             seed = f"{base_seed}#{schema_suffix}"
             id = generate_id(seed)
@@ -93,32 +85,33 @@ class MySQLDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
-            culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            traces_table=traces_table,
-            spans_table=spans_table,
+            culture_table=culture_table,
             versions_table=versions_table,
         )
 
-        _engine: Optional[Engine] = db_engine
+        _engine: Optional[AsyncEngine] = db_engine
         if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
+            _engine = create_async_engine(db_url)
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
         self.db_url: Optional[str] = db_url
-        self.db_engine: Engine = _engine
+        self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
 
-        # Initialize database session
-        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        # Initialize database session factory
+        self.async_session_factory = async_sessionmaker(
+            bind=self.db_engine,
+            expire_on_commit=False,
+        )
 
     # -- DB methods --
-    def table_exists(self, table_name: str) -> bool:
+    async def table_exists(self, table_name: str) -> bool:
         """Check if a table with the given name exists in the MySQL database.
 
         Args:
@@ -127,22 +120,25 @@ class MySQLDb(BaseDb):
         Returns:
             bool: True if the table exists in the database, False otherwise
         """
-        with self.Session() as sess:
-            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+        async with self.async_session_factory() as sess:
+            return await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
 
-    def _create_table(self, table_name: str, table_type: str) -> Table:
+    async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
+            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
         """
         try:
             table_schema = get_table_schema_definition(table_type).copy()
+
+            log_debug(f"Creating table {self.db_schema}.{table_name} with schema: {table_schema}")
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -162,20 +158,11 @@ class MySQLDb(BaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
-
-                # Handle foreign key constraint
-                if "foreign_key" in col_config:
-                    fk_ref = col_config["foreign_key"]
-                    # For spans table, dynamically replace the traces table reference
-                    # with the actual trace table name configured for this db instance
-                    if table_type == "spans" and "trace_id" in fk_ref:
-                        fk_ref = f"{self.db_schema}.{self.trace_table_name}.trace_id"
-                    column_args.append(ForeignKey(fk_ref))
-
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+            table_metadata = MetaData(schema=self.db_schema)
+            table = Table(table_name, table_metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -188,13 +175,15 @@ class MySQLDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=self.db_schema)
+            # Create schema if not exists
+            async with self.async_session_factory() as sess, sess.begin():
+                await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
-            if not self.table_exists(table_name):
-                table.create(self.db_engine, checkfirst=True)
+            if not await self.table_exists(table_name):
+                async with self.db_engine.begin() as conn:
+                    await conn.run_sync(table.create, checkfirst=True)
                 log_debug(f"Successfully created table '{table_name}'")
                 table_created = True
             else:
@@ -204,34 +193,34 @@ class MySQLDb(BaseDb):
             for idx in table.indexes:
                 try:
                     # Check if index already exists
-                    with self.Session() as sess:
+                    async with self.async_session_factory() as sess:
                         exists_query = text(
                             "SELECT 1 FROM information_schema.statistics WHERE table_schema = :schema "
                             "AND table_name = :table_name AND index_name = :index_name"
                         )
-                        exists = (
-                            sess.execute(
-                                exists_query,
-                                {"schema": self.db_schema, "table_name": table_name, "index_name": idx.name},
-                            ).scalar()
-                            is not None
+                        result = await sess.execute(
+                            exists_query, {"schema": self.db_schema, "table_name": table_name, "index_name": idx.name}
                         )
+                        exists = result.scalar() is not None
                         if exists:
                             log_debug(
                                 f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
                             )
                             continue
 
-                    idx.create(self.db_engine)
-
+                    async with self.db_engine.begin() as conn:
+                        await conn.run_sync(idx.create)
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
+
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
+
+            log_debug(f"Successfully created table {table_name} in schema {self.db_schema}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
                 latest_schema_version = MigrationManager(self).latest_schema_version
-                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
                 log_info(
                     f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
                 )
@@ -242,7 +231,7 @@ class MySQLDb(BaseDb):
             log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
-    def _create_all_tables(self):
+    async def _create_all_tables(self):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
@@ -254,113 +243,80 @@ class MySQLDb(BaseDb):
         ]
 
         for table_name, table_type in tables_to_create:
-            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+            await self._get_or_create_table(table_name=table_name, table_type=table_type)
 
-    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+    async def _get_table(self, table_type: str) -> Table:
         if table_type == "sessions":
-            self.session_table = self._get_or_create_table(
-                table_name=self.session_table_name,
-                table_type="sessions",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "session_table"):
+                self.session_table = await self._get_or_create_table(
+                    table_name=self.session_table_name, table_type="sessions"
+                )
             return self.session_table
 
         if table_type == "memories":
-            self.memory_table = self._get_or_create_table(
-                table_name=self.memory_table_name,
-                table_type="memories",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "memory_table"):
+                self.memory_table = await self._get_or_create_table(
+                    table_name=self.memory_table_name, table_type="memories"
+                )
             return self.memory_table
 
         if table_type == "metrics":
-            self.metrics_table = self._get_or_create_table(
-                table_name=self.metrics_table_name,
-                table_type="metrics",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "metrics_table"):
+                self.metrics_table = await self._get_or_create_table(
+                    table_name=self.metrics_table_name, table_type="metrics"
+                )
             return self.metrics_table
 
         if table_type == "evals":
-            self.eval_table = self._get_or_create_table(
-                table_name=self.eval_table_name,
-                table_type="evals",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "eval_table"):
+                self.eval_table = await self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
             return self.eval_table
 
         if table_type == "knowledge":
-            self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name,
-                table_type="knowledge",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "knowledge_table"):
+                self.knowledge_table = await self._get_or_create_table(
+                    table_name=self.knowledge_table_name, table_type="knowledge"
+                )
             return self.knowledge_table
 
         if table_type == "culture":
-            self.culture_table = self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "culture_table"):
+                self.culture_table = await self._get_or_create_table(
+                    table_name=self.culture_table_name, table_type="culture"
+                )
             return self.culture_table
 
         if table_type == "versions":
-            self.versions_table = self._get_or_create_table(
-                table_name=self.versions_table_name,
-                table_type="versions",
-                create_table_if_not_found=create_table_if_not_found,
-            )
+            if not hasattr(self, "versions_table"):
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name, table_type="versions"
+                )
             return self.versions_table
-
-        if table_type == "traces":
-            self.traces_table = self._get_or_create_table(
-                table_name=self.trace_table_name,
-                table_type="traces",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.traces_table
-
-        if table_type == "spans":
-            # Ensure traces table exists first (spans has FK to traces)
-            if create_table_if_not_found:
-                self._get_table(table_type="traces", create_table_if_not_found=True)
-
-            self.spans_table = self._get_or_create_table(
-                table_name=self.span_table_name,
-                table_type="spans",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.spans_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_table(
-        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Optional[Table]:
+    async def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
+            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
-        with self.Session() as sess, sess.begin():
-            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+        async with self.async_session_factory() as sess, sess.begin():
+            table_is_available = await ais_table_available(
+                session=sess, table_name=table_name, db_schema=self.db_schema
+            )
 
         if not table_is_available:
-            if not create_table_if_not_found:
-                return None
+            return await self._create_table(table_name=table_name, table_type=table_type)
 
-            created_table = self._create_table(table_name=table_name, table_type=table_type)
-
-            return created_table
-
-        if not is_valid_table(
+        if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
@@ -369,32 +325,36 @@ class MySQLDb(BaseDb):
             raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
-            return table
+            async with self.db_engine.connect() as conn:
+
+                def create_table(connection):
+                    return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
+
+                table = await conn.run_sync(create_table)
+                return table
 
         except Exception as e:
             log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
 
-    def get_latest_schema_version(self, table_name: str) -> str:
+    async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
-        table = self._get_table(table_type="versions", create_table_if_not_found=True)
-        with self.Session() as sess:
+        table = await self._get_table(table_type="versions")
+        async with self.async_session_factory() as sess:
             # Latest version for the given table
             stmt = select(table).where(table.c.table_name == table_name).order_by(table.c.version.desc()).limit(1)  # type: ignore
-            result = sess.execute(stmt).fetchone()
-            if result is None:
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            if row is None:
                 return "2.0.0"
-            version_dict = dict(result._mapping)
+            version_dict = dict(row._mapping)
             return version_dict.get("version") or "2.0.0"
 
-    def upsert_schema_version(self, table_name: str, version: str) -> None:
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
-        table = self._get_table(table_type="versions", create_table_if_not_found=True)
-        if table is None:
-            return
+        table = await self._get_table(table_type="versions")
         current_datetime = datetime.now().isoformat()
-        with self.Session() as sess, sess.begin():
+        async with self.async_session_factory() as sess, sess.begin():
             stmt = mysql.insert(table).values(  # type: ignore
                 table_name=table_name,
                 version=version,
@@ -407,10 +367,10 @@ class MySQLDb(BaseDb):
                 created_at=current_datetime,
                 updated_at=current_datetime,
             )
-            sess.execute(stmt)
+            await sess.execute(stmt)
 
     # -- Session methods --
-    def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
 
@@ -424,16 +384,16 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return False
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
-                result = sess.execute(delete_stmt)
-                if result.rowcount == 0:
+                result = await sess.execute(delete_stmt)
+
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
                     return False
+
                 else:
                     log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
                     return True
@@ -442,7 +402,7 @@ class MySQLDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             return False
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
@@ -453,20 +413,18 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
-                result = sess.execute(delete_stmt)
+                result = await sess.execute(delete_stmt)
 
-            log_debug(f"Successfully deleted {result.rowcount} sessions")
+            log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
 
-    def get_session(
+    async def get_session(
         self,
         session_id: str,
         session_type: SessionType,
@@ -478,8 +436,8 @@ class MySQLDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
-            session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
+            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -491,20 +449,19 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess:
+            async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
                     return None
 
-                session = dict(result._mapping)
+                session = dict(row._mapping)
 
             if not deserialize:
                 return session
@@ -522,7 +479,7 @@ class MySQLDb(BaseDb):
             log_error(f"Exception reading from session table: {e}")
             return None
 
-    def get_sessions(
+    async def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
@@ -540,7 +497,6 @@ class MySQLDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
-            session_type (Optional[SessionType]): The type of sessions to get.
             user_id (Optional[str]): The ID of the user to filter by.
             component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
@@ -561,11 +517,9 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return [] if deserialize else ([], 0)
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
 
                 # Filtering
@@ -594,7 +548,7 @@ class MySQLDb(BaseDb):
                     stmt = stmt.where(table.c.session_type == session_type_value)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -605,28 +559,29 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if records is None:
+                    return [], 0
 
-                session_dicts = [dict(row._mapping) for row in result]
+                session = [dict(record._mapping) for record in records]
                 if not deserialize:
-                    return session_dicts, total_count
+                    return session, total_count
 
-                if session_type == SessionType.AGENT:
-                    return [AgentSession.from_dict(record) for record in session_dicts]  # type: ignore
-                elif session_type == SessionType.TEAM:
-                    return [TeamSession.from_dict(record) for record in session_dicts]  # type: ignore
-                elif session_type == SessionType.WORKFLOW:
-                    return [WorkflowSession.from_dict(record) for record in session_dicts]  # type: ignore
-                else:
-                    raise ValueError(f"Invalid session type: {session_type}")
+            if session_type == SessionType.AGENT:
+                return [AgentSession.from_dict(record) for record in session]  # type: ignore
+            elif session_type == SessionType.TEAM:
+                return [TeamSession.from_dict(record) for record in session]  # type: ignore
+            elif session_type == SessionType.WORKFLOW:
+                return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception getting sessions: {e}")
-            raise e
+            log_error(f"Exception reading from session table: {e}")
+            return [] if deserialize else ([], 0)
 
-    def rename_session(
+    async def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -647,11 +602,9 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="sessions")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 # MySQL JSON_SET syntax
                 stmt = (
                     update(table)
@@ -659,14 +612,16 @@ class MySQLDb(BaseDb):
                     .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
-                result = sess.execute(select_stmt)
+                result = await sess.execute(select_stmt)
                 row = result.fetchone()
                 if not row:
                     return None
+
+            log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
             session = dict(row._mapping)
             if not deserialize:
@@ -686,7 +641,7 @@ class MySQLDb(BaseDb):
             log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(
+    async def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -705,14 +660,12 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
-            if table is None:
-                return None
-
+            table = await self._get_table(table_type="sessions")
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
-                with self.Session() as sess, sess.begin():
+                async with self.async_session_factory() as sess, sess.begin():
+                    current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
@@ -723,8 +676,8 @@ class MySQLDb(BaseDb):
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
                         metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
+                        created_at=session_dict.get("created_at") or current_time,
+                        updated_at=session_dict.get("updated_at") or current_time,
                     )
                     stmt = stmt.on_duplicate_key_update(
                         agent_id=session_dict.get("agent_id"),
@@ -736,21 +689,25 @@ class MySQLDb(BaseDb):
                         runs=session_dict.get("runs"),
                         updated_at=int(time.time()),
                     )
-                    sess.execute(stmt)
+                    await sess.execute(stmt)
 
                     # Fetch the row
                     select_stmt = select(table).where(table.c.session_id == session_dict.get("session_id"))
-                    result = sess.execute(select_stmt)
+                    result = await sess.execute(select_stmt)
                     row = result.fetchone()
-                    if not row:
+                    if row is None:
                         return None
                     session_dict = dict(row._mapping)
-                    if session_dict is None or not deserialize:
+
+                    log_debug(f"Upserted agent session with id '{session_dict.get('session_id')}'")
+
+                    if not deserialize:
                         return session_dict
                     return AgentSession.from_dict(session_dict)
 
             elif isinstance(session, TeamSession):
-                with self.Session() as sess, sess.begin():
+                async with self.async_session_factory() as sess, sess.begin():
+                    current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
@@ -761,8 +718,8 @@ class MySQLDb(BaseDb):
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
                         metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
+                        created_at=session_dict.get("created_at") or current_time,
+                        updated_at=session_dict.get("updated_at") or current_time,
                     )
                     stmt = stmt.on_duplicate_key_update(
                         team_id=session_dict.get("team_id"),
@@ -774,21 +731,25 @@ class MySQLDb(BaseDb):
                         runs=session_dict.get("runs"),
                         updated_at=int(time.time()),
                     )
-                    sess.execute(stmt)
+                    await sess.execute(stmt)
 
                     # Fetch the row
                     select_stmt = select(table).where(table.c.session_id == session_dict.get("session_id"))
-                    result = sess.execute(select_stmt)
+                    result = await sess.execute(select_stmt)
                     row = result.fetchone()
-                    if not row:
+                    if row is None:
                         return None
                     session_dict = dict(row._mapping)
-                    if session_dict is None or not deserialize:
+
+                    log_debug(f"Upserted team session with id '{session_dict.get('session_id')}'")
+
+                    if not deserialize:
                         return session_dict
                     return TeamSession.from_dict(session_dict)
 
-            else:
-                with self.Session() as sess, sess.begin():
+            elif isinstance(session, WorkflowSession):
+                async with self.async_session_factory() as sess, sess.begin():
+                    current_time = int(time.time())
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.WORKFLOW.value,
@@ -799,8 +760,8 @@ class MySQLDb(BaseDb):
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
                         metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
+                        created_at=session_dict.get("created_at") or current_time,
+                        updated_at=session_dict.get("updated_at") or current_time,
                     )
                     stmt = stmt.on_duplicate_key_update(
                         workflow_id=session_dict.get("workflow_id"),
@@ -812,24 +773,30 @@ class MySQLDb(BaseDb):
                         runs=session_dict.get("runs"),
                         updated_at=int(time.time()),
                     )
-                    sess.execute(stmt)
+                    await sess.execute(stmt)
 
                     # Fetch the row
                     select_stmt = select(table).where(table.c.session_id == session_dict.get("session_id"))
-                    result = sess.execute(select_stmt)
+                    result = await sess.execute(select_stmt)
                     row = result.fetchone()
-                    if not row:
+                    if row is None:
                         return None
                     session_dict = dict(row._mapping)
-                    if session_dict is None or not deserialize:
+
+                    log_debug(f"Upserted workflow session with id '{session_dict.get('session_id')}'")
+
+                    if not deserialize:
                         return session_dict
                     return WorkflowSession.from_dict(session_dict)
+
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
             return None
 
-    def upsert_sessions(
+    async def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
@@ -850,16 +817,7 @@ class MySQLDb(BaseDb):
             return []
 
         try:
-            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
-            if table is None:
-                log_info("Sessions table not available, falling back to individual upserts")
-                return [
-                    result
-                    for session in sessions
-                    if session is not None
-                    for result in [self.upsert_session(session, deserialize=deserialize)]
-                    if result is not None
-                ]
+            table = await self._get_table(table_type="sessions")
 
             # Group sessions by type for batch processing
             agent_sessions = []
@@ -877,7 +835,7 @@ class MySQLDb(BaseDb):
             results: List[Union[Session, Dict[str, Any]]] = []
 
             # Process each session type in bulk
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 # Bulk upsert agent sessions
                 if agent_sessions:
                     agent_data = []
@@ -913,14 +871,15 @@ class MySQLDb(BaseDb):
                             runs=stmt.inserted.runs,
                             updated_at=stmt.inserted.updated_at,
                         )
-                        sess.execute(stmt, agent_data)
+                        await sess.execute(stmt, agent_data)
 
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
-                        result = sess.execute(select_stmt).fetchall()
+                        result = await sess.execute(select_stmt)
+                        fetched_rows = result.fetchall()
 
-                        for row in result:
+                        for row in fetched_rows:
                             session_dict = dict(row._mapping)
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
@@ -965,14 +924,15 @@ class MySQLDb(BaseDb):
                             runs=stmt.inserted.runs,
                             updated_at=stmt.inserted.updated_at,
                         )
-                        sess.execute(stmt, team_data)
+                        await sess.execute(stmt, team_data)
 
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
-                        result = sess.execute(select_stmt).fetchall()
+                        result = await sess.execute(select_stmt)
+                        fetched_rows = result.fetchall()
 
-                        for row in result:
+                        for row in fetched_rows:
                             session_dict = dict(row._mapping)
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
@@ -1017,14 +977,15 @@ class MySQLDb(BaseDb):
                             runs=stmt.inserted.runs,
                             updated_at=stmt.inserted.updated_at,
                         )
-                        sess.execute(stmt, workflow_data)
+                        await sess.execute(stmt, workflow_data)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(workflow_ids))
-                        result = sess.execute(select_stmt).fetchall()
+                        result = await sess.execute(select_stmt)
+                        fetched_rows = result.fetchall()
 
-                        for row in result:
+                        for row in fetched_rows:
                             session_dict = dict(row._mapping)
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
@@ -1043,17 +1004,13 @@ class MySQLDb(BaseDb):
                 result
                 for session in sessions
                 if session is not None
-                for result in [self.upsert_session(session, deserialize=deserialize)]
+                for result in [await self.upsert_session(session, deserialize=deserialize)]
                 if result is not None
             ]
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
+    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.
-
-        Args:
-            memory_id (str): The ID of the memory to delete.
-            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
@@ -1062,17 +1019,15 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
-                result = sess.execute(delete_stmt)
+                result = await sess.execute(delete_stmt)
 
-                success = result.rowcount > 0
+                success = result.rowcount > 0  # type: ignore
                 if success:
                     log_debug(f"Successfully deleted user memory id: {memory_id}")
                 else:
@@ -1081,33 +1036,34 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
 
-    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
             memory_ids (List[str]): The IDs of the memories to delete.
-            user_id (Optional[str]): The user ID to filter by. Defaults to None.
+            user_id (Optional[str]): Optional user ID to filter deletions.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
-                result = sess.execute(delete_stmt)
-                if result.rowcount == 0:
+                result = await sess.execute(delete_stmt)
+
+                if result.rowcount == 0:  # type: ignore
                     log_debug(f"No user memories found with ids: {memory_ids}")
+                else:
+                    log_debug(f"Successfully deleted {result.rowcount} user memories")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
+    async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 
         Args:
@@ -1117,17 +1073,16 @@ class MySQLDb(BaseDb):
             List[str]: List of memory topics.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return []
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
                 stmt = select(table.c.topics)
-                result = sess.execute(stmt).fetchall()
+                result = await sess.execute(stmt)
+                records = result.fetchall()
 
                 topics_set = set()
-                for row in result:
+                for row in records:
                     if row[0]:
                         # Parse JSON array and add topics to set
                         import json
@@ -1143,17 +1098,16 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
-            raise e
+            return []
 
-    def get_user_memory(
+    async def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
-    ) -> Optional[UserMemory]:
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
-            user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1164,29 +1118,29 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
 
-                result = sess.execute(stmt).fetchone()
-                if not result:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if not row:
                     return None
 
-                memory_raw = result._mapping
+                memory_raw = dict(row._mapping)
                 if not deserialize:
                     return memory_raw
+
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
             return None
 
-    def get_user_memories(
+    async def get_user_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -1199,7 +1153,7 @@ class MySQLDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
-        """Get all memories from the database as MemoryRow objects.
+        """Get all memories from the database as UserMemory objects.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
@@ -1213,7 +1167,6 @@ class MySQLDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
-
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of UserMemory objects
@@ -1223,11 +1176,9 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return [] if deserialize else ([], 0)
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
                 # Filtering
                 if user_id is not None:
@@ -1247,7 +1198,7 @@ class MySQLDb(BaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -1258,11 +1209,12 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [] if deserialize else ([], 0)
 
-                memories_raw = [record._mapping for record in result]
+                memories_raw = [dict(record._mapping) for record in records]
                 if not deserialize:
                     return memories_raw, total_count
 
@@ -1270,21 +1222,244 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
+            return [] if deserialize else ([], 0)
+
+    async def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="memories")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all memories: {e}")
+
+    # -- Cultural Knowledge methods --
+    async def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
+
+    async def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_warning(f"Exception deleting cultural knowledge: {e}")
             raise e
 
-    def clear_memories(self) -> None:
-        """Clear all user memories from the database."""
+    async def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return
+            table = await self._get_table(table_type="culture")
 
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.id == id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+                if not deserialize:
+                    return db_row
+
+                return deserialize_cultural_knowledge_from_db(db_row)
+
         except Exception as e:
-            log_error(f"Exception clearing user memories: {e}")
+            log_warning(f"Exception reading cultural knowledge: {e}")
+            raise e
 
-    def get_user_memory_stats(
+    async def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            async with self.async_session_factory() as sess:
+                # Build query with filters
+                stmt = select(table)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if name is not None:
+                    stmt = stmt.where(table.c.name.ilike(f"%{name}%"))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count_result = await sess.execute(count_stmt)
+                total_count = total_count_result.scalar() or 0
+
+                # Apply sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Apply pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                # Execute query
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+
+                db_rows = [dict(row._mapping) for row in rows]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+                return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
+
+        except Exception as e:
+            log_warning(f"Exception reading all cultural knowledge: {e}")
+            raise e
+
+    async def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in the database.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = await self._get_table(table_type="culture")
+
+            # Generate ID if not present
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Use MySQL-specific insert with on_duplicate_key_update
+                insert_stmt = mysql.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+
+                # Update all fields except id on conflict
+                upsert_stmt = insert_stmt.on_duplicate_key_update(
+                    name=cultural_knowledge.name,
+                    summary=cultural_knowledge.summary,
+                    content=content_dict if content_dict else None,
+                    metadata=cultural_knowledge.metadata,
+                    input=cultural_knowledge.input,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+
+                await sess.execute(upsert_stmt)
+
+                # Fetch the inserted/updated row
+                select_stmt = select(table).where(table.c.id == cultural_knowledge.id)
+                result = await sess.execute(select_stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+            if not deserialize:
+                return db_row
+
+            # Deserialize from DB format to model format
+            return deserialize_cultural_knowledge_from_db(db_row)
+
+        except Exception as e:
+            log_warning(f"Exception upserting cultural knowledge: {e}")
+            raise e
+
+    async def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
@@ -1309,11 +1484,9 @@ class MySQLDb(BaseDb):
         )
         """
         try:
-            table = self._get_table(table_type="memories")
-            if table is None:
-                return [], 0
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(
                     table.c.user_id,
                     func.count(table.c.memory_id).label("total_memories"),
@@ -1329,7 +1502,7 @@ class MySQLDb(BaseDb):
                 stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Pagination
                 if limit is not None:
@@ -1337,8 +1510,9 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [], 0
 
                 return [
@@ -1347,14 +1521,14 @@ class MySQLDb(BaseDb):
                         "total_memories": record.total_memories,
                         "last_memory_updated_at": record.last_memory_updated_at,
                     }
-                    for record in result
+                    for record in records
                 ], total_count
 
         except Exception as e:
             log_error(f"Exception getting user memory stats: {e}")
             return [], 0
 
-    def upsert_user_memory(
+    async def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the database.
@@ -1372,11 +1546,9 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="memories", create_table_if_not_found=True)
-            if table is None:
-                return None
+            table = await self._get_table(table_type="memories")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
@@ -1405,16 +1577,19 @@ class MySQLDb(BaseDb):
                     # Preserve created_at on update - don't overwrite existing value
                     created_at=table.c.created_at,
                 )
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
                 # Fetch the row
                 select_stmt = select(table).where(table.c.memory_id == memory.memory_id)
-                result = sess.execute(select_stmt)
+                result = await sess.execute(select_stmt)
                 row = result.fetchone()
-                if not row:
+                if row is None:
                     return None
 
-            memory_raw = row._mapping
+            memory_raw = dict(row._mapping)
+
+            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
+
             if not memory_raw or not deserialize:
                 return memory_raw
 
@@ -1424,7 +1599,7 @@ class MySQLDb(BaseDb):
             log_error(f"Exception upserting user memory: {e}")
             return None
 
-    def upsert_memories(
+    async def upsert_memories(
         self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
@@ -1433,6 +1608,7 @@ class MySQLDb(BaseDb):
         Args:
             memories (List[UserMemory]): List of memories to upsert.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the memory object.
 
         Returns:
             List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories.
@@ -1444,28 +1620,17 @@ class MySQLDb(BaseDb):
             return []
 
         try:
-            table = self._get_table(table_type="memories", create_table_if_not_found=True)
-            if table is None:
-                log_info("Memories table not available, falling back to individual upserts")
-                return [
-                    result
-                    for memory in memories
-                    if memory is not None
-                    for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
-                    if result is not None
-                ]
+            table = await self._get_table(table_type="memories")
 
             # Prepare bulk data
             bulk_data = []
             current_time = int(time.time())
-
             for memory in memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
-
                 bulk_data.append(
                     {
                         "memory_id": memory.memory_id,
@@ -1483,7 +1648,7 @@ class MySQLDb(BaseDb):
 
             results: List[Union[UserMemory, Dict[str, Any]]] = []
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 # Bulk upsert memories using MySQL ON DUPLICATE KEY UPDATE
                 stmt = mysql.insert(table)
                 stmt = stmt.on_duplicate_key_update(
@@ -1497,14 +1662,15 @@ class MySQLDb(BaseDb):
                     # Preserve created_at on update
                     created_at=table.c.created_at,
                 )
-                sess.execute(stmt, bulk_data)
+                await sess.execute(stmt, bulk_data)
 
                 # Fetch results
                 memory_ids = [memory.memory_id for memory in memories if memory.memory_id]
                 select_stmt = select(table).where(table.c.memory_id.in_(memory_ids))
-                result = sess.execute(select_stmt).fetchall()
+                result = await sess.execute(select_stmt)
+                fetched_rows = result.fetchall()
 
-                for row in result:
+                for row in fetched_rows:
                     memory_dict = dict(row._mapping)
                     if deserialize:
                         results.append(UserMemory.from_dict(memory_dict))
@@ -1520,12 +1686,12 @@ class MySQLDb(BaseDb):
                 result
                 for memory in memories
                 if memory is not None
-                for result in [self.upsert_user_memory(memory, deserialize=deserialize)]
+                for result in [await self.upsert_user_memory(memory, deserialize=deserialize)]
                 if result is not None
             ]
 
     # -- Metrics methods --
-    def _get_all_sessions_for_metrics_calculation(
+    async def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -1542,9 +1708,7 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return []
+            table = await self._get_table(table_type="sessions")
 
             stmt = select(
                 table.c.user_id,
@@ -1559,15 +1723,17 @@ class MySQLDb(BaseDb):
             if end_timestamp is not None:
                 stmt = stmt.where(table.c.created_at <= end_timestamp)
 
-            with self.Session() as sess:
-                result = sess.execute(stmt).fetchall()
-                return [record._mapping for record in result]
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+
+                return [dict(record._mapping) for record in records]
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {e}")
-            raise e
+            return []
 
-    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
+    async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
 
         1. If there are metrics records, return the date of the first day without a complete metrics record.
@@ -1580,23 +1746,22 @@ class MySQLDb(BaseDb):
         Returns:
             Optional[date]: The starting date for which metrics calculation is needed.
         """
-        with self.Session() as sess:
+        async with self.async_session_factory() as sess:
             stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
+            result = await sess.execute(stmt)
+            row = result.fetchone()
 
             # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
+            if row is not None:
+                if row.completed:
+                    return row._mapping["date"] + timedelta(days=1)
                 else:
-                    return result._mapping["date"]
+                    return row._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-        if not isinstance(first_session, list):
-            raise ValueError("Error obtaining session list to calculate metrics")
+        first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
 
-        first_session_date = first_session[0]["created_at"] if first_session else None
+        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -1604,7 +1769,7 @@ class MySQLDb(BaseDb):
 
         return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    async def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1614,11 +1779,10 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
-                return None
+            table = await self._get_table(table_type="metrics")
 
-            starting_date = self._get_metrics_calculation_starting_date(table)
+            starting_date = await self._get_metrics_calculation_starting_date(table)
+
             if starting_date is None:
                 log_info("No session data found. Won't calculate metrics.")
                 return None
@@ -1637,9 +1801,10 @@ class MySQLDb(BaseDb):
                 .timestamp()
             )
 
-            sessions = self._get_all_sessions_for_metrics_calculation(
+            sessions = await self._get_all_sessions_for_metrics_calculation(
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
+
             all_sessions_data = fetch_all_sessions_data(
                 sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
             )
@@ -1659,11 +1824,14 @@ class MySQLDb(BaseDb):
                     continue
 
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+
                 metrics_records.append(metrics_record)
 
             if metrics_records:
-                with self.Session() as sess, sess.begin():
-                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+                async with self.async_session_factory() as sess, sess.begin():
+                    results = await abulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+
+            log_debug("Updated metrics calculations")
 
             return results
 
@@ -1671,10 +1839,8 @@ class MySQLDb(BaseDb):
             log_error(f"Exception refreshing metrics: {e}")
             return None
 
-    def get_metrics(
-        self,
-        starting_date: Optional[date] = None,
-        ending_date: Optional[date] = None,
+    async def get_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1689,54 +1855,48 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
-                return [], 0
+            table = await self._get_table(table_type="metrics")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
                 if starting_date:
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [], None
 
                 # Get the latest updated_at
                 latest_stmt = select(func.max(table.c.updated_at))
-                latest_updated_at = sess.execute(latest_stmt).scalar()
+                latest_result = await sess.execute(latest_stmt)
+                latest_updated_at = latest_result.scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_warning(f"Exception getting metrics: {e}")
             return [], None
 
     # -- Knowledge methods --
-
-    def delete_knowledge_content(self, id: str):
+    async def delete_knowledge_content(self, id: str):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
         """
-        table = self._get_table(table_type="knowledge")
-        if table is None:
-            return None
+        table = await self._get_table(table_type="knowledge")
 
         try:
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {e}")
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
@@ -1744,27 +1904,24 @@ class MySQLDb(BaseDb):
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
         """
-        table = self._get_table(table_type="knowledge")
-        if table is None:
-            return None
+        table = await self._get_table(table_type="knowledge")
 
         try:
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
                     return None
-                return KnowledgeRow.model_validate(result._mapping)
+
+                return KnowledgeRow.model_validate(row._mapping)
 
         except Exception as e:
             log_error(f"Exception getting knowledge content: {e}")
             return None
 
-    def get_knowledge_contents(
+    async def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
@@ -1778,20 +1935,17 @@ class MySQLDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
-            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+            List[KnowledgeRow]: The knowledge contents.
 
         Raises:
             Exception: If an error occurs during retrieval.
         """
-        table = self._get_table(table_type="knowledge")
-        if table is None:
-            return [], 0
+        table = await self._get_table(table_type="knowledge")
 
         try:
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
 
                 # Apply sorting
@@ -1800,7 +1954,7 @@ class MySQLDb(BaseDb):
 
                 # Get total count before applying limit and pagination
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Apply pagination after count
                 if limit is not None:
@@ -1808,17 +1962,15 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [], 0
-
-                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in records], total_count
 
         except Exception as e:
             log_error(f"Exception getting knowledge contents: {e}")
             return [], 0
 
-    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+    async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
 
         Args:
@@ -1826,16 +1978,10 @@ class MySQLDb(BaseDb):
 
         Returns:
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
-
-        Raises:
-            Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
+            table = await self._get_table(table_type="knowledge")
+            async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
 
@@ -1879,7 +2025,7 @@ class MySQLDb(BaseDb):
                     # If we have insert_data, just do an insert without conflict resolution
                     if insert_data:
                         stmt = mysql.insert(table).values(insert_data)
-                        sess.execute(stmt)
+                        await sess.execute(stmt)
                     else:
                         # If we have no data at all, this is an error
                         log_error("No valid fields found for knowledge row upsert")
@@ -1887,7 +2033,9 @@ class MySQLDb(BaseDb):
                 else:
                     # Normal upsert with conflict resolution
                     stmt = mysql.insert(table).values(insert_data).on_duplicate_key_update(**update_fields)
-                    sess.execute(stmt)
+                    await sess.execute(stmt)
+
+            log_debug(f"Upserted knowledge row with id '{knowledge_row.id}'")
 
             return knowledge_row
 
@@ -1896,8 +2044,7 @@ class MySQLDb(BaseDb):
             return None
 
     # -- Eval methods --
-
-    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+    async def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database.
 
         Args:
@@ -1910,16 +2057,16 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during creation.
         """
         try:
-            table = self._get_table(table_type="evals", create_table_if_not_found=True)
-            if table is None:
-                return None
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 current_time = int(time.time())
                 stmt = mysql.insert(table).values(
                     {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
                 )
-                sess.execute(stmt)
+                await sess.execute(stmt)
+
+            log_debug(f"Created eval run with id '{eval_run.run_id}'")
 
             return eval_run
 
@@ -1927,51 +2074,49 @@ class MySQLDb(BaseDb):
             log_error(f"Error creating eval run: {e}")
             return None
 
-    def delete_eval_run(self, eval_run_id: str) -> None:
+    async def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to delete.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
-                result = sess.execute(stmt)
-                if result.rowcount == 0:
-                    log_error(f"No eval run found with ID: {eval_run_id}")
+                result = await sess.execute(stmt)
+
+                if result.rowcount == 0:  # type: ignore
+                    log_warning(f"No eval run found with ID: {eval_run_id}")
                 else:
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {e}")
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
-                result = sess.execute(stmt)
-                if result.rowcount == 0:
-                    log_error(f"No eval runs found with IDs: {eval_run_ids}")
+                result = await sess.execute(stmt)
+
+                if result.rowcount == 0:  # type: ignore
+                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
                 else:
-                    log_debug(f"Deleted {result.rowcount} eval runs")
+                    log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
             log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
 
-    def get_eval_run(
+    async def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
@@ -1989,17 +2134,16 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return None
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
                     return None
 
-                eval_run_raw = result._mapping
+                eval_run_raw = dict(row._mapping)
                 if not deserialize:
                     return eval_run_raw
 
@@ -2009,7 +2153,7 @@ class MySQLDb(BaseDb):
             log_error(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs(
+    async def get_eval_runs(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
@@ -2037,7 +2181,6 @@ class MySQLDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2048,11 +2191,9 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return [] if deserialize else ([], 0)
+            table = await self._get_table(table_type="evals")
 
-            with self.Session() as sess, sess.begin():
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
 
                 # Filtering
@@ -2076,7 +2217,7 @@ class MySQLDb(BaseDb):
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = await sess.scalar(count_stmt) or 0
 
                 # Sorting
                 if sort_by is None:
@@ -2090,11 +2231,12 @@ class MySQLDb(BaseDb):
                     if page is not None:
                         stmt = stmt.offset((page - 1) * limit)
 
-                result = sess.execute(stmt).fetchall()
-                if not result:
+                result = await sess.execute(stmt)
+                records = result.fetchall()
+                if not records:
                     return [] if deserialize else ([], 0)
 
-                eval_runs_raw = [row._mapping for row in result]
+                eval_runs_raw = [dict(row._mapping) for row in records]
                 if not deserialize:
                     return eval_runs_raw, total_count
 
@@ -2102,9 +2244,9 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
-            raise e
+            return [] if deserialize else ([], 0)
 
-    def rename_eval_run(
+    async def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
@@ -2120,17 +2262,14 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during update.
         """
         try:
-            table = self._get_table(table_type="evals")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
+            table = await self._get_table(table_type="evals")
+            async with self.async_session_factory() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
-                sess.execute(stmt)
+                await sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
@@ -2140,226 +2279,12 @@ class MySQLDb(BaseDb):
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
             return None
 
-    # -- Culture methods --
-
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
-
-        except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.id == id)
-                result = sess.execute(delete_stmt)
-
-                success = result.rowcount > 0
-                if success:
-                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
-                else:
-                    log_debug(f"No cultural knowledge found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from the database.
-
-        Args:
-            id (str): The ID of the cultural knowledge to get.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
-                    return None
-
-                db_row = dict(result._mapping)
-                if not db_row or not deserialize:
-                    return db_row
-
-            return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from the database as CulturalKnowledge objects.
-
-        Args:
-            name (Optional[str]): The name of the cultural knowledge to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-
-                # Filtering
-                if name is not None:
-                    stmt = stmt.where(table.c.name == name)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-
-                # Get total count after applying filtering
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
-
-                # Sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-                # Paginating
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
-
-                db_rows = [dict(record._mapping) for record in result]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
-
-        Returns:
-            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            with self.Session() as sess, sess.begin():
-                stmt = mysql.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                stmt = stmt.on_duplicate_key_update(
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                sess.execute(stmt)
-
-            # Fetch the inserted/updated row
-            return self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
-            raise e
-
     # -- Migrations --
 
-    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+    async def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
         """Migrate all content in the given table to the right v2 table"""
+
+        from typing import Sequence
 
         from agno.db.migrations.v1_to_v2 import (
             get_all_table_content,
@@ -2396,495 +2321,20 @@ class MySQLDb(BaseDb):
         # Insert the new content into the new table
         if v1_table_type == "agent_sessions":
             for session in sessions:
-                self.upsert_session(session)
+                await self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "team_sessions":
             for session in sessions:
-                self.upsert_session(session)
+                await self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "workflow_sessions":
             for session in sessions:
-                self.upsert_session(session)
+                await self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
 
         elif v1_table_type == "memories":
             for memory in memories:
-                self.upsert_user_memory(memory)
+                await self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
-
-    # --- Traces ---
-    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
-        """Build base query for traces with aggregated span counts.
-
-        Args:
-            table: The traces table.
-            spans_table: The spans table (optional).
-
-        Returns:
-            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
-        """
-        from sqlalchemy import case, literal
-
-        if spans_table is not None:
-            # JOIN with spans table to calculate total_spans and error_count
-            return (
-                select(
-                    table,
-                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
-                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
-                        "error_count"
-                    ),
-                )
-                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
-                .group_by(table.c.trace_id)
-            )
-        else:
-            # Fallback if spans table doesn't exist
-            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
-
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
-
-        Args:
-            trace: The Trace object to store (one per trace_id).
-        """
-        try:
-            table = self._get_table(table_type="traces", create_table_if_not_found=True)
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                # Check if trace exists
-                existing = sess.execute(select(table).where(table.c.trace_id == trace.trace_id)).fetchone()
-
-                if existing:
-                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
-
-                    def get_component_level(workflow_id, team_id, agent_id, name):
-                        # Check if name indicates a root span
-                        is_root_name = ".run" in name or ".arun" in name
-
-                        if not is_root_name:
-                            return 0  # Child span (not a root)
-                        elif workflow_id:
-                            return 3  # Workflow root
-                        elif team_id:
-                            return 2  # Team root
-                        elif agent_id:
-                            return 1  # Agent root
-                        else:
-                            return 0  # Unknown
-
-                    existing_level = get_component_level(
-                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
-                    )
-                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
-
-                    # Only update name if new trace is from a higher or equal level
-                    should_update_name = new_level > existing_level
-
-                    # Parse existing start_time to calculate correct duration
-                    existing_start_time_str = existing.start_time
-                    if isinstance(existing_start_time_str, str):
-                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
-                    else:
-                        existing_start_time = trace.start_time
-
-                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
-
-                    update_values = {
-                        "end_time": trace.end_time.isoformat(),
-                        "duration_ms": recalculated_duration_ms,
-                        "status": trace.status,
-                        "name": trace.name if should_update_name else existing.name,
-                    }
-
-                    # Update context fields ONLY if new value is not None (preserve non-null values)
-                    if trace.run_id is not None:
-                        update_values["run_id"] = trace.run_id
-                    if trace.session_id is not None:
-                        update_values["session_id"] = trace.session_id
-                    if trace.user_id is not None:
-                        update_values["user_id"] = trace.user_id
-                    if trace.agent_id is not None:
-                        update_values["agent_id"] = trace.agent_id
-                    if trace.team_id is not None:
-                        update_values["team_id"] = trace.team_id
-                    if trace.workflow_id is not None:
-                        update_values["workflow_id"] = trace.workflow_id
-
-                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
-                    sess.execute(stmt)
-                else:
-                    trace_dict = trace.to_dict()
-                    trace_dict.pop("total_spans", None)
-                    trace_dict.pop("error_count", None)
-                    stmt = mysql.insert(table).values(trace_dict)
-                    sess.execute(stmt)
-
-        except Exception as e:
-            log_error(f"Error creating trace: {e}")
-            # Don't raise - tracing should not break the main application flow
-
-    def get_trace(
-        self,
-        trace_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ):
-        """Get a single trace by trace_id or other filters.
-
-        Args:
-            trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
-
-        Returns:
-            Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
-        """
-        try:
-            from agno.tracing.schemas import Trace
-
-            table = self._get_table(table_type="traces")
-            if table is None:
-                return None
-
-            # Get spans table for JOIN
-            spans_table = self._get_table(table_type="spans")
-
-            with self.Session() as sess:
-                # Build query with aggregated span counts
-                stmt = self._get_traces_base_query(table, spans_table)
-
-                if trace_id:
-                    stmt = stmt.where(table.c.trace_id == trace_id)
-                elif run_id:
-                    stmt = stmt.where(table.c.run_id == run_id)
-                else:
-                    log_debug("get_trace called without any filter parameters")
-                    return None
-
-                # Order by most recent and get first result
-                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
-                result = sess.execute(stmt).fetchone()
-
-                if result:
-                    return Trace.from_dict(dict(result._mapping))
-                return None
-
-        except Exception as e:
-            log_error(f"Error getting trace: {e}")
-            return None
-
-    def get_traces(
-        self,
-        run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        status: Optional[str] = None,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        limit: Optional[int] = 20,
-        page: Optional[int] = 1,
-    ) -> tuple[List, int]:
-        """Get traces matching the provided filters with pagination.
-
-        Args:
-            run_id: Filter by run ID.
-            session_id: Filter by session ID.
-            user_id: Filter by user ID.
-            agent_id: Filter by agent ID.
-            team_id: Filter by team ID.
-            workflow_id: Filter by workflow ID.
-            status: Filter by status (OK, ERROR, UNSET).
-            start_time: Filter traces starting after this datetime.
-            end_time: Filter traces ending before this datetime.
-            limit: Maximum number of traces to return per page.
-            page: Page number (1-indexed).
-
-        Returns:
-            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
-        """
-        try:
-            from agno.tracing.schemas import Trace
-
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
-            table = self._get_table(table_type="traces")
-            if table is None:
-                log_debug("Traces table not found")
-                return [], 0
-
-            # Get spans table for JOIN
-            spans_table = self._get_table(table_type="spans")
-
-            with self.Session() as sess:
-                # Build base query with aggregated span counts
-                base_stmt = self._get_traces_base_query(table, spans_table)
-
-                # Apply filters
-                if run_id:
-                    base_stmt = base_stmt.where(table.c.run_id == run_id)
-                if session_id:
-                    base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
-                    base_stmt = base_stmt.where(table.c.user_id == user_id)
-                if agent_id:
-                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
-                if team_id:
-                    base_stmt = base_stmt.where(table.c.team_id == team_id)
-                if workflow_id:
-                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
-                if status:
-                    base_stmt = base_stmt.where(table.c.status == status)
-                if start_time:
-                    # Convert datetime to ISO string for comparison
-                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
-                if end_time:
-                    # Convert datetime to ISO string for comparison
-                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
-
-                # Get total count
-                count_stmt = select(func.count()).select_from(base_stmt.alias())
-                total_count = sess.execute(count_stmt).scalar() or 0
-
-                # Apply pagination
-                offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
-
-                results = sess.execute(paginated_stmt).fetchall()
-
-                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
-                return traces, total_count
-
-        except Exception as e:
-            log_error(f"Error getting traces: {e}")
-            return [], 0
-
-    def get_trace_stats(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        limit: Optional[int] = 20,
-        page: Optional[int] = 1,
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Get trace statistics grouped by session.
-
-        Args:
-            user_id: Filter by user ID.
-            agent_id: Filter by agent ID.
-            team_id: Filter by team ID.
-            workflow_id: Filter by workflow ID.
-            start_time: Filter sessions with traces created after this datetime.
-            end_time: Filter sessions with traces created before this datetime.
-            limit: Maximum number of sessions to return per page.
-            page: Page number (1-indexed).
-
-        Returns:
-            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
-                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                workflow_id, first_trace_at, last_trace_at.
-        """
-        try:
-            table = self._get_table(table_type="traces")
-            if table is None:
-                log_debug("Traces table not found")
-                return [], 0
-
-            with self.Session() as sess:
-                # Build base query grouped by session_id
-                base_stmt = (
-                    select(
-                        table.c.session_id,
-                        table.c.user_id,
-                        table.c.agent_id,
-                        table.c.team_id,
-                        table.c.workflow_id,
-                        func.count(table.c.trace_id).label("total_traces"),
-                        func.min(table.c.created_at).label("first_trace_at"),
-                        func.max(table.c.created_at).label("last_trace_at"),
-                    )
-                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(
-                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
-                    )
-                )
-
-                # Apply filters
-                if user_id:
-                    base_stmt = base_stmt.where(table.c.user_id == user_id)
-                if workflow_id:
-                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
-                if team_id:
-                    base_stmt = base_stmt.where(table.c.team_id == team_id)
-                if agent_id:
-                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
-                if start_time:
-                    # Convert datetime to ISO string for comparison
-                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
-                if end_time:
-                    # Convert datetime to ISO string for comparison
-                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
-
-                # Get total count of sessions
-                count_stmt = select(func.count()).select_from(base_stmt.alias())
-                total_count = sess.execute(count_stmt).scalar() or 0
-
-                # Apply pagination and ordering
-                offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
-
-                results = sess.execute(paginated_stmt).fetchall()
-
-                # Convert to list of dicts with datetime objects
-                stats_list = []
-                for row in results:
-                    # Convert ISO strings to datetime objects
-                    first_trace_at_str = row.first_trace_at
-                    last_trace_at_str = row.last_trace_at
-
-                    # Parse ISO format strings to datetime objects
-                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
-                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
-
-                    stats_list.append(
-                        {
-                            "session_id": row.session_id,
-                            "user_id": row.user_id,
-                            "agent_id": row.agent_id,
-                            "team_id": row.team_id,
-                            "workflow_id": row.workflow_id,
-                            "total_traces": row.total_traces,
-                            "first_trace_at": first_trace_at,
-                            "last_trace_at": last_trace_at,
-                        }
-                    )
-
-                return stats_list, total_count
-
-        except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
-            return [], 0
-
-    # --- Spans ---
-    def create_span(self, span: "Span") -> None:
-        """Create a single span in the database.
-
-        Args:
-            span: The Span object to store.
-        """
-        try:
-            table = self._get_table(table_type="spans", create_table_if_not_found=True)
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                stmt = mysql.insert(table).values(span.to_dict())
-                sess.execute(stmt)
-
-        except Exception as e:
-            log_error(f"Error creating span: {e}")
-
-    def create_spans(self, spans: List) -> None:
-        """Create multiple spans in the database as a batch.
-
-        Args:
-            spans: List of Span objects to store.
-        """
-        if not spans:
-            return
-
-        try:
-            table = self._get_table(table_type="spans", create_table_if_not_found=True)
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                for span in spans:
-                    stmt = mysql.insert(table).values(span.to_dict())
-                    sess.execute(stmt)
-
-        except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
-
-    def get_span(self, span_id: str):
-        """Get a single span by its span_id.
-
-        Args:
-            span_id: The unique span identifier.
-
-        Returns:
-            Optional[Span]: The span if found, None otherwise.
-        """
-        try:
-            from agno.tracing.schemas import Span
-
-            table = self._get_table(table_type="spans")
-            if table is None:
-                return None
-
-            with self.Session() as sess:
-                stmt = select(table).where(table.c.span_id == span_id)
-                result = sess.execute(stmt).fetchone()
-                if result:
-                    return Span.from_dict(dict(result._mapping))
-                return None
-
-        except Exception as e:
-            log_error(f"Error getting span: {e}")
-            return None
-
-    def get_spans(
-        self,
-        trace_id: Optional[str] = None,
-        parent_span_id: Optional[str] = None,
-        limit: Optional[int] = 1000,
-    ) -> List:
-        """Get spans matching the provided filters.
-
-        Args:
-            trace_id: Filter by trace ID.
-            parent_span_id: Filter by parent span ID.
-            limit: Maximum number of spans to return.
-
-        Returns:
-            List[Span]: List of matching spans.
-        """
-        try:
-            from agno.tracing.schemas import Span
-
-            table = self._get_table(table_type="spans")
-            if table is None:
-                return []
-
-            with self.Session() as sess:
-                stmt = select(table)
-
-                # Apply filters
-                if trace_id:
-                    stmt = stmt.where(table.c.trace_id == trace_id)
-                if parent_span_id:
-                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
-
-                if limit:
-                    stmt = stmt.limit(limit)
-
-                results = sess.execute(stmt).fetchall()
-                return [Span.from_dict(dict(row._mapping)) for row in results]
-
-        except Exception as e:
-            log_error(f"Error getting spans: {e}")
-            return []
