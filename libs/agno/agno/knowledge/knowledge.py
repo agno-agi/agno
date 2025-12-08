@@ -385,7 +385,7 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
 
-        await self._load_content(content, upsert, skip_if_exists, include, exclude)
+        await self._load_content_async(content, upsert, skip_if_exists, include, exclude)
 
     @overload
     def add_content(
@@ -458,21 +458,21 @@ class Knowledge:
             file_data = FileData(content=text_content, type="Text")
 
         content = Content(
-            name=name,
-            description=description,
-            path=path,
-            url=url,
+                name=name,
+                description=description,
+                path=path,
+                url=url,
             file_data=file_data if file_data else None,
-            metadata=metadata,
-            topics=topics,
-            remote_content=remote_content,
-            reader=reader,
-            auth=auth,
-        )
+                metadata=metadata,
+                topics=topics,
+                remote_content=remote_content,
+                reader=reader,
+                auth=auth,
+            )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
 
-        self._load_content_sync(content, upsert, skip_if_exists, include, exclude)
+        self._load_content(content, upsert, skip_if_exists, include, exclude)
 
     def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
         """
@@ -633,7 +633,7 @@ class Knowledge:
             chunked_documents.extend(reader.chunk_document(doc))
         return chunked_documents
 
-    async def _load_from_path(
+    async def _load_from_path_async(
         self,
         content: Content,
         upsert: bool,
@@ -652,7 +652,7 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
-                await self._add_to_contents_db(content)
+                await self._add_to_contents_db_async(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     await self._aupdate_content(content)
@@ -660,7 +660,7 @@ class Knowledge:
 
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
-                    await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                    await self._process_lightrag_content_async(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -691,7 +691,7 @@ class Knowledge:
 
                 self._prepare_documents_for_insert(read_documents, content.id)
 
-                await self._handle_vector_db_insert(content, read_documents, upsert)
+                await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
         elif path.is_dir():
             for file_path in path.iterdir():
@@ -710,11 +710,11 @@ class Knowledge:
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
 
-                await self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
+                await self._load_from_path_async(file_content, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
 
-    def _load_from_path_sync(
+    def _load_from_path(
         self,
         content: Content,
         upsert: bool,
@@ -734,7 +734,7 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
-                self._add_to_contents_db_sync(content)
+                self._add_to_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
@@ -742,7 +742,7 @@ class Knowledge:
 
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
-                    self._process_lightrag_content_sync(content, KnowledgeContentOrigin.PATH)
+                    self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -786,7 +786,7 @@ class Knowledge:
 
                 self._prepare_documents_for_insert(read_documents, content.id)
 
-                self._handle_vector_db_insert_sync(content, read_documents, upsert)
+                self._handle_vector_db_insert(content, read_documents, upsert)
 
         elif path.is_dir():
             for file_path in path.iterdir():
@@ -805,11 +805,11 @@ class Knowledge:
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
 
-                self._load_from_path_sync(file_content, upsert, skip_if_exists, include, exclude)
+                self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
 
-    async def _load_from_url(
+    async def _load_from_url_async(
         self,
         content: Content,
         upsert: bool,
@@ -833,14 +833,14 @@ class Knowledge:
             raise ValueError("No url provided")
 
         # 1. Add content to contents database
-        await self._add_to_contents_db(content)
+        await self._add_to_contents_db_async(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
 
         if self.vector_db.__class__.__name__ == "LightRag":
-            await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            await self._process_lightrag_content_async(content, KnowledgeContentOrigin.URL)
             return
 
         # 2. Validate URL
@@ -899,9 +899,9 @@ class Knowledge:
             read_documents = await reader.chunk_documents_async(read_documents)
         # 7. Prepare and insert the content in the vector database
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
-        await self._handle_vector_db_insert(content, read_documents, upsert)
+        await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
-    def _load_from_url_sync(
+    def _load_from_url(
         self,
         content: Content,
         upsert: bool,
@@ -927,14 +927,14 @@ class Knowledge:
             raise ValueError("No url provided")
 
         # 1. Add content to contents database
-        self._add_to_contents_db_sync(content)
+        self._add_to_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
 
         if self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content_sync(content, KnowledgeContentOrigin.URL)
+            self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
 
         # 2. Validate URL
@@ -993,9 +993,9 @@ class Knowledge:
 
         # 7. Prepare and insert the content in the vector database
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
-        self._handle_vector_db_insert_sync(content, read_documents, upsert)
+        self._handle_vector_db_insert(content, read_documents, upsert)
 
-    async def _load_from_content(
+    async def _load_from_content_async(
         self,
         content: Content,
         upsert: bool = True,
@@ -1026,14 +1026,14 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        await self._add_to_contents_db(content)
+        await self._add_to_contents_db_async(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
 
         if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+            await self._process_lightrag_content_async(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -1087,9 +1087,9 @@ class Knowledge:
             await self._aupdate_content(content)
             return
 
-        await self._handle_vector_db_insert(content, read_documents, upsert)
+        await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
-    def _load_from_content_sync(
+    def _load_from_content(
         self,
         content: Content,
         upsert: bool = True,
@@ -1121,14 +1121,14 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        self._add_to_contents_db_sync(content)
+        self._add_to_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
 
         if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content_sync(content, KnowledgeContentOrigin.CONTENT)
+            self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -1182,9 +1182,9 @@ class Knowledge:
             self._update_content(content)
             return
 
-        self._handle_vector_db_insert_sync(content, read_documents, upsert)
+        self._handle_vector_db_insert(content, read_documents, upsert)
 
-    async def _load_from_topics(
+    async def _load_from_topics_async(
         self,
         content: Content,
         upsert: bool,
@@ -1213,21 +1213,21 @@ class Knowledge:
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
-            await self._add_to_contents_db(content)
+            await self._add_to_contents_db_async(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
                 return
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                await self._process_lightrag_content_async(content, KnowledgeContentOrigin.TOPIC)
                 return
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            await self._add_to_contents_db(content)
+            await self._add_to_contents_db_async(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1243,9 +1243,9 @@ class Knowledge:
                 content.status_message = "No content found for topic"
                 await self._aupdate_content(content)
 
-            await self._handle_vector_db_insert(content, read_documents, upsert)
+            await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
-    def _load_from_topics_sync(
+    def _load_from_topics(
         self,
         content: Content,
         upsert: bool,
@@ -1275,21 +1275,21 @@ class Knowledge:
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
-            self._add_to_contents_db_sync(content)
+            self._add_to_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
                 return
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                self._process_lightrag_content_sync(content, KnowledgeContentOrigin.TOPIC)
+                self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 return
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            self._add_to_contents_db_sync(content)
+            self._add_to_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1305,9 +1305,9 @@ class Knowledge:
                 content.status_message = "No content found for topic"
                 self._update_content(content)
 
-            self._handle_vector_db_insert_sync(content, read_documents, upsert)
+            self._handle_vector_db_insert(content, read_documents, upsert)
 
-    async def _load_from_remote_content(
+    async def _load_from_remote_content_async(
         self,
         content: Content,
         upsert: bool,
@@ -1320,15 +1320,15 @@ class Knowledge:
         remote_content = content.remote_content
 
         if isinstance(remote_content, S3Content):
-            await self._load_from_s3(content, upsert, skip_if_exists)
+            await self._load_from_s3_async(content, upsert, skip_if_exists)
 
         elif isinstance(remote_content, GCSContent):
-            await self._load_from_gcs(content, upsert, skip_if_exists)
+            await self._load_from_gcs_async(content, upsert, skip_if_exists)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    async def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_s3_async(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Load the contextual S3 content.
 
         1. Identify objects to read
@@ -1372,7 +1372,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            await self._add_to_contents_db(content_entry)
+            await self._add_to_contents_db_async(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
@@ -1398,13 +1398,13 @@ class Knowledge:
 
             # 7. Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content.id)
-            await self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            await self._handle_vector_db_insert_async(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
             if temporary_file:
                 temporary_file.unlink()
 
-    async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_gcs_async(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Load the contextual GCS content.
 
         1. Identify objects to read
@@ -1440,7 +1440,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            await self._add_to_contents_db(content_entry)
+            await self._add_to_contents_db_async(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
@@ -1458,9 +1458,9 @@ class Knowledge:
 
             # 7. Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content.id)
-            await self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            await self._handle_vector_db_insert_async(content_entry, read_documents, upsert)
 
-    def _load_from_remote_content_sync(
+    def _load_from_remote_content(
         self,
         content: Content,
         upsert: bool,
@@ -1474,15 +1474,15 @@ class Knowledge:
         remote_content = content.remote_content
 
         if isinstance(remote_content, S3Content):
-            self._load_from_s3_sync(content, upsert, skip_if_exists)
+            self._load_from_s3(content, upsert, skip_if_exists)
 
         elif isinstance(remote_content, GCSContent):
-            self._load_from_gcs_sync(content, upsert, skip_if_exists)
+            self._load_from_gcs(content, upsert, skip_if_exists)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    def _load_from_s3_sync(self, content: Content, upsert: bool, skip_if_exists: bool):
+    def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Synchronous version of _load_from_s3.
         
         Load the contextual S3 content:
@@ -1527,7 +1527,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            self._add_to_contents_db_sync(content_entry)
+            self._add_to_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
@@ -1553,13 +1553,13 @@ class Knowledge:
 
             # 7. Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content.id)
-            self._handle_vector_db_insert_sync(content_entry, read_documents, upsert)
+            self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
             if temporary_file:
                 temporary_file.unlink()
 
-    def _load_from_gcs_sync(self, content: Content, upsert: bool, skip_if_exists: bool):
+    def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Synchronous version of _load_from_gcs.
         
         Load the contextual GCS content:
@@ -1596,7 +1596,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            self._add_to_contents_db_sync(content_entry)
+            self._add_to_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
@@ -1614,9 +1614,9 @@ class Knowledge:
 
             # 7. Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content.id)
-            self._handle_vector_db_insert_sync(content_entry, read_documents, upsert)
+            self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
-    async def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
+    async def _handle_vector_db_insert_async(self, content: Content, read_documents, upsert):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -1654,8 +1654,8 @@ class Knowledge:
         content.status = ContentStatus.COMPLETED
         await self._aupdate_content(content)
 
-    def _handle_vector_db_insert_sync(self, content: Content, read_documents, upsert):
-        """Synchronous version of _handle_vector_db_insert."""
+    def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
+        """Synchronously handle vector database insertion."""
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -1693,7 +1693,7 @@ class Knowledge:
         content.status = ContentStatus.COMPLETED
         self._update_content(content)
 
-    def _load_content_sync(
+    def _load_content(
         self,
         content: Content,
         upsert: bool,
@@ -1701,23 +1701,23 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ) -> None:
-        """Synchronous version of _load_content."""
+        """Synchronously load content."""
         if content.path:
-            self._load_from_path_sync(content, upsert, skip_if_exists, include, exclude)
+            self._load_from_path(content, upsert, skip_if_exists, include, exclude)
 
         if content.url:
-            self._load_from_url_sync(content, upsert, skip_if_exists)
+            self._load_from_url(content, upsert, skip_if_exists)
 
         if content.file_data:
-            self._load_from_content_sync(content, upsert, skip_if_exists)
+            self._load_from_content(content, upsert, skip_if_exists)
 
         if content.topics:
-            self._load_from_topics_sync(content, upsert, skip_if_exists)
+            self._load_from_topics(content, upsert, skip_if_exists)
 
         if content.remote_content:
-            self._load_from_remote_content_sync(content, upsert, skip_if_exists)
+            self._load_from_remote_content(content, upsert, skip_if_exists)
 
-    async def _load_content(
+    async def _load_content_async(
         self,
         content: Content,
         upsert: bool,
@@ -1726,19 +1726,19 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
     ) -> None:
         if content.path:
-            await self._load_from_path(content, upsert, skip_if_exists, include, exclude)
+            await self._load_from_path_async(content, upsert, skip_if_exists, include, exclude)
 
         if content.url:
-            await self._load_from_url(content, upsert, skip_if_exists)
+            await self._load_from_url_async(content, upsert, skip_if_exists)
 
         if content.file_data:
-            await self._load_from_content(content, upsert, skip_if_exists)
+            await self._load_from_content_async(content, upsert, skip_if_exists)
 
         if content.topics:
-            await self._load_from_topics(content, upsert, skip_if_exists)
+            await self._load_from_topics_async(content, upsert, skip_if_exists)
 
         if content.remote_content:
-            await self._load_from_remote_content(content, upsert, skip_if_exists)
+            await self._load_from_remote_content_async(content, upsert, skip_if_exists)
 
     def _build_content_hash(self, content: Content) -> str:
         """
@@ -1810,7 +1810,7 @@ class Knowledge:
         # Already a string, return as-is
         return value
 
-    async def _add_to_contents_db(self, content: Content):
+    async def _add_to_contents_db_async(self, content: Content):
         if self.contents_db:
             created_at = content.created_at if content.created_at else int(time.time())
             updated_at = content.updated_at if content.updated_at else int(time.time())
@@ -1853,12 +1853,12 @@ class Knowledge:
             else:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-    def _add_to_contents_db_sync(self, content: Content):
-        """Synchronous version of _add_to_contents_db."""
+    def _add_to_contents_db(self, content: Content):
+        """Synchronously add content to contents database."""
         if self.contents_db:
             if isinstance(self.contents_db, AsyncBaseDb):
                 raise ValueError(
-                    "_add_to_contents_db_sync() is not supported with an async DB. Please use _add_to_contents_db() instead."
+                    "_add_to_contents_db() is not supported with an async DB. Please use _add_to_contents_db_async() instead."
                 )
 
             created_at = content.created_at if content.created_at else int(time.time())
@@ -1999,12 +1999,12 @@ class Knowledge:
                 log_warning("Contents DB not found for knowledge base")
             return None
 
-    async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+    async def _process_lightrag_content_async(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        await self._add_to_contents_db(content)
+        await self._add_to_contents_db_async(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
                 log_warning("No file data provided")
@@ -2154,13 +2154,13 @@ class Knowledge:
                 log_warning(f"No documents found for LightRAG upload: {content.name}")
                 return
 
-    def _process_lightrag_content_sync(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-        """Synchronous version of _process_lightrag_content. Uses asyncio.run() only for LightRAG-specific async methods."""
+    def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        """Synchronously process LightRAG content. Uses asyncio.run() only for LightRAG-specific async methods."""
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        self._add_to_contents_db_sync(content)
+        self._add_to_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
                 log_warning("No file data provided")
