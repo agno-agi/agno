@@ -1,4 +1,4 @@
-# Shared Learnings (Culture for Agents)
+# Shared, Collective Learning for Agents (aka Agentic Culture)
 
 When humans learn a new skill or quality that will be useful in the future, we process, store and communicate it with each other via cultural artifacts. The consolidation of this shared knowledge, is the foundation of what we call culture.
 
