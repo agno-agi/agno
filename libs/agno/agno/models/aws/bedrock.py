@@ -369,7 +369,16 @@ class AwsBedrock(Model):
                 converse_input["system"] = system_message
 
             response = self.get_client().count_tokens(modelId=self.id, input={"converse": converse_input})
-            return response.get("inputTokens", 0)
+            tokens = response.get("inputTokens", 0)
+
+            # Count tool tokens
+            if tools:
+                from agno.utils.tokens import _count_tool_tokens
+
+                includes_system = any(m.role == "system" for m in messages)
+                tokens += _count_tool_tokens(tools, self.id, includes_system)
+
+            return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
             return super().count_tokens(messages, tools)

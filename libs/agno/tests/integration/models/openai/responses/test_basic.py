@@ -271,3 +271,20 @@ def test_count_tokens(openai_responses_model):
     assert isinstance(tokens, int)
     assert tokens > 0
     assert tokens < 100
+
+
+def test_count_tokens_with_tools(openai_responses_model):
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = openai_responses_model.count_tokens(messages)
+    tokens_with_tools = openai_responses_model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"

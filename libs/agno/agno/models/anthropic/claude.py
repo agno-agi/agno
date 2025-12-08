@@ -403,7 +403,7 @@ class Claude(Model):
     def count_tokens(
         self,
         messages: List[Message],
-        tools: Optional[List[Union[Function, dict]]] = None,
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> int:
         anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
         anthropic_tools = None
@@ -1035,7 +1035,7 @@ class Claude(Model):
                     else:
                         model_response.provider_data["context_management"] = context_mgmt
 
-        if hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
+        if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
 
         # Capture the Beta response

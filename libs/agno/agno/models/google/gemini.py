@@ -312,9 +312,10 @@ class Gemini(Model):
     def count_tokens(
         self,
         messages: List[Message],
-        tools: Optional[List[Union[Function, dict]]] = None,
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> int:
         if not self.vertexai:
+            log_warning("Gemini count_tokens requires VertexAI. Falling back to tiktoken-based estimation.")
             return super().count_tokens(messages, tools)
 
         contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
