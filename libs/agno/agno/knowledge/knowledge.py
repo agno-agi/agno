@@ -361,10 +361,6 @@ class Knowledge:
             )
             return
 
-        if not skip_if_exists:
-            log_debug("skip_if_exists is disabled, disabling upsert")
-            upsert = False
-
         content = None
         file_data = None
         if text_content:
@@ -448,27 +444,23 @@ class Knowledge:
             )
             return
 
-        if not skip_if_exists:
-            log_debug("skip_if_exists is disabled, disabling upsert")
-            upsert = False
-
         content = None
         file_data = None
         if text_content:
             file_data = FileData(content=text_content, type="Text")
 
         content = Content(
-                name=name,
-                description=description,
-                path=path,
-                url=url,
+            name=name,
+            description=description,
+            path=path,
+            url=url,
             file_data=file_data if file_data else None,
-                metadata=metadata,
-                topics=topics,
-                remote_content=remote_content,
-                reader=reader,
-                auth=auth,
-            )
+            metadata=metadata,
+            topics=topics,
+            remote_content=remote_content,
+            reader=reader,
+            auth=auth,
+        )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
 
