@@ -1369,7 +1369,7 @@ class Step:
         # If this step has nested steps (like Steps, Condition, Router, Loop, Parallel, etc.)
         if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
             # For Parallel steps, aggregate content from ALL inner steps
-            if step_output.step_type == StepType.PARALLEL or step_output.step_type == "Parallel":
+            if step_output.step_type == StepType.PARALLEL:
                 aggregated_parts = []
                 for i, inner_step in enumerate(step_output.steps):
                     inner_content = self._get_deepest_content_from_step_output(inner_step)
