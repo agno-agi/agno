@@ -3,7 +3,6 @@ import collections.abc
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
 from hashlib import md5
 from pathlib import Path
 from time import sleep, time
@@ -39,24 +38,6 @@ from agno.tools.function import Function, FunctionCall, FunctionExecutionResult,
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
-
-
-class RetryReason(Enum):
-    """Reasons for requesting a model retry.
-
-    Values should match provider-specific finish reasons where applicable.
-    """
-
-    MALFORMED_FUNCTION_CALL = "MALFORMED_FUNCTION_CALL"  # Gemini finish_reason
-
-
-@dataclass
-class ModelRetryRequest:
-    """Request for the model to retry with guidance."""
-
-    reason: RetryReason
-    guidance_message: str
-    max_retries: int = 3
 
 
 @dataclass
@@ -172,15 +153,12 @@ class Model(ABC):
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
-    # Retry mechanism for provider-specific errors (e.g., Gemini MALFORMED_FUNCTION_CALL)
-    _retry_request: Optional[ModelRetryRequest] = None
-    _retry_count: int = 0
+    # Regeneration mechanism for provider-specific errors (e.g., Gemini MALFORMED_FUNCTION_CALL)
+    _regeneration_attempts: int = 0
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
-        self._retry_request = None
-        self._retry_count = 0
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -302,52 +280,25 @@ class Model(ABC):
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
-    def request_retry(self, retry_request: ModelRetryRequest) -> None:
-        """Request a retry with the given guidance.
-
-        Args:
-            retry_request: The retry request containing reason, guidance message, and max retries.
-        """
-        self._retry_request = retry_request
-
-    def clear_retry_request(self) -> None:
-        """Clear any pending retry request and reset the retry count."""
-        self._retry_request = None
-        self._retry_count = 0
-
-    def should_retry(self) -> bool:
-        """Check if a retry is requested and within the retry limit.
-
-        Returns:
-            True if a retry should be attempted, False otherwise.
-        """
-        if self._retry_request is None:
-            return False
-        return self._retry_count < self._retry_request.max_retries
-
-    def _get_retry_marker(self) -> str:
-        """Get the marker string used to identify retry guidance messages.
+    def _get_regeneration_marker(self) -> str:
+        """Get the marker string used to identify guidance messages used for regeneration.
 
         Returns:
             A unique marker string for the current retry reason.
         """
-        if self._retry_request is None:
-            return ""
-        return f"[RETRY:{self._retry_request.reason.value}]"
+        return "[AGNO REGENERATION GUIDANCE MESSAGE]"
 
-    def _remove_retry_messages(self, messages: List[Message]) -> None:
-        """Remove any retry guidance messages from the message list.
+    def _remove_regeneration_messages(self, messages: List[Message]) -> None:
+        """Remove messages used as regeneration guidance from the given list.
 
         Args:
             messages: The list of messages to filter (modified in place).
         """
-        if self._retry_request is None:
-            return
-        retry_marker = self._get_retry_marker()
+        regeneration_marker = self._get_regeneration_marker()
         messages[:] = [
             m
             for m in messages
-            if not (m.role == "user" and isinstance(m.content, str) and retry_marker in m.content)
+            if not (m.role == "user" and isinstance(m.content, str) and regeneration_marker in m.content)
         ]
 
     def get_provider(self) -> str:
@@ -1433,25 +1384,6 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
-
-                # Handle retry requests from provider-specific errors
-                if self.should_retry():
-                    self._retry_count += 1
-
-                    # Remove previous retry guidance messages to avoid context pollution
-                    self._remove_retry_messages(messages)
-
-                    # Add the new retry guidance message
-                    user_message = Message(
-                        role="user",
-                        content=f"{self._get_retry_marker()}\n{self._retry_request.guidance_message}",  # type: ignore[union-attr]
-                    )
-                    messages.append(user_message)
-                    continue
-
-                # Clear retry state and remove any leftover retry messages on success
-                self._remove_retry_messages(messages)
-                self.clear_retry_request()
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:
