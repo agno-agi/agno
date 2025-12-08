@@ -540,6 +540,27 @@ class OpenAIResponses(Model):
             log_warning(f"Failed to count tokens via API: {e}")
             return super().count_tokens(messages, tools)
 
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """Async version of count_tokens using the async client."""
+        try:
+            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_tools = self._format_tool_params(messages, tools) if tools else None
+
+            response = await self.get_async_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,  # type: ignore
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return await super().acount_tokens(messages, tools)
+
     def invoke(
         self,
         messages: List[Message],
@@ -1093,11 +1114,5 @@ class OpenAIResponses(Model):
 
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
-
-        log_debug(
-            f"OpenAI Responses response metrics: input_tokens={metrics.input_tokens}, "
-            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}, "
-            f"cache_read={metrics.cache_read_tokens}, reasoning={metrics.reasoning_tokens}"
-        )
 
         return metrics

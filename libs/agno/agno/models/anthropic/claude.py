@@ -420,6 +420,26 @@ class Claude(Model):
         response = self.get_client().messages.count_tokens(**kwargs)
         return response.input_tokens
 
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = await self.get_async_client().messages.count_tokens(**kwargs)
+        return response.input_tokens
+
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -1076,11 +1096,5 @@ class Claude(Model):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}
                 metrics.provider_metrics["service_tier"] = response_usage.service_tier
-
-        log_debug(
-            f"Anthropic response metrics: input_tokens={metrics.input_tokens}, "
-            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}, "
-            f"cache_read={metrics.cache_read_tokens}, cache_write={metrics.cache_write_tokens}"
-        )
 
         return metrics

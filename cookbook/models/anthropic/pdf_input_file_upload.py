@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.media import File
 from agno.models.anthropic import Claude
 from agno.utils.media import download_file
+
 from anthropic import Anthropic
 
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")

@@ -1,3 +1,5 @@
+import pytest
+
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.utils.tokens import (
@@ -239,3 +241,40 @@ def test_count_tokens_conversation_with_media():
 
     assert result > 210
     assert result > 250
+
+
+@pytest.mark.asyncio
+async def test_model_acount_tokens():
+    """Test async token counting on Model base class."""
+    from agno.models.openai import OpenAIChat
+
+    model = OpenAIChat(id="gpt-4o")
+    messages = [Message(role="user", content="Hello world")]
+
+    sync_count = model.count_tokens(messages)
+    async_count = await model.acount_tokens(messages)
+
+    assert sync_count == async_count
+    assert sync_count > 0
+
+
+@pytest.mark.asyncio
+async def test_model_acount_tokens_with_tools():
+    """Test async token counting with tools."""
+    from agno.models.openai import OpenAIChat
+    from agno.tools.function import Function
+
+    model = OpenAIChat(id="gpt-4o")
+    messages = [Message(role="user", content="What is the weather?")]
+
+    def get_weather(location: str) -> str:
+        """Get weather for a location."""
+        return f"Weather in {location}"
+
+    tools = [Function.from_callable(get_weather)]
+
+    sync_count = model.count_tokens(messages, tools)
+    async_count = await model.acount_tokens(messages, tools)
+
+    assert sync_count == async_count
+    assert sync_count > 0

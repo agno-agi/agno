@@ -288,3 +288,41 @@ def test_count_tokens_with_tools(openai_responses_model):
 
     assert isinstance(tokens_with_tools, int)
     assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens(openai_responses_model):
+    """Test async token counting uses the async client."""
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    sync_tokens = openai_responses_model.count_tokens(messages)
+    async_tokens = await openai_responses_model.acount_tokens(messages)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens > 0
+    assert async_tokens == sync_tokens
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens_with_tools(openai_responses_model):
+    """Test async token counting with tools uses the async client."""
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+    tools = list(calculator.functions.values())
+
+    sync_tokens = openai_responses_model.count_tokens(messages, tools=tools)
+    async_tokens = await openai_responses_model.acount_tokens(messages, tools=tools)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens == sync_tokens
+    assert async_tokens > openai_responses_model.count_tokens(messages), "Token count with tools should be higher"

@@ -13,8 +13,9 @@ import os
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from anthropic import Anthropic
 from file_download_helper import download_skill_files
+
+from anthropic import Anthropic
 
 # Create a simple agent with Excel skills
 excel_agent = Agent(

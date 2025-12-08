@@ -46,13 +46,17 @@ DEFAULT_COMPRESSION_PROMPT = dedent("""\
 
 @dataclass
 class CompressionManager:
-    model: Optional[Model] = None
+    model: Optional[Model] = None  # model used for compression
     compress_tool_results: bool = True
     compress_tool_results_limit: Optional[int] = None
-    compress_tool_results_token_limit: Optional[int] = None
+    compress_token_limit: Optional[int] = None
     compress_tool_call_instructions: Optional[str] = None
 
     stats: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.compress_tool_results_limit is None and self.compress_token_limit is None:
+            self.compress_tool_results_limit = 3
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
@@ -61,16 +65,23 @@ class CompressionManager:
         self,
         messages: List[Message],
         tools: Optional[List] = None,
-        main_model: Optional[Model] = None,
+        model: Optional[Model] = None,
     ) -> bool:
+        """Check if tool results should be compressed.
+
+        Args:
+            messages: List of messages to check.
+            tools: Optional list of tools for token counting.
+            model: The Agent / Team model.
+        """
         if not self.compress_tool_results:
             return False
 
         # Token-based threshold check
-        if self.compress_tool_results_token_limit is not None and main_model is not None:
-            tokens = main_model.count_tokens(messages, tools)
-            if tokens >= self.compress_tool_results_token_limit:
-                log_info(f"Token limit hit: {tokens} >= {self.compress_tool_results_token_limit}")
+        if self.compress_token_limit is not None and model is not None:
+            tokens = model.count_tokens(messages, tools)
+            if tokens >= self.compress_token_limit:
+                log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
                 return True
 
         # Count-based threshold check
@@ -137,6 +148,40 @@ class CompressionManager:
                 log_warning(f"Compression failed for {tool_msg.tool_name}")
 
     # * Async methods *#
+    async def ashould_compress(
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        model: Optional[Model] = None,
+    ) -> bool:
+        """Async check if tool results should be compressed.
+
+        Args:
+            messages: List of messages to check.
+            tools: Optional list of tools for token counting.
+            model: The Agent / Team model.
+        """
+        if not self.compress_tool_results:
+            return False
+
+        # Token-based threshold check
+        if self.compress_token_limit is not None and model is not None:
+            tokens = await model.acount_tokens(messages, tools)
+            if tokens >= self.compress_token_limit:
+                log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
+                return True
+
+        # Count-based threshold check
+        if self.compress_tool_results_limit is not None:
+            uncompressed_tools_count = len(
+                [m for m in messages if self._is_tool_result_message(m) and m.compressed_content is None]
+            )
+            if uncompressed_tools_count >= self.compress_tool_results_limit:
+                log_info(f"Tool count limit hit: {uncompressed_tools_count} >= {self.compress_tool_results_limit}")
+                return True
+
+        return False
+
     async def _acompress_tool_result(self, tool_result: Message) -> Optional[str]:
         """Async compress a single tool result"""
         if not tool_result:

@@ -336,6 +336,33 @@ class Gemini(Model):
         )
         return response.total_tokens or 0
 
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+    ) -> int:
+        if not self.vertexai:
+            log_warning("Gemini count_tokens requires VertexAI. Falling back to tiktoken-based estimation.")
+            return await super().acount_tokens(messages, tools)
+
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+
+        config: Dict[str, Any] = {}
+        if system_instruction:
+            config["system_instruction"] = system_instruction
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            gemini_tools = format_function_definitions(formatted_tools)
+            if gemini_tools:
+                config["tools"] = [gemini_tools]
+
+        response = await self.get_client().aio.models.count_tokens(
+            model=self.id,
+            contents=contents,
+            config=config if config else None,  # type: ignore
+        )
+        return response.total_tokens or 0
+
     def invoke(
         self,
         messages: List[Message],

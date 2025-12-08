@@ -4,9 +4,10 @@ Beta features are experimental capability extensions for Anthropic models.
 You can use them with the `betas` parameter of the Agno Claude model class.
 """
 
-import anthropic
 from agno.agent import Agent
 from agno.models.vertexai.claude import Claude
+
+import anthropic
 
 # Setup the beta features we want to use
 betas = ["context-management-2025-06-27"]

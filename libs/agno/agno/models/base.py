@@ -437,6 +437,14 @@ class Model(ABC):
 
         return count_tokens(messages, tools=list(tools) if tools else None, model_id=self.id)
 
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+    ) -> int:
+        # Run in thread to avoid blocking the event loop.
+        return await asyncio.to_thread(self.count_tokens, messages, tools)
+
     def response(
         self,
         messages: List[Message],
@@ -484,11 +492,14 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             while True:
-                # Compress tool results
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    compression_manager.compress(messages)
+                # Compress tool results if compression is enabled and threshold is met
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self
+                ):
+                    _compression_manager.compress(messages)
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -683,13 +694,16 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    await compression_manager.acompress(messages)
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self
+                ):
+                    await _compression_manager.acompress(messages)
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -1109,13 +1123,16 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
                 # Compress existing tool results BEFORE invoke
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    compression_manager.compress(messages)
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self
+                ):
+                    _compression_manager.compress(messages)
 
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
@@ -1326,13 +1343,16 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
-                if compression_manager and compression_manager.should_compress(messages, tools, main_model=self):
-                    await compression_manager.acompress(messages)
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self
+                ):
+                    await _compression_manager.acompress(messages)
 
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
