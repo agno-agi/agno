@@ -32,7 +32,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
         try:
             await session.send_ping()
         except Exception as e:
-            print(e)
+            log_exception(e)
 
         try:
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
