@@ -1,10 +1,13 @@
 """Integration tests for WorkflowAgent functionality in workflows."""
 
+from dataclasses import dataclass
+from typing import AsyncIterator, Union
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowCompletedEvent, WorkflowStartedEvent
+from agno.run.workflow import CustomEvent, WorkflowCompletedEvent, WorkflowRunOutputEvent, WorkflowStartedEvent
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 from agno.workflow.agent import WorkflowAgent
 
@@ -29,6 +32,35 @@ def reference_step(step_input: StepInput) -> StepOutput:
     """Add references."""
     prev = step_input.previous_step_content or ""
     return StepOutput(content=f"{prev}\n\nReferences: https://www.agno.com")
+
+
+def get_weather(city: str) -> str:
+    """Get the weather for a city."""
+    return f"The weather in {city} is sunny and 72F."
+
+
+@dataclass
+class DataProcessedEvent(CustomEvent):
+    """Custom event for data processing."""
+
+    records_processed: int = None
+    status: str = None
+
+
+async def process_data_step(
+    step_input: StepInput,
+) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+    """Process data and yield custom events."""
+    data = step_input.input
+
+    # Custom logic
+    processed_count = len(data.split()) if data else 0
+
+    # Yield custom event
+    yield DataProcessedEvent(records_processed=processed_count, status="completed")
+
+    # Return final output
+    yield StepOutput(content=f"Processed {processed_count} items")
 
 
 # ============================================================================
@@ -134,7 +166,7 @@ def test_workflow_agent_comparison_from_history(shared_db):
     workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"))
 
     workflow = Workflow(
-        name="Story Workflow",
+        name="Comparison Story Workflow",
         description="Generates and formats stories",
         agent=workflow_agent,
         steps=[
@@ -142,6 +174,7 @@ def test_workflow_agent_comparison_from_history(shared_db):
             Step(name="format", executor=format_step),
         ],
         db=shared_db,
+        session_id="test_comparison_session",
     )
 
     # Run workflow twice with different topics
@@ -438,3 +471,118 @@ def test_workflow_agent_no_previous_runs(shared_db):
 
     session = workflow.get_session(session_id=workflow.session_id)
     assert len(session.runs) == 1
+
+
+def test_workflow_agent_streaming_tool_events(shared_db):
+    """Test that tool events are not muted when using WorkflowAgent with streaming."""
+    workflow_agent = WorkflowAgent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You help users with weather queries. ALWAYS use the workflow to get weather information.",
+    )
+
+    weather_agent = Agent(
+        name="Weather Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        instructions="You are a helpful weather assistant. Use the get_weather tool to answer questions.",
+    )
+
+    workflow = Workflow(
+        name="Weather Workflow",
+        description="Gets weather information",
+        agent=workflow_agent,
+        steps=[Step(name="Weather Step", agent=weather_agent)],
+        db=shared_db,
+    )
+
+    # Run with streaming
+    events = list(workflow.run(input="What is the weather in San Francisco?", stream=True, stream_events=True))
+
+    # Collect event types
+    event_types = {type(e).__name__ for e in events}
+
+    # Should have tool call events from the inner agent
+    assert "ToolCallStartedEvent" in event_types, f"ToolCallStartedEvent not found. Events seen: {event_types}"
+    assert "ToolCallCompletedEvent" in event_types, f"ToolCallCompletedEvent not found. Events seen: {event_types}"
+
+    # Should also have workflow events
+    assert "WorkflowStartedEvent" in event_types
+    assert "WorkflowCompletedEvent" in event_types
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_async_streaming_tool_events(shared_db):
+    """Test that tool events are not muted when using WorkflowAgent with async streaming."""
+    workflow_agent = WorkflowAgent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You help users with weather queries. ALWAYS use the workflow to get weather information.",
+    )
+
+    weather_agent = Agent(
+        name="Weather Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        instructions="You are a helpful weather assistant. Use the get_weather tool to answer questions.",
+    )
+
+    workflow = Workflow(
+        name="Weather Workflow",
+        description="Gets weather information",
+        agent=workflow_agent,
+        steps=[Step(name="Weather Step", agent=weather_agent)],
+        db=shared_db,
+    )
+
+    # Run with async streaming
+    events = []
+    async for event in workflow.arun(input="What is the weather in San Francisco?", stream=True, stream_events=True):
+        events.append(event)
+
+    # Collect event types
+    event_types = {type(e).__name__ for e in events}
+
+    # Should have tool call events from the inner agent
+    assert "ToolCallStartedEvent" in event_types, f"ToolCallStartedEvent not found. Events seen: {event_types}"
+    assert "ToolCallCompletedEvent" in event_types, f"ToolCallCompletedEvent not found. Events seen: {event_types}"
+
+    # Should also have workflow events
+    assert "WorkflowStartedEvent" in event_types
+    assert "WorkflowCompletedEvent" in event_types
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_async_streaming_custom_events(shared_db):
+    """Test that custom events are not muted when using WorkflowAgent with async streaming."""
+    workflow_agent = WorkflowAgent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You process data. ALWAYS use the workflow to process any data. Never answer directly.",
+    )
+
+    workflow = Workflow(
+        name="Data Processing Workflow",
+        description="Processes data and emits custom events",
+        agent=workflow_agent,
+        steps=[Step(name="Process", executor=process_data_step)],
+        db=shared_db,
+    )
+
+    # Run with async streaming
+    events = []
+    async for event in workflow.arun(input="Process this data: hello world test", stream=True, stream_events=True):
+        events.append(event)
+
+    # Collect event types
+    event_types = {type(e).__name__ for e in events}
+
+    # Should have custom event from the step
+    assert "DataProcessedEvent" in event_types, f"DataProcessedEvent not found. Events seen: {event_types}"
+
+    # Verify the custom event has correct data
+    custom_events = [e for e in events if isinstance(e, DataProcessedEvent)]
+    assert len(custom_events) >= 1, "Should have at least one DataProcessedEvent"
+    assert custom_events[0].status == "completed"
+    assert custom_events[0].records_processed is not None
+
+    # Should also have workflow events
+    assert "WorkflowStartedEvent" in event_types
+    assert "WorkflowCompletedEvent" in event_types

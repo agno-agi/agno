@@ -2767,8 +2767,26 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunContentEvent
-        from agno.run.team import RunContentEvent as TeamRunContentEvent
+        from agno.run.agent import (
+            CustomEvent,
+            PostHookCompletedEvent,
+            PostHookStartedEvent,
+            PreHookCompletedEvent,
+            PreHookStartedEvent,
+            RunContentEvent,
+            ToolCallCompletedEvent,
+            ToolCallStartedEvent,
+        )
+        from agno.run.team import (
+            CustomEvent as TeamCustomEvent,
+            PostHookCompletedEvent as TeamPostHookCompletedEvent,
+            PostHookStartedEvent as TeamPostHookStartedEvent,
+            PreHookCompletedEvent as TeamPreHookCompletedEvent,
+            PreHookStartedEvent as TeamPreHookStartedEvent,
+            RunContentEvent as TeamRunContentEvent,
+            ToolCallCompletedEvent as TeamToolCallCompletedEvent,
+            ToolCallStartedEvent as TeamToolCallStartedEvent,
+        )
         from agno.run.workflow import WorkflowAgentCompletedEvent, WorkflowAgentStartedEvent
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
@@ -2818,6 +2836,29 @@ class Workflow:
 
                     # workflow_agent field is used by consumers of the events to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
+                yield event  # type: ignore[misc]
+            elif isinstance(
+                event,
+                (
+                    # Agent events
+                    ToolCallStartedEvent,
+                    ToolCallCompletedEvent,
+                    PreHookStartedEvent,
+                    PreHookCompletedEvent,
+                    PostHookStartedEvent,
+                    PostHookCompletedEvent,
+                    CustomEvent,
+                    # Team events
+                    TeamToolCallStartedEvent,
+                    TeamToolCallCompletedEvent,
+                    TeamPreHookStartedEvent,
+                    TeamPreHookCompletedEvent,
+                    TeamPostHookStartedEvent,
+                    TeamPostHookCompletedEvent,
+                    TeamCustomEvent,
+                ),
+            ):
+                # Yield specific agent/team events (tool calls, hooks, custom events) that were previously muted
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
@@ -3150,8 +3191,26 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunContentEvent
-        from agno.run.team import RunContentEvent as TeamRunContentEvent
+        from agno.run.agent import (
+            CustomEvent,
+            PostHookCompletedEvent,
+            PostHookStartedEvent,
+            PreHookCompletedEvent,
+            PreHookStartedEvent,
+            RunContentEvent,
+            ToolCallCompletedEvent,
+            ToolCallStartedEvent,
+        )
+        from agno.run.team import (
+            CustomEvent as TeamCustomEvent,
+            PostHookCompletedEvent as TeamPostHookCompletedEvent,
+            PostHookStartedEvent as TeamPostHookStartedEvent,
+            PreHookCompletedEvent as TeamPreHookCompletedEvent,
+            PreHookStartedEvent as TeamPreHookStartedEvent,
+            RunContentEvent as TeamRunContentEvent,
+            ToolCallCompletedEvent as TeamToolCallCompletedEvent,
+            ToolCallStartedEvent as TeamToolCallStartedEvent,
+        )
         from agno.run.workflow import WorkflowAgentCompletedEvent, WorkflowAgentStartedEvent
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
@@ -3207,6 +3266,30 @@ class Workflow:
                     # Broadcast to WebSocket if available (async context only)
                     self._broadcast_to_websocket(event, websocket_handler)
 
+                yield event  # type: ignore[misc]
+            elif isinstance(
+                event,
+                (
+                    # Agent events
+                    ToolCallStartedEvent,
+                    ToolCallCompletedEvent,
+                    PreHookStartedEvent,
+                    PreHookCompletedEvent,
+                    PostHookStartedEvent,
+                    PostHookCompletedEvent,
+                    CustomEvent,
+                    # Team events
+                    TeamToolCallStartedEvent,
+                    TeamToolCallCompletedEvent,
+                    TeamPreHookStartedEvent,
+                    TeamPreHookCompletedEvent,
+                    TeamPostHookStartedEvent,
+                    TeamPostHookCompletedEvent,
+                    TeamCustomEvent,
+                ),
+            ):
+                # Yield specific agent/team events (tool calls, hooks, custom events) that were previously muted
+                self._broadcast_to_websocket(event, websocket_handler)
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
