@@ -3,6 +3,7 @@ import collections.abc
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from hashlib import md5
 from pathlib import Path
 from time import sleep, time
@@ -38,6 +39,24 @@ from agno.tools.function import Function, FunctionCall, FunctionExecutionResult,
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
+
+
+class RetryReason(Enum):
+    """Reasons for requesting a model retry.
+
+    Values should match provider-specific finish reasons where applicable.
+    """
+
+    MALFORMED_FUNCTION_CALL = "MALFORMED_FUNCTION_CALL"  # Gemini finish_reason
+
+
+@dataclass
+class ModelRetryRequest:
+    """Request for the model to retry with guidance."""
+
+    reason: RetryReason
+    guidance_message: str
+    max_retries: int = 3
 
 
 @dataclass
@@ -159,6 +178,8 @@ class Model(ABC):
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+        self._retry_request = None
+        self._retry_count = 0
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -1402,6 +1423,25 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
+
+                # Handle retry requests from provider-specific errors
+                if self.should_retry():
+                    self._retry_count += 1
+
+                    # Remove previous retry guidance messages to avoid context pollution
+                    self._remove_retry_messages(messages)
+
+                    # Add the new retry guidance message
+                    user_message = Message(
+                        role="user",
+                        content=f"{self._get_retry_marker()}\n{self._retry_request.guidance_message}",  # type: ignore[union-attr]
+                    )
+                    messages.append(user_message)
+                    continue
+
+                # Clear retry state and remove any leftover retry messages on success
+                self._remove_retry_messages(messages)
+                self.clear_retry_request()
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:

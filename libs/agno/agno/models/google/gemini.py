@@ -140,6 +140,9 @@ class Gemini(Model):
     location: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
 
+    # Retry configuration
+    malformed_function_call_retries: int = 3  # Max retries for MALFORMED_FUNCTION_CALL errors
+
     # Gemini client
     client: Optional[GeminiClient] = None
 
