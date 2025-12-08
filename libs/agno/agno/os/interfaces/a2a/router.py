@@ -29,6 +29,8 @@ from a2a.types import (
     AgentSkill,
 )
 import warnings
+
+
 def attach_routes(
     router: APIRouter,
     agents: Optional[List[Agent]] = None,
@@ -37,7 +39,7 @@ def attach_routes(
 ) -> APIRouter:
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
-    @router.get("/.well-known/agent.json")
+    @router.get("/.well-known/agent-card.json")
     async def get_agent_card(request: Request):
 
         base_url = str(request.base_url).rstrip("/")
@@ -47,6 +49,7 @@ def attach_routes(
         description=agents[0].description,
         tags=['agno'],
         examples=['search', 'ok'],
+        output_modes=["application/json","text/event-stream"]
         )
         return AgentCard(
             name=agents[0].name,
@@ -55,12 +58,12 @@ def attach_routes(
             url=f"{base_url}/a2a/agents/{agents[0].id}",
             default_input_modes=['text'],
             default_output_modes=['text'],
-            capabilities=AgentCapabilities(streaming=True),
+            capabilities=AgentCapabilities(streaming=False),
             skills=[skill], 
-            supports_authenticated_extended_card=True
+            supports_authenticated_extended_card=False,
         )
     @router.post(
-        "/agents/{agent_id}",
+        "/agents/{id}",
         operation_id="run_message",
         name="run_message",
         description="Send a message to an Agno Agent, Team, or Workflow. "
@@ -98,10 +101,9 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_run_agent(request: Request, id:str, stream: bool = False):
+    async def a2a_run_agent(request: Request, id:str):
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_run_agent)
-
         # 1. Get the Agent, Team, or Workflow to run
         """
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
@@ -110,6 +112,10 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )"""
+        
+        # Detect streaming based on method in request
+        method = request_body.get("method")
+        stream = method == "message/stream"
         entity: Optional[Union[Agent, Team, Workflow]] = None
         if agents:
             entity = get_agent_by_id(id, agents)
@@ -118,10 +124,10 @@ def attach_routes(
         if not entity and workflows:
             entity = get_workflow_by_id(id, workflows)
         if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{id}' not found")
 
         # 2. Map the request to our run_input and run variables
-        run_input = await map_a2a_request_to_run_input(request_body, stream=False)
+        run_input = await map_a2a_request_to_run_input(request_body, stream=stream)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
@@ -161,7 +167,7 @@ def attach_routes(
                 # 4. Stream the response
                 return StreamingResponse(
                     stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
-                    media_type="application/x-ndjson",
+                    media_type="text/event-stream",
                 )
 
             except Exception as e:
@@ -356,10 +362,10 @@ def attach_routes(
             200: {
                 "description": "Streaming response with task updates",
                 "content": {
-                    "application/x-ndjson": {
-                        "example": '{"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n'
-                        '{"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n'
-                    }
+                    "text/event-stream": {
+    "example": 'event: TaskStatusUpdateEvent\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n\n'
+    'event: Message\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n\n'
+}
                 },
             },
             400: {"description": "Invalid request or unsupported method"},
