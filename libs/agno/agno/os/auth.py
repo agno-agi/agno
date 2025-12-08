@@ -152,13 +152,8 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     # Get user's scopes from request state (set by JWT middleware)
     user_scopes = getattr(request.state, "scopes", [])
 
-    # Get agent_os_id from app state
-    agent_os_id = getattr(request.app.state, "agent_os_id", None)
-
     # Get accessible resource IDs
-    accessible_ids = get_accessible_resource_ids(
-        user_scopes=user_scopes, resource_type=resource_type
-    )
+    accessible_ids = get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type)
 
     return accessible_ids
 

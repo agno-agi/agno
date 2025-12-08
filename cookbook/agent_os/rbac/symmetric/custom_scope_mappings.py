@@ -9,8 +9,9 @@ Pre-requisites:
 - Endpoints are automatically protected with default scope mappings
 """
 
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
+
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -128,7 +129,9 @@ if __name__ == "__main__":
     print("\nTest commands:")
     print("\n# Basic user can read agents:")
     print(
-        'curl -H "Authorization: Bearer ' + basic_user_token + '" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer '
+        + basic_user_token
+        + '" http://localhost:7777/agents'
     )
     print("\n# But cannot run them (missing app:run and app:execute):")
     print(

@@ -1,8 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-import os
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -17,6 +16,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
+    AuthorizationConfig,
     DatabaseConfig,
     EvalsConfig,
     EvalsDomainConfig,
@@ -28,7 +28,6 @@ from agno.os.config import (
     MetricsDomainConfig,
     SessionConfig,
     SessionDomainConfig,
-    JWTConfig,
     TracesConfig,
     TracesDomainConfig,
 )
@@ -72,6 +71,15 @@ async def mcp_lifespan(_, mcp_tools):
         await tool.close()
 
 
+@asynccontextmanager
+async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Initializes databases in the event loop"""
+    if agent_os.auto_provision_dbs:
+        agent_os._initialize_sync_databases()
+        await agent_os._initialize_async_databases()
+    yield
+
+
 def _combine_app_lifespans(lifespans: list) -> Any:
     """Combine multiple FastAPI app lifespan context managers into one."""
     if len(lifespans) == 1:
@@ -110,7 +118,7 @@ class AgentOS:
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         authorization: bool = False,
-        jwt_config: Optional[JWTConfig] = None,
+        authorization_config: Optional[AuthorizationConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
@@ -145,10 +153,7 @@ class AgentOS:
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
-            jwt_verification_key: Key used to verify JWT signatures. For asymmetric algorithms (RS256, ES256),
-                this should be the public key. For symmetric algorithms (HS256), this is the shared secret.
-            jwt_algorithm: JWT algorithm for signature verification (default: RS256).
-                Common options: RS256 (asymmetric, recommended), HS256 (symmetric).
+            authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
@@ -201,7 +206,7 @@ class AgentOS:
 
         # RBAC
         self.authorization = authorization
-        self.jwt_config = jwt_config
+        self.authorization_config = authorization_config
 
         if self.authorization and not self.id:
             raise ValueError(
@@ -210,7 +215,7 @@ class AgentOS:
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
-        
+
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
@@ -494,41 +499,36 @@ class AgentOS:
             if self.enable_mcp_server and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
 
+            # The async database lifespan
+            lifespans.append(partial(db_lifespan, agent_os=self))
+
             # Combine lifespans and set them in the app
             if lifespans:
                 fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
 
         else:
-            if self.enable_mcp_server:
-                from contextlib import asynccontextmanager
+            lifespans = []
 
+            # User provided lifespan
+            if self.lifespan:
+                lifespans.append(self._add_agent_os_to_lifespan_function(self.lifespan))
+
+            # MCP tools lifespan
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            # MCP server lifespan
+            if self.enable_mcp_server:
                 from agno.os.mcp import get_mcp_server
 
                 self._mcp_app = get_mcp_server(self)
+                lifespans.append(self._mcp_app.lifespan)
 
-                final_lifespan = self._mcp_app.lifespan  # type: ignore
-                if self.lifespan is not None:
-                    # Wrap the user lifespan with agent_os parameter
-                    wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
+            # Async database initialization lifespan
+            lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
-                    # Combine both lifespans
-                    @asynccontextmanager
-                    async def combined_lifespan(app: FastAPI):
-                        # Run both lifespans
-                        async with wrapped_lifespan(app):  # type: ignore
-                            async with self._mcp_app.lifespan(app):  # type: ignore
-                                yield
-
-                    final_lifespan = combined_lifespan  # type: ignore
-
-                fastapi_app = self._make_app(lifespan=final_lifespan)
-            else:
-                # Wrap the user lifespan with agent_os parameter
-                wrapped_user_lifespan = None
-                if self.lifespan is not None:
-                    wrapped_user_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
-
-                fastapi_app = self._make_app(lifespan=wrapped_user_lifespan)
+            final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
+            fastapi_app = self._make_app(lifespan=final_lifespan)
 
         self._add_built_in_routes(app=fastapi_app)
 
@@ -586,12 +586,20 @@ class AgentOS:
 
             algorithm = "RS256"
             verification_key = None
-            if self.jwt_config:
-                algorithm = self.jwt_config.algorithm if self.jwt_config and self.jwt_config.algorithm else "RS256"
-                verification_key = self.jwt_config.verification_key if self.jwt_config and self.jwt_config.verification_key else None
-                
+            if self.authorization_config:
+                algorithm = (
+                    self.authorization_config.algorithm
+                    if self.authorization_config and self.authorization_config.algorithm
+                    else "RS256"
+                )
+                verification_key = (
+                    self.authorization_config.verification_key
+                    if self.authorization_config and self.authorization_config.verification_key
+                    else None
+                )
+
             log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
-                
+
             fastapi_app.add_middleware(
                 JWTMiddleware,
                 verification_key=verification_key,
@@ -717,36 +725,14 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-        # Initialize/scaffold all discovered databases
+        # Initialize all discovered databases
         if self.auto_provision_dbs:
-            import asyncio
-            import concurrent.futures
+            self._pending_async_db_init = True
 
-            try:
-                # If we're already in an event loop, run in a separate thread
-                asyncio.get_running_loop()
-
-                def run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(self._initialize_databases())
-                    finally:
-                        new_loop.close()
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(run_in_new_loop)
-                    future.result()  # Wait for completion
-
-            except RuntimeError:
-                # No event loop running, use asyncio.run
-                asyncio.run(self._initialize_databases())
-
-    async def _initialize_databases(self) -> None:
-        """Initialize all discovered databases and create all Agno tables that don't exist yet."""
+    def _initialize_sync_databases(self) -> None:
+        """Initialize sync databases."""
         from itertools import chain
 
-        # Collect all database instances and remove duplicates by identity
         unique_dbs = list(
             {
                 id(db): db
@@ -756,37 +742,39 @@ class AgentOS:
             }.values()
         )
 
-        # Separate sync and async databases
-        sync_dbs: List[Tuple[str, BaseDb]] = []
-        async_dbs: List[Tuple[str, AsyncBaseDb]] = []
+        for db in unique_dbs:
+            if isinstance(db, AsyncBaseDb):
+                continue  # Skip async dbs
+
+            try:
+                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
+                    db._create_all_tables()
+            except Exception as e:
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+
+    async def _initialize_async_databases(self) -> None:
+        """Initialize async databases."""
+
+        from itertools import chain
+
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
 
         for db in unique_dbs:
-            target = async_dbs if isinstance(db, AsyncBaseDb) else sync_dbs
-            target.append((db.id, db))  # type: ignore
+            if not isinstance(db, AsyncBaseDb):
+                continue  # Skip sync dbs
 
-        # Initialize sync databases
-        for db_id, db in sync_dbs:
             try:
-                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
-                    db._create_all_tables()
-                else:
-                    log_debug(f"No table initialization needed for {db.__class__.__name__}")
-
-            except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db_id}): {e}")
-
-        # Initialize async databases
-        for db_id, db in async_dbs:
-            try:
-                log_debug(f"Initializing async {db.__class__.__name__} (id: {db_id})")
-
-                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
-                else:
-                    log_debug(f"No table initialization needed for async {db.__class__.__name__}")
-
             except Exception as e:
-                log_warning(f"Failed to initialize async database {db.__class__.__name__} (id: {db_id}): {e}")
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
@@ -1015,4 +1003,13 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, lifespan="on", **kwargs)
+        uvicorn.run(
+            app=app,
+            host=host,
+            port=port,
+            reload=reload,
+            workers=workers,
+            access_log=access_log,
+            lifespan="on",
+            **kwargs,
+        )

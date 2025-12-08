@@ -14,45 +14,46 @@ Prerequisites:
 - Endpoints are automatically protected with default scope mappings
 """
 
-from datetime import UTC, datetime, timedelta
 import os
-import jwt
+from datetime import UTC, datetime, timedelta
 
+import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.config import JWTConfig
+from agno.os.config import AuthorizationConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.cryptography import generate_rsa_keys
-
 
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
+
 def _load_or_generate_keys():
     """Load keys from file or generate new ones. Persists keys for reload consistency."""
     import json
-    
+
     # First check environment variables
     public_key = os.getenv("JWT_VERIFICATION_KEY", None)
     private_key = os.getenv("JWT_SIGNING_KEY", None)
-    
+
     if public_key and private_key:
         return private_key, public_key
-    
+
     # Try to load from file (for reload consistency)
     if os.path.exists(_KEYS_FILE):
         with open(_KEYS_FILE, "r") as f:
             keys = json.load(f)
             return keys["private_key"], keys["public_key"]
-    
+
     # Generate new keys and save them
     private_key, public_key = generate_rsa_keys()
     with open(_KEYS_FILE, "w") as f:
         json.dump({"private_key": private_key, "public_key": public_key}, f)
-    
+
     return private_key, public_key
+
 
 PRIVATE_KEY, PUBLIC_KEY = _load_or_generate_keys()
 
@@ -76,7 +77,7 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
-    jwt_config=JWTConfig(
+    jwt_config=AuthorizationConfig(
         verification_key=PUBLIC_KEY,
         algorithm="RS256",
     ),
@@ -135,11 +136,14 @@ if __name__ == "__main__":
         print("\n" + "=" * 60)
         print("RBAC Test Tokens (RS256 Asymmetric)")
         print("=" * 60)
-        print("Keys loaded from: " + (_KEYS_FILE if os.path.exists(_KEYS_FILE) else "environment variables"))
+        print(
+            "Keys loaded from: "
+            + (_KEYS_FILE if os.path.exists(_KEYS_FILE) else "environment variables")
+        )
         print("To generate fresh keys, delete: " + _KEYS_FILE)
-        
+
         print("Public Key: \n" + PUBLIC_KEY)
-        
+
         print("\nAdmin Token (agent_os:admin - full access):")
         print(admin_token)
         print("\n" + "=" * 60 + "\n")

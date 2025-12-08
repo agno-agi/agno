@@ -100,4 +100,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="06_basic_workflow_tracing:app", reload=True)
+    agent_os.serve(app="05_basic_workflow_tracing:app", reload=True)

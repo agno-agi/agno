@@ -5,11 +5,12 @@ from typing import Generic, List, Optional, TypeVar
 from pydantic import BaseModel, field_validator
 
 
-class JWTConfig(BaseModel):
+class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
     verification_key: Optional[str] = None
     algorithm: Optional[str] = None
+
 
 class EvalsDomainConfig(BaseModel):
     """Configuration for the Evals domain of the AgentOS"""

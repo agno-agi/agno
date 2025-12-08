@@ -307,7 +307,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if decode_options:
             decode_kwargs["options"] = decode_options
 
-        payload = jwt.decode(token, self.verification_key, **decode_kwargs)
+        payload = jwt.decode(token, self.verification_key, **decode_kwargs)  # type: ignore
         return payload
 
     def _get_missing_token_error_message(self) -> str:
@@ -403,9 +403,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
             # Extract dependencies claims
             dependencies = {}
-            for claim in self.dependencies_claims:
-                if claim in payload:
-                    dependencies[claim] = payload[claim]
+            if self.dependencies_claims:
+                for claim in self.dependencies_claims:
+                    if claim in payload:
+                        dependencies[claim] = payload[claim]
 
             if dependencies:
                 log_debug(f"Extracted dependencies: {dependencies}")
@@ -413,9 +414,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
             # Extract session state claims
             session_state = {}
-            for claim in self.session_state_claims:
-                if claim in payload:
-                    session_state[claim] = payload[claim]
+            if self.session_state_claims:
+                for claim in self.session_state_claims:
+                    if claim in payload:
+                        session_state[claim] = payload[claim]
 
             if session_state:
                 log_debug(f"Extracted session state: {session_state}")
@@ -454,7 +456,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
                         # This allows endpoints to return filtered results (including empty list) instead of 403
-                        accessible_ids = get_accessible_resource_ids(scopes, resource_type, admin_scope=self.admin_scope)
+                        accessible_ids = get_accessible_resource_ids(
+                            scopes, resource_type, admin_scope=self.admin_scope
+                        )
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
 
@@ -484,7 +488,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if self.authorization:
                 log_warning(f"Invalid audience - expected: {agent_os_id}")
                 return self._create_error_response(
-                    401, f"Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
+                    401, "Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
                 )
             request.state.authenticated = False
             request.state.token = token

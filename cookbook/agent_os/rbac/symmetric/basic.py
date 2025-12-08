@@ -17,7 +17,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.config import JWTConfig
+from agno.os.config import AuthorizationConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
@@ -43,7 +43,7 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
-    jwt_config=JWTConfig(
+    jwt_config=AuthorizationConfig(
         verification_key=JWT_SECRET,
         algorithm="HS256",
     ),
@@ -106,10 +106,14 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print(
-        '\ncurl -H "Authorization: Bearer ' + user_token + '" http://localhost:7777/agents'
+        '\ncurl -H "Authorization: Bearer '
+        + user_token
+        + '" http://localhost:7777/agents'
     )
     print(
-        '\ncurl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/sessions'
+        '\ncurl -H "Authorization: Bearer '
+        + admin_token
+        + '" http://localhost:7777/sessions'
     )
     print("\n" + "=" * 60 + "\n")
 

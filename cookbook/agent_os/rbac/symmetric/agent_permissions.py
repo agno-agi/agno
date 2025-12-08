@@ -9,8 +9,8 @@ Prerequisites:
 - Endpoints are automatically protected with default scope mappings
 """
 
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from agno.agent import Agent
@@ -127,10 +127,14 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print(
-        '\ncurl -H "Authorization: Bearer ' + web_search_user_token + '" http://localhost:7777/agents/web-search-agent/runs'
+        '\ncurl -H "Authorization: Bearer '
+        + web_search_user_token
+        + '" http://localhost:7777/agents/web-search-agent/runs'
     )
     print(
-        '\ncurl -H "Authorization: Bearer ' + agno_user_token + '" http://localhost:7777/agents/agno-agent/runs'
+        '\ncurl -H "Authorization: Bearer '
+        + agno_user_token
+        + '" http://localhost:7777/agents/agno-agent/runs'
     )
     print("\n" + "=" * 60 + "\n")
 

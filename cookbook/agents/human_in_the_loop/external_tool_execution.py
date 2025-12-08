@@ -10,6 +10,7 @@ Run `pip install openai agno` to install dependencies.
 import subprocess
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -36,21 +37,30 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[execute_shell_command],
     markdown=True,
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
 run_response = agent.run("What files do I have in my current directory?")
+
 if run_response.is_paused:
-    for tool in run_response.tools_awaiting_external_execution:
-        if tool.tool_name == execute_shell_command.name:
-            print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
-            # We execute the tool ourselves. You can also execute something completely external here.
-            result = execute_shell_command.entrypoint(**tool.tool_args)  # type: ignore
-            # We have to set the result on the tool execution object so that the agent can continue
-            tool.result = result
+    for requirement in run_response.active_requirements:
+        if requirement.needs_external_execution:
+            if requirement.tool_execution.tool_name == execute_shell_command.name:
+                print(
+                    f"Executing {requirement.tool_execution.tool_name} with args {requirement.tool_execution.tool_args} externally"
+                )
+                # We execute the tool ourselves. You can also execute something completely external here.
+                result = execute_shell_command.entrypoint(
+                    **requirement.tool_execution.tool_args
+                )  # type: ignore
+                # We have to set the result on the tool execution object so that the agent can continue
+                requirement.set_external_execution_result(result)
 
-    run_response = agent.continue_run(run_response=run_response)
-    pprint.pprint_run_response(run_response)
-
+run_response = agent.continue_run(
+    run_id=run_response.run_id,
+    requirements=run_response.requirements,
+)
+pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow
 # agent.print_response("What files do I have in my current directory?")

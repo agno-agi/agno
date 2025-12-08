@@ -21,15 +21,15 @@ Prerequisites:
 - Endpoints automatically filter based on user scopes
 """
 
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.config import JWTConfig
+from agno.os.config import AuthorizationConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # JWT Secret (use environment variable in production)
@@ -74,10 +74,10 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS with Simplified Scopes",
     agents=[web_search_agent, analyst_agent, admin_agent],
     authorization=True,  # Enable RBAC
-    jwt_config=JWTConfig(
+    jwt_config=AuthorizationConfig(
         verification_key=JWT_SECRET,
         algorithm="HS256",
-    ),  
+    ),
 )
 
 # Get the app
@@ -178,7 +178,9 @@ if __name__ == "__main__":
     print("   Token: " + power_user_token[:50] + "...")
 
     print("\n3. LIMITED USER (specific agents only):")
-    print("   Scopes: ['agents:web-search-agent:read', 'agents:web-search-agent:run', ...]")
+    print(
+        "   Scopes: ['agents:web-search-agent:read', 'agents:web-search-agent:run', ...]"
+    )
     print("   Token: " + limited_user_token[:50] + "...")
 
     print("\n4. READ-ONLY USER (view only):")
@@ -194,12 +196,22 @@ if __name__ == "__main__":
     print("=" * 80)
 
     print("\n# Test admin access (should work for all endpoints):")
-    print('curl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/agents')
-    print('curl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/config')
+    print(
+        'curl -H "Authorization: Bearer '
+        + admin_token
+        + '" http://localhost:7777/agents'
+    )
+    print(
+        'curl -H "Authorization: Bearer '
+        + admin_token
+        + '" http://localhost:7777/config'
+    )
 
     print("\n# Test power user (should see all agents and run any):")
     print(
-        'curl -H "Authorization: Bearer ' + power_user_token + '" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer '
+        + power_user_token
+        + '" http://localhost:7777/agents'
     )
     print(
         'curl -X POST -H "Authorization: Bearer ' + power_user_token + '" \\\n'
@@ -210,7 +222,9 @@ if __name__ == "__main__":
         "\n# Test limited user (should only see 2 agents: web-search-agent and analyst-agent):"
     )
     print(
-        'curl -H "Authorization: Bearer ' + limited_user_token + '" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer '
+        + limited_user_token
+        + '" http://localhost:7777/agents'
     )
     print(
         'curl -X POST -H "Authorization: Bearer ' + limited_user_token + '" \\\n'
@@ -219,7 +233,9 @@ if __name__ == "__main__":
 
     print("\n# Test read-only user (should see all agents but cannot run):")
     print(
-        'curl -H "Authorization: Bearer ' + readonly_user_token + '" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer '
+        + readonly_user_token
+        + '" http://localhost:7777/agents'
     )
     print(
         'curl -X POST -H "Authorization: Bearer ' + readonly_user_token + '" \\\n'
@@ -228,7 +244,9 @@ if __name__ == "__main__":
 
     print("\n# Test wildcard user (should work for any agent):")
     print(
-        'curl -H "Authorization: Bearer ' + wildcard_user_token + '" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer '
+        + wildcard_user_token
+        + '" http://localhost:7777/agents'
     )
     print(
         'curl -X POST -H "Authorization: Bearer ' + wildcard_user_token + '" \\\n'

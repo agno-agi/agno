@@ -9,8 +9,9 @@ Prerequisites:
 - Endpoints are automatically protected with default scope mappings
 """
 
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
+
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -169,10 +170,14 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("\nTest commands:")
     print(
-        '\ncurl -H "Authorization: Bearer ' + user_token + '" http://localhost:7777/agents'
+        '\ncurl -H "Authorization: Bearer '
+        + user_token
+        + '" http://localhost:7777/agents'
     )
     print(
-        '\ncurl -H "Authorization: Bearer ' + admin_token + '" http://localhost:7777/sessions'
+        '\ncurl -H "Authorization: Bearer '
+        + admin_token
+        + '" http://localhost:7777/sessions'
     )
     print("\n" + "=" * 60 + "\n")
 

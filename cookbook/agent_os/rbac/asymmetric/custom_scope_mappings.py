@@ -14,8 +14,9 @@ Pre-requisites:
 - Endpoints are automatically protected with default scope mappings
 """
 
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
+
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -28,29 +29,31 @@ from agno.utils.cryptography import generate_rsa_keys
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
+
 def _load_or_generate_keys():
     """Load keys from file or generate new ones. Persists keys for reload consistency."""
     import json
-    
+
     # First check environment variables
     public_key = os.getenv("JWT_VERIFICATION_KEY", None)
     private_key = os.getenv("JWT_SIGNING_KEY", None)
-    
+
     if public_key and private_key:
         return private_key, public_key
-    
+
     # Try to load from file (for reload consistency)
     if os.path.exists(_KEYS_FILE):
         with open(_KEYS_FILE, "r") as f:
             keys = json.load(f)
             return keys["private_key"], keys["public_key"]
-    
+
     # Generate new keys and save them
     private_key, public_key = generate_rsa_keys()
     with open(_KEYS_FILE, "w") as f:
         json.dump({"private_key": private_key, "public_key": public_key}, f)
-    
+
     return private_key, public_key
+
 
 PRIVATE_KEY, PUBLIC_KEY = _load_or_generate_keys()
 
@@ -161,7 +164,9 @@ if __name__ == "__main__":
     print("\nTest commands:")
     print("\n# Basic user can read agents:")
     print(
-        'curl -H "Authorization: Bearer ' + basic_user_token + '" http://localhost:7777/agents'
+        'curl -H "Authorization: Bearer '
+        + basic_user_token
+        + '" http://localhost:7777/agents'
     )
     print("\n# But cannot run them (missing app:run and app:execute):")
     print(

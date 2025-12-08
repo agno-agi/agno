@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
 from agno.os.middleware import JWTMiddleware, TokenSource
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
@@ -135,8 +136,7 @@ def test_valid_scope_grants_access(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -159,8 +159,7 @@ def test_missing_scope_denies_access(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -185,8 +184,7 @@ def test_admin_scope_grants_full_access(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -216,8 +214,7 @@ def test_wildcard_resource_grants_all_agents(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -247,15 +244,21 @@ def test_wildcard_resource_grants_all_agents(test_agent):
 
 
 def test_audience_verification(test_agent):
-    """Test that audience claim is verified against AgentOS ID."""
+    """Test that audience claim is verified against AgentOS ID when verify_audience is enabled."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
-        authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
     )
     app = agent_os.get_app()
+
+    # Manually add middleware with verify_audience=True
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        authorization=True,
+        verify_audience=True,
+    )
 
     client = TestClient(app)
 
@@ -285,8 +288,7 @@ def test_per_resource_scope(test_agent, second_agent):
         id=TEST_OS_ID,
         agents=[test_agent, second_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -323,8 +325,7 @@ def test_global_resource_scope(test_agent, second_agent):
         id=TEST_OS_ID,
         agents=[test_agent, second_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -362,34 +363,24 @@ def test_global_resource_scope(test_agent, second_agent):
 
 
 def test_excluded_routes_skip_jwt(test_agent):
-    """Test that excluded routes don't require JWT."""
+    """Test that excluded routes (health) don't require JWT."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
-    app.add_middleware(
-        JWTMiddleware,
-        verification_key=JWT_SECRET,
-        algorithm="HS256",
-        authorization=True,
-        excluded_route_paths=[
-            "/",
-            "/health",
-            "/docs",
-            "/agents",  # Exclude this for testing
-        ],
-    )
-
     client = TestClient(app)
 
-    # Should access excluded routes without token
+    # Health endpoint should be accessible without token (default excluded route)
     response = client.get("/health")
     assert response.status_code == 200
 
+    # Protected endpoints should require token
     response = client.get("/agents")
-    assert response.status_code == 200
+    assert response.status_code == 401  # Missing token
 
 
 def test_expired_token_rejected(test_agent):
@@ -435,8 +426,7 @@ def test_missing_token_returns_401(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -455,8 +445,7 @@ def test_invalid_token_format(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -580,8 +569,7 @@ def test_system_scope(test_agent):
         id=TEST_OS_ID,
         agents=[test_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -599,15 +587,21 @@ def test_system_scope(test_agent):
 
 
 def test_different_audience_blocks_access(test_agent):
-    """Test that tokens with different audience (OS ID) don't grant access."""
+    """Test that tokens with different audience (OS ID) don't grant access when verify_audience is enabled."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
-        authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
     )
     app = agent_os.get_app()
+
+    # Manually add middleware with verify_audience=True
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        authorization=True,
+        verify_audience=True,
+    )
 
     client = TestClient(app)
 
@@ -629,8 +623,7 @@ def test_agent_filtering_with_global_scope(test_agent, second_agent, third_agent
         id=TEST_OS_ID,
         agents=[test_agent, second_agent, third_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -657,8 +650,7 @@ def test_agent_filtering_with_wildcard_scope(test_agent, second_agent, third_age
         id=TEST_OS_ID,
         agents=[test_agent, second_agent, third_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -685,8 +677,7 @@ def test_agent_filtering_with_specific_scope(test_agent, second_agent, third_age
         id=TEST_OS_ID,
         agents=[test_agent, second_agent, third_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -712,8 +703,7 @@ def test_agent_filtering_with_multiple_specific_scopes(test_agent, second_agent,
         id=TEST_OS_ID,
         agents=[test_agent, second_agent, third_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -745,8 +735,7 @@ def test_agent_run_blocked_without_specific_scope(test_agent, second_agent):
         id=TEST_OS_ID,
         agents=[test_agent, second_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -785,8 +774,7 @@ def test_agent_run_with_wildcard_scope(test_agent, second_agent):
         id=TEST_OS_ID,
         agents=[test_agent, second_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -822,8 +810,7 @@ def test_agent_run_with_global_scope(test_agent, second_agent):
         id=TEST_OS_ID,
         agents=[test_agent, second_agent],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -864,8 +851,7 @@ def test_team_filtering_with_global_scope(test_team, second_team):
         id=TEST_OS_ID,
         teams=[test_team, second_team],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -892,8 +878,7 @@ def test_team_filtering_with_wildcard_scope(test_team, second_team):
         id=TEST_OS_ID,
         teams=[test_team, second_team],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -920,8 +905,7 @@ def test_team_filtering_with_specific_scope(test_team, second_team):
         id=TEST_OS_ID,
         teams=[test_team, second_team],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -947,8 +931,7 @@ def test_team_run_blocked_without_specific_scope(test_team, second_team):
         id=TEST_OS_ID,
         teams=[test_team, second_team],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -987,8 +970,7 @@ def test_team_run_with_wildcard_scope(test_team, second_team):
         id=TEST_OS_ID,
         teams=[test_team, second_team],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1024,8 +1006,7 @@ def test_team_run_with_global_scope(test_team, second_team):
         id=TEST_OS_ID,
         teams=[test_team, second_team],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1066,8 +1047,7 @@ def test_workflow_filtering_with_global_scope(test_workflow, second_workflow):
         id=TEST_OS_ID,
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1094,8 +1074,7 @@ def test_workflow_filtering_with_wildcard_scope(test_workflow, second_workflow):
         id=TEST_OS_ID,
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1122,8 +1101,7 @@ def test_workflow_filtering_with_specific_scope(test_workflow, second_workflow):
         id=TEST_OS_ID,
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1149,8 +1127,7 @@ def test_workflow_run_blocked_without_specific_scope(test_workflow, second_workf
         id=TEST_OS_ID,
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1189,8 +1166,7 @@ def test_workflow_run_with_wildcard_scope(test_workflow, second_workflow):
         id=TEST_OS_ID,
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1226,8 +1202,7 @@ def test_workflow_run_with_global_scope(test_workflow, second_workflow):
         id=TEST_OS_ID,
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1270,8 +1245,7 @@ def test_mixed_resource_filtering(test_agent, second_agent, test_team, second_te
         teams=[test_team, second_team],
         workflows=[test_workflow, second_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1323,15 +1297,14 @@ def test_mixed_resource_filtering(test_agent, second_agent, test_team, second_te
 
 
 def test_no_access_to_resource_type(test_agent, test_team, test_workflow):
-    """Test that users without any scope for a resource type get empty list."""
+    """Test that users without any scope for a resource type get 403."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
         teams=[test_team],
         workflows=[test_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
@@ -1352,21 +1325,19 @@ def test_no_access_to_resource_type(test_agent, test_team, test_workflow):
     assert response.status_code == 200
     assert len(response.json()) == 1
 
-    # Should NOT see teams (no scope)
+    # Should NOT see teams (no scope) - returns 403 Insufficient permissions
     response = client.get(
         "/teams",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200
-    assert len(response.json()) == 0  # Empty list, not 403
+    assert response.status_code == 403
 
-    # Should NOT see workflows (no scope)
+    # Should NOT see workflows (no scope) - returns 403 Insufficient permissions
     response = client.get(
         "/workflows",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200
-    assert len(response.json()) == 0  # Empty list, not 403
+    assert response.status_code == 403
 
 
 def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_workflow):
@@ -1377,8 +1348,7 @@ def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_work
         teams=[test_team],
         workflows=[test_workflow],
         authorization=True,
-        jwt_verification_key=JWT_SECRET,
-        jwt_algorithm="HS256",
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
     )
     app = agent_os.get_app()
 
