@@ -38,6 +38,7 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
+from agno.run.agent import RunOutput
 
 try:
     from httpx import AsyncClient
@@ -318,7 +319,7 @@ class AgentOSClient:
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
         **kwargs: Any,
-    ) -> RunSchema:
+    ) -> RunOutput:
         """Execute an agent run.
 
         Args:
@@ -338,7 +339,7 @@ class AgentOSClient:
                 - output_schema: JSON schema for structured output
 
         Returns:
-            RunSchema: The run response
+            RunOutput: The run response
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -366,7 +367,7 @@ class AgentOSClient:
                 data[key] = value
 
         response_data = await self._post(endpoint, data, as_form=True)
-        return RunSchema.model_validate(response_data)
+        return RunOutput.from_dict(response_data)
 
     async def stream_agent_run(
         self,
@@ -431,7 +432,7 @@ class AgentOSClient:
         stream: bool = False,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> RunSchema:
+    ) -> RunOutput:
         """Continue a paused agent run with tool results.
 
         Args:
@@ -443,7 +444,7 @@ class AgentOSClient:
             user_id: Optional user ID
 
         Returns:
-            RunSchema: The continued run response
+            RunOutput: The continued run response
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -456,7 +457,7 @@ class AgentOSClient:
             data["user_id"] = user_id
 
         response_data = await self._post(endpoint, data, as_form=True)
-        return RunSchema.model_validate(response_data)
+        return RunOutput.from_dict(response_data)
 
     async def stream_continue_agent_run(
         self,
