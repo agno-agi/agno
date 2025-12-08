@@ -20,6 +20,8 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.to_dict()
         elif isinstance(obj, Metrics):
             return obj.to_dict()
+        elif isinstance(obj, type):
+            return str(obj)
 
         return super().default(obj)
 

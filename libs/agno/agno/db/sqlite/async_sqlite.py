@@ -1,8 +1,11 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
@@ -24,7 +27,6 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.tracing.schemas import Span, Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
@@ -347,10 +349,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
-        if not table_is_available:
-            if not create_table_if_not_found:
-                return None
-
+        if (not table_is_available) and create_table_if_not_found:
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -364,7 +363,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, autoload_with=connection)
 
                 table = await conn.run_sync(load_table)
-                log_debug(f"Loaded existing table {table_name}")
                 return table
 
         except Exception as e:
@@ -373,7 +371,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def get_latest_schema_version(self, table_name: str) -> str:
         """Get the latest version of the database schema."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return "2.0.0"
         async with self.async_session_factory() as sess:
@@ -390,7 +388,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     async def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
-        table = await self._get_table(table_type="versions")
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
         current_datetime = datetime.now().isoformat()
@@ -424,7 +422,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            table = await self._get_table(table_type="sessions")
             if table is None:
                 return False
 
@@ -688,7 +686,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during upserting.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -834,7 +832,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return []
 
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 log_info("Sessions table not available, falling back to individual upserts")
                 return [
@@ -1115,7 +1113,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Select topics from all results
-                stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
+                stmt = select(table.c.topics)
                 result = (await sess.execute(stmt)).fetchall()
 
                 return list(set([record[0] for record in result]))
@@ -2514,14 +2512,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if trace.workflow_id is not None:
                         update_values["workflow_id"] = trace.workflow_id
 
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     await sess.execute(stmt)
                 else:
@@ -2623,10 +2613,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             from agno.tracing.schemas import Trace
 
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
             table = await self._get_table(table_type="traces")
             if table is None:
                 log_debug("Traces table not found")
@@ -2643,7 +2629,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2665,7 +2650,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
-                log_debug(f"Total matching traces: {total_count}")
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
@@ -2673,7 +2657,6 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
-                log_debug(f"Returning page {page} with {len(results)} traces")
 
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
@@ -2711,12 +2694,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             table = await self._get_table(table_type="traces")
             if table is None:
                 log_debug("Traces table not found")
@@ -2760,7 +2737,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
-                log_debug(f"Total matching sessions: {total_count}")
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
@@ -2768,7 +2744,6 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
-                log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
                 stats_list = []

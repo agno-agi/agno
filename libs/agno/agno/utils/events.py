@@ -35,6 +35,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.requirement import RunRequirement
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
@@ -136,7 +137,9 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
 
 
 def create_run_paused_event(
-    from_run_response: RunOutput, tools: Optional[List[ToolExecution]] = None
+    from_run_response: RunOutput,
+    tools: Optional[List[ToolExecution]] = None,
+    requirements: Optional[List[RunRequirement]] = None,
 ) -> RunPausedEvent:
     return RunPausedEvent(
         session_id=from_run_response.session_id,
@@ -144,6 +147,7 @@ def create_run_paused_event(
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
+        requirements=requirements,
         content=from_run_response.content,
     )
 

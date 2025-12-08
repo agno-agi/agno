@@ -347,7 +347,7 @@ async def test_agentos_propagates_background_setting_to_agents(shared_db):
     )
 
     # By default, _run_hooks_in_background should be False on the agent
-    assert agent._run_hooks_in_background is False
+    assert agent._run_hooks_in_background is None
 
     # When AgentOS is created with run_hooks_in_background=True (default)
     agent_os = AgentOS(agents=[agent], run_hooks_in_background=True)
