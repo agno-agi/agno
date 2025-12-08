@@ -69,6 +69,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
+from agno.utils.log import log_error
 
 try:
     from google.auth.transport.requests import Request
@@ -202,7 +203,7 @@ class GoogleDriveTools(Toolkit):
             items = results.get("files", [])
             return items
         except Exception as error:
-            print(f"Could not list files: {error}")
+            log_error(f"Could not list files: {error}")
             return []
 
     @authenticate
@@ -238,7 +239,7 @@ class GoogleDriveTools(Toolkit):
             )
             return uploaded_file
         except Exception as error:
-            print(f"Could not upload file '{file_path}': {error}")
+            log_error(f"Could not upload file '{file_path}': {error}")
             return None
 
     @authenticate
@@ -266,5 +267,5 @@ class GoogleDriveTools(Toolkit):
                     print(f"Download progress: {int(status.progress() * 100)}%.")
             return dest_path
         except Exception as error:
-            print(f"Could not download file '{file_id}': {error}")
+            log_error(f"Could not download file '{file_id}': {error}")
             return None

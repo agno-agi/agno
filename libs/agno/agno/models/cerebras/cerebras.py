@@ -512,14 +512,16 @@ class Cerebras(Model):
 
             # Extend the list if needed
             while len(tool_calls) <= index:
-                tool_calls.append({
-                    "id": None,
-                    "type": None,
-                    "function": {
-                        "name": "",
-                        "arguments": "",
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": None,
+                        "type": None,
+                        "function": {
+                            "name": "",
+                            "arguments": "",
+                        },
+                    }
+                )
 
             tool_call_entry = tool_calls[index]
 
@@ -540,10 +542,7 @@ class Cerebras(Model):
                     tool_call_entry["function"]["arguments"] += func_delta["arguments"]
 
         # Filter out any incomplete tool calls (missing id or function name)
-        complete_tool_calls = [
-            tc for tc in tool_calls
-            if tc.get("id") and tc.get("function", {}).get("name")
-        ]
+        complete_tool_calls = [tc for tc in tool_calls if tc.get("id") and tc.get("function", {}).get("name")]
 
         return complete_tool_calls
 
