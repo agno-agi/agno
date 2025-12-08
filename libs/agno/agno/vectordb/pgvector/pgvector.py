@@ -555,11 +555,43 @@ class PgVector(VectorDb):
                     logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+                    # Check for exceptions and handle them
+                    for i, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            error_msg = str(result)
+                            # If it's an event loop closure error, log it but don't fail
+                            if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
+                                logger.warning(
+                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+                                )
+                            else:
+                                logger.error(f"Error embedding document {i}: {result}")
+
+                    # Give httpx connections time to clean up before event loop closes
+                    # This prevents "Event loop is closed" errors during connection cleanup
+                    await asyncio.sleep(0.05)  # Small delay for connection cleanup
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+            # Check for exceptions and handle them
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    error_msg = str(result)
+                    # If it's an event loop closure error, log it but don't fail
+                    if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
+                        logger.warning(
+                            f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+                        )
+                    else:
+                        logger.error(f"Error embedding document {i}: {result}")
+
+            # Give httpx connections time to clean up before event loop closes
+            # This prevents "Event loop is closed" errors during connection cleanup
+            await asyncio.sleep(0.05)  # Small delay for connection cleanup
 
     async def async_upsert(
         self,
@@ -603,10 +635,17 @@ class PgVector(VectorDb):
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
-                        for doc in batch_docs:
+                        for idx, doc in enumerate(batch_docs):
                             try:
                                 cleaned_content = self._clean_content(doc.content)
                                 record_id = md5(cleaned_content.encode()).hexdigest()
+
+                                if (
+                                    doc.embedding is not None
+                                    and hasattr(doc.embedding, "__len__")
+                                    and len(doc.embedding) == 0
+                                ):
+                                    logger.warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
                                 meta_data = doc.meta_data or {}
                                 if filters:

@@ -24,9 +24,7 @@ knowledge = Knowledge(
 # Add from S3 bucket
 knowledge.add_content(
     name="S3 PDF",
-    remote_content=S3Content(
-        bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"
-    ),
+    remote_content=S3Content(bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"),
     metadata={"remote_content": "S3"},
 )
 

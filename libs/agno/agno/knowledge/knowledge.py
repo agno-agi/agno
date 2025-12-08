@@ -486,7 +486,9 @@ class Knowledge:
 
         return False
 
-    def _select_reader_by_extension(self, file_extension: str, provided_reader: Optional[Reader] = None) -> Tuple[Optional[Reader], str]:
+    def _select_reader_by_extension(
+        self, file_extension: str, provided_reader: Optional[Reader] = None
+    ) -> Tuple[Optional[Reader], str]:
         """
         Select a reader based on file extension.
 
@@ -499,7 +501,7 @@ class Knowledge:
         """
         if provided_reader:
             return provided_reader, ""
-        
+
         file_extension = file_extension.lower()
         if file_extension == ".csv":
             return self.csv_reader, "data.csv"
@@ -529,7 +531,7 @@ class Knowledge:
         """
         if provided_reader:
             return provided_reader
-        
+
         uri_lower = uri.lower()
         if uri_lower.endswith(".pdf"):
             return self.pdf_reader
@@ -619,7 +621,7 @@ class Knowledge:
         """
         if not reader or reader.chunk:
             return documents
-        
+
         chunked_documents = []
         for doc in documents:
             chunked_documents.extend(reader.chunk_document(doc))
@@ -660,7 +662,7 @@ class Knowledge:
                 else:
                     reader = ReaderFactory.get_reader_for_extension(path.suffix)
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
-                
+
                 if reader:
                     password = content.auth.password if content.auth and content.auth.password else None
                     read_documents = self._read_with_reader(
@@ -681,6 +683,8 @@ class Knowledge:
                         log_warning(f"Could not get file size for {path}: {e}")
                         content.size = 0
 
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
 
                 await self._handle_vector_db_insert_async(content, read_documents, upsert)
@@ -775,6 +779,8 @@ class Knowledge:
                         log_warning(f"Could not get file size for {path}: {e}")
                         content.size = 0
 
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
 
                 self._handle_vector_db_insert(content, read_documents, upsert)
@@ -862,9 +868,12 @@ class Knowledge:
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
-        if default_name and file_extension == ".csv":
-            name = basename(parsed_url.path) or default_name
+        if file_extension:
+            reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
+            if default_name and file_extension == ".csv":
+                name = basename(parsed_url.path) or default_name
+        else:
+            reader = content.reader or self.website_reader
 
         # 5. Read content
         try:
@@ -889,6 +898,8 @@ class Knowledge:
         if reader and not reader.chunk:
             read_documents = await reader.chunk_documents_async(read_documents)
         # 7. Prepare and insert the content in the vector database
+        if not content.id:
+            content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
@@ -899,15 +910,15 @@ class Knowledge:
         skip_if_exists: bool,
     ):
         """Synchronous version of _load_from_url.
-        
+
         Load the content from a URL:
         1. Set content hash
         2. Validate the URL
         3. Read the content
         4. Prepare and insert the content in the vector database
         """
-        from agno.vectordb import VectorDb
         from agno.utils.http import fetch_with_retry
+        from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
@@ -955,9 +966,12 @@ class Knowledge:
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
-        if default_name and file_extension == ".csv":
-            name = basename(parsed_url.path) or default_name
+        if file_extension:
+            reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
+            if default_name and file_extension == ".csv":
+                name = basename(parsed_url.path) or default_name
+        else:
+            reader = content.reader or self.website_reader
 
         # 5. Read content
         try:
@@ -983,6 +997,8 @@ class Knowledge:
             read_documents = self._chunk_documents_sync(reader, read_documents)
 
         # 7. Prepare and insert the content in the vector database
+        if not content.id:
+            content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         self._handle_vector_db_insert(content, read_documents, upsert)
 
@@ -1064,6 +1080,8 @@ class Knowledge:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 if len(read_documents) == 0:
@@ -1159,6 +1177,8 @@ class Knowledge:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 if len(read_documents) == 0:
@@ -1388,6 +1408,8 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
             self._prepare_documents_for_insert(read_documents, content.id)
             await self._handle_vector_db_insert_async(content_entry, read_documents, upsert)
 
@@ -1448,6 +1470,8 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=name)
 
             # 7. Prepare and insert the content in the vector database
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
             self._prepare_documents_for_insert(read_documents, content.id)
             await self._handle_vector_db_insert_async(content_entry, read_documents, upsert)
 
@@ -1475,7 +1499,7 @@ class Knowledge:
 
     def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Synchronous version of _load_from_s3.
-        
+
         Load the contextual S3 content:
         1. Identify objects to read
         2. Setup Content object
@@ -1543,6 +1567,8 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
             self._prepare_documents_for_insert(read_documents, content.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
@@ -1552,7 +1578,7 @@ class Knowledge:
 
     def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Synchronous version of _load_from_gcs.
-        
+
         Load the contextual GCS content:
         1. Identify objects to read
         2. Setup Content object
@@ -1604,6 +1630,8 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=name)
 
             # 7. Prepare and insert the content in the vector database
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
             self._prepare_documents_for_insert(read_documents, content.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
@@ -2052,6 +2080,8 @@ class Knowledge:
 
                 reader.chunk = False
                 read_documents = reader.read(content.url, name=content.name)
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
 
                 if not read_documents:
@@ -2210,6 +2240,8 @@ class Knowledge:
 
                 reader.chunk = False
                 read_documents = reader.read(content.url, name=content.name)
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
 
                 if not read_documents:

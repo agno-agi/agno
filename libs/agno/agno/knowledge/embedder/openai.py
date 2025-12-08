@@ -137,7 +137,7 @@ class OpenAIEmbedder(Embedder):
             usage = response.usage
             return embedding, usage.model_dump() if usage else None
         except Exception as e:
-            logger.warning(e)
+            logger.warning(f"Error getting embedding: {e}")
             return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -182,7 +182,7 @@ class OpenAIEmbedder(Embedder):
             except Exception as e:
                 logger.warning(f"Error in async batch embedding: {e}")
                 # Fallback to individual calls for this batch
-                for text in batch_texts:
+                for idx, text in enumerate(batch_texts):
                     try:
                         embedding, usage = await self.async_get_embedding_and_usage(text)
                         all_embeddings.append(embedding)
