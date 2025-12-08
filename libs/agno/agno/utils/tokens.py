@@ -2,7 +2,7 @@ import json
 import math
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -274,7 +274,7 @@ def count_file_tokens(file: File) -> int:
 
 
 def _count_tool_tokens(
-    tools: List[Union[Function, Dict[str, Any]]],
+    tools: Sequence[Union[Function, Dict[str, Any]]],
     model_id: str = "gpt-4o",
     includes_system_message: bool = False,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
