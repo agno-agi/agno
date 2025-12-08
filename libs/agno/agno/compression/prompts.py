@@ -36,30 +36,86 @@ TOOL_COMPRESSION_PROMPT = dedent("""\
     """)
 
 CONTEXT_COMPRESSION_PROMPT = dedent("""\
-    You are compressing a conversation to save context space while preserving critical information.
-
-    Your goal: Create a concise summary that captures all essential information.
-
-    ALWAYS PRESERVE:
-    - The user's original request/intent
-    - Tool calls made and their key results
-    - Specific facts: numbers, dates, entities, identifiers
-    - Key decisions and conclusions reached
-    - Important context for future interactions
+    Compress conversation to WORKING STATE for agent continuity.
 
     FORMAT:
-    - Start with user's request
-    - List tool calls with key results
-    - Note any important conclusions
+    TASK: [user's goal in one line]
+    STATUS: [In Progress | Blocked | Complete]
+
+    DONE:
+    - [tool/search]: [key result summary]
+
+    DATA:
+    [Entity/Topic]
+    - fact: value (source)
+    - fact: value
+
+    SOURCES: [url1], [url2]
+
+    PENDING:
+    - [next step]
+
+    PRESERVE ALL (exact values, never paraphrase):
+    - Financial: prices ($10/mo, $150M), percentages (15%), ratios (P/E 28.3), ranges (52wk $164-$237)
+    - Temporal: dates (Oct 21 2025, Q3 2024), timestamps ([2:30:45]), durations (30min, 3-5 years)
+    - Identifiers: URLs, tickers (AAPL), IDs, versions (v2.1), ArXiv IDs
+    - Entities: company names, people, products with their attributes
+    - Lists: features, ingredients, action items, risk factors
+    - Scores: ratings (8/10, 1-9 scale), recommendations (BUY/HOLD/SELL), priorities (HIGH/LOW)
+    - Relationships: acquired by, competes with, founded by, integrates with
+    - Status: complete/pending, available/deprecated, in stock
+    - Geographic: locations, regions, addresses, coordinates
+    - Technical: code snippets (<10 lines), SQL, API specs, schemas
+    - Citations: paper titles, sources, quotes, methodology
 
     REMOVE:
-    - Greetings, filler content
-    - Redundant information
-    - Verbose tool outputs (keep only key data)
+    - Narrative descriptions ("researched the company" -> just list facts)
+    - Hedging ("might", "possibly", "appears to")
+    - Introductions, conclusions, meta-commentary
+    - Formatting artifacts (markdown, HTML, JSON structure)
+    - Background info not directly relevant to task
 
-    EXAMPLE OUTPUT:
-    "User asked about AI news.
-    Tools: search('AI news') -> OpenAI GPT-5 (Oct 2024), Google Gemini 2
-    Tools: get_article('openai') -> Details: CEO Sam Altman, $10B funding
-    Status: Found key announcements, ready to summarize."
+    EXAMPLE (Investment Research):
+    TASK: Analyze Apple vs Microsoft for investment
+    STATUS: In Progress
+
+    DONE:
+    - search(AAPL financials): Q3 2024 data
+    - search(MSFT financials): Q3 2024 data
+
+    DATA:
+    [Apple - AAPL]
+    - price: $234.56, 52wk: $164-$237
+    - P/E: 28.3, market_cap: $3.5T
+    - revenue: $394B (2023), net_income: $99.8B
+    - recommendation: BUY, conviction: 8/10
+
+    [Microsoft - MSFT]
+    - price: $378.91, 52wk: $309-$384
+    - P/E: 32.1, market_cap: $2.8T
+    - revenue: $211B (2023), net_income: $72.4B
+    - recommendation: BUY, conviction: 9/10
+
+    SOURCES: finance.yahoo.com, SEC filings
+
+    PENDING:
+    - Risk assessment comparison
+    - Valuation analysis (DCF)
+
+    EXAMPLE (Video Analysis):
+    TASK: Extract highlight clips from tutorial video
+    STATUS: In Progress
+
+    DONE:
+    - analyze(video.mp4): found 5 segments
+
+    DATA:
+    [Segments]
+    - 0:15-0:45: intro hook, score=8/10
+    - 2:30-3:15: key demo, score=9/10
+    - 5:00-5:30: summary, score=7/10
+
+    PENDING:
+    - Extract top 3 clips
+    - Add captions
     """)

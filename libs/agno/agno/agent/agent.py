@@ -1143,10 +1143,6 @@ class Agent:
             if self.compression_manager and self.compress_context:
                 ctx = session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-                if ctx:
-                    log_debug(f"[Compression] Loaded {len(ctx.message_ids)} existing compressed IDs from session")
-                else:
-                    log_debug("[Compression] No existing compressed context in session")
 
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
@@ -1164,9 +1160,6 @@ class Agent:
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
                 session.compressed_context = self.compression_manager.last_compressed_context
-                log_debug(
-                    f"[Compression] Stored compressed context with {len(self.compression_manager.last_compressed_context.message_ids)} message IDs to session"
-                )
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model call
@@ -2061,10 +2054,6 @@ class Agent:
             if self.compression_manager and self.compress_context:
                 ctx = agent_session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-                if ctx:
-                    log_debug(f"[Compression] Loaded {len(ctx.message_ids)} existing compressed IDs from session")
-                else:
-                    log_debug("[Compression] No existing compressed context in session")
 
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -2082,9 +2071,6 @@ class Agent:
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
                 agent_session.compressed_context = self.compression_manager.last_compressed_context
-                log_debug(
-                    f"[Compression] Stored compressed context with {len(self.compression_manager.last_compressed_context.message_ids)} message IDs to session"
-                )
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model call
@@ -3233,10 +3219,6 @@ class Agent:
             if self.compression_manager and self.compress_context:
                 ctx = session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-                if ctx:
-                    log_debug(f"[Compression] Loaded {len(ctx.message_ids)} existing compressed IDs from session")
-                else:
-                    log_debug("[Compression] No existing compressed context in session")
 
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
@@ -3252,9 +3234,6 @@ class Agent:
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
                 session.compressed_context = self.compression_manager.last_compressed_context
-                log_debug(
-                    f"[Compression] Stored compressed context with {len(self.compression_manager.last_compressed_context.message_ids)} message IDs to session"
-                )
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model processing
@@ -3863,10 +3842,6 @@ class Agent:
             if self.compression_manager and self.compress_context:
                 ctx = agent_session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-                if ctx:
-                    log_debug(f"[Compression] Loaded {len(ctx.message_ids)} existing compressed IDs from session")
-                else:
-                    log_debug("[Compression] No existing compressed context in session")
 
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -3882,9 +3857,6 @@ class Agent:
             # Store compressed context if compression occurred
             if self.compression_manager and self.compression_manager.last_compressed_context:
                 agent_session.compressed_context = self.compression_manager.last_compressed_context
-                log_debug(
-                    f"[Compression] Stored compressed context with {len(self.compression_manager.last_compressed_context.message_ids)} message IDs to session"
-                )
                 self.compression_manager.last_compressed_context = None
 
             # Check for cancellation after model call
@@ -5236,10 +5208,6 @@ class Agent:
         if self.compression_manager and self.compress_context:
             ctx = session.compressed_context
             self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-            if ctx:
-                log_debug(f"[Compression] Loaded {len(ctx.message_ids)} existing compressed IDs from session")
-            else:
-                log_debug("[Compression] No existing compressed context in session")
 
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -5305,9 +5273,6 @@ class Agent:
         # Store compressed context if compression occurred
         if self.compression_manager and self.compression_manager.last_compressed_context:
             session.compressed_context = self.compression_manager.last_compressed_context
-            log_debug(
-                f"[Compression] Stored compressed context with {len(self.compression_manager.last_compressed_context.message_ids)} message IDs to session"
-            )
             self.compression_manager.last_compressed_context = None
 
     async def _ahandle_model_response_stream(
@@ -5342,10 +5307,6 @@ class Agent:
         if self.compression_manager and self.compress_context:
             ctx = session.compressed_context
             self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-            if ctx:
-                log_debug(f"[Compression] Loaded {len(ctx.message_ids)} existing compressed IDs from session")
-            else:
-                log_debug("[Compression] No existing compressed context in session")
 
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -5413,9 +5374,6 @@ class Agent:
         # Store compressed context if compression occurred
         if self.compression_manager and self.compression_manager.last_compressed_context:
             session.compressed_context = self.compression_manager.last_compressed_context
-            log_debug(
-                f"[Compression] Stored compressed context with {len(self.compression_manager.last_compressed_context.message_ids)} message IDs to session"
-            )
             self.compression_manager.last_compressed_context = None
 
     def _handle_model_response_chunk(

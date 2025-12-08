@@ -6402,6 +6402,8 @@ class Team:
         if add_history_to_context:
             from copy import deepcopy
 
+            compressed_ctx = session.compressed_context
+
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
             # Standard conversation roles ("user", "assistant", "tool") should never be filtered
             # to preserve conversation continuity.
@@ -6409,12 +6411,16 @@ class Team:
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
 
-            history = session.get_messages(
+            history: List[Message] = session.get_messages(
                 last_n_runs=self.num_history_runs,
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id if self.parent_team_id is not None else None,
             )
+
+            # Filter out messages that are part of compressed context
+            if compressed_ctx:
+                history = [m for m in history if m.id not in compressed_ctx.message_ids]
 
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -6535,18 +6541,23 @@ class Team:
         if add_history_to_context:
             from copy import deepcopy
 
+            compressed_ctx = session.compressed_context
+
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
             # Standard conversation roles ("user", "assistant", "tool") should never be filtered
             # to preserve conversation continuity.
             skip_role = (
                 self.system_message_role if self.system_message_role not in ["user", "assistant", "tool"] else None
             )
-            history = session.get_messages(
+            history: List[Message] = session.get_messages(
                 last_n_runs=self.num_history_runs,
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id,
             )
+
+            if compressed_ctx:
+                history = [m for m in history if m.id not in compressed_ctx.message_ids]
 
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
