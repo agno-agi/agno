@@ -373,10 +373,10 @@ class AwsBedrock(Model):
 
             # Count tool tokens
             if tools:
-                from agno.utils.tokens import _count_tool_tokens
+                from agno.utils.tokens import count_tool_tokens
 
                 includes_system = any(m.role == "system" for m in messages)
-                tokens += _count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id, includes_system)
 
             return tokens
         except Exception as e:
@@ -400,10 +400,10 @@ class AwsBedrock(Model):
 
             # Count tool tokens
             if tools:
-                from agno.utils.tokens import _count_tool_tokens
+                from agno.utils.tokens import count_tool_tokens
 
                 includes_system = any(m.role == "system" for m in messages)
-                tokens += _count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id, includes_system)
 
             return tokens
         except Exception as e:

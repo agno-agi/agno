@@ -340,7 +340,7 @@ def count_file_tokens(file: File) -> int:
     return size // 40
 
 
-def _count_tool_tokens(
+def count_tool_tokens(
     tools: Sequence[Union[Function, Dict[str, Any]]],
     model_id: str = "gpt-4o",
     includes_system_message: bool = False,
@@ -636,6 +636,6 @@ def count_tokens(
     # when both are present.
     if tools:
         includes_system = any(msg.role == "system" for msg in messages)
-        total += _count_tool_tokens(tools, model_id, includes_system, tool_choice)
+        total += count_tool_tokens(tools, model_id, includes_system, tool_choice)
 
     return total

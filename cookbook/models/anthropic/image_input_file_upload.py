@@ -8,7 +8,6 @@ from agno.agent import Agent
 from agno.media import Image
 from agno.models.anthropic import Claude
 from agno.utils.media import download_file
-
 from anthropic import Anthropic
 
 img_path = Path(__file__).parent.joinpath("agno-intro.png")

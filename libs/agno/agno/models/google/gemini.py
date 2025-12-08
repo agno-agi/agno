@@ -21,6 +21,7 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.tokens import count_text_tokens, count_tool_tokens
 
 try:
     from google import genai
@@ -314,54 +315,99 @@ class Gemini(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> int:
-        if not self.vertexai:
-            log_warning("Gemini count_tokens requires VertexAI. Falling back to tiktoken-based estimation.")
-            return super().count_tokens(messages, tools)
-
         contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
 
-        config: Dict[str, Any] = {}
-        if system_instruction:
-            config["system_instruction"] = system_instruction
-        if tools:
-            formatted_tools = self._format_tools(tools)
-            gemini_tools = format_function_definitions(formatted_tools)
-            if gemini_tools:
-                config["tools"] = [gemini_tools]
+        if self.vertexai:
+            # VertexAI supports full token counting with system_instruction and tools
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
 
-        response = self.get_client().models.count_tokens(
-            model=self.id,
-            contents=contents,
-            config=config if config else None,  # type: ignore
-        )
-        return response.total_tokens or 0
+            response = self.get_client().models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return response.total_tokens or 0
+        else:
+            # Google AI Studio: Use API for content tokens + local estimation for system/tools
+            # The API doesn't support system_instruction or tools in config, so we use a hybrid approach:
+            # 1. Get accurate token count for contents (text + multimodal) from API
+            # 2. Add estimated tokens for system_instruction and tools locally
+            try:
+                response = self.get_client().models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return super().count_tokens(messages, tools)
+
+            # Add estimated tokens for system instruction (not supported by Google AI Studio API)
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools (not supported by Google AI Studio API)
+            if tools:
+                includes_system = system_instruction is not None
+                total += count_tool_tokens(tools, self.id, includes_system)
+
+            return total
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> int:
-        if not self.vertexai:
-            log_warning("Gemini count_tokens requires VertexAI. Falling back to tiktoken-based estimation.")
-            return await super().acount_tokens(messages, tools)
-
         contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
 
-        config: Dict[str, Any] = {}
-        if system_instruction:
-            config["system_instruction"] = system_instruction
-        if tools:
-            formatted_tools = self._format_tools(tools)
-            gemini_tools = format_function_definitions(formatted_tools)
-            if gemini_tools:
-                config["tools"] = [gemini_tools]
+        # VertexAI supports full token counting with system_instruction and tools
+        if self.vertexai:
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
 
-        response = await self.get_client().aio.models.count_tokens(
-            model=self.id,
-            contents=contents,
-            config=config if config else None,  # type: ignore
-        )
-        return response.total_tokens or 0
+            response = await self.get_client().aio.models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return response.total_tokens or 0
+        else:
+            # Hybrid approach - Google AI Studio does not support system_instruction or tools in config
+            try:
+                response = await self.get_client().aio.models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return await super().acount_tokens(messages, tools)
+
+            # Add estimated tokens for system instruction
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools
+            if tools:
+                includes_system = system_instruction is not None
+                total += count_tool_tokens(tools, self.id, includes_system)
+
+            return total
 
     def invoke(
         self,
