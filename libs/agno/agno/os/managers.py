@@ -10,7 +10,7 @@ Future managers (e.g., RunCancellationManager) can be added here.
 
 import json
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunStatus
