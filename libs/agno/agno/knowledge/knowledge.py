@@ -722,7 +722,6 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ):
-        """Synchronous version of _load_from_path."""
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
