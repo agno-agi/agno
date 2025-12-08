@@ -101,8 +101,8 @@ class FirecrawlTools(Toolkit):
             The results of the crawling.
         """
         params: Dict[str, Any] = {}
-        if self.limit or limit:
-            params["limit"] = self.limit or limit
+        # max limit is the toolkit's configured limit
+        params["limit"] = min(limit, self.limit) if limit is not None else self.limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
 
@@ -129,15 +129,19 @@ class FirecrawlTools(Toolkit):
             limit (int): The maximum number of results to return.
         """
         params: Dict[str, Any] = {}
-        if self.limit or limit:
-            params["limit"] = self.limit or limit
+        # max limit is the toolkit's configured limit
+        params["limit"] = min(limit, self.limit) if limit is not None else self.limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
         if self.search_params:
             params.update(self.search_params)
 
         search_result = self.app.search(query, **params)
-        if search_result.success:
-            return json.dumps(search_result.data, cls=CustomJSONEncoder)
+
+        if hasattr(search_result, "success"):
+            if search_result.success:
+                return json.dumps(search_result.data, cls=CustomJSONEncoder)
+            else:
+                return f"Error searching with the Firecrawl tool: {search_result.error}"
         else:
-            return "Error searching with the Firecrawl tool: " + search_result.error
+            return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
