@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model
+from agno.models.base import Model, RetryableModelProviderError
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -53,8 +53,8 @@ except ImportError:
     )
 
 
-class MalformedFunctionCallError(Exception):
-    """Exception raised when a function call is malformed."""
+class GeminiMalformedFunctionCallError(RetryableModelProviderError):
+    """Error to raise when a the finish_reason of a generation is MALFORMED_FUNCTION_CALL."""
 
     pass
 
@@ -139,9 +139,6 @@ class Gemini(Model):
     project_id: Optional[str] = None
     location: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
-
-    # Max number of regeneration attempts
-    regeneration_attempts: int = 3
 
     # Gemini client
     client: Optional[GeminiClient] = None
@@ -388,20 +385,11 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
-        except MalformedFunctionCallError:
-            self._regeneration_attempts += 1
-            self._remove_regeneration_messages(messages)
-            messages.append(self._get_malformed_function_call_guidance_message())
-            return self.invoke(
-                messages, assistant_message, response_format, tools, tool_choice, run_response, compress_tool_results
-            )
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        finally:
-            if self._regeneration_attempts > 0:
-                self._regeneration_attempts = 0
-                self._remove_regeneration_messages(messages)
 
     def invoke_stream(
         self,
@@ -443,20 +431,11 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
-        except MalformedFunctionCallError:
-            self._regeneration_attempts += 1
-            self._remove_regeneration_messages(messages)
-            messages.append(self._get_malformed_function_call_guidance_message())
-            return self.invoke_stream(
-                messages, assistant_message, response_format, tools, tool_choice, run_response, compress_tool_results
-            )
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        finally:
-            if self._regeneration_attempts > 0:
-                self._regeneration_attempts = 0
-                self._remove_regeneration_messages(messages)
 
     async def ainvoke(
         self,
@@ -501,20 +480,11 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
-        except MalformedFunctionCallError:
-            self._regeneration_attempts += 1
-            self._remove_regeneration_messages(messages)
-            messages.append(self._get_malformed_function_call_guidance_message())
-            return await self.ainvoke(
-                messages, assistant_message, response_format, tools, tool_choice, run_response, compress_tool_results
-            )
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        finally:
-            if self._regeneration_attempts > 0:
-                self._regeneration_attempts = 0
-                self._remove_regeneration_messages(messages)
 
     async def ainvoke_stream(
         self,
@@ -559,21 +529,11 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
-        except MalformedFunctionCallError:
-            self._regeneration_attempts += 1
-            self._remove_regeneration_messages(messages)
-            messages.append(self._get_malformed_function_call_guidance_message())
-            async for chunk in self.ainvoke_stream(
-                messages, assistant_message, response_format, tools, tool_choice, run_response, compress_tool_results
-            ):
-                yield chunk
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        finally:
-            if self._regeneration_attempts > 0:
-                self._regeneration_attempts = 0
-                self._remove_regeneration_messages(messages)
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
@@ -964,8 +924,13 @@ class Gemini(Model):
             # Raise if the request failed because of a malformed function call
             if hasattr(candidate, "finish_reason") and candidate.finish_reason:
                 if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
-                    if self.regeneration_attempts > self._regeneration_attempts:
-                        raise MalformedFunctionCallError()
+                    # We only want to raise errors that trigger regeneration attempts once
+                    if self._regeneration_attempt is True:
+                        pass
+                    if self.enable_regeneration_attempt:
+                        raise GeminiMalformedFunctionCallError(
+                            retry_guidance_message=self._get_malformed_function_call_guidance_message()
+                        )
 
             if candidate.content:
                 response_message = candidate.content
@@ -1121,8 +1086,12 @@ class Gemini(Model):
             # Raise if the request failed because of a malformed function call
             if hasattr(candidate, "finish_reason") and candidate.finish_reason:
                 if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
-                    if self.regeneration_attempts > self._regeneration_attempts:
-                        raise MalformedFunctionCallError()
+                    # We only want to raise errors that trigger regeneration attempts once
+                    if self._regeneration_attempt is True:
+                        pass
+                    raise GeminiMalformedFunctionCallError(
+                        retry_guidance_message=self._get_malformed_function_call_guidance_message()
+                    )
 
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:

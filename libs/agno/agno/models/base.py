@@ -41,6 +41,12 @@ from agno.utils.tools import get_function_call_for_tool_call, get_function_call_
 
 
 @dataclass
+class RetryableModelProviderError(Exception):
+    # Guidance message to try a regeneration after a provider error
+    retry_guidance_message: Optional[Message] = None
+
+
+@dataclass
 class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
@@ -153,12 +159,13 @@ class Model(ABC):
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
-    # Regeneration mechanism for provider-specific errors (e.g., Gemini MALFORMED_FUNCTION_CALL)
-    _regeneration_attempts: int = 0
+    # Enable regenerating a response providing a guidance message to avoid the same error
+    enable_regeneration_attempt: bool = True
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+        self._regeneration_attempt = False
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -188,6 +195,10 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                self._regeneration_attempt = True
+                kwargs["messages"].append(e.retry_guidance_message)
+                return self.invoke(**kwargs)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -214,6 +225,10 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                self._regeneration_attempt = True
+                kwargs["messages"].append(e.retry_guidance_message)
+                return await self.ainvoke(**kwargs)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -242,6 +257,11 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                self._regeneration_attempt = True
+                kwargs["messages"].append(e.retry_guidance_message)
+                yield from self.invoke_stream(**kwargs)
+                return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -271,6 +291,12 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                self._regeneration_attempt = True
+                kwargs["messages"].append(e.retry_guidance_message)
+                async for response in self.ainvoke_stream(**kwargs):
+                    yield response
+                return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -920,6 +946,11 @@ class Model(ABC):
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
 
+        # If we are in a regeneration attempt, remove the regeneration flag and guidance message
+        if self._regeneration_attempt is True:
+            self._regeneration_attempt = False
+            self._remove_regeneration_messages(messages)
+
     async def _aprocess_model_response(
         self,
         messages: List[Message],
@@ -976,6 +1007,11 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
+
+        # If we are in a regeneration attempt, remove the regeneration flag and guidance message
+        if self._regeneration_attempt is True:
+            self._regeneration_attempt = False
+            self._remove_regeneration_messages(messages)
 
     def _populate_assistant_message(
         self,
