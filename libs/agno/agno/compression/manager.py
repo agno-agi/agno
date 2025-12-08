@@ -98,9 +98,8 @@ class CompressionManager:
         if len(messages) < 2:
             return
 
+        # Check for system message (optional)
         system_msg = messages[0] if messages[0].role == "system" else None
-        if not system_msg:
-            return
 
         # Find last user message
         latest_user = next((m for m in reversed(messages) if m.role == "user"), None)
@@ -121,9 +120,10 @@ class CompressionManager:
         new_ids = {m.id for m in msgs_to_compress}
         all_ids.update(new_ids)
 
-        # Rebuild: [system, context, original_user]
+        # Rebuild: [system (if present), context summary, original_user]
         messages.clear()
-        messages.append(system_msg)
+        if system_msg:
+            messages.append(system_msg)
         messages.append(Message(role="user", content=f"Previous conversation summary:\n\n{summary}"))
         messages.append(latest_user)
 
@@ -138,9 +138,8 @@ class CompressionManager:
         if len(messages) < 2:
             return
 
+        # Check for system message (optional)
         system_msg = messages[0] if messages[0].role == "system" else None
-        if not system_msg:
-            return
 
         # Find last user message
         latest_user = next((m for m in reversed(messages) if m.role == "user"), None)
@@ -161,9 +160,10 @@ class CompressionManager:
         new_ids = {m.id for m in msgs_to_compress}
         all_ids.update(new_ids)
 
-        # Rebuild: [system, context, original_user]
+        # Rebuild: [system (if present), context summary, original_user]
         messages.clear()
-        messages.append(system_msg)
+        if system_msg:
+            messages.append(system_msg)
         messages.append(Message(role="user", content=f"Previous conversation summary:\n\n{summary}"))
         messages.append(latest_user)
 

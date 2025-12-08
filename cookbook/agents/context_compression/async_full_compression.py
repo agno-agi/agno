@@ -1,3 +1,13 @@
+"""
+Full Context Compression Example
+
+This example demonstrates context compression across multiple runs:
+- Compression triggers when token count exceeds the limit
+- Compressed context persists to database between runs
+- Old messages are filtered, keeping only the summary + recent messages
+
+Run: python cookbook/agents/context_compression/full_compression.py
+"""
 from textwrap import dedent
 
 from agno.agent import Agent

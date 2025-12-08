@@ -1139,7 +1139,7 @@ class Agent:
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
-            # Set up compression manager with existing compressed IDs if context compression is enabled
+            # Set up compression manager with existing compressed IDs
             if self.compression_manager and self.compress_context:
                 ctx = session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
@@ -2049,12 +2049,12 @@ class Agent:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 9. Generate a response from the Model (includes running function calls)
-            # Set up compression manager with existing compressed IDs if context compression is enabled
+            # Set up compression manager with existing compressed IDs
             if self.compression_manager and self.compress_context:
                 ctx = agent_session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
 
+            # 9. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -3215,7 +3215,7 @@ class Agent:
             # 2. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
-            # Set up compression manager with existing compressed IDs if context compression is enabled
+            # Set up compression manager with existing compressed IDs
             if self.compression_manager and self.compress_context:
                 ctx = session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
@@ -3837,12 +3837,12 @@ class Agent:
             # 7. Handle the updated tools
             await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=_tools)
 
-            # 8. Get model response
-            # Set up compression manager with existing compressed IDs if context compression is enabled
+            # Set up compression manager with existing compressed IDs
             if self.compression_manager and self.compress_context:
                 ctx = agent_session.compressed_context
                 self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
 
+            # 8. Get model response
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
                 response_format=response_format,
@@ -5204,7 +5204,7 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Set up compression manager with existing compressed IDs if context compression is enabled
+        # Set up compression manager with existing compressed IDs
         if self.compression_manager and self.compress_context:
             ctx = session.compressed_context
             self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
@@ -5303,7 +5303,7 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Set up compression manager with existing compressed IDs if context compression is enabled
+        # Set up compression manager with existing compressed IDs
         if self.compression_manager and self.compress_context:
             ctx = session.compressed_context
             self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
@@ -8380,7 +8380,7 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
-            # Get compressed context for filtering (summary is already in history as user message)
+            # Get compressed context for filtering messages
             compressed_ctx = session.compressed_context
 
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
@@ -8600,7 +8600,7 @@ class Agent:
         if add_history_to_context:
             from copy import deepcopy
 
-            # Get compressed context for filtering (summary is already in history as user message)
+            # Get compressed context for filtering messages
             compressed_ctx = session.compressed_context
 
             # Only skip messages from history when system_message_role is NOT a standard conversation role.

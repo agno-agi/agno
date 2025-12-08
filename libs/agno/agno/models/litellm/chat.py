@@ -483,10 +483,14 @@ class LiteLLM(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     ) -> int:
-        formatted_messages = self._format_messages(messages, compress_tool_results=True)
-        formatted_tools = self._format_tools(tools) if tools else None
-        return litellm.token_counter(
-            model=self.id,
-            messages=formatted_messages,
-            tools=formatted_tools,  # type: ignore
-        )
+        try:
+            formatted_messages = self._format_messages(messages, compress_tool_results=True)
+            formatted_tools = self._format_tools(tools) if tools else None
+            return litellm.token_counter(
+                model=self.id,
+                messages=formatted_messages,
+                tools=formatted_tools,  # type: ignore
+            )
+        except Exception as e:
+            log_warning(f"Failed to count tokens: {e}")
+            return super().count_tokens(messages, tools)
