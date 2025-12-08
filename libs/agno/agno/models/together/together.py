@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -22,7 +22,7 @@ class Together(OpenAILike):
     id: str = "mistralai/Mixtral-8x7B-Instruct-v0.1"
     name: str = "Together"
     provider: str = "Together"
-    api_key: Optional[str] = field(default_factory=lambda: getenv("TOGETHER_API_KEY"))
+    api_key: Optional[str] = None
     base_url: str = "https://api.together.xyz/v1"
 
     def _get_client_params(self) -> Dict[str, Any]:
@@ -35,9 +35,8 @@ class Together(OpenAILike):
         if not self.api_key:
             self.api_key = getenv("TOGETHER_API_KEY")
             if not self.api_key:
-                raise ModelProviderError(
+                raise ModelAuthenticationError(
                     message="TOGETHER_API_KEY not set. Please set the TOGETHER_API_KEY environment variable.",
                     model_name=self.name,
-                    model_id=self.id,
                 )
         return super()._get_client_params()

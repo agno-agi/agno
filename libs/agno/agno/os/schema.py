@@ -8,7 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.os.config import ChatConfig, EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
+from agno.os.config import (
+    ChatConfig,
+    EvalsConfig,
+    KnowledgeConfig,
+    MemoryConfig,
+    MetricsConfig,
+    SessionConfig,
+    TracesConfig,
+)
 from agno.os.utils import (
     extract_input_media,
     format_team_tools,
@@ -152,6 +160,7 @@ class ConfigResponse(BaseModel):
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
+    traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
@@ -733,10 +742,11 @@ class SessionSchema(BaseModel):
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         session_name = get_session_name(session)
+        session_data = session.get("session_data", {}) or {}
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
-            session_state=session.get("session_data", {}).get("session_state", None),
+            session_state=session_data.get("session_state", None),
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
@@ -914,6 +924,7 @@ class RunSchema(BaseModel):
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
         run_input = get_run_input(run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
+
         return cls(
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
