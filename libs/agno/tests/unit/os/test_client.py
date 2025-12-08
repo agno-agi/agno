@@ -131,13 +131,15 @@ class TestAgentOSClientHTTPMethods:
             mock_response = MagicMock()
             mock_response.json.return_value = {"data": "test"}
             mock_response.raise_for_status = MagicMock()
+            mock_response.content = b'{"data": "test"}'
 
-            with patch.object(client._http_client, "get", new_callable=AsyncMock) as mock_get:
-                mock_get.return_value = mock_response
+            with patch.object(client._http_client, "request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = mock_response
                 result = await client._get("/test-endpoint")
 
-                mock_get.assert_called_once()
-                call_args = mock_get.call_args
+                mock_request.assert_called_once()
+                call_args = mock_request.call_args
+                assert call_args[0][0] == "GET"
                 assert "http://localhost:7777/test-endpoint" in str(call_args)
                 assert result == {"data": "test"}
 
@@ -148,12 +150,15 @@ class TestAgentOSClientHTTPMethods:
             mock_response = MagicMock()
             mock_response.json.return_value = {"created": True}
             mock_response.raise_for_status = MagicMock()
+            mock_response.content = b'{"created": true}'
 
-            with patch.object(client._http_client, "post", new_callable=AsyncMock) as mock_post:
-                mock_post.return_value = mock_response
+            with patch.object(client._http_client, "request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = mock_response
                 result = await client._post("/test-endpoint", {"key": "value"})
 
-                mock_post.assert_called_once()
+                mock_request.assert_called_once()
+                call_args = mock_request.call_args
+                assert call_args[0][0] == "POST"
                 assert result == {"created": True}
 
     @pytest.mark.asyncio
@@ -163,12 +168,15 @@ class TestAgentOSClientHTTPMethods:
             mock_response = MagicMock()
             mock_response.json.return_value = {"updated": True}
             mock_response.raise_for_status = MagicMock()
+            mock_response.content = b'{"updated": true}'
 
-            with patch.object(client._http_client, "patch", new_callable=AsyncMock) as mock_patch:
-                mock_patch.return_value = mock_response
+            with patch.object(client._http_client, "request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = mock_response
                 result = await client._patch("/test-endpoint", {"key": "value"})
 
-                mock_patch.assert_called_once()
+                mock_request.assert_called_once()
+                call_args = mock_request.call_args
+                assert call_args[0][0] == "PATCH"
                 assert result == {"updated": True}
 
     @pytest.mark.asyncio
@@ -177,12 +185,15 @@ class TestAgentOSClientHTTPMethods:
         async with AgentOSClient(base_url="http://localhost:7777") as client:
             mock_response = MagicMock()
             mock_response.raise_for_status = MagicMock()
+            mock_response.content = b''
 
-            with patch.object(client._http_client, "delete", new_callable=AsyncMock) as mock_delete:
-                mock_delete.return_value = mock_response
+            with patch.object(client._http_client, "request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = mock_response
                 await client._delete("/test-endpoint")
 
-                mock_delete.assert_called_once()
+                mock_request.assert_called_once()
+                call_args = mock_request.call_args
+                assert call_args[0][0] == "DELETE"
 
 
 class TestAgentOSClientDiscovery:
@@ -551,7 +562,7 @@ class TestAgentOSClientRuns:
                 "content": "Hello! How can I help?",
                 "created_at": 1234567890,
             }
-            with patch.object(client, "_post_form_data", new_callable=AsyncMock) as mock_post:
+            with patch.object(client, "_post", new_callable=AsyncMock) as mock_post:
                 mock_post.return_value = mock_data
                 result = await client.run_agent(
                     agent_id="agent-1",
@@ -572,7 +583,7 @@ class TestAgentOSClientRuns:
                 "content": "Team response",
                 "created_at": 1234567890,
             }
-            with patch.object(client, "_post_form_data", new_callable=AsyncMock) as mock_post:
+            with patch.object(client, "_post", new_callable=AsyncMock) as mock_post:
                 mock_post.return_value = mock_data
                 result = await client.run_team(
                     team_id="team-1",
@@ -592,7 +603,7 @@ class TestAgentOSClientRuns:
                 "content": "Workflow output",
                 "created_at": 1234567890,
             }
-            with patch.object(client, "_post_form_data", new_callable=AsyncMock) as mock_post:
+            with patch.object(client, "_post", new_callable=AsyncMock) as mock_post:
                 mock_post.return_value = mock_data
                 result = await client.run_workflow(
                     workflow_id="workflow-1",
@@ -606,8 +617,8 @@ class TestAgentOSClientRuns:
     async def test_cancel_agent_run(self):
         """Verify cancel_agent_run cancels a run."""
         async with AgentOSClient(base_url="http://localhost:7777") as client:
-            with patch.object(client, "_post_empty", new_callable=AsyncMock) as mock_post:
-                mock_post.return_value = True
+            with patch.object(client, "_post", new_callable=AsyncMock) as mock_post:
+                mock_post.return_value = None
                 await client.cancel_agent_run("agent-1", "run-123")
 
                 mock_post.assert_called_once()

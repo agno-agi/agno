@@ -75,7 +75,9 @@ async def run_agent_streaming():
                         print(content, end="", flush=True)
                         full_content += content
                 except json.JSONDecodeError as e:
-                    print(f"Warning: Failed to decode JSON from line: {line[6:]}. Error: {e}")
+                    print(
+                        f"Warning: Failed to decode JSON from line: {line[6:]}. Error: {e}"
+                    )
 
         print("\n")
 

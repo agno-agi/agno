@@ -2,11 +2,10 @@ import json
 from os import getenv
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-from agno.media import Audio, Image, Video
-from agno.media import File as MediaFile
-
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.media import Audio, Image, Video
+from agno.media import File as MediaFile
 from agno.os.routers.evals.schemas import EvalSchema
 from agno.os.routers.knowledge.schemas import (
     ConfigResponseSchema as KnowledgeConfigResponse,
@@ -66,7 +65,7 @@ class AgentOSClient:
         Args:
             base_url: Base URL of the AgentOS instance (e.g., "http://localhost:7777")
             api_key: API key for authentication. Defaults to AGNO_API_KEY environment variable
-            timeout: Request timeout in seconds (default: 300)
+            timeout: Request timeout in seconds (default: 300.0)
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or getenv("AGNO_API_KEY")
@@ -82,14 +81,18 @@ class AgentOSClient:
         """Exit async context manager and cleanup resources."""
         await self.close()
 
-    async def connect(self) -> None:
+    async def connect(self) -> "AgentOSClient":
         """Explicitly create HTTP client connection.
 
         Use this when you need to manage the client lifecycle manually
         without using the async context manager.
+
+        Returns:
+            Self for method chaining
         """
         if not self._http_client:
             self._http_client = AsyncClient(timeout=self.timeout)
+        return self
 
     async def close(self) -> None:
         """Close HTTP client connections."""
@@ -553,7 +556,6 @@ class AgentOSClient:
         Args:
             team_id: ID of the team to run
             message: The message/prompt for the team
-            stream: Whether to stream the response
             session_id: Optional session ID for context
             user_id: Optional user ID
             images: Optional list of images
@@ -569,7 +571,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/teams/{team_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
+        data: Dict[str, Any] = {"message": message, "stream": "false"}
         if session_id:
             data["session_id"] = session_id
         if user_id:
@@ -699,7 +701,6 @@ class AgentOSClient:
         Args:
             workflow_id: ID of the workflow to run
             message: The message/prompt for the workflow
-            stream: Whether to stream the response
             session_id: Optional session ID for context
             user_id: Optional user ID
             images: Optional list of images
@@ -715,7 +716,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/workflows/{workflow_id}/runs"
-        data: Dict[str, Any] = {"message": message, "stream": str(stream).lower()}
+        data: Dict[str, Any] = {"message": message, "stream": "false"}
         if session_id:
             data["session_id"] = session_id
         if user_id:
