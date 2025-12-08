@@ -1,7 +1,8 @@
 from dataclasses import asdict, dataclass, field
+from inspect import iscoroutinefunction
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -15,27 +16,28 @@ from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunInput, TeamRunOutput
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import log_warning, logger, set_log_level_to_debug, set_log_level_to_info
 
 if TYPE_CHECKING:
     from rich.console import Console
 
 
-class CriteriaJudgeResponse(BaseModel):
+class AgentAsJudgeResponse(BaseModel):
     """Response schema for the LLM judge."""
 
-    score: int = Field(..., description="Score between 1 and 10 based on the evaluation criteria.")
-    reason: str = Field(..., description="Detailed reasoning for the score.")
+    score: Optional[int] = Field(None, ge=1, le=10, description="Score between 1 and 10 (numeric mode only).")
+    passed: Optional[bool] = Field(None, description="Pass/fail result (binary mode only).")
+    reason: str = Field(..., description="Detailed reasoning for the evaluation.")
 
 
 @dataclass
-class CriteriaEvaluation:
-    """Result of a single criteria evaluation."""
+class AgentAsJudgeEvaluation:
+    """Result of a single agent-as-judge evaluation."""
 
     input: str
     output: str
     criteria: str
-    score: int
+    score: Optional[int]
     reason: str
     passed: bool
 
@@ -55,27 +57,29 @@ class CriteriaEvaluation:
             box=ROUNDED,
             border_style="blue",
             show_header=False,
-            title="[ Criteria Evaluation ]",
+            title="[ Agent As Judge Evaluation ]",
             title_style="bold sky_blue1",
             title_justify="center",
         )
         results_table.add_row("Input", self.input[:200] + "..." if len(self.input) > 200 else self.input)
         results_table.add_row("Output", self.output[:200] + "..." if len(self.output) > 200 else self.output)
-        results_table.add_row("Score", f"{self.score}/10")
+        if self.score is not None:
+            results_table.add_row("Score", f"{self.score}/10")
         results_table.add_row("Status", f"[{status_style}]{status_text}[/{status_style}]")
         results_table.add_row("Reason", Markdown(self.reason))
         console.print(results_table)
 
 
 @dataclass
-class CriteriaResult:
-    """Aggregated results from criteria evaluations."""
+class AgentAsJudgeResult:
+    """Aggregated results from agent-as-judge evaluations."""
 
-    results: List[CriteriaEvaluation] = field(default_factory=list)
-    avg_score: float = field(init=False)
-    min_score: float = field(init=False)
-    max_score: float = field(init=False)
-    std_dev_score: float = field(init=False)
+    run_id: str
+    results: List[AgentAsJudgeEvaluation] = field(default_factory=list)
+    avg_score: Optional[float] = field(init=False)
+    min_score: Optional[float] = field(init=False)
+    max_score: Optional[float] = field(init=False)
+    std_dev_score: Optional[float] = field(init=False)
     pass_rate: float = field(init=False)
 
     def __post_init__(self):
@@ -85,18 +89,27 @@ class CriteriaResult:
         import statistics
 
         if self.results and len(self.results) > 0:
-            scores = [r.score for r in self.results]
             passed = [r.passed for r in self.results]
-            self.avg_score = statistics.mean(scores)
-            self.min_score = min(scores)
-            self.max_score = max(scores)
-            self.std_dev_score = statistics.stdev(scores) if len(scores) > 1 else 0.0
             self.pass_rate = sum(passed) / len(passed) * 100
+
+            # Compute score statistics only for numeric mode (where score is not None)
+            scores = [r.score for r in self.results if r.score is not None]
+            if scores:
+                self.avg_score = statistics.mean(scores)
+                self.min_score = min(scores)
+                self.max_score = max(scores)
+                self.std_dev_score = statistics.stdev(scores) if len(scores) > 1 else 0.0
+            else:
+                # Binary mode - no scores
+                self.avg_score = None
+                self.min_score = None
+                self.max_score = None
+                self.std_dev_score = None
         else:
-            self.avg_score = 0.0
-            self.min_score = 0.0
-            self.max_score = 0.0
-            self.std_dev_score = 0.0
+            self.avg_score = None
+            self.min_score = None
+            self.max_score = None
+            self.std_dev_score = None
             self.pass_rate = 0.0
 
     def print_summary(self, console: Optional["Console"] = None):
@@ -111,17 +124,30 @@ class CriteriaResult:
             box=ROUNDED,
             border_style="blue",
             show_header=False,
-            title="[ Criteria Evaluation Summary ]",
+            title="[ Agent As Judge Evaluation Summary ]",
             title_style="bold sky_blue1",
             title_justify="center",
+            padding=(0, 2),  # Add horizontal padding to make table wider
+            min_width=45,  # Ensure table is wide enough for title
         )
-        summary_table.add_row("Number of Evaluations", f"{len(self.results)}")
+
+        num_results = len(self.results)
+        summary_table.add_row("Number of Evaluations", f"{num_results}")
         summary_table.add_row("Pass Rate", f"{self.pass_rate:.1f}%")
-        summary_table.add_row("Average Score", f"{self.avg_score:.2f}/10")
-        summary_table.add_row("Min Score", f"{self.min_score:.2f}/10")
-        summary_table.add_row("Max Score", f"{self.max_score:.2f}/10")
-        if self.std_dev_score > 0:
-            summary_table.add_row("Std Deviation", f"{self.std_dev_score:.2f}")
+
+        # Only show score statistics for numeric mode (when scores exist)
+        if self.avg_score is not None:
+            # For single evaluation, show "Score" instead of statistics
+            if num_results == 1:
+                summary_table.add_row("Score", f"{self.avg_score:.2f}/10")
+            # For multiple evaluations, show full statistics
+            elif num_results > 1:
+                summary_table.add_row("Average Score", f"{self.avg_score:.2f}/10")
+                summary_table.add_row("Min Score", f"{self.min_score:.2f}/10")
+                summary_table.add_row("Max Score", f"{self.max_score:.2f}/10")
+                if self.std_dev_score and self.std_dev_score > 0:
+                    summary_table.add_row("Std Deviation", f"{self.std_dev_score:.2f}")
+
         console.print(summary_table)
 
     def print_results(self, console: Optional["Console"] = None):
@@ -130,25 +156,22 @@ class CriteriaResult:
 
 
 @dataclass
-class CriteriaEval(BaseEval):
+class AgentAsJudgeEval(BaseEval):
     """Evaluate agent outputs using custom criteria with an LLM judge."""
 
     # Core evaluation fields
     criteria: str = ""
-    threshold: int = 7
-    on_fail: Optional[Callable[["CriteriaEvaluation"], None]] = None
+    scoring_strategy: Literal["numeric", "binary"] = "numeric"
+    threshold: int = 7  # Only used for numeric strategy
+    on_fail: Optional[Callable[["AgentAsJudgeEvaluation"], None]] = None
     additional_guidelines: Optional[Union[str, List[str]]] = None
-    additional_context: Optional[str] = None
 
     # Evaluation metadata
     name: Optional[str] = None
-    eval_id: str = field(default_factory=lambda: str(uuid4()))
-    num_iterations: int = 1
-    run_id: Optional[str] = None
-    result: Optional[CriteriaResult] = None
 
     # Model configuration
     model: Optional[Model] = None
+    evaluator_agent: Optional[Agent] = None
 
     # Output options
     print_summary: bool = False
@@ -158,63 +181,84 @@ class CriteriaEval(BaseEval):
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     telemetry: bool = True
 
+    def __post_init__(self):
+        """Validate scoring_strategy and threshold."""
+        if self.scoring_strategy == "numeric" and not 1 <= self.threshold <= 10:
+            raise ValueError(f"threshold must be between 1 and 10, got {self.threshold}")
+
     def get_evaluator_agent(self) -> Agent:
-        """Build the evaluator agent with criteria-based instructions."""
+        """Return the evaluator agent. If not provided, build it based on the model and criteria."""
+        if self.evaluator_agent is not None:
+            # Ensure custom evaluator has the required output_schema for structured responses
+            self.evaluator_agent.output_schema = AgentAsJudgeResponse
+            return self.evaluator_agent
+
         model = self.model
         if model is None:
             try:
                 from agno.models.openai import OpenAIChat
 
-                model = OpenAIChat(id="gpt-4o-mini")
+                model = OpenAIChat(id="gpt-5-mini")
             except (ModuleNotFoundError, ImportError) as e:
                 logger.exception(e)
                 raise EvalError(
                     "Agno uses `openai` as the default model provider. Please run `pip install openai` to use the default evaluator."
                 )
 
-        # Format additional guidelines
-        additional_guidelines = ""
-        if self.additional_guidelines:
-            guidelines_text = (
-                self.additional_guidelines
-                if isinstance(self.additional_guidelines, str)
-                else "\n- " + "\n- ".join(self.additional_guidelines)
-            )
-            additional_guidelines = f"\n## Additional Guidelines\n{guidelines_text}\n"
+        # Build instructions based on scoring strategy
+        instructions_parts = ["## Criteria", self.criteria, ""]
 
-        # Format additional context
-        additional_context = (
-            f"\n## Additional Context\n{self.additional_context}\n" if self.additional_context else ""
-        )
+        if self.scoring_strategy == "numeric":
+            instructions_parts.extend(
+                [
+                    "## Scoring (1-10)",
+                    "- 1-2: Completely fails the criteria",
+                    "- 3-4: Major issues",
+                    "- 5-6: Partial success with significant issues",
+                    "- 7-8: Mostly meets criteria with minor issues",
+                    "- 9-10: Fully meets or exceeds criteria",
+                    "",
+                    "## Instructions",
+                    "1. Carefully evaluate the output against the criteria above",
+                    "2. Provide a score from 1-10",
+                    "3. Provide detailed reasoning that references specific parts of the output",
+                ]
+            )
+        else:  # binary
+            instructions_parts.extend(
+                [
+                    "## Evaluation",
+                    "Determine if the output PASSES or FAILS the criteria above.",
+                    "",
+                    "## Instructions",
+                    "1. Carefully evaluate the output against the criteria above",
+                    "2. Decide if it passes (true) or fails (false)",
+                    "3. Provide detailed reasoning that references specific parts of the output",
+                ]
+            )
+
+        # Add additional guidelines if provided
+        if self.additional_guidelines:
+            instructions_parts.append("")
+            instructions_parts.append("## Additional Guidelines")
+            if isinstance(self.additional_guidelines, str):
+                instructions_parts.append(self.additional_guidelines)
+            else:
+                for guideline in self.additional_guidelines:
+                    instructions_parts.append(f"- {guideline}")
+
+        # Add closing instruction
+        instructions_parts.append("")
+        instructions_parts.append("Be objective and thorough in your evaluation.")
 
         return Agent(
             model=model,
-            description=f"""\
-You are an expert evaluator. Score the output based on these criteria:
-
-## Criteria
-{self.criteria}
-
-## Scoring (1-10)
-- 1-2: Completely fails the criteria
-- 3-4: Major issues
-- 5-6: Partial success with significant issues
-- 7-8: Mostly meets criteria with minor issues
-- 9-10: Fully meets or exceeds criteria
-
-## Instructions
-1. Carefully evaluate the output against the criteria above
-2. Follow the additional guidelines if provided
-3. Provide detailed reasoning that references specific parts of the output
-4. Assign a score from 1 to 10 (whole numbers only)
-{additional_guidelines}{additional_context}
-Be objective and thorough in your evaluation.
-""",
-            output_schema=CriteriaJudgeResponse,
-            structured_outputs=True,
+            description="You are an expert evaluator. Score outputs objectively based on the provided criteria.",
+            instructions="\n".join(instructions_parts),
+            output_schema=AgentAsJudgeResponse,
         )
 
-    def _evaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[CriteriaEvaluation]:
+    def _evaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair."""
         try:
             prompt = dedent(f"""\
@@ -228,15 +272,22 @@ Be objective and thorough in your evaluation.
             """)
 
             response = evaluator_agent.run(prompt).content
-            if not isinstance(response, CriteriaJudgeResponse):
+            if not isinstance(response, AgentAsJudgeResponse):
                 raise EvalError(f"Invalid response: {response}")
 
-            passed = response.score >= self.threshold
-            evaluation = CriteriaEvaluation(
+            # Determine pass/fail based on scoring strategy
+            if self.scoring_strategy == "numeric":
+                score = response.score
+                passed = score >= self.threshold if score is not None else False
+            else:  # binary
+                score = None
+                passed = response.passed if response.passed is not None else False
+
+            evaluation = AgentAsJudgeEvaluation(
                 input=input,
                 output=output,
                 criteria=self.criteria,
-                score=response.score,
+                score=score,
                 reason=response.reason,
                 passed=passed,
             )
@@ -244,7 +295,12 @@ Be objective and thorough in your evaluation.
             # Trigger on_fail callback if evaluation failed
             if not passed and self.on_fail:
                 try:
-                    self.on_fail(evaluation)
+                    if iscoroutinefunction(self.on_fail):
+                        log_warning(
+                            f"Cannot use async on_fail callback with sync evaluation. Use arun() instead. Skipping callback: {self.on_fail.__name__}"
+                        )
+                    else:
+                        self.on_fail(evaluation)
                 except Exception as e:
                     logger.warning(f"on_fail callback error: {e}")
 
@@ -253,7 +309,7 @@ Be objective and thorough in your evaluation.
             logger.exception(f"Evaluation failed: {e}")
             return None
 
-    async def _aevaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[CriteriaEvaluation]:
+    async def _aevaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair asynchronously."""
         try:
             prompt = dedent(f"""\
@@ -268,15 +324,22 @@ Be objective and thorough in your evaluation.
 
             response = await evaluator_agent.arun(prompt)
             judge_response = response.content
-            if not isinstance(judge_response, CriteriaJudgeResponse):
+            if not isinstance(judge_response, AgentAsJudgeResponse):
                 raise EvalError(f"Invalid response: {judge_response}")
 
-            passed = judge_response.score >= self.threshold
-            evaluation = CriteriaEvaluation(
+            # Determine pass/fail based on scoring strategy
+            if self.scoring_strategy == "numeric":
+                score = judge_response.score
+                passed = score >= self.threshold if score is not None else False
+            else:  # binary
+                score = None
+                passed = judge_response.passed if judge_response.passed is not None else False
+
+            evaluation = AgentAsJudgeEvaluation(
                 input=input,
                 output=output,
                 criteria=self.criteria,
-                score=judge_response.score,
+                score=score,
                 reason=judge_response.reason,
                 passed=passed,
             )
@@ -284,7 +347,10 @@ Be objective and thorough in your evaluation.
             # Trigger on_fail callback if evaluation failed
             if not passed and self.on_fail:
                 try:
-                    self.on_fail(evaluation)
+                    if iscoroutinefunction(self.on_fail):
+                        await self.on_fail(evaluation)
+                    else:
+                        self.on_fail(evaluation)
                 except Exception as e:
                     logger.warning(f"on_fail callback error: {e}")
 
@@ -295,6 +361,8 @@ Be objective and thorough in your evaluation.
 
     def _log_eval_to_db(
         self,
+        run_id: str,
+        result: AgentAsJudgeResult,
         agent_id: Optional[str] = None,
         model_id: Optional[str] = None,
         model_provider: Optional[str] = None,
@@ -302,25 +370,31 @@ Be objective and thorough in your evaluation.
         evaluated_component_name: Optional[str] = None,
     ) -> None:
         """Helper to log evaluation to database."""
-        if not self.db or not self.run_id:
+        if not self.db:
             return
 
         log_eval_run(
             db=self.db,  # type: ignore
-            run_id=self.run_id,
-            run_data=asdict(self.result) if self.result else {},
-            eval_type=EvalType.CRITERIA,
+            run_id=run_id,
+            run_data=asdict(result),
+            eval_type=EvalType.AGENT_AS_JUDGE,
             agent_id=agent_id,
             model_id=model_id,
             model_provider=model_provider,
             name=self.name,
             team_id=team_id,
             evaluated_component_name=evaluated_component_name,
-            eval_input={"criteria": self.criteria, "threshold": self.threshold},
+            eval_input={
+                "criteria": self.criteria,
+                "threshold": self.threshold,
+                "additional_guidelines": self.additional_guidelines,
+            },
         )
 
     async def _async_log_eval_to_db(
         self,
+        run_id: str,
+        result: AgentAsJudgeResult,
         agent_id: Optional[str] = None,
         model_id: Optional[str] = None,
         model_provider: Optional[str] = None,
@@ -328,21 +402,25 @@ Be objective and thorough in your evaluation.
         evaluated_component_name: Optional[str] = None,
     ) -> None:
         """Helper to log evaluation to database asynchronously."""
-        if not self.db or not self.run_id:
+        if not self.db:
             return
 
         await async_log_eval(
             db=self.db,
-            run_id=self.run_id,
-            run_data=asdict(self.result) if self.result else {},
-            eval_type=EvalType.CRITERIA,
+            run_id=run_id,
+            run_data=asdict(result),
+            eval_type=EvalType.AGENT_AS_JUDGE,
             agent_id=agent_id,
             model_id=model_id,
             model_provider=model_provider,
             name=self.name,
             team_id=team_id,
             evaluated_component_name=evaluated_component_name,
-            eval_input={"criteria": self.criteria, "threshold": self.threshold},
+            eval_input={
+                "criteria": self.criteria,
+                "threshold": self.threshold,
+                "additional_guidelines": self.additional_guidelines,
+            },
         )
 
     def run(
@@ -353,7 +431,7 @@ Be objective and thorough in your evaluation.
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
-    ) -> Optional[CriteriaResult]:
+    ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria.
 
         Supports both single evaluation and batch evaluation:
@@ -365,6 +443,9 @@ Be objective and thorough in your evaluation.
             print_summary: Whether to print summary
             print_results: Whether to print detailed results
         """
+        # Generate unique run_id for this execution
+        run_id = str(uuid4())
+
         # Validate parameters
         single_mode = input is not None or output is not None
         batch_mode = cases is not None
@@ -377,7 +458,7 @@ Be objective and thorough in your evaluation.
 
         # Batch mode if cases provided
         if batch_mode and cases is not None:
-            return self.run_batch(cases, print_summary=print_summary, print_results=print_results)
+            return self._run_batch(cases=cases, run_id=run_id, print_summary=print_summary, print_results=print_results)
 
         # Validate single mode has both input and output
         if input is None or output is None:
@@ -392,53 +473,51 @@ Be objective and thorough in your evaluation.
             raise ValueError("Use arun() with async DB.")
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
-        self.result = CriteriaResult()
+        result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
         with Live(console=console, transient=True) as live_log:
             evaluator = self.get_evaluator_agent()
 
-            for i in range(self.num_iterations):
-                status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
-                live_log.update(status)
+            status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
+            live_log.update(status)
 
-                evaluation = self._evaluate(input=input, output=output, evaluator_agent=evaluator)
+            evaluation = self._evaluate(input=input, output=output, evaluator_agent=evaluator)
 
-                if evaluation:
-                    self.result.results.append(evaluation)
-                    self.result.compute_stats()
+            if evaluation:
+                result.results.append(evaluation)
+                result.compute_stats()
 
-                status.stop()
+            status.stop()
 
         # Save result to file
-        if self.file_path_to_save_results and self.result:
+        if self.file_path_to_save_results:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
-                result=self.result,
-                eval_id=self.eval_id,
+                result=result,
+                eval_id=run_id,
                 name=self.name,
             )
 
         # Print results
         if self.print_results or print_results:
-            self.result.print_results(console)
+            result.print_results(console)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
-
-        # Generate unique run_id for each execution
-        self.run_id = str(uuid4())
+            result.print_summary(console)
 
         # Log to DB
-        self._log_eval_to_db()
+        self._log_eval_to_db(run_id=run_id, result=result)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=self.run_id, eval_type=EvalType.CRITERIA, data=self._get_telemetry_data())
+                eval_run=EvalRunCreate(
+                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
+                )
             )
 
-        return self.result
+        return result
 
     async def arun(
         self,
@@ -448,7 +527,7 @@ Be objective and thorough in your evaluation.
         cases: Optional[List[Dict[str, str]]] = None,
         print_summary: bool = False,
         print_results: bool = False,
-    ) -> Optional[CriteriaResult]:
+    ) -> Optional[AgentAsJudgeResult]:
         """Evaluate input/output against the criteria asynchronously.
 
         Supports both single evaluation and batch evaluation:
@@ -460,6 +539,9 @@ Be objective and thorough in your evaluation.
             print_summary: Whether to print summary
             print_results: Whether to print detailed results
         """
+        # Generate unique run_id for this execution
+        run_id = str(uuid4())
+
         # Validate parameters
         single_mode = input is not None or output is not None
         batch_mode = cases is not None
@@ -472,7 +554,9 @@ Be objective and thorough in your evaluation.
 
         # Batch mode if cases provided
         if batch_mode and cases is not None:
-            return await self.arun_batch(cases, print_summary=print_summary, print_results=print_results)
+            return await self._arun_batch(
+                cases=cases, run_id=run_id, print_summary=print_summary, print_results=print_results
+            )
 
         # Validate single mode has both input and output
         if input is None or output is None:
@@ -484,268 +568,200 @@ Be objective and thorough in your evaluation.
         from rich.status import Status
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
-        self.result = CriteriaResult()
+        result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
         with Live(console=console, transient=True) as live_log:
             evaluator = self.get_evaluator_agent()
 
-            for i in range(self.num_iterations):
-                status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
-                live_log.update(status)
+            status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
+            live_log.update(status)
 
-                evaluation = await self._aevaluate(input=input, output=output, evaluator_agent=evaluator)
+            evaluation = await self._aevaluate(input=input, output=output, evaluator_agent=evaluator)
 
-                if evaluation:
-                    self.result.results.append(evaluation)
-                    self.result.compute_stats()
+            if evaluation:
+                result.results.append(evaluation)
+                result.compute_stats()
 
-                status.stop()
+            status.stop()
 
         # Save result to file
-        if self.file_path_to_save_results and self.result:
+        if self.file_path_to_save_results:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
-                result=self.result,
-                eval_id=self.eval_id,
+                result=result,
+                eval_id=run_id,
                 name=self.name,
             )
 
         # Print results
         if self.print_results or print_results:
-            self.result.print_results(console)
+            result.print_results(console)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
-
-        # Generate unique run_id for each execution
-        self.run_id = str(uuid4())
+            result.print_summary(console)
 
         # Log to DB
-        await self._async_log_eval_to_db()
+        await self._async_log_eval_to_db(run_id=run_id, result=result)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=self.run_id, eval_type=EvalType.CRITERIA, data=self._get_telemetry_data())
+                eval_run=EvalRunCreate(
+                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
+                )
             )
 
-        return self.result
+        return result
 
-    def run_batch(
+    def _run_batch(
         self,
         cases: List[Dict[str, str]],
+        run_id: str,
         *,
         print_summary: bool = True,
         print_results: bool = False,
-    ) -> Optional[CriteriaResult]:
-        """Evaluate multiple input/output pairs.
+    ) -> Optional[AgentAsJudgeResult]:
+        """Private helper: Evaluate multiple input/output pairs.
 
         Args:
             cases: List of dicts with 'input' and 'output' keys
+            run_id: Unique ID for this evaluation run
         """
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("Use arun_batch() with async DB.")
+            raise ValueError("Use arun() with async DB.")
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
-        self.result = CriteriaResult()
+        result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
         with Live(console=console, transient=True) as live_log:
             evaluator = self.get_evaluator_agent()
 
             for i, case in enumerate(cases):
-                for iteration in range(self.num_iterations):
-                    if self.num_iterations > 1:
-                        status = Status(
-                            f"Evaluating {i + 1}/{len(cases)} (iteration {iteration + 1}/{self.num_iterations})...",
-                            spinner="dots",
-                        )
-                    else:
-                        status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
-                    live_log.update(status)
+                status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
+                live_log.update(status)
 
-                    evaluation = self._evaluate(input=case["input"], output=case["output"], evaluator_agent=evaluator)
-                    if evaluation:
-                        self.result.results.append(evaluation)
-                        self.result.compute_stats()
+                evaluation = self._evaluate(input=case["input"], output=case["output"], evaluator_agent=evaluator)
+                if evaluation:
+                    result.results.append(evaluation)
+                    result.compute_stats()
 
             status.stop()
 
         # Save result to file
-        if self.file_path_to_save_results and self.result:
+        if self.file_path_to_save_results:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
-                result=self.result,
-                eval_id=self.eval_id,
+                result=result,
+                eval_id=run_id,
                 name=self.name,
             )
 
         # Print results
         if self.print_results or print_results:
-            self.result.print_results(console)
+            result.print_results(console)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
-
-        # Generate unique run_id for each execution
-        self.run_id = str(uuid4())
+            result.print_summary(console)
 
         # Log to DB
-        self._log_eval_to_db()
+        self._log_eval_to_db(run_id=run_id, result=result)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=self.run_id, eval_type=EvalType.CRITERIA, data=self._get_telemetry_data())
+                eval_run=EvalRunCreate(
+                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
+                )
             )
 
-        return self.result
+        return result
 
-    async def arun_batch(
+    async def _arun_batch(
         self,
         cases: List[Dict[str, str]],
+        run_id: str,
         *,
         print_summary: bool = True,
         print_results: bool = False,
-    ) -> Optional[CriteriaResult]:
-        """Evaluate multiple input/output pairs asynchronously."""
+    ) -> Optional[AgentAsJudgeResult]:
+        """Private helper: Evaluate multiple input/output pairs asynchronously.
+
+        Args:
+            cases: List of dicts with 'input' and 'output' keys
+            run_id: Unique ID for this evaluation run
+        """
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
-        self.result = CriteriaResult()
+        result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
         with Live(console=console, transient=True) as live_log:
             evaluator = self.get_evaluator_agent()
 
             for i, case in enumerate(cases):
-                for iteration in range(self.num_iterations):
-                    if self.num_iterations > 1:
-                        status = Status(
-                            f"Evaluating {i + 1}/{len(cases)} (iteration {iteration + 1}/{self.num_iterations})...",
-                            spinner="dots",
-                        )
-                    else:
-                        status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
-                    live_log.update(status)
+                status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
+                live_log.update(status)
 
-                    evaluation = await self._aevaluate(
-                        input=case["input"], output=case["output"], evaluator_agent=evaluator
-                    )
-                    if evaluation:
-                        self.result.results.append(evaluation)
-                        self.result.compute_stats()
+                evaluation = await self._aevaluate(
+                    input=case["input"], output=case["output"], evaluator_agent=evaluator
+                )
+                if evaluation:
+                    result.results.append(evaluation)
+                    result.compute_stats()
 
-            status.stop()
+                status.stop()
 
         # Save result to file
-        if self.file_path_to_save_results and self.result:
+        if self.file_path_to_save_results:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
-                result=self.result,
-                eval_id=self.eval_id,
+                result=result,
+                eval_id=run_id,
                 name=self.name,
             )
 
         # Print results
         if self.print_results or print_results:
-            self.result.print_results(console)
+            result.print_results(console)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
-
-        # Generate unique run_id for each execution
-        self.run_id = str(uuid4())
+            result.print_summary(console)
 
         # Log to DB
-        await self._async_log_eval_to_db()
+        await self._async_log_eval_to_db(run_id=run_id, result=result)
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=self.run_id, eval_type=EvalType.CRITERIA, data=self._get_telemetry_data())
+                eval_run=EvalRunCreate(
+                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
+                )
             )
 
-        return self.result
+        return result
 
-    def _get_telemetry_data(self) -> Dict[str, Any]:
+    def _get_telemetry_data(self, result: Optional[AgentAsJudgeResult] = None) -> Dict[str, Any]:
         return {
             "criteria_length": len(self.criteria) if self.criteria else 0,
             "threshold": self.threshold,
-            "num_results": len(self.result.results) if self.result else 0,
-            "num_iterations": self.num_iterations,
+            "num_results": len(result.results) if result else 0,
         }
 
     # BaseEval hook methods
     def pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Perform sync pre-check to validate input before agent runs."""
-        input_str = run_input.input_content_string() if run_input else ""
-        output_str = "(Input validation - no output yet)"
-
-        # Temporarily disable DB logging and add pre-hook instruction
-        original_db = self.db
-        original_guidelines = self.additional_guidelines
-        self.db = None
-
-        # Prepend pre-hook instruction to evaluate input quality
-        pre_hook_instruction = "IMPORTANT: This is PRE-HOOK evaluation. Evaluate the INPUT quality (shown in Input field), NOT the output. The output is a placeholder. Score the INPUT based on the criteria."
-
-        if original_guidelines:
-            if isinstance(original_guidelines, str):
-                self.additional_guidelines = [pre_hook_instruction, original_guidelines]
-            else:
-                self.additional_guidelines = [pre_hook_instruction] + list(original_guidelines)
-        else:
-            self.additional_guidelines = pre_hook_instruction
-
-        self.run(input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary)
-
-        # Restore DB and guidelines
-        self.db = original_db
-        self.additional_guidelines = original_guidelines
-
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("pre_check() requires sync DB. Use async_pre_check() with async DB.")
-
-        self._log_eval_to_db()
+        raise ValueError("Pre-hooks are not supported")
 
     async def async_pre_check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
-        """Perform async pre-check to validate input before agent runs."""
-        input_str = run_input.input_content_string() if run_input else ""
-        output_str = "(Input validation - no output yet)"
-
-        # Temporarily disable DB logging and add pre-hook instruction
-        original_db = self.db
-        original_guidelines = self.additional_guidelines
-        self.db = None
-
-        # Prepend pre-hook instruction to evaluate INPUT quality
-        pre_hook_instruction = "IMPORTANT: This is PRE-HOOK evaluation. Evaluate the INPUT quality (shown in Input field), NOT the output. The output is a placeholder. Score the INPUT based on the criteria."
-
-        if original_guidelines:
-            if isinstance(original_guidelines, str):
-                self.additional_guidelines = [pre_hook_instruction, original_guidelines]
-            else:
-                self.additional_guidelines = [pre_hook_instruction] + list(original_guidelines)
-        else:
-            self.additional_guidelines = pre_hook_instruction
-
-        await self.arun(
-            input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary
-        )
-
-        # Restore DB and guidelines
-        self.db = original_db
-        self.additional_guidelines = original_guidelines
-
-        await self._async_log_eval_to_db()
+        raise ValueError("Pre-hooks are not supported")
 
     def post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
         """Perform sync post-check to evaluate agent output."""
@@ -756,7 +772,10 @@ Be objective and thorough in your evaluation.
         original_db = self.db
         self.db = None
 
-        self.run(input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary)
+        # Run evaluation and capture result
+        result = self.run(
+            input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary
+        )
 
         # Restore DB and log with context from run_output
         self.db = original_db
@@ -776,12 +795,16 @@ Be objective and thorough in your evaluation.
             model_id = run_output.model
             model_provider = run_output.model_provider
 
-        self._log_eval_to_db(
-            agent_id=agent_id,
-            model_id=model_id,
-            model_provider=model_provider,
-            team_id=team_id,
-        )
+        # Log to DB if we have a valid result (use run_id from result)
+        if result:
+            self._log_eval_to_db(
+                run_id=result.run_id,
+                result=result,
+                agent_id=agent_id,
+                model_id=model_id,
+                model_provider=model_provider,
+                team_id=team_id,
+            )
 
     async def async_post_check(self, run_output: Union[RunOutput, TeamRunOutput]) -> None:
         """Perform async post-check to evaluate agent output."""
@@ -792,7 +815,8 @@ Be objective and thorough in your evaluation.
         original_db = self.db
         self.db = None
 
-        await self.arun(
+        # Run evaluation and capture result
+        result = await self.arun(
             input=input_str, output=output_str, print_results=self.print_results, print_summary=self.print_summary
         )
 
@@ -811,9 +835,13 @@ Be objective and thorough in your evaluation.
             model_id = run_output.model
             model_provider = run_output.model_provider
 
-        await self._async_log_eval_to_db(
-            agent_id=agent_id,
-            model_id=model_id,
-            model_provider=model_provider,
-            team_id=team_id,
-        )
+        # Log to DB if we have a valid result (use run_id from result)
+        if result:
+            await self._async_log_eval_to_db(
+                run_id=result.run_id,
+                result=result,
+                agent_id=agent_id,
+                model_id=model_id,
+                model_provider=model_provider,
+                team_id=team_id,
+            )

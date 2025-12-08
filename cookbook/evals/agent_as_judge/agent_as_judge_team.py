@@ -1,20 +1,11 @@
-"""CriteriaEval as post-hook on Team."""
+"""AgentAsJudgeEval with teams."""
+
+from typing import Optional
 
 from agno.agent import Agent
-from agno.eval.criteria import CriteriaEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeResult
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-
-# Setup CriteriaEval as post-hook
-criteria_eval = CriteriaEval(
-    name="Team Response Quality",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    criteria="Response should be well-researched, clear, and comprehensive",
-    threshold=7,
-    num_iterations=1,
-    print_results=True,
-    print_summary=True,
-)
 
 # Setup a team with researcher and writer
 researcher = Agent(
@@ -34,8 +25,21 @@ research_team = Team(
     model=OpenAIChat("gpt-4o"),
     members=[researcher, writer],
     instructions=["First research the topic thoroughly, then write a clear summary."],
-    post_hooks=[criteria_eval],
 )
 
 response = research_team.run("Explain quantum computing")
-print(response.content)
+
+evaluation = AgentAsJudgeEval(
+    name="Team Response Quality",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    criteria="Response should be well-researched, clear, and comprehensive with good flow",
+    scoring_strategy="binary",
+)
+
+result: Optional[AgentAsJudgeResult] = evaluation.run(
+    input="Explain quantum computing",
+    output=str(response.content),
+    print_results=True,
+    print_summary=True,
+)
+assert result is not None, "Evaluation should return a result"

@@ -1,23 +1,22 @@
-"""CriteriaEval as post-hook example."""
+"""AgentAsJudgeEval as post-hook example."""
 
 from agno.agent import Agent
-from agno.eval.criteria import CriteriaEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.models.openai import OpenAIChat
 
-criteria_eval = CriteriaEval(
+agent_as_judge_eval = AgentAsJudgeEval(
     name="Response Quality Check",
     model=OpenAIChat(id="gpt-4o-mini"),
-    criteria="Response should be professional and accurate",
+    criteria="Response should be professional, well-structured, and provide balanced perspectives",
     threshold=7,
     print_results=True,
     print_summary=True,
-    num_iterations=2,
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    instructions="Provide professional and accurate answers.",
-    post_hooks=[criteria_eval],
+    instructions="Provide professional and well-reasoned answers.",
+    post_hooks=[agent_as_judge_eval],
 )
 
 response = agent.run("What are the benefits of renewable energy?")

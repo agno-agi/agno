@@ -1,10 +1,16 @@
-"""Async CriteriaEval usage example."""
+"""Async AgentAsJudgeEval usage example with async on_fail callback."""
 
 import asyncio
 
 from agno.agent import Agent
-from agno.eval.criteria import CriteriaEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeEvaluation
 from agno.models.openai import OpenAIChat
+
+
+def on_evaluation_failure(evaluation: AgentAsJudgeEvaluation):
+    """Async callback triggered when evaluation fails (score < threshold)."""
+    print(f"Evaluation failed - Score: {evaluation.score}/10")
+    print(f"Reason: {evaluation.reason}")
 
 
 async def main():
@@ -15,12 +21,12 @@ async def main():
 
     response = await agent.arun("Explain machine learning in simple terms")
 
-    evaluation = CriteriaEval(
+    evaluation = AgentAsJudgeEval(
         name="ML Explanation Quality",
         model=OpenAIChat(id="gpt-4o-mini"),
-        criteria="Response should be clear, accurate, and easy to understand",
-        threshold=7,
-        num_iterations=2,
+        criteria="Explanation should be clear, beginner-friendly, and avoid jargon",
+        threshold=10,
+        on_fail=on_evaluation_failure,
     )
 
     result = await evaluation.arun(

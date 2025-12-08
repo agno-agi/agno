@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class EvalType(str, Enum):
     ACCURACY = "accuracy"
-    CRITERIA = "criteria"
+    AGENT_AS_JUDGE = "agent_as_judge"
     PERFORMANCE = "performance"
     RELIABILITY = "reliability"
 

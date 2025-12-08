@@ -56,17 +56,15 @@ def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
     return getattr(hook, HOOK_RUN_IN_BACKGROUND_ATTR, False)
 
 
-def normalize_hooks(
+def normalize_pre_hooks(
     hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]],
     async_mode: bool = False,
-    hook_mode: str = "post",
 ) -> Optional[List[Callable[..., Any]]]:
-    """Normalize hooks to a list format
+    """Normalize pre-hooks to a list format.
 
     Args:
         hooks: List of hook functions, guardrails, or eval instances
         async_mode: Whether to use async versions of methods
-        hook_mode: Either "pre" or "post" - determines which eval method to use
     """
     from agno.eval.base import BaseEval
 
@@ -80,11 +78,53 @@ def normalize_hooks(
                 else:
                     result_hooks.append(hook.check)
             elif isinstance(hook, BaseEval):
-                # Extract the method based on hook_mode
-                if hook_mode == "pre":
-                    method = hook.async_pre_check if async_mode else hook.pre_check
+                # Extract pre_check method
+                method = hook.async_pre_check if async_mode else hook.pre_check
+
+                from functools import partial
+
+                wrapped = partial(method)
+                wrapped.__name__ = method.__name__  # type: ignore
+                setattr(wrapped, HOOK_RUN_IN_BACKGROUND_ATTR, getattr(hook, "run_in_background", False))
+                result_hooks.append(wrapped)
+            else:
+                # Check if the hook is async and used within sync methods
+                if not async_mode:
+                    import asyncio
+
+                    if asyncio.iscoroutinefunction(hook):
+                        raise ValueError(
+                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                        )
+
+                result_hooks.append(hook)
+    return result_hooks if result_hooks else None
+
+
+def normalize_post_hooks(
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]],
+    async_mode: bool = False,
+) -> Optional[List[Callable[..., Any]]]:
+    """Normalize post-hooks to a list format.
+
+    Args:
+        hooks: List of hook functions, guardrails, or eval instances
+        async_mode: Whether to use async versions of methods
+    """
+    from agno.eval.base import BaseEval
+
+    result_hooks: List[Callable[..., Any]] = []
+
+    if hooks is not None:
+        for hook in hooks:
+            if isinstance(hook, BaseGuardrail):
+                if async_mode:
+                    result_hooks.append(hook.async_check)
                 else:
-                    method = hook.async_post_check if async_mode else hook.post_check  # type: ignore[assignment]
+                    result_hooks.append(hook.check)
+            elif isinstance(hook, BaseEval):
+                # Extract post_check method
+                method = hook.async_post_check if async_mode else hook.post_check  # type: ignore[assignment]
 
                 from functools import partial
 

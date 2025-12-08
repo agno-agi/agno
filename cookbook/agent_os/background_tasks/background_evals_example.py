@@ -1,42 +1,40 @@
 """
-Example: Per-Hook Background Control with CriteriaEval in AgentOS
+Example: Per-Hook Background Control with AgentAsJudgeEval in AgentOS
 
 This example demonstrates fine-grained control over which hooks run in background:
 - Set eval.run_in_background = True for eval instances
-- CriteriaEval evaluates output quality based on custom criteria
+- AgentAsJudgeEval evaluates output quality based on custom criteria
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
-from agno.eval.criteria import CriteriaEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
 # Setup database
-db = AsyncSqliteDb(db_file="tmp/criteria_evals.db")
+db = AsyncSqliteDb(db_file="tmp/agent_as_judge_evals.db")
 
-# CriteriaEval for accuracy - runs synchronously (blocks response)
-accuracy_criteria = CriteriaEval(
+# AgentAsJudgeEval for completeness - runs synchronously (blocks response)
+completeness_eval = AgentAsJudgeEval(
     db=db,
-    name="Accuracy Check",
+    name="Completeness Check",
     model=OpenAIChat(id="gpt-4o-mini"),
-    criteria="Response should be factually correct and complete",
+    criteria="Response should be thorough, complete, and address all aspects of the question",
     threshold=7,
-    num_iterations=2,
     print_results=True,
     print_summary=True,
     telemetry=True,
 )
-# accuracy_criteria.run_in_background = False (default - blocks)
+# completeness_eval.run_in_background = False (default - blocks)
 
-# CriteriaEval for quality - runs in background (non-blocking)
-quality_criteria = CriteriaEval(
+# AgentAsJudgeEval for quality - runs in background (non-blocking)
+quality_eval = AgentAsJudgeEval(
     db=db,
     name="Quality Assessment",
     model=OpenAIChat(id="gpt-4o-mini"),
     criteria="Response should be well-structured, concise, and professional",
     threshold=8,
-    num_iterations=2,
     additional_guidelines=[
         "Check if response is easy to understand",
         "Verify response is not overly verbose",
@@ -45,7 +43,7 @@ quality_criteria = CriteriaEval(
     print_summary=True,
     telemetry=True,
 )
-quality_criteria.run_in_background = True
+quality_eval.run_in_background = True
 
 agent = Agent(
     id="geography-agent",
@@ -54,8 +52,8 @@ agent = Agent(
     instructions="You are a helpful geography assistant. Provide accurate and concise answers.",
     db=db,
     post_hooks=[
-        accuracy_criteria,  # run_in_background=False - runs first, blocks
-        quality_criteria,  # run_in_background=True - runs after response
+        completeness_eval,  # run_in_background=False - runs first, blocks
+        quality_eval,  # run_in_background=True - runs after response
     ],
     markdown=True,
     telemetry=False,
@@ -67,9 +65,9 @@ app = agent_os.get_app()
 
 # Flow:
 # 1. Agent processes request
-# 2. Sync hooks run (accuracy_criteria)
+# 2. Sync hooks run (completeness_eval)
 # 3. Response sent to user
-# 4. Background hooks run (quality_criteria)
+# 4. Background hooks run (quality_eval)
 
 # Test with:
 # curl -X POST http://localhost:7777/agents/geography-agent/runs \

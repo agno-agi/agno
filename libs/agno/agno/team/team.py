@@ -127,7 +127,13 @@ from agno.utils.events import (
     create_team_tool_call_started_event,
     handle_event,
 )
-from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
+from agno.utils.hooks import (
+    copy_args_for_background,
+    filter_hook_args,
+    normalize_post_hooks,
+    normalize_pre_hooks,
+    should_run_hook_in_background,
+)
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -2072,9 +2078,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, hook_mode="pre")  # type: ignore
+                self.pre_hooks = normalize_pre_hooks(self.pre_hooks)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, hook_mode="post")  # type: ignore
+                self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -2952,9 +2958,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True, hook_mode="pre")  # type: ignore
+                self.pre_hooks = normalize_pre_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True, hook_mode="post")  # type: ignore
+                self.post_hooks = normalize_post_hooks(self.post_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)

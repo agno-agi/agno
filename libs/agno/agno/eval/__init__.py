@@ -1,6 +1,6 @@
 from agno.eval.accuracy import AccuracyAgentResponse, AccuracyEval, AccuracyEvaluation, AccuracyResult
+from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeEvaluation, AgentAsJudgeResponse, AgentAsJudgeResult
 from agno.eval.base import BaseEval
-from agno.eval.criteria import CriteriaEval, CriteriaEvaluation, CriteriaJudgeResponse, CriteriaResult
 from agno.eval.performance import PerformanceEval, PerformanceResult
 from agno.eval.reliability import ReliabilityEval, ReliabilityResult
 
@@ -9,11 +9,11 @@ __all__ = [
     "AccuracyEvaluation",
     "AccuracyResult",
     "AccuracyEval",
+    "AgentAsJudgeEval",
+    "AgentAsJudgeEvaluation",
+    "AgentAsJudgeResponse",
+    "AgentAsJudgeResult",
     "BaseEval",
-    "CriteriaEval",
-    "CriteriaEvaluation",
-    "CriteriaJudgeResponse",
-    "CriteriaResult",
     "PerformanceEval",
     "PerformanceResult",
     "ReliabilityEval",

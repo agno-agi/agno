@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.accuracy import AccuracyEval
-from agno.eval.criteria import CriteriaEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 from agno.models.base import Model
@@ -55,16 +55,16 @@ async def run_accuracy_eval(
     return eval_run
 
 
-async def run_criteria_eval(
+async def run_agent_as_judge_eval(
     eval_run_input: EvalRunInput,
     db: Union[BaseDb, AsyncBaseDb],
     agent: Optional[Agent] = None,
     team: Optional[Team] = None,
     default_model: Optional[Model] = None,
 ) -> EvalSchema:
-    """Run a Criteria evaluation for the given agent or team"""
+    """Run an AgentAsJudge evaluation for the given agent or team"""
     if not eval_run_input.criteria:
-        raise HTTPException(status_code=400, detail="criteria is required for criteria evaluation")
+        raise HTTPException(status_code=400, detail="criteria is required for agent-as-judge evaluation")
 
     # Run agent/team to get output
     if agent:
@@ -84,28 +84,29 @@ async def run_criteria_eval(
     else:
         raise HTTPException(status_code=400, detail="Either agent_id or team_id must be provided")
 
-    criteria_eval = CriteriaEval(
+    agent_as_judge_eval = AgentAsJudgeEval(
         db=db,
         criteria=eval_run_input.criteria,
+        scoring_strategy=eval_run_input.scoring_strategy or "numeric",
         threshold=eval_run_input.threshold or 7,
         additional_guidelines=eval_run_input.additional_guidelines,
-        additional_context=eval_run_input.additional_context,
-        num_iterations=eval_run_input.num_iterations,
         name=eval_run_input.name,
         model=default_model,
     )
 
     if isinstance(db, AsyncBaseDb):
-        result = await criteria_eval.arun(
+        result = await agent_as_judge_eval.arun(
             input=eval_run_input.input, output=output, print_results=False, print_summary=False
         )
     else:
-        result = criteria_eval.run(input=eval_run_input.input, output=output, print_results=False, print_summary=False)
+        result = agent_as_judge_eval.run(
+            input=eval_run_input.input, output=output, print_results=False, print_summary=False
+        )
     if not result:
-        raise HTTPException(status_code=500, detail="Failed to run criteria evaluation")
+        raise HTTPException(status_code=500, detail="Failed to run agent as judge evaluation")
 
-    eval_run = EvalSchema.from_criteria_eval(
-        criteria_eval=criteria_eval,
+    eval_run = EvalSchema.from_agent_as_judge_eval(
+        agent_as_judge_eval=agent_as_judge_eval,
         result=result,
         agent_id=agent_id,
         team_id=team_id,

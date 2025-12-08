@@ -4,11 +4,11 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.eval.criteria import CriteriaEval, CriteriaResult
+from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeResult
 from agno.models.openai import OpenAIChat
 
 # Setup the database
-db = SqliteDb(db_file="tmp/criteria_evals.db", eval_table="eval_runs_cookbook")
+db = SqliteDb(db_file="tmp/agent_as_judge_evals.db", eval_table="eval_runs_cookbook")
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -18,19 +18,20 @@ agent = Agent(
 
 response = agent.run("What are the benefits of cloud computing?")
 
-evaluation = CriteriaEval(
+evaluation = AgentAsJudgeEval(
     db=db,  # Pass the database to the evaluation. Results will be stored in the database.
     name="Cloud Computing Response Quality",
     model=OpenAIChat(id="gpt-4o-mini"),
-    criteria="Response should be accurate, comprehensive, and well-structured",
+    criteria="Response should be comprehensive, well-structured, and provide balanced perspectives on benefits",
     threshold=7,
     additional_guidelines=[
         "Include at least 3 specific benefits",
-        "Use clear language",
+        "Use clear, professional language",
+        "Provide concrete examples where helpful",
     ],
 )
 
-result: Optional[CriteriaResult] = evaluation.run(
+result: Optional[AgentAsJudgeResult] = evaluation.run(
     input="What are the benefits of cloud computing?",
     output=str(response.content),
     print_results=True,
