@@ -76,7 +76,7 @@ researcher = Agent(
 # =============================================================================
 
 research_team = Team(
-    name="ResearchTeam",
+    name="Research Team",
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[assistant, researcher],
     instructions=[
@@ -94,7 +94,7 @@ research_team = Team(
 # =============================================================================
 
 qa_workflow = Workflow(
-    name="QAWorkflow",
+    name="QA Workflow",
     description="A simple Q&A workflow that uses the assistant agent",
     db=db,
     steps=[
