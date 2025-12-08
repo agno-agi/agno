@@ -386,7 +386,8 @@ class AgentAsJudgeEval(BaseEval):
             evaluated_component_name=evaluated_component_name,
             eval_input={
                 "criteria": self.criteria,
-                "threshold": self.threshold,
+                "scoring_strategy": self.scoring_strategy,
+                "threshold": self.threshold if self.scoring_strategy == "numeric" else None,
                 "additional_guidelines": self.additional_guidelines,
             },
         )
@@ -418,7 +419,8 @@ class AgentAsJudgeEval(BaseEval):
             evaluated_component_name=evaluated_component_name,
             eval_input={
                 "criteria": self.criteria,
-                "threshold": self.threshold,
+                "scoring_strategy": self.scoring_strategy,
+                "threshold": self.threshold if self.scoring_strategy == "numeric" else None,
                 "additional_guidelines": self.additional_guidelines,
             },
         )
@@ -752,7 +754,8 @@ class AgentAsJudgeEval(BaseEval):
     def _get_telemetry_data(self, result: Optional[AgentAsJudgeResult] = None) -> Dict[str, Any]:
         return {
             "criteria_length": len(self.criteria) if self.criteria else 0,
-            "threshold": self.threshold,
+            "scoring_strategy": self.scoring_strategy,
+            "threshold": self.threshold if self.scoring_strategy == "numeric" else None,
             "num_results": len(result.results) if result else 0,
         }
 
