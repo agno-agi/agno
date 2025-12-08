@@ -3,29 +3,121 @@ Managers for AgentOS.
 
 This module provides various manager classes for AgentOS:
 - WebSocketManager: WebSocket connection management for real-time streaming
-- WorkflowEventBuffer: Event buffering for workflow reconnection support
+- EventsBuffer: Event buffering for agent/team/workflow reconnection support
+- WebSocketHandler: Handler for sending events over WebSocket connections
 
-Future managers (e.g., RunCancellationManager) can be added here.
+These managers are used by agents, teams, and workflows for background WebSocket execution.
 """
 
 import json
+from dataclasses import dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Union
+
+from starlette.websockets import WebSocket
 
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.utils.log import log_debug, log_warning, logger
-from starlette.websockets import WebSocket
+from agno.utils.serialize import json_serializer
+
+
+@dataclass
+class WebSocketHandler:
+    """Generic WebSocket handler for real-time agent/team/workflow events"""
+
+    websocket: Optional[WebSocket] = None
+
+    def format_sse_event(self, json_data: str) -> str:
+        """Parse JSON data into SSE-compliant format.
+
+        Args:
+            json_data: JSON string containing the event data
+
+        Returns:
+            SSE-formatted response with event type and data
+        """
+        try:
+            # Parse the JSON to extract the event type
+            data = json.loads(json_data)
+            event_type = data.get("event", "message")
+
+            # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
+            return f"event: {event_type}\ndata: {json_data}\n\n"
+        except (json.JSONDecodeError, KeyError):
+            # Fallback to generic message event if parsing fails
+            return f"event: message\ndata: {json_data}\n\n"
+
+    async def handle_event(self, event: Any, event_index: Optional[int] = None, run_id: Optional[str] = None) -> None:
+        """Handle an event object - serializes and sends via WebSocket with event_index for reconnection support"""
+        if not self.websocket:
+            return
+
+        try:
+            if hasattr(event, "to_dict"):
+                data = event.to_dict()
+            elif hasattr(event, "__dict__"):
+                data = event.__dict__
+            elif isinstance(event, dict):
+                data = event
+            else:
+                data = {"type": "message", "content": str(event)}
+
+            # Add event_index and run_id for reconnection support (if provided)
+            if event_index is not None:
+                data["event_index"] = event_index
+            if run_id:
+                data["run_id"] = run_id
+
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
+
+        except RuntimeError as e:
+            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
+                log_debug("WebSocket closed, event not sent (expected during disconnection)")
+            else:
+                log_warning(f"Failed to handle WebSocket event: {e}")
+        except Exception as e:
+            log_warning(f"Failed to handle WebSocket event: {e}")
+
+    async def handle_text(self, message: str) -> None:
+        """Handle a plain text message"""
+        if not self.websocket:
+            return
+
+        try:
+            await self.websocket.send_text(self.format_sse_event(message))
+        except RuntimeError as e:
+            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
+                log_debug("WebSocket closed, text not sent (expected during disconnection)")
+            else:
+                log_warning(f"Failed to send WebSocket text: {e}")
+        except Exception as e:
+            log_warning(f"Failed to send WebSocket text: {e}")
+
+    async def handle_dict(self, data: Dict[str, Any]) -> None:
+        """Handle a dictionary directly"""
+        if not self.websocket:
+            return
+
+        try:
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
+        except RuntimeError as e:
+            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
+                log_debug("WebSocket closed, dict not sent (expected during disconnection)")
+            else:
+                log_warning(f"Failed to send WebSocket dict: {e}")
+        except Exception as e:
+            log_warning(f"Failed to send WebSocket dict: {e}")
 
 
 class WebSocketManager:
     """
-    Manages WebSocket connections for workflow runs.
+    Manages WebSocket connections for agent, team, and workflow runs.
 
     Handles connection lifecycle, authentication, and message broadcasting
-    for real-time workflow event streaming.
+    for real-time event streaming across all execution types.
     """
 
     active_connections: Dict[str, WebSocket]  # {run_id: websocket}
@@ -54,9 +146,9 @@ class WebSocketManager:
                 {
                     "event": "connected",
                     "message": (
-                        "Connected to workflow events. Please authenticate to continue."
+                        "Connected to AgentOS. Please authenticate to continue."
                         if requires_auth
-                        else "Connected to workflow events. Authentication not required."
+                        else "Connected to AgentOS. Authentication not required."
                     ),
                     "requires_auth": requires_auth,
                 }
@@ -82,19 +174,19 @@ class WebSocketManager:
         """Check if a WebSocket connection is authenticated"""
         return self.authenticated_connections.get(websocket, False)
 
-    async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
-        """Register a workflow run with its WebSocket connection"""
+    async def register_websocket(self, run_id: str, websocket: WebSocket):
+        """Register a run (agent/team/workflow) with its WebSocket connection"""
         self.active_connections[run_id] = websocket
         logger.debug(f"Registered WebSocket for run_id: {run_id}")
 
-    async def broadcast_to_workflow(self, run_id: str, message: str):
-        """Broadcast a message to the websocket registered for this workflow run"""
+    async def broadcast_to_run(self, run_id: str, message: str):
+        """Broadcast a message to the websocket registered for this run (agent/team/workflow)"""
         if run_id in self.active_connections:
             websocket = self.active_connections[run_id]
             try:
                 await websocket.send_text(message)
             except Exception as e:
-                log_warning(f"Failed to broadcast to workflow {run_id}: {e}")
+                log_warning(f"Failed to broadcast to run {run_id}: {e}")
                 # Remove dead connection
                 await self.disconnect_by_run_id(run_id)
 
@@ -122,19 +214,19 @@ class WebSocketManager:
         logger.debug("WebSocket disconnected and cleaned up")
 
     async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
-        """Get WebSocket connection for a workflow run"""
+        """Get WebSocket connection for a run (agent/team/workflow)"""
         return self.active_connections.get(run_id)
 
 
 class EventsBuffer:
     """
-    In-memory buffer for workflow events to support WebSocket reconnection.
+    In-memory buffer for events to support WebSocket reconnection.
 
-    Stores recent events for active workflow runs, allowing clients to catch up
-    on missed events when reconnecting after disconnection or page refresh.
+    Stores recent events for active runs (agents, teams, workflows), allowing clients
+    to catch up on missed events when reconnecting after disconnection or page refresh.
 
-    Buffers all event types: WorkflowRunOutputEvent, RunOutputEvent (from agents),
-    and TeamRunOutputEvent (from teams).
+    Buffers all event types: RunOutputEvent (agents), TeamRunOutputEvent (teams),
+    and WorkflowRunOutputEvent (workflows).
     """
 
     def __init__(self, max_events_per_run: int = 1000, cleanup_interval: int = 3600):
@@ -183,7 +275,7 @@ class EventsBuffer:
         Get events since the last received event index.
 
         Args:
-            run_id: The workflow run ID
+            run_id: The run ID (agent/team/workflow)
             last_event_index: Index of last event received by client (0-based)
 
         Returns:
@@ -241,12 +333,13 @@ class EventsBuffer:
             self.cleanup_run(run_id)
 
         if runs_to_cleanup:
-            log_debug(f"Cleaned up {len(runs_to_cleanup)} old workflow run buffers")
+            log_debug(f"Cleaned up {len(runs_to_cleanup)} old run buffers")
 
     def get_run_status(self, run_id: str) -> Optional[RunStatus]:
         """Get the status of a run from metadata"""
         metadata = self.run_metadata.get(run_id)
         return metadata["status"] if metadata else None
+
 
 # Global manager instances
 websocket_manager = WebSocketManager(

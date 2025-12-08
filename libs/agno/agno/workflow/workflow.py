@@ -30,6 +30,7 @@ from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledExcep
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.os.managers import WebSocketHandler
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
@@ -81,7 +82,6 @@ from agno.workflow.types import (
     StepMetrics,
     StepOutput,
     StepType,
-    WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -1118,7 +1118,7 @@ class Workflow:
                     from agno.utils.serialize import json_serializer
 
                     asyncio.create_task(
-                        websocket_manager.broadcast_to_workflow(
+                        websocket_manager.broadcast_to_run(
                             buffer_run_id, json.dumps(event_dict, default=json_serializer)
                         )
                     )
@@ -3765,7 +3765,7 @@ class Workflow:
 
         websocket_handler = None
         if websocket:
-            from agno.workflow.types import WebSocketHandler
+            from agno.os.managers import WebSocketHandler
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 
