@@ -84,7 +84,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self,
         app,
         verification_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
         algorithm: str = "RS256",
+        validate: bool = True,
+        authorization: Optional[bool] = None,
         token_source: TokenSource = TokenSource.HEADER,
         token_header_key: str = "Authorization",
         cookie_name: str = "access_token",
@@ -95,7 +98,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         verify_audience: bool = False,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
-        authorization: Optional[bool] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
@@ -108,7 +110,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
             verification_key: Key used to verify JWT signatures (will use JWT_VERIFICATION_KEY env var if not provided).
                              For asymmetric algorithms (RS256, ES256), this should be the public key.
                              For symmetric algorithms (HS256), this is the shared secret.
+            secret_key: (deprecated) Use verification_key instead.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
+            validate: Whether to validate the JWT token (default: True)
+            authorization: Whether to add authorization checks to the request (i.e. validation of scopes)
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
             cookie_name: Cookie name for JWT token (default: "access_token")
@@ -117,7 +122,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             session_id_claim: JWT claim name for session ID (default: "session_id")
             audience_claim: JWT claim name for audience/OS ID (default: "aud")
             verify_audience: Whether to verify the audience claim matches AgentOS ID (default: False)
-            authorization: Whether to add validation/authorization checks to the request (i.e. validation of scopes)
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
             scope_mappings: Optional dictionary mapping route patterns to required scopes.
@@ -136,6 +140,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         # JWT configuration
         self.verification_key = verification_key or getenv("JWT_VERIFICATION_KEY", "")
+        if not self.verification_key and secret_key:
+            self.verification_key = secret_key
         if not self.verification_key:
             raise ValueError(
                 "JWT verification key is required. Set via verification_key parameter or JWT_VERIFICATION_KEY environment variable."
@@ -144,6 +150,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.token_source = token_source
         self.token_header_key = token_header_key
         self.cookie_name = cookie_name
+        self.validate = validate
         self.scopes_claim = scopes_claim
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
@@ -373,7 +380,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # Extract JWT token
         token = self._extract_token(request)
         if not token:
-            if self.authorization:
+            if self.validate:
                 error_msg = self._get_missing_token_error_message()
                 return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
@@ -400,6 +407,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.session_id = session_id
             request.state.scopes = scopes
             request.state.audience = audience
+            request.state.authorization_enabled = self.authorization or False
 
             # Extract dependencies claims
             dependencies = {}
@@ -485,29 +493,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authenticated = True
 
         except jwt.InvalidAudienceError:
-            if self.authorization:
-                log_warning(f"Invalid audience - expected: {agent_os_id}")
-                return self._create_error_response(
-                    401, "Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
-                )
-            request.state.authenticated = False
-            request.state.token = token
+            log_warning(f"Invalid audience - expected: {agent_os_id}")
+            return self._create_error_response(
+                401, "Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
+            )
 
         except jwt.ExpiredSignatureError:
-            if self.authorization:
+            if self.validate:
                 log_warning("Token has expired")
                 return self._create_error_response(401, "Token has expired", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
 
         except jwt.InvalidTokenError as e:
-            if self.authorization:
+            if self.validate:
                 log_warning(f"Invalid token: {str(e)}")
                 return self._create_error_response(401, f"Invalid token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
         except Exception as e:
-            if self.authorization:
+            if self.validate:
                 log_warning(f"Error decoding token: {str(e)}")
                 return self._create_error_response(401, f"Error decoding token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False

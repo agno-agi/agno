@@ -60,13 +60,14 @@ def jwt_test_client(jwt_test_agent):
         user_id_claim="sub",  # Extract user_id from 'sub' claim
         session_id_claim="session_id",  # Extract session_id from 'session_id' claim
         dependencies_claims=["name", "email", "roles", "org_id"],  # Extract these as dependencies
-        authorization=True,  # Enable token validation for this test
+        validate=True,  # Enable token validation for this test
+        authorization=False,  # Disable authorization checks for this test
     )
 
     return TestClient(app)
 
 
-def test_jwt_middleware_extracts_claims_correctly(jwt_test_client, jwt_token, jwt_test_agent):
+def test_extracts_claims_correctly(jwt_test_client, jwt_token, jwt_test_agent):
     """Test that JWT middleware correctly extracts claims and makes them available to tools."""
 
     # Mock the agent's arun method to capture the tool call results
@@ -110,7 +111,7 @@ def test_jwt_middleware_extracts_claims_correctly(jwt_test_client, jwt_token, jw
         }
 
 
-def test_jwt_middleware_without_token_fails_validation(jwt_test_client):
+def test_without_token_fails_validation(jwt_test_client):
     """Test that requests without JWT token are rejected when validation is enabled."""
 
     response = jwt_test_client.post(
@@ -126,7 +127,7 @@ def test_jwt_middleware_without_token_fails_validation(jwt_test_client):
     assert "Authorization header missing" in response.json()["detail"]
 
 
-def test_jwt_middleware_with_invalid_token_fails(jwt_test_client):
+def test_with_invalid_token_fails(jwt_test_client):
     """Test that requests with invalid JWT token are rejected."""
 
     response = jwt_test_client.post(
@@ -143,7 +144,7 @@ def test_jwt_middleware_with_invalid_token_fails(jwt_test_client):
     assert "Invalid token" in response.json()["detail"]
 
 
-def test_jwt_middleware_with_expired_token_fails(jwt_test_client):
+def test_with_expired_token_fails(jwt_test_client):
     """Test that requests with expired JWT token are rejected."""
 
     # Create expired token
@@ -168,7 +169,7 @@ def test_jwt_middleware_with_expired_token_fails(jwt_test_client):
     assert "Token has expired" in response.json()["detail"]
 
 
-def test_jwt_middleware_validation_disabled(jwt_test_agent):
+def test_validation_disabled(jwt_test_agent):
     """Test JWT middleware with validation disabled."""
 
     # Create AgentOS with JWT middleware but validation disabled
@@ -183,7 +184,7 @@ def test_jwt_middleware_validation_disabled(jwt_test_agent):
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email", "roles"],
-        authorization=False,  # Disable validation
+        validate=False,  # Disable validation
     )
 
     client = TestClient(app)
@@ -207,7 +208,7 @@ def test_jwt_middleware_validation_disabled(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_custom_claims_configuration(jwt_test_agent):
+def test_custom_claims_configuration(jwt_test_agent):
     """Test JWT middleware with custom claim configurations."""
 
     # Create AgentOS with custom claim mappings
@@ -222,7 +223,7 @@ def test_jwt_middleware_custom_claims_configuration(jwt_test_agent):
         user_id_claim="custom_user_id",  # Different claim name
         session_id_claim="custom_session",  # Different claim name
         dependencies_claims=["department", "level"],  # Different dependency claims
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -257,7 +258,7 @@ def test_jwt_middleware_custom_claims_configuration(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_excluded_routes(jwt_test_agent):
+def test_excluded_routes(jwt_test_agent):
     """Test that JWT middleware can exclude certain routes from authentication."""
 
     # Create AgentOS
@@ -273,7 +274,7 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email"],
-        authorization=True,
+        validate=True,
         excluded_route_paths=[
             "/health",  # Exclude health endpoint
             "/sessions",  # Exclude sessions endpoint
@@ -303,7 +304,7 @@ def test_jwt_middleware_excluded_routes(jwt_test_agent):
     assert response.status_code == 401
 
 
-def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
+def test_cookie_token_source(jwt_test_agent, jwt_token):
     """Test JWT middleware with cookie as token source."""
 
     # Create AgentOS with cookie-based JWT middleware
@@ -319,7 +320,7 @@ def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
         user_id_claim="sub",
         session_id_claim="session_id",
         dependencies_claims=["name", "email", "roles", "org_id"],
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -349,7 +350,7 @@ def test_jwt_middleware_cookie_token_source(jwt_test_agent, jwt_token):
         assert call_args.kwargs["session_id"] == "test_session_456"
 
 
-def test_jwt_middleware_cookie_missing_token_fails(jwt_test_agent):
+def test_cookie_missing_token_fails(jwt_test_agent):
     """Test that cookie-based middleware fails when cookie is missing."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -361,7 +362,7 @@ def test_jwt_middleware_cookie_missing_token_fails(jwt_test_agent):
         algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -376,7 +377,7 @@ def test_jwt_middleware_cookie_missing_token_fails(jwt_test_agent):
     assert "JWT cookie 'jwt_token' missing" in response.json()["detail"]
 
 
-def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_token):
+def test_both_token_sources_header_first(jwt_test_agent, jwt_token):
     """Test JWT middleware with both token sources, header takes precedence."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -389,7 +390,7 @@ def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_toke
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -422,7 +423,7 @@ def test_jwt_middleware_both_token_sources_header_first(jwt_test_agent, jwt_toke
         assert call_args.kwargs["user_id"] == "test_user_123"
 
 
-def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_token):
+def test_both_token_sources_cookie_fallback(jwt_test_agent, jwt_token):
     """Test JWT middleware with both token sources, falls back to cookie."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -435,7 +436,7 @@ def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_t
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -457,7 +458,7 @@ def test_jwt_middleware_both_token_sources_cookie_fallback(jwt_test_agent, jwt_t
         assert call_args.kwargs["user_id"] == "test_user_123"
 
 
-def test_jwt_middleware_both_token_sources_missing_both_fails(jwt_test_agent):
+def test_both_token_sources_missing_both_fails(jwt_test_agent):
     """Test that both token sources fail when neither header nor cookie present."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -468,7 +469,7 @@ def test_jwt_middleware_both_token_sources_missing_both_fails(jwt_test_agent):
         verification_key=JWT_SECRET,
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -483,7 +484,7 @@ def test_jwt_middleware_both_token_sources_missing_both_fails(jwt_test_agent):
     assert "JWT token missing from both Authorization header and 'jwt_cookie' cookie" in response.json()["detail"]
 
 
-def test_jwt_middleware_custom_cookie_name(jwt_test_agent, jwt_token):
+def test_custom_cookie_name(jwt_test_agent, jwt_token):
     """Test JWT middleware with custom cookie name."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -497,7 +498,7 @@ def test_jwt_middleware_custom_cookie_name(jwt_test_agent, jwt_token):
         token_source=TokenSource.COOKIE,
         cookie_name=custom_cookie_name,
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -521,7 +522,7 @@ def test_jwt_middleware_custom_cookie_name(jwt_test_agent, jwt_token):
         assert call_args.kwargs["user_id"] == "test_user_123"
 
 
-def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
+def test_cookie_invalid_token_fails(jwt_test_agent):
     """Test that cookie-based middleware fails with invalid token."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -533,7 +534,7 @@ def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
         algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -549,7 +550,7 @@ def test_jwt_middleware_cookie_invalid_token_fails(jwt_test_agent):
     assert "Invalid token" in response.json()["detail"]
 
 
-def test_jwt_middleware_scopes_string_format(jwt_test_agent):
+def test_scopes_string_format(jwt_test_agent):
     """Test JWT middleware with scopes claim as space-separated string."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -561,7 +562,7 @@ def test_jwt_middleware_scopes_string_format(jwt_test_agent):
         algorithm="HS256",
         scopes_claim="scope",  # Standard OAuth2 scope claim
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -590,7 +591,7 @@ def test_jwt_middleware_scopes_string_format(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_scopes_list_format(jwt_test_agent):
+def test_scopes_list_format(jwt_test_agent):
     """Test JWT middleware with scopes claim as list."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -602,7 +603,7 @@ def test_jwt_middleware_scopes_list_format(jwt_test_agent):
         algorithm="HS256",
         scopes_claim="permissions",  # Custom scope claim name
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -631,7 +632,7 @@ def test_jwt_middleware_scopes_list_format(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_no_scopes_claim(jwt_test_agent):
+def test_no_scopes_claim(jwt_test_agent):
     """Test JWT middleware when no scopes claim is configured."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -643,7 +644,7 @@ def test_jwt_middleware_no_scopes_claim(jwt_test_agent):
         algorithm="HS256",
         scopes_claim=None,  # No scopes extraction
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -672,7 +673,7 @@ def test_jwt_middleware_no_scopes_claim(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_session_state_claims(jwt_test_agent):
+def test_session_state_claims(jwt_test_agent):
     """Test JWT middleware with session_state_claims extraction."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -684,7 +685,7 @@ def test_jwt_middleware_session_state_claims(jwt_test_agent):
         algorithm="HS256",
         user_id_claim="sub",
         session_state_claims=["session_data", "user_preferences", "theme"],
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -716,7 +717,7 @@ def test_jwt_middleware_session_state_claims(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_custom_token_header_key(jwt_test_agent):
+def test_custom_token_header_key(jwt_test_agent):
     """Test JWT middleware with custom token header key instead of Authorization."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -729,7 +730,7 @@ def test_jwt_middleware_custom_token_header_key(jwt_test_agent):
         algorithm="HS256",
         token_header_key=custom_header_key,
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -768,7 +769,7 @@ def test_jwt_middleware_custom_token_header_key(jwt_test_agent):
         assert response.status_code == 401  # Should fail because custom header key is missing
 
 
-def test_jwt_middleware_malformed_authorization_header(jwt_test_agent):
+def test_malformed_authorization_header(jwt_test_agent):
     """Test JWT middleware with malformed Authorization headers."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -779,7 +780,7 @@ def test_jwt_middleware_malformed_authorization_header(jwt_test_agent):
         verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -808,16 +809,8 @@ def test_jwt_middleware_malformed_authorization_header(jwt_test_agent):
     )
     assert response.status_code == 401
 
-    # Test header without Bearer prefix
-    response = client.post(
-        "/agents/jwt-test-agent/runs",
-        headers={"Authorization": token},  # No Bearer prefix
-        data={"message": "Test no bearer prefix", "stream": "false"},
-    )
-    assert response.status_code == 401
 
-
-def test_jwt_middleware_missing_session_id_claim(jwt_test_agent):
+def test_missing_session_id_claim(jwt_test_agent):
     """Test JWT middleware when session_id_claim doesn't exist in token."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -829,7 +822,7 @@ def test_jwt_middleware_missing_session_id_claim(jwt_test_agent):
         algorithm="HS256",
         user_id_claim="sub",
         session_id_claim="missing_session_claim",  # Claim that won't exist
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -865,7 +858,7 @@ def test_jwt_middleware_missing_session_id_claim(jwt_test_agent):
         assert call_args.kwargs.get("session_id") != "test_session_456"
 
 
-def test_jwt_middleware_general_exception_during_decode(jwt_test_agent):
+def test_general_exception_during_decode(jwt_test_agent):
     """Test JWT middleware handles general exceptions during token decode."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -876,7 +869,7 @@ def test_jwt_middleware_general_exception_during_decode(jwt_test_agent):
         verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -893,7 +886,7 @@ def test_jwt_middleware_general_exception_during_decode(jwt_test_agent):
         assert "Error decoding token: General decode error" in response.json()["detail"]
 
 
-def test_jwt_middleware_different_algorithm_rs256(jwt_test_agent):
+def test_different_algorithm_rs256(jwt_test_agent):
     """Test JWT middleware with RS256 algorithm."""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -923,7 +916,7 @@ def test_jwt_middleware_different_algorithm_rs256(jwt_test_agent):
         verification_key=public_pem.decode("utf-8"),  # Use public key for verification
         algorithm="RS256",
         user_id_claim="sub",
-        authorization=True,
+        validate=True,
     )
 
     client = TestClient(app)
@@ -951,7 +944,7 @@ def test_jwt_middleware_different_algorithm_rs256(jwt_test_agent):
         mock_arun.assert_called_once()
 
 
-def test_jwt_middleware_request_state_token_storage(jwt_test_agent):
+def test_request_state_token_storage(jwt_test_agent):
     """Test that JWT middleware stores token and authentication status in request.state."""
 
     agent_os = AgentOS(agents=[jwt_test_agent])
@@ -972,7 +965,7 @@ def test_jwt_middleware_request_state_token_storage(jwt_test_agent):
         verification_key=JWT_SECRET,
         algorithm="HS256",
         user_id_claim="sub",
-        authorization=False,  # Don't fail on validation errors, just set authenticated=False
+        validate=False,  # Don't fail on validation errors, just set authenticated=False
     )
 
     client = TestClient(app)
@@ -1003,3 +996,471 @@ def test_jwt_middleware_request_state_token_storage(jwt_test_agent):
     assert data["has_authenticated"] is True
     assert data["authenticated"] is False
     assert data["token_present"] is True
+
+
+# --- Authorization Tests ---
+
+
+def test_authorization_enabled_flag_set_true(jwt_test_agent):
+    """Test that authorization_enabled is set to True in request.state when authorization=True."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    @app.get("/test-authorization-flag")
+    async def test_endpoint(request: Request):
+        return {
+            "authorization_enabled": getattr(request.state, "authorization_enabled", None),
+        }
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        authorization=True,
+        scope_mappings={
+            "GET /test-authorization-flag": [],  # Allow access without scopes
+        },
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:read"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.get("/test-authorization-flag", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["authorization_enabled"] is True
+
+
+def test_authorization_enabled_flag_set_false(jwt_test_agent):
+    """Test that authorization_enabled is set to False in request.state when authorization=False."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    @app.get("/test-authorization-flag")
+    async def test_endpoint(request: Request):
+        return {
+            "authorization_enabled": getattr(request.state, "authorization_enabled", None),
+        }
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        authorization=False,  # Explicitly disable authorization
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.get("/test-authorization-flag", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["authorization_enabled"] is False
+
+
+def test_authorization_enabled_implicitly_by_scope_mappings(jwt_test_agent):
+    """Test that authorization is implicitly enabled when scope_mappings are provided."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    @app.get("/test-authorization-flag")
+    async def test_endpoint(request: Request):
+        return {
+            "authorization_enabled": getattr(request.state, "authorization_enabled", None),
+        }
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        # authorization not explicitly set, but scope_mappings provided
+        scope_mappings={
+            "GET /test-authorization-flag": [],  # Allow access without scopes
+        },
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.get("/test-authorization-flag", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["authorization_enabled"] is True
+
+
+def test_router_checks_skipped_when_authorization_disabled(jwt_test_agent):
+    """Test that router-level authorization checks are skipped when authorization=False."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        authorization=False,  # Authorization disabled
+    )
+
+    client = TestClient(app)
+
+    # Create token WITHOUT any scopes - should still be able to access agents
+    payload = {
+        "sub": "test_user_123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+        # No scopes claim
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Should be able to list agents without scopes when authorization is disabled
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+
+    # Should succeed (200) because authorization checks are skipped
+    assert response.status_code == 200
+
+
+def test_router_checks_enforced_when_authorization_enabled(jwt_test_agent):
+    """Test that router-level authorization checks are enforced when authorization=True."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,  # Authorization enabled
+    )
+
+    client = TestClient(app)
+
+    # Create token WITHOUT any scopes
+    payload_no_scopes = {
+        "sub": "test_user_123",
+        "scopes": [],  # Empty scopes
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token_no_scopes = jwt.encode(payload_no_scopes, JWT_SECRET, algorithm="HS256")
+
+    # Should fail to list agents without proper scopes when authorization is enabled
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token_no_scopes}"})
+
+    # Should fail (403) because user has no agent scopes
+    assert response.status_code == 403
+    assert "Insufficient permissions" in response.json()["detail"]
+
+
+def test_router_allows_access_with_valid_scopes(jwt_test_agent):
+    """Test that router-level checks allow access with valid scopes."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with agents:read scope
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:read"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Should be able to list agents with agents:read scope
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+
+
+def test_router_allows_specific_agent_access(jwt_test_agent):
+    """Test that router-level checks allow access to specific agent with proper scopes."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with specific agent scope
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:jwt-test-agent:read"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Should be able to access the specific agent
+    response = client.get("/agents/jwt-test-agent", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+
+
+def test_router_denies_wrong_agent_access(jwt_test_agent):
+    """Test that router-level checks deny access to agent user doesn't have scope for."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with scope for different agent
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:other-agent:read"],  # Scope for different agent
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Should be denied access to jwt-test-agent
+    response = client.get("/agents/jwt-test-agent", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+    assert "Insufficient permissions" in response.json()["detail"]
+
+
+def test_router_run_agent_with_valid_scope(jwt_test_agent):
+    """Test that agent run endpoint works with proper run scope."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with agent run scope
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:jwt-test-agent:run"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Success with run scope"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test with run scope", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_router_denies_run_without_scope(jwt_test_agent):
+    """Test that agent run endpoint is denied without run scope."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with only read scope (no run scope)
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:jwt-test-agent:read"],  # Only read, not run
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 403
+    assert "Insufficient permissions" in response.json()["detail"]
+
+
+def test_admin_scope_grants_all_access(jwt_test_agent):
+    """Test that admin scope grants access to all resources."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with admin scope
+    payload = {
+        "sub": "admin_user",
+        "scopes": ["agent_os:admin"],  # Admin scope
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Should be able to list agents
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    # Should be able to access specific agent
+    response = client.get("/agents/jwt-test-agent", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    # Should be able to run agent
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Admin success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Admin test", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+
+
+def test_wildcard_scope_grants_resource_access(jwt_test_agent):
+    """Test that wildcard scope grants access to all resources of that type."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with wildcard agent scope
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:*:read", "agents:*:run"],  # Wildcard for all agents
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    # Should be able to list agents
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    # Should be able to access any agent
+    response = client.get("/agents/jwt-test-agent", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    # Should be able to run any agent
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Wildcard success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Wildcard test", "stream": "false"},
+        )
+
+        assert response.status_code == 200

@@ -6,6 +6,8 @@ This directory contains examples demonstrating AgentOS's RBAC (Role-Based Access
 
 AgentOS RBAC provides fine-grained access control using JWT tokens with scopes.
 
+**Important:** RBAC is opt-in. Router-level authorization checks (scope validation, resource filtering) only run when `authorization=True` is set on the JWT middleware. Without this flag, JWT tokens are validated but all resources are accessible.
+
 The system supports:
 
 1. **Audience Verification** - JWT `aud` claim must match the AgentOS ID
@@ -150,6 +152,9 @@ See `advanced_scopes.py` for comprehensive examples of:
 
 ### 1. Enable RBAC
 
+There are two ways to enable RBAC:
+
+**Option A: Via AgentOS parameters (recommended)**
 ```python
 from agno.os import AgentOS
 
@@ -157,12 +162,37 @@ agent_os = AgentOS(
     id="my-agent-os",  # Important: Set ID for audience verification
     agents=[agent1, agent2],
     authorization=True,  # Enable RBAC
-    jwt_verification_key="your-public-key-or-secret",  # Or set JWT_VERIFICATION_KEY env var
-    jwt_algorithm="RS256",  # Default; use "HS256" for symmetric keys
+    authorization_config=AuthorizationConfig(
+        verification_key="your-public-key-or-secret",  # Or set JWT_VERIFICATION_KEY env var
+        algorithm="RS256",  # Default; use "HS256" for symmetric keys
+    ),
 )
 
 app = agent_os.get_app()
 ```
+
+**Option B: Via JWTMiddleware directly**
+```python
+from agno.os import AgentOS
+from agno.os.middleware import JWTMiddleware
+
+agent_os = AgentOS(
+    id="my-agent-os",
+    agents=[agent1, agent2],
+)
+
+app = agent_os.get_app()
+
+app.add_middleware(
+    JWTMiddleware,
+    verification_key="your-public-key-or-secret",
+    algorithm="RS256",
+    authorization=True,  # Enable RBAC - without this, scopes are NOT enforced
+    verify_audience=True,  # Verify aud claim matches AgentOS ID
+)
+```
+
+**Note:** When `authorization=False` (or not set), JWT tokens are still validated but scope-based access control is disabled - all authenticated users can access all resources.
 
 ### 2. Create JWT Tokens with Scopes and Audience
 
@@ -247,6 +277,8 @@ All AgentOS endpoints have default scope requirements:
 }
 ```
 
+See `/libs/agno/agno/os/scopes.py` for the default scope mappings.
+
 ## Custom Scope Mappings
 
 You can override or extend default mappings:
@@ -275,15 +307,12 @@ app.add_middleware(
 
 ## Security Best Practices
 
-1. **Use RS256 asymmetric keys in production** - Only share the public key with AgentOS
+1. **Use RS256 asymmetric keys in production** - Only share the public key with AgentOS. This is how the AgentOS Control Plane communicates with your AgentOS instance.
 2. **Use environment variables** for keys and secrets
-3. **Use PostgreSQL in production** (not SQLite)
-4. **Set appropriate token expiration** (exp claim)
-5. **Include audience claim** (aud) matching your AgentOS ID
-6. **Use HTTPS** in production
-7. **Rotate keys regularly**
-8. **Follow principle of least privilege** - Grant minimum required scopes
-9. **Monitor access logs** for suspicious activity
+3. **Set appropriate token expiration** (exp claim)
+4. **Use HTTPS** in production
+5. **Follow principle of least privilege** - Grant minimum required scopes
+6. **Monitor access logs** for suspicious activity
 
 ## Troubleshooting
 
@@ -291,7 +320,6 @@ app.add_middleware(
 - Token missing or expired
 - Invalid JWT secret/key
 - Token format incorrect
-- **Audience mismatch** - `aud` claim doesn't match AgentOS ID
 
 ### 403 Forbidden
 - User lacks required scopes
@@ -300,6 +328,11 @@ app.add_middleware(
 ### Agents not appearing in GET /agents
 - User lacks read scopes for those agents
 - Check both `agents:read` and `agents:<id>:read` scopes
+
+### Scopes not being enforced
+- Ensure `authorization=True` is set on JWTMiddleware or AgentOS
+- Without this flag, JWT validation occurs but scope checks are skipped
+- All authenticated users will have access to all resources
 
 ## Additional Resources
 

@@ -109,7 +109,10 @@ app.add_middleware(
     cookie_name="auth_token",  # Name of the cookie containing the JWT
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
-    scopes_claim="scopes",  # Extract scopes from 'scopes' claim
+    dependencies_claims=["name", "email", "roles", "org"],
+    # In this example, we want this middleware to demonstrate parameter injection, not token validation.
+    # In production scenarios, you will probably also want token validation. Be careful setting this to False.
+    validate=False,
 )
 
 

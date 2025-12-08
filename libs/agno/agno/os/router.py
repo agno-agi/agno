@@ -869,11 +869,12 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # Check if user has access to run this specific agent
-        from agno.os.auth import check_resource_access
+        # Check if user has access to run this specific agent (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import check_resource_access
 
-        if not check_resource_access(request, agent_id, "agents", "run"):
-            raise HTTPException(status_code=403, detail="Access denied to run this agent")
+            if not check_resource_access(request, agent_id, "agents", "run"):
+                raise HTTPException(status_code=403, detail="Access denied to run this agent")
 
         if session_id is None or session_id == "":
             log_debug("Creating new session")
@@ -1174,16 +1175,19 @@ def get_base_router(
         if os.agents is None:
             return []
 
-        # Filter agents based on user's scopes
-        from agno.os.auth import filter_resources_by_access, get_accessible_resources
+        # Filter agents based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
 
-        # Check if user has any agent scopes at all
-        accessible_ids = get_accessible_resources(request, "agents")
-        if not accessible_ids:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            # Check if user has any agent scopes at all
+            accessible_ids = get_accessible_resources(request, "agents")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-        # Limit results based on the user's access/scopes
-        accessible_agents = filter_resources_by_access(request, os.agents, "agents")
+            # Limit results based on the user's access/scopes
+            accessible_agents = filter_resources_by_access(request, os.agents, "agents")
+        else:
+            accessible_agents = os.agents
 
         agents = []
         for agent in accessible_agents:
@@ -1235,11 +1239,12 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # Check if user has access to this specific agent
-        from agno.os.auth import check_resource_access
+        # Check if user has access to this specific agent (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import check_resource_access
 
-        if not check_resource_access(request, agent_id, "agents", "read"):
-            raise HTTPException(status_code=403, detail="Access denied to this agent")
+            if not check_resource_access(request, agent_id, "agents", "read"):
+                raise HTTPException(status_code=403, detail="Access denied to this agent")
 
         return await AgentResponse.from_agent(agent)
 
@@ -1318,11 +1323,12 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        # Check if user has access to run this specific team
-        from agno.os.auth import check_resource_access
+        # Check if user has access to run this specific team (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import check_resource_access
 
-        if not check_resource_access(request, team_id, "teams", "run"):
-            raise HTTPException(status_code=403, detail="Access denied to run this team")
+            if not check_resource_access(request, team_id, "teams", "run"):
+                raise HTTPException(status_code=403, detail="Access denied to run this team")
 
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -1534,15 +1540,18 @@ def get_base_router(
         if os.teams is None:
             return []
 
-        # Filter teams based on user's scopes
-        from agno.os.auth import filter_resources_by_access, get_accessible_resources
+        # Filter teams based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
 
-        # Check if user has any team scopes at all
-        accessible_ids = get_accessible_resources(request, "teams")
-        if not accessible_ids:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            # Check if user has any team scopes at all
+            accessible_ids = get_accessible_resources(request, "teams")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-        accessible_teams = filter_resources_by_access(request, os.teams, "teams")
+            accessible_teams = filter_resources_by_access(request, os.teams, "teams")
+        else:
+            accessible_teams = os.teams
 
         teams = []
         for team in accessible_teams:
@@ -1640,11 +1649,12 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        # Check if user has access to this specific team
-        from agno.os.auth import check_resource_access
+        # Check if user has access to this specific team (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import check_resource_access
 
-        if not check_resource_access(request, team_id, "teams", "read"):
-            raise HTTPException(status_code=403, detail="Access denied to this team")
+            if not check_resource_access(request, team_id, "teams", "read"):
+                raise HTTPException(status_code=403, detail="Access denied to this team")
 
         return await TeamResponse.from_team(team)
 
@@ -1688,15 +1698,18 @@ def get_base_router(
         if os.workflows is None:
             return []
 
-        # Filter workflows based on user's scopes
-        from agno.os.auth import filter_resources_by_access, get_accessible_resources
+        # Filter workflows based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
 
-        # Check if user has any workflow scopes at all
-        accessible_ids = get_accessible_resources(request, "workflows")
-        if not accessible_ids:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            # Check if user has any workflow scopes at all
+            accessible_ids = get_accessible_resources(request, "workflows")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-        accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
+            accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
+        else:
+            accessible_workflows = os.workflows
 
         return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in accessible_workflows]
 
@@ -1730,11 +1743,12 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        # Check if user has access to this specific workflow
-        from agno.os.auth import check_resource_access
+        # Check if user has access to this specific workflow (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import check_resource_access
 
-        if not check_resource_access(request, workflow_id, "workflows", "read"):
-            raise HTTPException(status_code=403, detail="Access denied to this workflow")
+            if not check_resource_access(request, workflow_id, "workflows", "read"):
+                raise HTTPException(status_code=403, detail="Access denied to this workflow")
 
         return await WorkflowResponse.from_workflow(workflow)
 
@@ -1812,11 +1826,12 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        # Check if user has access to run this specific workflow
-        from agno.os.auth import check_resource_access
+        # Check if user has access to run this specific workflow (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import check_resource_access
 
-        if not check_resource_access(request, workflow_id, "workflows", "run"):
-            raise HTTPException(status_code=403, detail="Access denied to run this workflow")
+            if not check_resource_access(request, workflow_id, "workflows", "run"):
+                raise HTTPException(status_code=403, detail="Access denied to run this workflow")
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
