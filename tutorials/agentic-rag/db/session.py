@@ -3,6 +3,10 @@
 from os import getenv
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def get_db_url() -> Optional[str]:
     """Build database URL from environment variables."""

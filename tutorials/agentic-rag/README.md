@@ -27,24 +27,20 @@ For more information, checkout [Agno](https://agno.link/gh).
 ### Run with Docker
 
 ```bash
-git clone https://github.com/agno-agi/tutorials
-cd tutorials/agentic-rag
+git clone https://github.com/agno-agi/agno.git
+cd agno/tutorials/agentic-rag
 cp .env.example .env
 # Add your OPENAI_API_KEY to .env
 
+docker compose down  # Stop any existing containers
 docker compose up -d --build
-```
-
-Test it:
-
-```bash
-curl -X POST http://localhost:8000/agents/docs-assistant/runs \
-  -F "message=How do I create an agent in Agno?"
 ```
 
 ### Connect to AgentOS UI
 
 Open [os.agno.com](https://os.agno.com) and connect with endpoint `http://localhost:8000`.
+
+> **Note:** First startup takes 1-2 minutes while documents are loaded into the vector database. Wait for the green connection indicator before chatting.
 
 ## Running with Python
 
@@ -123,5 +119,6 @@ View logs: `railway logs --service api`
 
 ## Learn More
 
+- [Full Tutorial](https://docs.agno.com/tutorials/agentic-rag) - Step-by-step guide with explanations
 - [Agno Documentation](https://docs.agno.com)
-- [Knowledge Documentation](https://docs.agno.com/knowledge)
+- [Knowledge Documentation](https://docs.agno.com/basics/knowledge/overview)
