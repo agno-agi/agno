@@ -1,16 +1,16 @@
-# Agentic Culture & Cultural Knowledge
+# Shared Learnings (Culture for Agents)
 
-When we as humans learn something that can be useful in the future, we communicate it to each other. The consolidation of this shared knowledge, is the foundation of what we call culture.
+When humans learn a new skill or quality that will be useful in the future, we process, store and communicate it with each other via cultural artifacts. The consolidation of this shared knowledge, is the foundation of what we call culture.
 
-With Agno, you can now equip your Agents with similar collective knowledge, that persists beyond individual memory, using our Culture feature.
+With Agno, you can now give your Agents shared collective knowledge, that persists beyond individual memory, using our `Culture` service. This allows your Agents to learn from each other and build on each other's ideas over time.
 
 ## How Culture Works
 
-Culture provides a shared space for Agents to think, write, and build on each other's ideas.
+`Culture` provides a shared space for Agents to think, write, and build on each other's ideas.
 
-Unlike Memory, which stores user-specific information ("Sarah prefers email"), Culture stores universal knowledge that benefits all interactions ("Always provide actionable solutions with clear next steps").
+Unlike Memory, which stores user-specific information ("Sarah prefers email"), `Culture` stores universal knowledge that benefits all interactions ("Always provide actionable solutions with clear next steps").
 
-Using Culture, your Agents will be able to transmit relevant learnings to each other and across time - similarly to how we transmit knowledge across generations.
+Using `Culture`, your Agents will be able to transmit relevant learnings to each other and across time - similarly to how we transmit knowledge across generations.
 
 > "Culture is how intelligence compounds"
 
