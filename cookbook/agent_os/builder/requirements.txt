@@ -1,0 +1,12 @@
+agno
+sqlalchemy
+psycopg-binary
+duckduckgo-search
+yfinance
+arxiv
+wikipedia
+fastapi
+uvicorn
+google-genai
+anthropic
+pypdf

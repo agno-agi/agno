@@ -68,12 +68,14 @@ def get_builder_router(builder: BuilderConfig) -> APIRouter:
             databases=databases,
         )
 
+    # Purely for adding the response model to our swagger docs
+    # TODO: REMOVE AFTER TESTING
     @router.post("/agents", response_model=BuilderAgentRequest)
     async def create_agent(agent: BuilderAgentRequest):
         """
         Create a new agent configuration.
         """
-        # TODO: Persist agent configuration to database
+
         return agent
 
     return router
