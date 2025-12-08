@@ -352,6 +352,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -372,7 +373,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_regeneration_messages(messages)
 
             return model_response
 
@@ -400,6 +407,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -419,7 +427,11 @@ class Gemini(Model):
                 contents=formatted_messages,
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                yield self._parse_provider_response_delta(response, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_regeneration_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -446,6 +458,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -468,7 +481,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_regeneration_messages(messages)
 
             return model_response
 
@@ -495,6 +514,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -517,7 +537,11 @@ class Gemini(Model):
                 **request_kwargs,
             )
             async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_regeneration_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -925,9 +949,9 @@ class Gemini(Model):
             if hasattr(candidate, "finish_reason") and candidate.finish_reason:
                 if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
                     # We only want to raise errors that trigger regeneration attempts once
-                    if self._regeneration_attempt is True:
+                    if kwargs.get("retrying_with_guidance") is True:
                         pass
-                    if self.enable_regeneration_attempt:
+                    if self.retry_with_guidance:
                         raise GeminiMalformedFunctionCallError(
                             retry_guidance_message=self._get_malformed_function_call_guidance_message()
                         )
@@ -1076,7 +1100,7 @@ class Gemini(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse, **kwargs) -> ModelResponse:
         model_response = ModelResponse()
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
@@ -1086,8 +1110,7 @@ class Gemini(Model):
             # Raise if the request failed because of a malformed function call
             if hasattr(candidate, "finish_reason") and candidate.finish_reason:
                 if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
-                    # We only want to raise errors that trigger regeneration attempts once
-                    if self._regeneration_attempt is True:
+                    if kwargs.get("retrying_with_guidance") is True:
                         pass
                     raise GeminiMalformedFunctionCallError(
                         retry_guidance_message=self._get_malformed_function_call_guidance_message()
