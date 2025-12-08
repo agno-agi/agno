@@ -1724,6 +1724,9 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
+            if attempt > 0:
+                log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
                 # Resolve dependencies
                 if run_context.dependencies is not None:
@@ -1801,74 +1804,69 @@ class Agent:
 
                 yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
-                try:
-                    if stream:
-                        response_iterator = self._run_stream(
-                            run_response=run_response,
-                            run_context=run_context,
-                            session=agent_session,
-                            user_id=user_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            yield_run_output=yield_run_output,
-                            debug_mode=debug_mode,
-                            background_tasks=background_tasks,
-                            **kwargs,
-                        )
-                        return response_iterator
-                    else:
-                        response = self._run(
-                            run_response=run_response,
-                            run_context=run_context,
-                            session=agent_session,
-                            user_id=user_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            response_format=response_format,
-                            debug_mode=debug_mode,
-                            background_tasks=background_tasks,
-                            **kwargs,
-                        )
-                        return response
-                except (InputCheckError, OutputCheckError) as e:
-                    log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                    raise e
-                except KeyboardInterrupt:
-                    run_response.content = "Operation cancelled by user"
-                    run_response.status = RunStatus.cancelled
+                if stream:
+                    response_iterator = self._run_stream(
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        yield_run_output=yield_run_output,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    return response_iterator
+                else:
+                    response = self._run(
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        response_format=response_format,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    return response
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                raise e
+            except KeyboardInterrupt:
+                run_response.content = "Operation cancelled by user"
+                run_response.status = RunStatus.cancelled
 
-                    if stream:
-                        return generator_wrapper(  # type: ignore
-                            create_run_cancelled_event(
-                                from_run_response=run_response,
-                                reason="Operation cancelled by user",
-                            )
+                if stream:
+                    return generator_wrapper(  # type: ignore
+                        create_run_cancelled_event(
+                            from_run_response=run_response,
+                            reason="Operation cancelled by user",
                         )
-                    else:
-                        return run_response
-                except Exception as e:
-                    # Check if this is the last attempt
-                    if attempt < num_attempts - 1:
-                        # Calculate delay with exponential backoff if enabled
-                        if self.exponential_backoff:
-                            delay = self.delay_between_retries * (2**attempt)
-                        else:
-                            delay = self.delay_between_retries
-
-                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        # Final attempt failed - re-raise the exception
-                        log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
-                        raise
+                    )
+                else:
+                    return run_response
             except Exception as e:
-                log_error(f"Unexpected error: {str(e)}")
-                if attempt == num_attempts - 1:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
                     if stream:
                         return generator_wrapper(create_run_error_event(run_response, error=str(e)))  # type: ignore
                     raise e
@@ -2758,7 +2756,9 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+            if attempt > 0:
+                log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
                 # Pass the new run_response to _arun
                 if stream:
@@ -2958,7 +2958,8 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+            if attempt > 0:
+                log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
                 # Resolve dependencies
@@ -3604,7 +3605,8 @@ class Agent:
         )
 
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+            if attempt > 0:
+                log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
                 if stream:
