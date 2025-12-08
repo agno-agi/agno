@@ -1072,7 +1072,7 @@ class Workflow:
 
         if buffer_run_id:
             try:
-                from agno.os.router import event_buffer
+                from agno.os.managers import event_buffer
 
                 # add_event now returns the event_index
                 event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
@@ -1101,7 +1101,7 @@ class Workflow:
             try:
                 import asyncio
 
-                from agno.os.router import websocket_manager
+                from agno.os.managers import websocket_manager
 
                 loop = asyncio.get_running_loop()
                 if loop:
@@ -1820,9 +1820,9 @@ class Workflow:
 
         # Mark run as completed in event buffer
         try:
-            from agno.os.router import event_buffer
+            from agno.os.managers import event_buffer
 
-            event_buffer.mark_run_completed(
+            event_buffer.set_run_completed(
                 workflow_run_response.run_id,  # type: ignore
                 workflow_run_response.status or RunStatus.completed,
             )
@@ -2423,9 +2423,9 @@ class Workflow:
 
         # Mark run as completed in event buffer
         try:
-            from agno.os.router import event_buffer
+            from agno.os.managers import event_buffer
 
-            event_buffer.mark_run_completed(
+            event_buffer.set_run_completed(
                 workflow_run_response.run_id,  # type: ignore
                 workflow_run_response.status or RunStatus.completed,
             )
