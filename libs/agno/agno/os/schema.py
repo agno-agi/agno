@@ -893,7 +893,6 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 
 class RunSchema(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
     run_id: str = Field(..., description="Unique identifier for the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
@@ -958,7 +957,6 @@ class RunSchema(BaseModel):
 
 
 class TeamRunSchema(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
@@ -1021,7 +1019,6 @@ class TeamRunSchema(BaseModel):
 
 
 class WorkflowRunSchema(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
     run_id: str = Field(..., description="Unique identifier for the workflow run")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
