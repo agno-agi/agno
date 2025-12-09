@@ -1239,6 +1239,8 @@ class Agent:
                 if run_response.content is None:
                     run_response.content = str(e)
 
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+
                 self._cleanup_and_store(
                     run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
@@ -1265,6 +1267,8 @@ class Agent:
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
+
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 self._cleanup_and_store(
@@ -1615,6 +1619,8 @@ class Agent:
                 if run_response.content is None:
                     run_response.content = str(e)
 
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+
                 self._cleanup_and_store(
                     run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
@@ -1641,6 +1647,8 @@ class Agent:
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
+
+                log_error(f"Error in Agent run: {str(e)}")
 
                 self._cleanup_and_store(
                     run_response=run_response, session=session, run_context=run_context, user_id=user_id
@@ -2218,6 +2226,8 @@ class Agent:
                 if run_response.content is None:
                     run_response.content = str(e)
 
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+
                 await self._acleanup_and_store(
                     run_response=run_response,
                     session=agent_session,
@@ -2248,6 +2258,8 @@ class Agent:
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
+
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 await self._acleanup_and_store(
@@ -2655,6 +2667,8 @@ class Agent:
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
+                
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
                 # Cleanup and store the run response and session
                 await self._acleanup_and_store(
@@ -2664,9 +2678,9 @@ class Agent:
                     user_id=user_id,
                 )
 
+
                 # Yield the error event
                 yield run_response.error
-
 
             except Exception as e:
                 # Check if this is the last attempt
@@ -2690,6 +2704,8 @@ class Agent:
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
+
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 await self._acleanup_and_store(
