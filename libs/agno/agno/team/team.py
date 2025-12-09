@@ -2027,6 +2027,8 @@ class Team:
                 self._cleanup_and_store(run_response=run_response, session=session)
 
                 yield run_response.error
+                
+                break
 
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -2970,6 +2972,8 @@ class Team:
                 await self._acleanup_and_store(run_response=run_response, session=team_session)
 
                 yield run_response.error
+
+                break
 
             except Exception as e:
                 if attempt < num_attempts - 1:

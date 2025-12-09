@@ -1631,6 +1631,7 @@ class Agent:
 
                 # Yield the error event
                 yield run_response.error
+                break
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -2680,6 +2681,7 @@ class Agent:
 
                 # Yield the error event
                 yield run_response.error
+                break
 
             except Exception as e:
                 # Check if this is the last attempt
