@@ -109,8 +109,7 @@ class AgentOSClient:
         Returns:
             Self for method chaining
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
         return self
 
     async def close(self) -> None:
@@ -118,6 +117,12 @@ class AgentOSClient:
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+
+    async def _ensure_client(self) -> None:
+        """Ensure HTTP client is initialized.
+        """
+        if not self._http_client:
+            self._http_client = AsyncClient(timeout=self.timeout)
 
     def _get_headers(self) -> Dict[str, str]:
         """Get HTTP headers for requests."""
@@ -149,8 +154,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
 
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers()
@@ -253,8 +257,7 @@ class AgentOSClient:
         Yields:
             str: Lines from the streaming response
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
 
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers()
@@ -1784,8 +1787,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
 
         params = {}
         if db_id:
@@ -1857,8 +1859,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
 
         params = {}
         if db_id:
@@ -1966,8 +1967,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
 
         params = {}
         if db_id:
@@ -2001,8 +2001,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
+        await self._ensure_client()
 
         params = {}
         if db_id:
