@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model
+from agno.models.base import Model, RetryableModelProviderError
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -418,6 +419,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -438,7 +440,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -451,6 +459,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -464,6 +474,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -483,7 +494,11 @@ class Gemini(Model):
                 contents=formatted_messages,
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                yield self._parse_provider_response_delta(response, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -495,6 +510,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -508,6 +525,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -530,7 +548,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -542,6 +566,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -555,6 +581,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -577,7 +604,11 @@ class Gemini(Model):
                 **request_kwargs,
             )
             async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -589,6 +620,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -971,10 +1004,10 @@ class Gemini(Model):
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelResponse.
+        Parse the Gemini response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Raw response from Gemini
 
         Returns:
             ModelResponse: Parsed response data
@@ -983,8 +1016,20 @@ class Gemini(Model):
 
         # Get response message
         response_message = Content(role="model", parts=[])
-        if response.candidates and response.candidates[0].content:
-            response_message = response.candidates[0].content
+        if response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    # We only want to raise errors that trigger regeneration attempts once
+                    if kwargs.get("retrying_with_guidance") is True:
+                        pass
+                    if self.retry_with_guidance:
+                        raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
+
+            if candidate.content:
+                response_message = candidate.content
 
         # Add role
         if response_message.role is not None:
@@ -1127,11 +1172,20 @@ class Gemini(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse, **kwargs) -> ModelResponse:
         model_response = ModelResponse()
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
-            candidate_content = response_delta.candidates[0].content
+            candidate = response_delta.candidates[0]
+            candidate_content = candidate.content
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    if kwargs.get("retrying_with_guidance") is True:
+                        pass
+                    raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
+
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:
                 response_message = candidate_content

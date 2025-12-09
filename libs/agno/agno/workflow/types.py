@@ -107,10 +107,46 @@ class StepInput:
             return str(self.input)
 
     def get_step_output(self, step_name: str) -> Optional["StepOutput"]:
-        """Get output from a specific previous step by name"""
+        """Get output from a specific previous step by name
+
+        Searches recursively through nested steps (Parallel, Condition, Router, Loop, Steps)
+        to find step outputs at any depth.
+        """
         if not self.previous_step_outputs:
             return None
-        return self.previous_step_outputs.get(step_name)
+
+        # First try direct lookup
+        direct = self.previous_step_outputs.get(step_name)
+        if direct:
+            return direct
+
+        # Search recursively in nested steps
+        return self._search_nested_steps(step_name)
+
+    def _search_nested_steps(self, step_name: str) -> Optional["StepOutput"]:
+        """Recursively search for a step output in nested steps (Parallel, Condition, etc.)"""
+        if not self.previous_step_outputs:
+            return None
+            
+        for step_output in self.previous_step_outputs.values():
+            result = self._search_in_step_output(step_output, step_name)
+            if result:
+                return result
+        return None
+
+    def _search_in_step_output(self, step_output: "StepOutput", step_name: str) -> Optional["StepOutput"]:
+        """Helper to recursively search within a single StepOutput"""
+        if not step_output.steps:
+            return None
+
+        for nested_step in step_output.steps:
+            if nested_step.step_name == step_name:
+                return nested_step
+            # Recursively search deeper
+            result = self._search_in_step_output(nested_step, step_name)
+            if result:
+                return result
+        return None
 
     def get_step_content(self, step_name: str) -> Optional[Union[str, Dict[str, str]]]:
         """Get content from a specific previous step by name

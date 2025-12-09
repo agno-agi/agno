@@ -308,6 +308,8 @@ class Agent:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+    # Provide the introduction as the first message from the Agent
+    introduction: Optional[str] = None
     # Set to False to skip context building
     build_context: bool = True
 
@@ -436,7 +438,6 @@ class Agent:
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
-        introduction: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -490,6 +491,7 @@ class Agent:
         send_media_to_model: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        introduction: Optional[str] = None,
         build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -1559,6 +1561,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1586,6 +1589,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1614,6 +1618,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1636,8 +1641,8 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
@@ -2535,6 +2540,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2561,6 +2567,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2589,6 +2596,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2609,8 +2617,8 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
@@ -6352,6 +6360,20 @@ class Agent:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                agent_session.upsert_run(
+                    RunOutput(
+                        run_id=str(uuid4()),
+                        session_id=session_id,
+                        agent_id=self.id,
+                        agent_name=self.name,
+                        user_id=user_id,
+                        content=self.introduction,
+                        messages=[
+                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                        ],
+                    )
+                )
 
         if self.cache_session:
             self._cached_session = agent_session
@@ -6395,6 +6417,20 @@ class Agent:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                agent_session.upsert_run(
+                    RunOutput(
+                        run_id=str(uuid4()),
+                        session_id=session_id,
+                        agent_id=self.id,
+                        agent_name=self.name,
+                        user_id=user_id,
+                        content=self.introduction,
+                        messages=[
+                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                        ],
+                    )
+                )
 
         if self.cache_session:
             self._cached_session = agent_session
