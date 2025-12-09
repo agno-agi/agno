@@ -30,6 +30,7 @@ class AgentResponse(BaseModel):
     system_message: Optional[Dict[str, Any]] = None
     extra_messages: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
+    introduction: Optional[str] = None
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
@@ -254,6 +255,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
+            introduction=agent.introduction,
             metadata=agent.metadata,
             input_schema=get_agent_input_schema_dict(agent),
         )

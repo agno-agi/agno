@@ -266,6 +266,8 @@ class Team:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+    # Introduction for the team
+    introduction: Optional[str] = None
 
     # If True, resolve the session_state, dependencies, and metadata in the user and system messages
     resolve_in_context: bool = True
@@ -486,6 +488,7 @@ class Team:
         add_member_tools_to_context: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        introduction: Optional[str] = None,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
@@ -611,6 +614,7 @@ class Team:
         self.add_member_tools_to_context = add_member_tools_to_context
         self.system_message = system_message
         self.system_message_role = system_message_role
+        self.introduction = introduction
         self.additional_input = additional_input
 
         self.dependencies = dependencies
@@ -1972,6 +1976,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1999,6 +2004,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2026,6 +2032,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2047,8 +2054,8 @@ class Team:
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         # Initialize Team
@@ -2866,6 +2873,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2893,6 +2901,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2921,6 +2930,7 @@ class Team:
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        run_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2941,8 +2951,8 @@ class Team:
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
@@ -8205,6 +8215,20 @@ class Team:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                from uuid import uuid4
+
+                team_session.upsert_run(
+                    TeamRunOutput(
+                        run_id=str(uuid4()),
+                        team_id=self.id,
+                        session_id=session_id,
+                        user_id=user_id,
+                        team_name=self.name,
+                        content=self.introduction,
+                        messages=[Message(role=self.model.assistant_message_role, content=self.introduction)],  # type: ignore
+                    )
+                )
 
         # Cache the session if relevant
         if team_session is not None and self.cache_session:
@@ -8237,15 +8261,34 @@ class Team:
         # Create new session if none found
         if team_session is None:
             log_debug(f"Creating new TeamSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             team_session = TeamSession(
                 session_id=session_id,
                 team_id=self.id,
                 user_id=user_id,
                 team_data=self._get_team_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                from uuid import uuid4
+
+                team_session.upsert_run(
+                    TeamRunOutput(
+                        run_id=str(uuid4()),
+                        team_id=self.id,
+                        session_id=session_id,
+                        user_id=user_id,
+                        team_name=self.name,
+                        content=self.introduction,
+                        messages=[Message(role=self.model.assistant_message_role, content=self.introduction)],  # type: ignore
+                    )
+                )
 
         # Cache the session if relevant
         if team_session is not None and self.cache_session:

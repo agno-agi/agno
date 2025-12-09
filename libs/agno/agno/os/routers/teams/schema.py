@@ -31,6 +31,7 @@ class TeamResponse(BaseModel):
     default_tools: Optional[Dict[str, Any]] = None
     system_message: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
+    introduction: Optional[str] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -248,6 +249,7 @@ class TeamResponse(BaseModel):
             default_tools=filter_meaningful_config(default_tools_info, team_defaults),
             system_message=filter_meaningful_config(system_message_info, team_defaults),
             response_settings=filter_meaningful_config(response_settings_info, team_defaults),
+            introduction=team.introduction,
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=members if members else None,
             metadata=team.metadata,
