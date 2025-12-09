@@ -1877,7 +1877,7 @@ class Knowledge:
         if self.contents_db:
             if isinstance(self.contents_db, AsyncBaseDb):
                 raise ValueError(
-                    "_add_to_contents_db() is not supported with an async DB. Please use _add_to_contents_db_async() instead."
+                    "_add_to_contents_db() is not supported with an async DB. Please use add_content_async with AsyncDb."
                 )
 
             created_at = content.created_at if content.created_at else int(time.time())
