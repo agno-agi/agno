@@ -2940,6 +2940,12 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
+        # Read existing session from database
+        if self._has_async_db():
+            agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+        else:
+            agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
         # Create RunInput
         image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
             images=images, videos=videos, audios=audio, files=files
@@ -3022,6 +3028,12 @@ class Agent:
                 # Update status to RUNNING
                 run_response.status = RunStatus.running
 
+                agent_session.upsert_run(run=run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=agent_session)
+                else:
+                    self.save_session(session=agent_session)
+
                 # Execute with streaming
                 async for event in self._arun_stream(
                     run_response=run_response,
@@ -3079,6 +3091,13 @@ class Agent:
 
                 # Mark run as error in buffer
                 event_buffer.set_run_completed(run_id, RunStatus.error)
+
+                # Save error run to database
+                agent_session.upsert_run(run=run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=agent_session)
+                else:
+                    self.save_session(session=agent_session)
 
                 # Send error event via WebSocket
                 if websocket_handler:

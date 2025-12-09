@@ -3271,6 +3271,12 @@ class Team:
         # Initialize the Team
         self.initialize_team(debug_mode=debug_mode)
 
+        # Read existing session from database
+        if self._has_async_db():
+            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+        else:
+            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
         # Create TeamRunInput
         image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
             images=images, videos=videos, audios=audio, files=files
@@ -3353,6 +3359,13 @@ class Team:
                 # Update status to RUNNING
                 run_response.status = RunStatus.running
 
+                # Save running status to database
+                team_session.upsert_run(run=run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=team_session)
+                else:
+                    self.save_session(session=team_session)
+
                 # Execute with streaming
                 async for event in self._arun_stream(
                     run_response=run_response,
@@ -3410,6 +3423,13 @@ class Team:
 
                 # Mark run as error in buffer
                 event_buffer.set_run_completed(run_id, RunStatus.error)
+
+                # Save error run to database
+                team_session.upsert_run(run=run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=team_session)
+                else:
+                    self.save_session(session=team_session)
 
                 # Send error event via WebSocket
                 if websocket_handler:
