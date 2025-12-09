@@ -22,11 +22,17 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 
-class AgentAsJudgeResponse(BaseModel):
-    """Response schema for the LLM judge."""
+class NumericJudgeResponse(BaseModel):
+    """Response schema for numeric scoring mode."""
 
-    score: Optional[int] = Field(None, ge=1, le=10, description="Score between 1 and 10 (numeric mode only).")
-    passed: Optional[bool] = Field(None, description="Pass/fail result (binary mode only).")
+    score: int = Field(..., ge=1, le=10, description="Score between 1 and 10.")
+    reason: str = Field(..., description="Detailed reasoning for the evaluation.")
+
+
+class BinaryJudgeResponse(BaseModel):
+    """Response schema for binary scoring mode."""
+
+    passed: bool = Field(..., description="Pass/fail result.")
     reason: str = Field(..., description="Detailed reasoning for the evaluation.")
 
 
@@ -161,7 +167,7 @@ class AgentAsJudgeEval(BaseEval):
 
     # Core evaluation fields
     criteria: str = ""
-    scoring_strategy: Literal["numeric", "binary"] = "numeric"
+    scoring_strategy: Literal["numeric", "binary"] = "binary"
     threshold: int = 7  # Only used for numeric strategy
     on_fail: Optional[Callable[["AgentAsJudgeEvaluation"], None]] = None
     additional_guidelines: Optional[Union[str, List[str]]] = None
@@ -180,6 +186,7 @@ class AgentAsJudgeEval(BaseEval):
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     telemetry: bool = True
+    run_in_background: bool = False
 
     def __post_init__(self):
         """Validate scoring_strategy and threshold."""
@@ -188,9 +195,12 @@ class AgentAsJudgeEval(BaseEval):
 
     def get_evaluator_agent(self) -> Agent:
         """Return the evaluator agent. If not provided, build it based on the model and criteria."""
+        # Select response schema based on scoring strategy
+        response_schema = NumericJudgeResponse if self.scoring_strategy == "numeric" else BinaryJudgeResponse
+
         if self.evaluator_agent is not None:
             # Ensure custom evaluator has the required output_schema for structured responses
-            self.evaluator_agent.output_schema = AgentAsJudgeResponse
+            self.evaluator_agent.output_schema = response_schema
             return self.evaluator_agent
 
         model = self.model
@@ -255,7 +265,7 @@ class AgentAsJudgeEval(BaseEval):
             model=model,
             description="You are an expert evaluator. Score outputs objectively based on the provided criteria.",
             instructions="\n".join(instructions_parts),
-            output_schema=AgentAsJudgeResponse,
+            output_schema=response_schema,
         )
 
     def _evaluate(self, input: str, output: str, evaluator_agent: Agent) -> Optional[AgentAsJudgeEvaluation]:
@@ -272,16 +282,16 @@ class AgentAsJudgeEval(BaseEval):
             """)
 
             response = evaluator_agent.run(prompt).content
-            if not isinstance(response, AgentAsJudgeResponse):
+            if not isinstance(response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {response}")
 
-            # Determine pass/fail based on scoring strategy
-            if self.scoring_strategy == "numeric":
+            # Determine pass/fail based on scoring strategy and response type
+            if isinstance(response, NumericJudgeResponse):
                 score = response.score
-                passed = score >= self.threshold if score is not None else False
-            else:  # binary
+                passed = score >= self.threshold
+            else:  # BinaryJudgeResponse
                 score = None
-                passed = response.passed if response.passed is not None else False
+                passed = response.passed
 
             evaluation = AgentAsJudgeEvaluation(
                 input=input,
@@ -324,16 +334,16 @@ class AgentAsJudgeEval(BaseEval):
 
             response = await evaluator_agent.arun(prompt)
             judge_response = response.content
-            if not isinstance(judge_response, AgentAsJudgeResponse):
+            if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {judge_response}")
 
-            # Determine pass/fail based on scoring strategy
-            if self.scoring_strategy == "numeric":
+            # Determine pass/fail based on response type
+            if isinstance(judge_response, NumericJudgeResponse):
                 score = judge_response.score
-                passed = score >= self.threshold if score is not None else False
-            else:  # binary
+                passed = score >= self.threshold
+            else:  # BinaryJudgeResponse
                 score = None
-                passed = judge_response.passed if judge_response.passed is not None else False
+                passed = judge_response.passed
 
             evaluation = AgentAsJudgeEvaluation(
                 input=input,

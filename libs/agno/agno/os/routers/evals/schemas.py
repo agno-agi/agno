@@ -31,7 +31,7 @@ class EvalRunInput(BaseModel):
     # AgentAsJudge eval specific fields
     criteria: Optional[str] = Field(None, description="Evaluation criteria for agent-as-judge evaluation")
     scoring_strategy: Optional[Literal["numeric", "binary"]] = Field(
-        "numeric", description="Scoring strategy: 'numeric' (1-10 with threshold) or 'binary' (PASS/FAIL)"
+        "binary", description="Scoring strategy: 'numeric' (1-10 with threshold) or 'binary' (PASS/FAIL)"
     )
     threshold: Optional[int] = Field(
         7, description="Score threshold for pass/fail (1-10), only used with numeric scoring", ge=1, le=10

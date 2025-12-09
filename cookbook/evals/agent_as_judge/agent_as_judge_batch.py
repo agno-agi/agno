@@ -1,6 +1,10 @@
 """Batch evaluation example - evaluate multiple cases at once."""
 
+from agno.db.sqlite import SqliteDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval
+
+# Setup database to persist eval results
+db = SqliteDb(db_file="tmp/agent_as_judge_batch.db")
 
 evaluation = AgentAsJudgeEval(
     name="Customer Service Quality",
@@ -9,6 +13,7 @@ evaluation = AgentAsJudgeEval(
     # For numeric scoring (1-10 with threshold), use:
     # scoring_strategy="numeric",
     # threshold=7,
+    db=db,
 )
 
 result = evaluation.run(
@@ -32,3 +37,12 @@ result = evaluation.run(
 
 print(f"Pass rate: {result.pass_rate:.1f}%")
 print(f"Passed: {sum(1 for r in result.results if r.passed)}/{len(result.results)}")
+
+# Query database for stored results
+print("Database Results:")
+eval_runs = db.get_eval_runs()
+print(f"Total evaluations stored: {len(eval_runs)}")
+if eval_runs:
+    latest = eval_runs[-1]
+    print(f"Eval ID: {latest.run_id}")
+    print(f"Cases evaluated: {len(result.results)}")

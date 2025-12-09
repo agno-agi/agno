@@ -3,6 +3,7 @@
 import asyncio
 
 from agno.agent import Agent
+from agno.db.sqlite import AsyncSqliteDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeEvaluation
 from agno.models.openai import OpenAIChat
 
@@ -14,9 +15,13 @@ def on_evaluation_failure(evaluation: AgentAsJudgeEvaluation):
 
 
 async def main():
+    # Setup database to persist eval results
+    db = AsyncSqliteDb(db_file="tmp/agent_as_judge_async.db")
+
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         instructions="Provide helpful and informative answers.",
+        db=db,
     )
 
     response = await agent.arun("Explain machine learning in simple terms")
@@ -25,8 +30,10 @@ async def main():
         name="ML Explanation Quality",
         model=OpenAIChat(id="gpt-4o-mini"),
         criteria="Explanation should be clear, beginner-friendly, and avoid jargon",
+        scoring_strategy="numeric",
         threshold=10,
         on_fail=on_evaluation_failure,
+        db=db,
     )
 
     result = await evaluation.arun(

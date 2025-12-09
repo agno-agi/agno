@@ -21,7 +21,6 @@ completeness_eval = AgentAsJudgeEval(
     name="Completeness Check",
     model=OpenAIChat(id="gpt-4o-mini"),
     criteria="Response should be thorough, complete, and address all aspects of the question",
-    threshold=7,
     print_results=True,
     print_summary=True,
     telemetry=True,
@@ -34,6 +33,7 @@ quality_eval = AgentAsJudgeEval(
     name="Quality Assessment",
     model=OpenAIChat(id="gpt-4o-mini"),
     criteria="Response should be well-structured, concise, and professional",
+    scoring_strategy="numeric",
     threshold=8,
     additional_guidelines=[
         "Check if response is easy to understand",
@@ -42,8 +42,8 @@ quality_eval = AgentAsJudgeEval(
     print_results=True,
     print_summary=True,
     telemetry=True,
+    run_in_background=True,
 )
-quality_eval.run_in_background = True
 
 agent = Agent(
     id="geography-agent",

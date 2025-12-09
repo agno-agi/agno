@@ -19,6 +19,7 @@ evaluation = AgentAsJudgeEval(
     name="Calculator Tool Usage Quality",
     model=OpenAIChat(id="gpt-4o-mini"),
     criteria="Response should clearly explain the calculation process, show intermediate steps, and present the final answer in a user-friendly way",
+    scoring_strategy="numeric",
     threshold=7,
 )
 

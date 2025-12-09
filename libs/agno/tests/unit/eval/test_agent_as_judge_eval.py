@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeResponse
+from agno.eval.agent_as_judge import AgentAsJudgeEval, BinaryJudgeResponse, NumericJudgeResponse
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunOutput
 
@@ -13,7 +13,7 @@ def _mock_evaluator_numeric(eval_instance: AgentAsJudgeEval, score: int = 8):
     """Helper to mock evaluator agent for numeric mode."""
     evaluator = eval_instance.get_evaluator_agent()
     evaluator.model = MagicMock()
-    mock_response = AgentAsJudgeResponse(score=score, passed=score >= 7, reason="Mocked evaluation response.")
+    mock_response = NumericJudgeResponse(score=score, reason="Mocked evaluation response.")
     mock_output = RunOutput(content=mock_response)
     evaluator.run = MagicMock(return_value=mock_output)
     eval_instance.evaluator_agent = evaluator
@@ -24,7 +24,7 @@ def _mock_evaluator_binary(eval_instance: AgentAsJudgeEval, passed: bool = True)
     """Helper to mock evaluator agent for binary mode."""
     evaluator = eval_instance.get_evaluator_agent()
     evaluator.model = MagicMock()
-    mock_response = AgentAsJudgeResponse(passed=passed, reason="Mocked evaluation response.")
+    mock_response = BinaryJudgeResponse(passed=passed, reason="Mocked evaluation response.")
     mock_output = RunOutput(content=mock_response)
     evaluator.run = MagicMock(return_value=mock_output)
     eval_instance.evaluator_agent = evaluator
@@ -79,7 +79,7 @@ def test_default_values():
     """Test that default values are correct."""
     eval = AgentAsJudgeEval(criteria="Be helpful")
 
-    assert eval.scoring_strategy == "numeric"
+    assert eval.scoring_strategy == "binary"
     assert eval.threshold == 7
     assert eval.telemetry is True
 
@@ -307,7 +307,7 @@ async def test_async_run():
     # Mock the evaluator for async
     evaluator = eval.get_evaluator_agent()
     evaluator.model = MagicMock()  # Mock the model to avoid real API calls
-    mock_response = AgentAsJudgeResponse(score=7, passed=True, reason="Mocked async evaluation.")
+    mock_response = NumericJudgeResponse(score=7, reason="Mocked async evaluation.")
     mock_output = RunOutput(content=mock_response)
     evaluator.arun = AsyncMock(return_value=mock_output)
     eval.evaluator_agent = evaluator
@@ -399,10 +399,10 @@ def test_on_fail_callback_batch_mode():
 
     # Return different scores for each case
     mock_responses = [
-        AgentAsJudgeResponse(score=9, passed=True, reason="Excellent response."),  # Pass
-        AgentAsJudgeResponse(score=5, passed=False, reason="Poor response."),  # Fail
-        AgentAsJudgeResponse(score=7, passed=False, reason="Below threshold."),  # Fail
-        AgentAsJudgeResponse(score=10, passed=True, reason="Perfect response."),  # Pass
+        NumericJudgeResponse(score=9, reason="Excellent response."),  # Pass
+        NumericJudgeResponse(score=5, reason="Poor response."),  # Fail
+        NumericJudgeResponse(score=7, reason="Below threshold."),  # Fail
+        NumericJudgeResponse(score=10, reason="Perfect response."),  # Pass
     ]
 
     # Mock run to return different responses for each call
@@ -460,9 +460,9 @@ async def test_on_fail_callback_batch_mode_async():
 
     # Return different scores for each case
     mock_responses = [
-        AgentAsJudgeResponse(score=6, passed=False, reason="Below threshold."),  # Fail
-        AgentAsJudgeResponse(score=9, passed=True, reason="Excellent response."),  # Pass
-        AgentAsJudgeResponse(score=4, passed=False, reason="Poor response."),  # Fail
+        NumericJudgeResponse(score=6, reason="Below threshold."),  # Fail
+        NumericJudgeResponse(score=9, reason="Excellent response."),  # Pass
+        NumericJudgeResponse(score=4, reason="Poor response."),  # Fail
     ]
 
     # Mock arun to return different responses for each call
@@ -509,7 +509,7 @@ async def test_numeric_mode_basic_async():
     # Mock the evaluator for async
     evaluator = eval.get_evaluator_agent()
     evaluator.model = MagicMock()
-    mock_response = AgentAsJudgeResponse(score=8, passed=True, reason="Mocked async evaluation.")
+    mock_response = NumericJudgeResponse(score=8, reason="Mocked async evaluation.")
     mock_output = RunOutput(content=mock_response)
     evaluator.arun = AsyncMock(return_value=mock_output)
     eval.evaluator_agent = evaluator
@@ -537,7 +537,7 @@ async def test_binary_mode_basic_async():
     # Mock the evaluator for async
     evaluator = eval.get_evaluator_agent()
     evaluator.model = MagicMock()
-    mock_response = AgentAsJudgeResponse(passed=True, reason="Mocked async binary evaluation.")
+    mock_response = BinaryJudgeResponse(passed=True, reason="Mocked async binary evaluation.")
     mock_output = RunOutput(content=mock_response)
     evaluator.arun = AsyncMock(return_value=mock_output)
     eval.evaluator_agent = evaluator

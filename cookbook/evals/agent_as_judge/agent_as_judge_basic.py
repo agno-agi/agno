@@ -1,6 +1,7 @@
 """Basic AgentAsJudgeEval usage with numeric scoring (1-10) and on_fail callback."""
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeEvaluation
 from agno.models.openai import OpenAIChat
 
@@ -11,9 +12,13 @@ def on_evaluation_failure(evaluation: AgentAsJudgeEvaluation):
     print(f"Reason: {evaluation.reason[:100]}...")
 
 
+# Setup database to persist eval results
+db = SqliteDb(db_file="tmp/agent_as_judge_basic.db")
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     instructions="You are a technical writer. Explain concepts clearly and concisely.",
+    db=db,
 )
 
 response = agent.run("Explain what an API is")
@@ -24,6 +29,7 @@ evaluation = AgentAsJudgeEval(
     scoring_strategy="numeric",  # Score 1-10
     threshold=7,  # Pass if score >= 7
     on_fail=on_evaluation_failure,
+    db=db,
 )
 
 result = evaluation.run(
@@ -35,3 +41,12 @@ result = evaluation.run(
 
 print(f"Score: {result.results[0].score}/10")
 print(f"Passed: {result.results[0].passed}")
+
+# Query database for stored results
+print("Database Results:")
+eval_runs = db.get_eval_runs()
+print(f"Total evaluations stored: {len(eval_runs)}")
+if eval_runs:
+    latest = eval_runs[-1]
+    print(f"Eval ID: {latest.run_id}")
+    print(f"Name: {latest.name}")
