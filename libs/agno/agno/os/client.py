@@ -614,7 +614,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
-        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> TeamRunSchema:
         """Execute a team run.
 
@@ -627,7 +627,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
-            context: Optional context dictionary
+            **kwargs: Additional parameters passed to the team run
 
         Returns:
             TeamRunSchema: The team run response
@@ -649,8 +649,13 @@ class AgentOSClient:
             data["videos"] = json.dumps(videos)
         if files:
             data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
+
+        # Add kwargs to data, serializing dicts as JSON
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
 
         response_data = await self._post(endpoint, data, as_form=True)
         return TeamRunSchema.model_validate(response_data)
@@ -665,7 +670,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
-        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[BaseTeamRunEvent]:
         """Stream a team run response.
 
@@ -678,7 +683,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
-            context: Optional context dictionary
+            **kwargs: Additional parameters passed to the team run
 
         Yields:
             BaseTeamRunEvent: Typed event objects (team and agent events)
@@ -700,8 +705,13 @@ class AgentOSClient:
             data["videos"] = json.dumps(videos)
         if files:
             data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
+
+        # Add kwargs to data, serializing dicts as JSON
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
 
         # Get raw SSE stream and parse into typed events
         raw_stream = self._stream_post_form_data(endpoint, data)
@@ -761,7 +771,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
-        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> WorkflowRunSchema:
         """Execute a workflow run.
 
@@ -774,8 +784,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
-            context: Optional context dictionary
-
+            **kwargs: Additional parameters passed to the workflow run
         Returns:
             WorkflowRunSchema: The workflow run response
 
@@ -796,8 +805,13 @@ class AgentOSClient:
             data["videos"] = json.dumps(videos)
         if files:
             data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
+
+        # Add kwargs to data, serializing dicts as JSON
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
 
         response_data = await self._post(endpoint, data, as_form=True)
         return WorkflowRunSchema.model_validate(response_data)
@@ -812,7 +826,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
-        context: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Stream a workflow run response.
 
@@ -825,7 +839,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
-            context: Optional context dictionary
+            **kwargs: Additional parameters passed to the workflow run.
 
         Yields:
             WorkflowRunOutputEvent: Typed event objects (workflow, team, and agent events)
@@ -847,8 +861,13 @@ class AgentOSClient:
             data["videos"] = json.dumps(videos)
         if files:
             data["files"] = json.dumps(files)
-        if context:
-            data["context"] = json.dumps(context)
+
+        # Add kwargs to data, serializing dicts as JSON
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
 
         # Get raw SSE stream and parse into typed events
         raw_stream = self._stream_post_form_data(endpoint, data)
