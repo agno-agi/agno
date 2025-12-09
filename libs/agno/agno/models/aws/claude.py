@@ -80,11 +80,10 @@ class Claude(AnthropicClaude):
                     "aws_region": self.aws_region,
                 }
 
-                if not (self.aws_access_key and self.aws_secret_key):
-                    log_warning(
-                        "AWS credentials not explicitly provided. Falling back to boto3 credential chain "
-                        "(env vars, ~/.aws/credentials, IAM role, etc.)."
-                    )
+            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+                log_warning(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                )
 
         if self.timeout is not None:
             client_params["timeout"] = self.timeout
