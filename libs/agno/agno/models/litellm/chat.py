@@ -13,6 +13,7 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.tokens import count_schema_tokens
 
 try:
     import litellm
@@ -482,15 +483,17 @@ class LiteLLM(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_messages = self._format_messages(messages, compress_tool_results=True)
             formatted_tools = self._format_tools(tools) if tools else None
-            return litellm.token_counter(
+            tokens = litellm.token_counter(
                 model=self.id,
                 messages=formatted_messages,
                 tools=formatted_tools,  # type: ignore
             )
+            return tokens + count_schema_tokens(response_format, self.id)
         except Exception as e:
             log_warning(f"Failed to count tokens: {e}")
-            return super().count_tokens(messages, tools)
+            return super().count_tokens(messages, tools, response_format)

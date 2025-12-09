@@ -12,6 +12,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from boto3 import client as AwsClient
@@ -361,6 +362,7 @@ class AwsBedrock(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
@@ -373,15 +375,49 @@ class AwsBedrock(Model):
 
             # Count tool tokens
             if tools:
-                from agno.utils.tokens import _count_tool_tokens
+                from agno.utils.tokens import count_tool_tokens
 
                 includes_system = any(m.role == "system" for m in messages)
-                tokens += _count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id, includes_system)
+
+            # Count schema tokens
+            tokens += count_schema_tokens(response_format, self.id)
 
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return super().count_tokens(messages, tools)
+            return super().count_tokens(messages, tools, response_format)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            converse_input: Dict[str, Any] = {"messages": formatted_messages}
+            if system_message:
+                converse_input["system"] = system_message
+
+            async with self.get_async_client() as client:
+                response = await client.count_tokens(modelId=self.id, input={"converse": converse_input})
+            tokens = response.get("inputTokens", 0)
+
+            # Count tool tokens
+            if tools:
+                from agno.utils.tokens import count_tool_tokens
+
+                includes_system = any(m.role == "system" for m in messages)
+                tokens += count_tool_tokens(tools, self.id, includes_system)
+
+            # Count schema tokens
+            tokens += count_schema_tokens(response_format, self.id)
+
+            return tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            return await super().acount_tokens(messages, tools, response_format)
 
     def invoke(
         self,
@@ -744,10 +780,5 @@ class AwsBedrock(Model):
         metrics.input_tokens = response_usage.get("inputTokens", 0) or 0
         metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
-
-        log_debug(
-            f"Bedrock response metrics: input_tokens={metrics.input_tokens}, "
-            f"output_tokens={metrics.output_tokens}, total_tokens={metrics.total_tokens}"
-        )
 
         return metrics

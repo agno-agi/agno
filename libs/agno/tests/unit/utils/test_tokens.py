@@ -1,9 +1,12 @@
+import pytest
+
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.utils.tokens import (
     count_audio_tokens,
     count_file_tokens,
     count_image_tokens,
+    count_schema_tokens,
     count_text_tokens,
     count_tokens,
     count_video_tokens,
@@ -239,3 +242,158 @@ def test_count_tokens_conversation_with_media():
 
     assert result > 210
     assert result > 250
+
+
+@pytest.mark.asyncio
+async def test_model_acount_tokens():
+    """Test async token counting on Model base class."""
+    from agno.models.openai import OpenAIChat
+
+    model = OpenAIChat(id="gpt-4o")
+    messages = [Message(role="user", content="Hello world")]
+
+    sync_count = model.count_tokens(messages)
+    async_count = await model.acount_tokens(messages)
+
+    assert sync_count == async_count
+    assert sync_count > 0
+
+
+@pytest.mark.asyncio
+async def test_model_acount_tokens_with_tools():
+    """Test async token counting with tools."""
+    from agno.models.openai import OpenAIChat
+    from agno.tools.function import Function
+
+    model = OpenAIChat(id="gpt-4o")
+    messages = [Message(role="user", content="What is the weather?")]
+
+    def get_weather(location: str) -> str:
+        """Get weather for a location."""
+        return f"Weather in {location}"
+
+    tools = [Function.from_callable(get_weather)]
+
+    sync_count = model.count_tokens(messages, tools)
+    async_count = await model.acount_tokens(messages, tools)
+
+    assert sync_count == async_count
+    assert sync_count > 0
+
+
+def test_count_schema_tokens_pydantic():
+    """Test schema token counting with Pydantic model."""
+    from pydantic import BaseModel
+
+    class SimpleSchema(BaseModel):
+        answer: str
+        score: float
+
+    tokens = count_schema_tokens(SimpleSchema, "gpt-4o-mini")
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100  # Reasonable range for simple schema
+
+
+def test_count_schema_tokens_complex():
+    """Test schema token counting with more complex schema."""
+    from typing import List
+
+    from pydantic import BaseModel, Field
+
+    class ComplexSchema(BaseModel):
+        title: str = Field(..., description="Title of the item")
+        description: str = Field(..., description="Detailed description")
+        score: int = Field(..., description="Score from 1-10")
+        tags: List[str] = Field(default_factory=list, description="List of tags")
+
+    tokens = count_schema_tokens(ComplexSchema, "gpt-4o-mini")
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens > 50  # Complex schema should have more tokens
+
+
+def test_count_schema_tokens_dict():
+    """Test schema token counting with dict schema."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+        },
+        "required": ["name", "age"],
+    }
+
+    tokens = count_schema_tokens(schema, "gpt-4o-mini")
+    assert isinstance(tokens, int)
+    assert tokens > 0
+
+
+def test_count_schema_tokens_none():
+    """Test schema token counting with None."""
+    tokens = count_schema_tokens(None, "gpt-4o-mini")
+    assert tokens == 0
+
+
+def test_count_tokens_with_schema():
+    """Test count_tokens includes schema tokens."""
+    from pydantic import BaseModel
+
+    class SimpleSchema(BaseModel):
+        answer: str
+
+    messages = [Message(role="user", content="Hello")]
+
+    # Count without schema
+    tokens_no_schema = count_tokens(messages, model_id="gpt-4o-mini")
+
+    # Count with schema
+    tokens_with_schema = count_tokens(messages, model_id="gpt-4o-mini", response_format=SimpleSchema)
+
+    # Schema should add tokens
+    assert tokens_with_schema > tokens_no_schema
+
+
+def test_model_count_tokens_with_schema():
+    """Test model.count_tokens includes schema tokens."""
+    from pydantic import BaseModel
+
+    from agno.models.openai import OpenAIChat
+
+    class SimpleSchema(BaseModel):
+        answer: str
+
+    model = OpenAIChat(id="gpt-4o-mini")
+    messages = [Message(role="user", content="Hello")]
+
+    # Count without schema
+    tokens_no_schema = model.count_tokens(messages)
+
+    # Count with schema
+    tokens_with_schema = model.count_tokens(messages, response_format=SimpleSchema)
+
+    # Schema should add tokens
+    assert tokens_with_schema > tokens_no_schema
+
+
+@pytest.mark.asyncio
+async def test_model_acount_tokens_with_schema():
+    """Test model.acount_tokens includes schema tokens."""
+    from pydantic import BaseModel
+
+    from agno.models.openai import OpenAIChat
+
+    class SimpleSchema(BaseModel):
+        answer: str
+
+    model = OpenAIChat(id="gpt-4o-mini")
+    messages = [Message(role="user", content="Hello")]
+
+    # Count without schema
+    tokens_no_schema = await model.acount_tokens(messages)
+
+    # Count with schema
+    tokens_with_schema = await model.acount_tokens(messages, response_format=SimpleSchema)
+
+    # Schema should add tokens
+    assert tokens_with_schema > tokens_no_schema

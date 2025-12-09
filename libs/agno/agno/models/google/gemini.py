@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model
+from agno.models.base import Model, RetryableModelProviderError
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -21,6 +22,7 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
     from google import genai
@@ -313,28 +315,110 @@ class Gemini(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        if not self.vertexai:
-            log_warning("Gemini count_tokens requires VertexAI. Falling back to tiktoken-based estimation.")
-            return super().count_tokens(messages, tools)
-
         contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(response_format, self.id)
 
-        config: Dict[str, Any] = {}
-        if system_instruction:
-            config["system_instruction"] = system_instruction
-        if tools:
-            formatted_tools = self._format_tools(tools)
-            gemini_tools = format_function_definitions(formatted_tools)
-            if gemini_tools:
-                config["tools"] = [gemini_tools]
+        if self.vertexai:
+            # VertexAI supports full token counting with system_instruction and tools
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
 
-        response = self.get_client().models.count_tokens(
-            model=self.id,
-            contents=contents,
-            config=config if config else None,  # type: ignore
-        )
-        return response.total_tokens or 0
+            response = self.get_client().models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return (response.total_tokens or 0) + schema_tokens
+        else:
+            # Google AI Studio: Use API for content tokens + local estimation for system/tools
+            # The API doesn't support system_instruction or tools in config, so we use a hybrid approach:
+            # 1. Get accurate token count for contents (text + multimodal) from API
+            # 2. Add estimated tokens for system_instruction and tools locally
+            try:
+                response = self.get_client().models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return super().count_tokens(messages, tools, response_format)
+
+            # Add estimated tokens for system instruction (not supported by Google AI Studio API)
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools (not supported by Google AI Studio API)
+            if tools:
+                includes_system = system_instruction is not None
+                total += count_tool_tokens(tools, self.id, includes_system)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
+            return total
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(response_format, self.id)
+
+        # VertexAI supports full token counting with system_instruction and tools
+        if self.vertexai:
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
+
+            response = await self.get_client().aio.models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return (response.total_tokens or 0) + schema_tokens
+        else:
+            # Hybrid approach - Google AI Studio does not support system_instruction or tools in config
+            try:
+                response = await self.get_client().aio.models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return await super().acount_tokens(messages, tools, response_format)
+
+            # Add estimated tokens for system instruction
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools
+            if tools:
+                includes_system = system_instruction is not None
+                total += count_tool_tokens(tools, self.id, includes_system)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
+            return total
 
     def invoke(
         self,
@@ -345,6 +429,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -365,7 +450,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -378,6 +469,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -391,6 +484,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -410,7 +504,11 @@ class Gemini(Model):
                 contents=formatted_messages,
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                yield self._parse_provider_response_delta(response, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -422,6 +520,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -435,6 +535,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -457,7 +558,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -469,6 +576,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -482,6 +591,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -504,7 +614,11 @@ class Gemini(Model):
                 **request_kwargs,
             )
             async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -516,6 +630,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -898,10 +1014,10 @@ class Gemini(Model):
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelResponse.
+        Parse the Gemini response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Raw response from Gemini
 
         Returns:
             ModelResponse: Parsed response data
@@ -910,8 +1026,20 @@ class Gemini(Model):
 
         # Get response message
         response_message = Content(role="model", parts=[])
-        if response.candidates and response.candidates[0].content:
-            response_message = response.candidates[0].content
+        if response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    # We only want to raise errors that trigger regeneration attempts once
+                    if kwargs.get("retrying_with_guidance") is True:
+                        pass
+                    if self.retry_with_guidance:
+                        raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
+
+            if candidate.content:
+                response_message = candidate.content
 
         # Add role
         if response_message.role is not None:
@@ -1054,11 +1182,20 @@ class Gemini(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse, **kwargs) -> ModelResponse:
         model_response = ModelResponse()
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
-            candidate_content = response_delta.candidates[0].content
+            candidate = response_delta.candidates[0]
+            candidate_content = candidate.content
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    if kwargs.get("retrying_with_guidance") is True:
+                        pass
+                    raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
+
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:
                 response_message = candidate_content

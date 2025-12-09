@@ -65,6 +65,30 @@ class CompressionManager:
 
         return False
 
+    async def ashould_compress(self, messages: List[Message], tools: Optional[List] = None) -> bool:
+        """Async version of should_compress for token counting."""
+        if self.compress_context:
+            if self.compress_context_token_limit and self.model:
+                tokens = self.model.count_tokens(messages, tools)
+                if tokens >= self.compress_context_token_limit:
+                    return True
+            else:
+                msg_count = len([m for m in messages if m.role in ("user", "assistant", "tool")])
+                if msg_count >= self.compress_context_messages_limit:
+                    return True
+
+        if self.compress_tool_results:
+            if self.compress_tool_results_token_limit and self.model:
+                tokens = self.model.count_tokens(messages, tools)
+                if tokens >= self.compress_tool_results_token_limit:
+                    return True
+            else:
+                uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
+                if uncompressed >= self.compress_tool_results_limit:
+                    return True
+
+        return False
+
     def compress(self, messages: List[Message], tools: Optional[List] = None) -> None:
         if self._should_compress_context(messages, tools):
             self._compress_context(messages)

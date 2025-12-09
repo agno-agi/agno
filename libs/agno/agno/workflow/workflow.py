@@ -3451,6 +3451,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3470,6 +3471,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3488,6 +3490,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3505,8 +3508,8 @@ class Workflow:
         if self._has_async_db():
             raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         input = self._validate_input(input)
@@ -3623,6 +3626,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3643,6 +3647,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3662,6 +3667,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3732,8 +3738,8 @@ class Workflow:
 
         self._set_debug()
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         self.initialize_workflow()

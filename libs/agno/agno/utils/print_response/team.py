@@ -30,6 +30,7 @@ def print_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -81,6 +82,7 @@ def print_response(
         # Run the agent
         run_response: TeamRunOutput = team.run(  # type: ignore
             input=input,
+            run_id=run_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -339,6 +341,7 @@ def print_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -417,6 +420,7 @@ def print_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -893,6 +897,7 @@ async def aprint_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -944,6 +949,7 @@ async def aprint_response(
         # Run the agent
         run_response: TeamRunOutput = await team.arun(  # type: ignore
             input=input,
+            run_id=run_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -1200,6 +1206,7 @@ async def aprint_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -1288,6 +1295,7 @@ async def aprint_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             add_dependencies_to_context=add_dependencies_to_context,

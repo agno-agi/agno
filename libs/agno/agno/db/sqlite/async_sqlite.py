@@ -1548,7 +1548,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return []
 
@@ -1886,7 +1886,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during creation.
         """
         try:
-            table = await self._get_table(table_type="evals")
+            table = await self._get_table(table_type="evals", create_table_if_not_found=True)
             if table is None:
                 return None
 
