@@ -53,12 +53,6 @@ except ImportError:
     )
 
 
-class GeminiMalformedFunctionCallError(RetryableModelProviderError):
-    """Error to raise when a the finish_reason of a generation is MALFORMED_FUNCTION_CALL."""
-
-    pass
-
-
 class GeminiFinishReason(Enum):
     """Gemini API finish reasons that may require special handling."""
 
@@ -156,13 +150,6 @@ class Gemini(Model):
         "assistant": "model",
         "tool": "user",
     }
-
-    def _get_malformed_function_call_guidance_message(self) -> Message:
-        """Get the guidance message to try a regeneration after a malformed function call."""
-        return Message(
-            role="user",
-            content=f"{self._get_regeneration_marker()}\n{MALFORMED_FUNCTION_CALL_GUIDANCE}",
-        )
 
     def get_client(self) -> GeminiClient:
         """
@@ -382,7 +369,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_regeneration_messages(messages)
+                self._remove_temporal_messages(messages)
 
             return model_response
 
@@ -434,7 +421,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_regeneration_messages(messages)
+                self._remove_temporal_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -490,7 +477,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_regeneration_messages(messages)
+                self._remove_temporal_messages(messages)
 
             return model_response
 
@@ -544,7 +531,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_regeneration_messages(messages)
+                self._remove_temporal_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -955,9 +942,7 @@ class Gemini(Model):
                     if kwargs.get("retrying_with_guidance") is True:
                         pass
                     if self.retry_with_guidance:
-                        raise GeminiMalformedFunctionCallError(
-                            retry_guidance_message=self._get_malformed_function_call_guidance_message()
-                        )
+                        raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
 
             if candidate.content:
                 response_message = candidate.content
@@ -1115,9 +1100,7 @@ class Gemini(Model):
                 if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
                     if kwargs.get("retrying_with_guidance") is True:
                         pass
-                    raise GeminiMalformedFunctionCallError(
-                        retry_guidance_message=self._get_malformed_function_call_guidance_message()
-                    )
+                    raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
 
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:

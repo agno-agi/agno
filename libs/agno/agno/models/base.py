@@ -210,7 +210,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(e.retry_guidance_message)
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
                 return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
@@ -239,7 +239,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(e.retry_guidance_message)
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
                 return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
@@ -270,7 +270,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(e.retry_guidance_message)
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
                 yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
                 return  # Success, exit after regeneration
 
@@ -303,7 +303,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(e.retry_guidance_message)
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
                 async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
@@ -316,26 +316,13 @@ class Model(ABC):
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
-    def _get_regeneration_marker(self) -> str:
-        """Get the marker string used to identify guidance messages used for regeneration.
-
-        Returns:
-            A unique marker string for the current retry reason.
-        """
-        return "[AGNO REGENERATION GUIDANCE MESSAGE]"
-
-    def _remove_regeneration_messages(self, messages: List[Message]) -> None:
-        """Remove messages used as regeneration guidance from the given list.
+    def _remove_temporal_messages(self, messages: List[Message]) -> None:
+        """Remove temporal messages from the given list.
 
         Args:
             messages: The list of messages to filter (modified in place).
         """
-        regeneration_marker = self._get_regeneration_marker()
-        messages[:] = [
-            m
-            for m in messages
-            if not (m.role == "user" and isinstance(m.content, str) and regeneration_marker in m.content)
-        ]
+        messages[:] = [m for m in messages if not m.temporal_message]
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
@@ -1012,9 +999,6 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
-
-        # If we are in a regeneration attempt, remove the regeneration flag and guidance message
-        self._remove_regeneration_messages(messages)
 
     def _populate_assistant_message(
         self,

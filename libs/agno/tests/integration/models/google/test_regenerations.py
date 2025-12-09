@@ -6,7 +6,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.models.google.gemini import GeminiMalformedFunctionCallError
+from agno.models.google.gemini import RetryableModelProviderError
 
 
 @pytest.fixture
@@ -191,9 +191,7 @@ async def test_malformed_function_call_error_triggers_regeneration_attempt_async
             # Let's use a different approach
 
             # Actually raise the error from within _parse_provider_response_delta
-            raise GeminiMalformedFunctionCallError(
-                retry_guidance_message=model._get_malformed_function_call_guidance_message()
-            )
+            raise RetryableModelProviderError(retry_guidance_message="Call the tool properly.")
         else:
             # Return the real stream on second call
             async for chunk in original_ainvoke_stream(*args, **kwargs):
