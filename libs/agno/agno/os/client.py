@@ -119,8 +119,7 @@ class AgentOSClient:
             self._http_client = None
 
     async def _ensure_client(self) -> None:
-        """Ensure HTTP client is initialized.
-        """
+        """Ensure HTTP client is initialized."""
         if not self._http_client:
             self._http_client = AsyncClient(timeout=self.timeout)
 

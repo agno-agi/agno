@@ -194,7 +194,7 @@ async def test_delete_method():
     async with AgentOSClient(base_url="http://localhost:7777") as client:
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.content = b''
+        mock_response.content = b""
 
         with patch.object(client._http_client, "request", new_callable=AsyncMock) as mock_request:
             mock_request.return_value = mock_response
@@ -686,7 +686,7 @@ async def test_post_creates_client_lazily():
 @pytest.mark.asyncio
 async def test_run_agent_stream_returns_typed_events():
     """Verify run_agent_stream yields typed RunOutputEvent objects."""
-    from agno.run.agent import RunStartedEvent, RunContentEvent, RunCompletedEvent
+    from agno.run.agent import RunCompletedEvent, RunContentEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
 
@@ -720,13 +720,13 @@ async def test_run_agent_stream_returns_typed_events():
 @pytest.mark.asyncio
 async def test_stream_handles_invalid_json():
     """Verify invalid JSON is logged and skipped."""
-    from agno.run.agent import RunStartedEvent, RunCompletedEvent
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
 
     mock_lines = [
         'data: {"event": "RunStarted", "run_id": "run-123", "agent_id": "agent-1", "created_at": 1234567890}',
-        'data: {invalid json}',  # Bad JSON
+        "data: {invalid json}",  # Bad JSON
         'data: {"event": "RunCompleted", "run_id": "run-123", "agent_id": "agent-1", "created_at": 1234567890}',
     ]
 
@@ -754,7 +754,7 @@ async def test_stream_handles_invalid_json():
 @pytest.mark.asyncio
 async def test_stream_handles_unknown_event_type():
     """Verify unknown event types are logged and skipped."""
-    from agno.run.agent import RunStartedEvent, RunCompletedEvent
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
 
@@ -788,7 +788,7 @@ async def test_stream_handles_unknown_event_type():
 @pytest.mark.asyncio
 async def test_stream_handles_empty_lines():
     """Verify empty lines and comments are skipped."""
-    from agno.run.agent import RunStartedEvent, RunCompletedEvent
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
 
@@ -822,7 +822,7 @@ async def test_stream_handles_empty_lines():
 @pytest.mark.asyncio
 async def test_stream_team_run_returns_typed_events():
     """Verify stream_team_run yields BaseTeamRunEvent objects."""
-    from agno.run.agent import RunStartedEvent, RunCompletedEvent
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
 
@@ -853,7 +853,7 @@ async def test_stream_team_run_returns_typed_events():
 @pytest.mark.asyncio
 async def test_stream_workflow_run_returns_typed_events():
     """Verify stream_workflow_run yields WorkflowRunOutputEvent objects."""
-    from agno.run.agent import RunStartedEvent, RunCompletedEvent
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
 

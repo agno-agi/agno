@@ -39,9 +39,7 @@ async def run_agent_non_streaming():
 
         print(f"\nRun ID: {result.run_id}")
         print(f"Content: {result.content}")
-        print(
-            f"Tokens: {result.metrics.total_tokens if result.metrics else 'N/A'}"
-        )
+        print(f"Tokens: {result.metrics.total_tokens if result.metrics else 'N/A'}")
 
 
 async def run_agent_streaming():
@@ -61,7 +59,7 @@ async def run_agent_streaming():
         print(f"Streaming from agent: {agent_id}")
         print("\nResponse: ", end="", flush=True)
 
-        from agno.run.agent import RunContentEvent, RunCompletedEvent
+        from agno.run.agent import RunCompletedEvent, RunContentEvent
 
         full_content = ""
         async for event in client.run_agent_stream(
