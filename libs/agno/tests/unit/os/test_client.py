@@ -76,8 +76,7 @@ async def test_connect_method():
     client = AgentOSClient(base_url="http://localhost:7777")
     assert client._http_client is None
 
-    result = await client.connect()
-    assert result is client  # Returns self for chaining
+    await client.connect()
     assert client._http_client is not None
 
     await client.close()

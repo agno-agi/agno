@@ -100,17 +100,13 @@ class AgentOSClient:
         else:
             asyncio.run(self.close())
 
-    async def connect(self) -> "AgentOSClient":
+    async def connect(self) -> None:
         """Explicitly create HTTP client connection.
 
         Use this when you need to manage the client lifecycle manually
         without using the async context manager.
-
-        Returns:
-            Self for method chaining
         """
         await self._ensure_client()
-        return self
 
     async def close(self) -> None:
         """Close HTTP client connections."""
