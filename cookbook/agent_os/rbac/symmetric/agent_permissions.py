@@ -17,6 +17,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
 from agno.os.middleware import JWTMiddleware
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
@@ -54,25 +55,16 @@ agent_os = AgentOS(
     id="my-agent-os",
     description="RBAC Protected AgentOS",
     agents=[web_search_agent, agno_agent],
+    authorization=True,
+    authorization_config=AuthorizationConfig(
+        verification_key=JWT_SECRET,
+        algorithm="HS256",
+    ),
 )
 
 # Get the app and add RBAC middleware
 app = agent_os.get_app()
 
-# Add JWT middleware with RBAC enabled using custom scope mappings
-app.add_middleware(
-    JWTMiddleware,
-    verification_key=JWT_SECRET,
-    algorithm="HS256",  # Use HS256 for symmetric key
-    verify_audience=True,  # Verify aud claim matches AgentOS ID
-    scope_mappings={
-        # Define the scopes for the agents
-        # Other scopes will remain the same
-        "POST /agents/web-search-agent/runs": ["agents:web-search-agent:run"],
-        "POST /agents/agno-agent/runs": ["agents:agno-agent:run"],
-        "POST /agents/*/runs": [],
-    },
-)
 
 if __name__ == "__main__":
     """

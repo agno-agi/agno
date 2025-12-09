@@ -208,11 +208,6 @@ class AgentOS:
         self.authorization = authorization
         self.authorization_config = authorization_config
 
-        if self.authorization and not self.id:
-            raise ValueError(
-                "Authorization is enabled but no AgentOS ID is provided. Please provide an ID for the AgentOS."
-            )
-
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
 
