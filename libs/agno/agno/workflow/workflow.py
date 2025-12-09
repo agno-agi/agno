@@ -2569,6 +2569,8 @@ class Workflow:
                 else:
                     # Update status to RUNNING and save
                     workflow_run_response.status = RunStatus.running
+
+                    workflow_session.upsert_run(run=workflow_run_response)
                     if self._has_async_db():
                         await self.asave_session(session=workflow_session)
                     else:
