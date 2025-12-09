@@ -55,6 +55,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        create_schema: bool = True,
     ):
         """
         Async interface for interacting with a MySQL database.
@@ -78,6 +79,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -112,6 +115,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
@@ -194,8 +198,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create schema if not exists
-            async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=self.db_schema)
+            if self.create_schema:
+                async with self.async_session_factory() as sess, sess.begin():
+                    await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
