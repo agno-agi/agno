@@ -1,5 +1,6 @@
 import json
 from functools import partial
+from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_exception
@@ -15,28 +16,56 @@ except (ImportError, ModuleNotFoundError):
 from agno.media import Image
 from agno.tools.function import ToolResult
 
+if TYPE_CHECKING:
+    from agno.run import RunContext
+    from agno.tools.mcp.mcp import MCPTools
 
-def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
+
+def get_entrypoint_for_tool(
+    tool: MCPTool,
+    session: ClientSession,
+    mcp_tools_instance: Optional["MCPTools"] = None,
+    server_name: str = "unknown",
+    server_idx: int = 0,
+):
     """
     Return an entrypoint for an MCP tool.
 
     Args:
         tool: The MCP tool to create an entrypoint for
-        session: The session to use
+        session: The MCP ClientSession to use
+        mcp_tools_instance: Optional MCPTools or MultiMCPTools instance
+        server_name: Name of the MCP server (for logging and context)
+        server_idx: Index of the server (for MultiMCPTools)
 
     Returns:
         Callable: The entrypoint function for the tool
     """
 
-    async def call_tool(tool_name: str, **kwargs) -> ToolResult:
+    async def call_tool(
+        tool_name: str, run_context: Optional["RunContext"] = None, **kwargs
+    ) -> ToolResult:
+        # Execute the MCP tool call
         try:
-            await session.send_ping()
-        except Exception as e:
-            log_exception(e)
+            # Get the appropriate session for this run
+            # If mcp_tools_instance has header_provider and run_context is provided,
+            # this will create/reuse a session with dynamic headers
+            if mcp_tools_instance and hasattr(mcp_tools_instance, 'get_session_for_run'):
+                # For MultiMCPTools, pass server_idx; for MCPTools, it will be ignored
+                if 'server_idx' in mcp_tools_instance.get_session_for_run.__code__.co_varnames:
+                    active_session = await mcp_tools_instance.get_session_for_run(run_context, server_idx)
+                else:
+                    active_session = await mcp_tools_instance.get_session_for_run(run_context)
+            else:
+                active_session = session
 
-        try:
+            try:
+                await active_session.send_ping()
+            except Exception as e:
+                log_exception(e)
+
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await session.call_tool(tool_name, kwargs)  # type: ignore
+            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:
