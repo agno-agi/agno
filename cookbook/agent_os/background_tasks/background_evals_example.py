@@ -41,8 +41,7 @@ quality_eval = AgentAsJudgeEval(
     ],
     print_results=True,
     print_summary=True,
-    telemetry=True,
-    run_in_background=True,
+    run_in_background=True,  # Run this eval as a background task
 )
 
 agent = Agent(
