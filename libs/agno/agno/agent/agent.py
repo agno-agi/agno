@@ -2293,6 +2293,8 @@ class Agent:
                 # Always clean up the run tracking
                 cleanup_run(run_response.run_id)  # type: ignore
 
+        return run_response
+
     async def _arun_stream(
         self,
         run_response: RunOutput,

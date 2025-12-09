@@ -1715,6 +1715,8 @@ class Team:
                 self._disconnect_connectable_tools()
                 cleanup_run(run_response.run_id)  # type: ignore
 
+        return run_response
+
     def _run_stream(
         self,
         run_response: TeamRunOutput,
@@ -2628,6 +2630,8 @@ class Team:
 
                 # Always clean up the run tracking
                 cleanup_run(run_response.run_id)  # type: ignore
+
+        return run_response
 
     async def _arun_stream(
         self,
