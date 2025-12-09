@@ -82,7 +82,7 @@ class Claude(AnthropicClaude):
 
             if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
                 log_warning(
-                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
         if self.timeout is not None:
