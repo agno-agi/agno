@@ -1,4 +1,11 @@
-title: "Docs Assistant"
-description: "AI-powered documentation assistant using Agentic RAG"
-host: "0.0.0.0"
-port: 7777
+available_models:
+  - "gpt-4o"
+  - "gpt-4o-mini"
+  - "claude-sonnet-4-5"
+  
+chat:
+  quick_prompts:
+    docs-assistant:
+      - "What is Agno?"
+      - "How do I create an agent with tools?"
+      - "What models are available?"

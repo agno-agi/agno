@@ -1,6 +1,5 @@
-# See https://help.github.com/ignore-files/ for more about ignoring files.
-
 .DS_Store
+.git
 
 # Cache
 .mypy_cache
@@ -11,6 +10,7 @@
 *.ruff_cache
 *.cache*
 *.config*
+*.local*
 
 # Machine specific
 .idea
