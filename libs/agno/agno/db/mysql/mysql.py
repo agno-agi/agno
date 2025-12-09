@@ -255,6 +255,9 @@ class MySQLDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.culture_table_name, "culture"),
+            (self.trace_table_name, "traces"),
+            (self.span_table_name, "spans"),
             (self.versions_table_name, "versions"),
         ]
 
