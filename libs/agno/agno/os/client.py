@@ -38,6 +38,7 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
+from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import BaseTeamRunEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
@@ -494,7 +495,7 @@ class AgentOSClient:
         self,
         agent_id: str,
         run_id: str,
-        tools: List[Dict[str, Any]],
+        tools: List[ToolExecution],
         stream: bool = False,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -504,7 +505,7 @@ class AgentOSClient:
         Args:
             agent_id: ID of the agent
             run_id: ID of the run to continue
-            tools: List of tool results to provide
+            tools: List of ToolExecution objects with tool results
             stream: Whether to stream the response
             session_id: Optional session ID
             user_id: Optional user ID
@@ -516,7 +517,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps(tools), "stream": str(stream).lower()}
+        data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": str(stream).lower()}
         if session_id:
             data["session_id"] = session_id
         if user_id:
@@ -525,11 +526,11 @@ class AgentOSClient:
         response_data = await self._post(endpoint, data, as_form=True)
         return RunOutput.from_dict(response_data)
 
-    async def stream_continue_agent_run(
+    async def continue_agent_run_stream(
         self,
         agent_id: str,
         run_id: str,
-        tools: List[Dict[str, Any]],
+        tools: List[ToolExecution],
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> AsyncIterator[RunOutputEvent]:
@@ -538,7 +539,7 @@ class AgentOSClient:
         Args:
             agent_id: ID of the agent
             run_id: ID of the run to continue
-            tools: List of tool results to provide
+            tools: List of ToolExecution objects with tool results
             session_id: Optional session ID
             user_id: Optional user ID
 
@@ -549,7 +550,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps(tools), "stream": "true"}
+        data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "true"}
         if session_id:
             data["session_id"] = session_id
         if user_id:
@@ -654,7 +655,7 @@ class AgentOSClient:
         response_data = await self._post(endpoint, data, as_form=True)
         return TeamRunSchema.model_validate(response_data)
 
-    async def stream_team_run(
+    async def run_team_stream(
         self,
         team_id: str,
         message: str,
@@ -801,7 +802,7 @@ class AgentOSClient:
         response_data = await self._post(endpoint, data, as_form=True)
         return WorkflowRunSchema.model_validate(response_data)
 
-    async def stream_workflow_run(
+    async def run_workflow_stream(
         self,
         workflow_id: str,
         message: str,

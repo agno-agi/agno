@@ -61,7 +61,7 @@ async def run_team_streaming():
         from agno.run.team import RunContentEvent, RunCompletedEvent
 
         # Stream the response
-        async for event in client.stream_team_run(
+        async for event in client.run_team_stream(
             team_id=team_id,
             message="Tell me about Python programming in 2 sentences.",
         ):

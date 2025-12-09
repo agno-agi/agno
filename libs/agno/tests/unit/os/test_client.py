@@ -820,8 +820,8 @@ async def test_stream_handles_empty_lines():
 
 
 @pytest.mark.asyncio
-async def test_stream_team_run_returns_typed_events():
-    """Verify stream_team_run yields BaseTeamRunEvent objects."""
+async def test_run_team_stream_returns_typed_events():
+    """Verify run_team_stream yields BaseTeamRunEvent objects."""
     from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -840,7 +840,7 @@ async def test_stream_team_run_returns_typed_events():
         mock_stream.return_value = async_generator()
 
         events = []
-        async for event in client.stream_team_run("team-123", "test message"):
+        async for event in client.run_team_stream("team-123", "test message"):
             events.append(event)
 
         assert len(events) == 2
@@ -851,8 +851,8 @@ async def test_stream_team_run_returns_typed_events():
 
 
 @pytest.mark.asyncio
-async def test_stream_workflow_run_returns_typed_events():
-    """Verify stream_workflow_run yields WorkflowRunOutputEvent objects."""
+async def test_run_workflow_stream_returns_typed_events():
+    """Verify run_workflow_stream yields WorkflowRunOutputEvent objects."""
     from agno.run.agent import RunCompletedEvent, RunStartedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -871,7 +871,7 @@ async def test_stream_workflow_run_returns_typed_events():
         mock_stream.return_value = async_generator()
 
         events = []
-        async for event in client.stream_workflow_run("workflow-123", "test message"):
+        async for event in client.run_workflow_stream("workflow-123", "test message"):
             events.append(event)
 
         assert len(events) == 2

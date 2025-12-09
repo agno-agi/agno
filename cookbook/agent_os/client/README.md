@@ -131,7 +131,7 @@ await client.cancel_agent_run(agent_id="agent-id", run_id="run-id")
 result = await client.run_team(team_id="team-id", message="Hello team")
 
 # Streaming team run
-async for line in client.stream_team_run(team_id="team-id", message="Hello"):
+async for line in client.run_team_stream(team_id="team-id", message="Hello"):
     print(line)
 
 # Cancel a team run
@@ -145,7 +145,7 @@ await client.cancel_team_run(team_id="team-id", run_id="run-id")
 result = await client.run_workflow(workflow_id="workflow-id", message="Start")
 
 # Streaming workflow run
-async for line in client.stream_workflow_run(workflow_id="workflow-id", message="Start"):
+async for line in client.run_workflow_stream(workflow_id="workflow-id", message="Start"):
     print(line)
 
 # Cancel a workflow run

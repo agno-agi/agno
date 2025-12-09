@@ -65,7 +65,7 @@ async def run_workflow_streaming():
 
         try:
             # Stream the response
-            async for line in client.stream_workflow_run(
+            async for line in client.run_workflow_stream(
                 workflow_id=workflow_id,
                 message="Explain machine learning in simple terms.",
             ):
