@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import warnings
 from collections import ChainMap, deque
 from copy import copy
@@ -36,7 +37,6 @@ from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.exceptions import (
     InputCheckError,
-    ModelProviderError,
     OutputCheckError,
     RunCancelledException,
 )
@@ -115,7 +115,6 @@ from agno.utils.events import (
     create_team_run_cancelled_event,
     create_team_run_completed_event,
     create_team_run_content_completed_event,
-    create_team_run_error_event,
     create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_session_summary_completed_event,
@@ -267,6 +266,8 @@ class Team:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+    # Introduction for the team
+    introduction: Optional[str] = None
 
     # If True, resolve the session_state, dependencies, and metadata in the user and system messages
     resolve_in_context: bool = True
@@ -487,6 +488,7 @@ class Team:
         add_member_tools_to_context: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        introduction: Optional[str] = None,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
@@ -612,6 +614,7 @@ class Team:
         self.add_member_tools_to_context = add_member_tools_to_context
         self.system_message = system_message
         self.system_message_role = system_message_role
+        self.introduction = introduction
         self.additional_input = additional_input
 
         self.dependencies = dependencies
@@ -1554,7 +1557,12 @@ class Team:
 
         # 4. Start memory creation in background thread
         memory_future = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
                 self._make_memories, run_messages=run_messages, user_id=user_id
@@ -1761,7 +1769,12 @@ class Team:
 
         # 4. Start memory creation in background thread
         memory_future = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background thread.")
             memory_future = self.background_executor.submit(
                 self._make_memories, run_messages=run_messages, user_id=user_id
@@ -1963,7 +1976,6 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1991,7 +2003,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2020,7 +2031,6 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2059,6 +2069,7 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
+            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -2196,18 +2207,11 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
-        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+        # Set up retry logic
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            # Initialize the current run
-
+            log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
             # Run the team
             try:
                 if stream:
@@ -2246,18 +2250,6 @@ class Team:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                import time
-
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -2270,21 +2262,24 @@ class Team:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise last_exception
-        else:
-            if stream:
-                return generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -2411,7 +2406,12 @@ class Team:
 
         # 6. Start memory creation in background task
         memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2649,7 +2649,12 @@ class Team:
 
         # 7. Start memory creation in background task
         memory_task = None
-        if run_messages.user_message is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+        if (
+            run_messages.user_message is not None
+            and self.memory_manager is not None
+            and self.enable_user_memories
+            and not self.enable_agentic_memory
+        ):
             log_debug("Starting memory creation in background task.")
             memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
@@ -2868,7 +2873,6 @@ class Team:
         run_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2897,7 +2901,6 @@ class Team:
         run_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2927,7 +2930,6 @@ class Team:
         run_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-        retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2961,6 +2963,8 @@ class Team:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -3087,20 +3091,16 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the team's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Run the team
-        last_exception = None
-        num_attempts = retries + 1
-
         yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+
+        # Resolve retry parameters
+        num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
             # Run the team
             try:
                 if stream:
-                    response_iterator = self._arun_stream(
+                    return self._arun_stream(  # type: ignore
                         input=validated_input,
                         run_response=run_response,
                         run_context=run_context,
@@ -3116,7 +3116,6 @@ class Team:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
-                    return response_iterator  # type: ignore
                 else:
                     return self._arun(  # type: ignore
                         input=validated_input,
@@ -3136,17 +3135,6 @@ class Team:
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 raise e
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -3159,21 +3147,25 @@ class Team:
                     )
                 else:
                     return run_response
+            except Exception as e:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
+                    raise e
 
         # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise last_exception
-        else:
-            if stream:
-                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
-
-            raise Exception(f"Failed after {num_attempts} attempts.")
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _update_run_response(
         self,
@@ -3824,7 +3816,12 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and self.enable_user_memories
+        ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
                 message=user_message_str,
@@ -3840,7 +3837,12 @@ class Team:
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
-        if user_message_str is not None and user_message_str.strip() != "" and self.memory_manager is not None:
+        if (
+            user_message_str is not None
+            and user_message_str.strip() != ""
+            and self.memory_manager is not None
+            and self.enable_user_memories
+        ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
                 message=user_message_str,
@@ -8210,6 +8212,20 @@ class Team:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                from uuid import uuid4
+
+                team_session.upsert_run(
+                    TeamRunOutput(
+                        run_id=str(uuid4()),
+                        team_id=self.id,
+                        session_id=session_id,
+                        user_id=user_id,
+                        team_name=self.name,
+                        content=self.introduction,
+                        messages=[Message(role=self.model.assistant_message_role, content=self.introduction)],  # type: ignore
+                    )
+                )
 
         # Cache the session if relevant
         if team_session is not None and self.cache_session:
@@ -8242,15 +8258,34 @@ class Team:
         # Create new session if none found
         if team_session is None:
             log_debug(f"Creating new TeamSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             team_session = TeamSession(
                 session_id=session_id,
                 team_id=self.id,
                 user_id=user_id,
                 team_data=self._get_team_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                from uuid import uuid4
+
+                team_session.upsert_run(
+                    TeamRunOutput(
+                        run_id=str(uuid4()),
+                        team_id=self.id,
+                        session_id=session_id,
+                        user_id=user_id,
+                        team_name=self.name,
+                        content=self.introduction,
+                        messages=[Message(role=self.model.assistant_message_role, content=self.introduction)],  # type: ignore
+                    )
+                )
 
         # Cache the session if relevant
         if team_session is not None and self.cache_session:
@@ -8900,12 +8935,13 @@ class Team:
             Optional[List[UserMemory]]: The user memories.
         """
         if self.memory_manager is None:
-            return None
+            self._set_memory_manager()
+
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
 
-        return self.memory_manager.get_user_memories(user_id=user_id)
+        return self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID.
@@ -8916,12 +8952,13 @@ class Team:
             Optional[List[UserMemory]]: The user memories.
         """
         if self.memory_manager is None:
-            return None
+            self._set_memory_manager()
+
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
 
-        return await self.memory_manager.aget_user_memories(user_id=user_id)
+        return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
     ###########################################################################
     # Handle reasoning content

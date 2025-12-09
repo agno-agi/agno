@@ -1,6 +1,7 @@
 import asyncio
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
@@ -101,7 +102,7 @@ class Parallel:
                 step_name=self.name or "Parallel",
                 step_id=str(uuid4()),
                 step_type=StepType.PARALLEL,
-                content=f"Parallel {self.name or 'execution'} completed with 1 result",
+                content=self._build_aggregated_content(step_outputs),
                 executor_name=self.name or "Parallel",
                 images=single_result.images,
                 videos=single_result.videos,
@@ -115,8 +116,8 @@ class Parallel:
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
-        # Multiple results - aggregate them
-        aggregated_content = f"Parallel {self.name or 'execution'} completed with {len(step_outputs)} results"
+        # Multiple results - aggregate them with actual content from all steps
+        aggregated_content = self._build_aggregated_content(step_outputs)
 
         # Combine all media from parallel steps
         all_images = []
@@ -267,8 +268,9 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks with their original indices
+            # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
-                executor.submit(execute_step_with_index, indexed_step): indexed_step[0]
+                executor.submit(copy_context().run, execute_step_with_index, indexed_step): indexed_step[0]
                 for indexed_step in indexed_steps
             }
 
@@ -449,7 +451,11 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
-            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
+            # Use copy_context().run to propagate context variables to child threads
+            futures = [
+                executor.submit(copy_context().run, execute_step_stream_with_index, indexed_step)
+                for indexed_step in indexed_steps
+            ]
 
             # Process events from queue as they arrive
             completed_steps = 0
