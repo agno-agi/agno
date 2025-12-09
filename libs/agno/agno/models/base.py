@@ -190,9 +190,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(
-                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
-                )
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
                 return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
@@ -221,9 +219,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(
-                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
-                )
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
                 return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
@@ -254,9 +250,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(
-                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
-                )
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
                 yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
                 return  # Success, exit after regeneration
 
@@ -289,9 +283,7 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(
-                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
-                )
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
                 async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
@@ -304,13 +296,13 @@ class Model(ABC):
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
-    def _remove_temporary_messages(self, messages: List[Message]) -> None:
+    def _remove_temporarys(self, messages: List[Message]) -> None:
         """Remove temporal messages from the given list.
 
         Args:
             messages: The list of messages to filter (modified in place).
         """
-        messages[:] = [m for m in messages if not m.temporary_message]
+        messages[:] = [m for m in messages if not m.temporary]
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__

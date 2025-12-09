@@ -345,7 +345,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporary_messages(messages)
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -397,7 +397,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporary_messages(messages)
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -453,7 +453,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporary_messages(messages)
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -507,7 +507,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporary_messages(messages)
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
