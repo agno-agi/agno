@@ -458,18 +458,25 @@ class Model(ABC):
         self,
         messages: List[Message],
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         from agno.utils.tokens import count_tokens
 
-        return count_tokens(messages, tools=list(tools) if tools else None, model_id=self.id)
+        return count_tokens(
+            messages,
+            tools=list(tools) if tools else None,
+            model_id=self.id,
+            response_format=response_format,
+        )
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         # Run in thread to avoid blocking the event loop.
-        return await asyncio.to_thread(self.count_tokens, messages, tools)
+        return await asyncio.to_thread(self.count_tokens, messages, tools, response_format)
 
     def response(
         self,

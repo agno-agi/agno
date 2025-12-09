@@ -2,7 +2,7 @@ import json
 import math
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -19,19 +19,16 @@ DEFAULT_IMAGE_HEIGHT = 1024
 # Different models use different encodings
 @lru_cache(maxsize=16)
 def _get_tiktoken_encoding(model_id: str):
+    model_id = model_id.lower()
     try:
         import tiktoken
-
-        # gpt-4o models use the newer o200k_base encoding with 200k vocabulary
-        if "gpt-4o" in model_id.lower():
-            return tiktoken.get_encoding("o200k_base")
 
         try:
             # Try to get the model-specific encoding
             return tiktoken.encoding_for_model(model_id)
         except KeyError:
-            # Fall back to cl100k_base for unknown models (most common encoding)
-            return tiktoken.get_encoding("cl100k_base")
+            # Fall back to o200k_base for unknown models
+            return tiktoken.get_encoding("o200k_base")
     except ImportError:
         log_warning("tiktoken not installed. Please install it using `pip install tiktoken`.")
         return None
@@ -371,7 +368,8 @@ def count_tool_tokens(
     tokens += 9
 
     # Subtract 4 tokens when system message is present with tools
-    # (OpenAI combines system message and tool definitions more efficiently)
+    # (OpenAI combines system message and tool definitions without
+    # the priming tokens <|start|>system<|message|>)
     if includes_system_message:
         tokens -= 4
 
@@ -385,9 +383,42 @@ def count_tool_tokens(
         func_name = tool_choice.get("function", {}).get("name", "")
         if func_name:
             tokens += count_text_tokens(func_name, model_id)
-    # "auto" or undefined: no additional tokens
-
     return tokens
+
+
+def count_schema_tokens(
+    response_format: Optional[Union[Dict, Type]],
+    model_id: str = "gpt-4o",
+) -> int:
+    """Estimate tokens for output_schema/response_format."""
+    if response_format is None:
+        return 0
+
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            # Convert Pydantic model to JSON schema
+            schema = response_format.model_json_schema()
+        elif isinstance(response_format, dict):
+            schema = response_format
+        else:
+            return 0
+
+        schema_json = json.dumps(schema)
+        raw_tokens = count_text_tokens(schema_json, model_id)
+
+        # The ratio varies with schema size
+        if raw_tokens < 100:
+            ratio = 0.88
+        elif raw_tokens < 200:
+            ratio = 0.77
+        else:
+            ratio = 0.72
+
+        return int(raw_tokens * ratio)
+    except Exception:
+        return 0
 
 
 def count_text_tokens(text: str, model_id: str = "gpt-4o") -> int:
@@ -612,6 +643,7 @@ def count_tokens(
     tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     model_id: str = "gpt-4o",
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    response_format: Optional[Union[Dict, Type]] = None,
 ) -> int:
     total = 0
 
@@ -632,10 +664,14 @@ def count_tokens(
     total += 3
 
     # Tools are tokenized separately from messages. Also, OpenAI internally combines
-    # system message and tool definitions more efficiently, resulting in 4 fewer tokens
+    # system message and tool definitions without the priming tokens <|start|>system<|message|>, resulting in 4 fewer tokens
     # when both are present.
     if tools:
         includes_system = any(msg.role == "system" for msg in messages)
         total += count_tool_tokens(tools, model_id, includes_system, tool_choice)
+
+    # Add response_format/output_schema tokens
+    if response_format is not None:
+        total += count_schema_tokens(response_format, model_id)
 
     return total

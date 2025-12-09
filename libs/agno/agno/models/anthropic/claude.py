@@ -17,6 +17,7 @@ from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -404,6 +405,7 @@ class Claude(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
         anthropic_tools = None
@@ -418,12 +420,13 @@ class Claude(Model):
             kwargs["tools"] = anthropic_tools
 
         response = self.get_client().messages.count_tokens(**kwargs)
-        return response.input_tokens
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
         anthropic_tools = None
@@ -438,7 +441,7 @@ class Claude(Model):
             kwargs["tools"] = anthropic_tools
 
         response = await self.get_async_client().messages.count_tokens(**kwargs)
-        return response.input_tokens
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
 
     def get_request_params(
         self,

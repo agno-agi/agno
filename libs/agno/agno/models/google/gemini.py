@@ -22,7 +22,7 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.tokens import count_text_tokens, count_tool_tokens
+from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
     from google import genai
@@ -315,8 +315,10 @@ class Gemini(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(response_format, self.id)
 
         if self.vertexai:
             # VertexAI supports full token counting with system_instruction and tools
@@ -334,7 +336,7 @@ class Gemini(Model):
                 contents=contents,
                 config=config if config else None,  # type: ignore
             )
-            return response.total_tokens or 0
+            return (response.total_tokens or 0) + schema_tokens
         else:
             # Google AI Studio: Use API for content tokens + local estimation for system/tools
             # The API doesn't support system_instruction or tools in config, so we use a hybrid approach:
@@ -348,7 +350,7 @@ class Gemini(Model):
                 total = response.total_tokens or 0
             except Exception as e:
                 log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
-                return super().count_tokens(messages, tools)
+                return super().count_tokens(messages, tools, response_format)
 
             # Add estimated tokens for system instruction (not supported by Google AI Studio API)
             if system_instruction:
@@ -360,14 +362,19 @@ class Gemini(Model):
                 includes_system = system_instruction is not None
                 total += count_tool_tokens(tools, self.id, includes_system)
 
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
             return total
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(response_format, self.id)
 
         # VertexAI supports full token counting with system_instruction and tools
         if self.vertexai:
@@ -385,7 +392,7 @@ class Gemini(Model):
                 contents=contents,
                 config=config if config else None,  # type: ignore
             )
-            return response.total_tokens or 0
+            return (response.total_tokens or 0) + schema_tokens
         else:
             # Hybrid approach - Google AI Studio does not support system_instruction or tools in config
             try:
@@ -396,7 +403,7 @@ class Gemini(Model):
                 total = response.total_tokens or 0
             except Exception as e:
                 log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
-                return await super().acount_tokens(messages, tools)
+                return await super().acount_tokens(messages, tools, response_format)
 
             # Add estimated tokens for system instruction
             if system_instruction:
@@ -407,6 +414,9 @@ class Gemini(Model):
             if tools:
                 includes_system = system_instruction is not None
                 total += count_tool_tokens(tools, self.id, includes_system)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
 
             return total
 

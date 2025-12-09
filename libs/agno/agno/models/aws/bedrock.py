@@ -12,6 +12,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from boto3 import client as AwsClient
@@ -361,6 +362,7 @@ class AwsBedrock(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
@@ -378,15 +380,19 @@ class AwsBedrock(Model):
                 includes_system = any(m.role == "system" for m in messages)
                 tokens += count_tool_tokens(tools, self.id, includes_system)
 
+            # Count schema tokens
+            tokens += count_schema_tokens(response_format, self.id)
+
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return super().count_tokens(messages, tools)
+            return super().count_tokens(messages, tools, response_format)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
@@ -405,10 +411,13 @@ class AwsBedrock(Model):
                 includes_system = any(m.role == "system" for m in messages)
                 tokens += count_tool_tokens(tools, self.id, includes_system)
 
+            # Count schema tokens
+            tokens += count_schema_tokens(response_format, self.id)
+
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return await super().acount_tokens(messages, tools)
+            return await super().acount_tokens(messages, tools, response_format)
 
     def invoke(
         self,
