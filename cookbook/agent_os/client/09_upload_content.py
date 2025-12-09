@@ -99,7 +99,7 @@ async def search_uploaded_content():
         try:
             # Search for content
             results = await client.search_knowledge(
-                query="How do I get started with Agno?",
+                query="What is Agno?",
                 limit=5,
             )
 
