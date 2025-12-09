@@ -643,7 +643,7 @@ class PgVector(VectorDb):
                                 if (
                                     doc.embedding is not None
                                     and isinstance(doc.embedding, list)
-                                    and len(doc.embedding) > 0
+                                    and len(doc.embedding) == 0
                                 ):
                                     log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
