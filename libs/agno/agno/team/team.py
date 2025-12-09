@@ -1682,8 +1682,8 @@ class Team:
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
-                run_response.error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
@@ -1703,8 +1703,8 @@ class Team:
                     time.sleep(delay)
                     continue
                 # Add error event to list of events
-                run_response.error = create_team_run_error_event(run_response, error=str(e))
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -2021,8 +2021,8 @@ class Team:
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
-                run_response.error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -2030,7 +2030,7 @@ class Team:
 
                 self._cleanup_and_store(run_response=run_response, session=session)
 
-                yield run_response.error
+                yield run_error
 
                 break
 
@@ -2047,8 +2047,8 @@ class Team:
                     continue
 
                 run_response.status = RunStatus.error
-                run_response.error = create_team_run_error_event(run_response, error=str(e))
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -2057,7 +2057,7 @@ class Team:
                 # Cleanup and store the run response and session
                 self._cleanup_and_store(run_response=run_response, session=session)
 
-                yield run_response.error
+                yield run_error
             finally:
                 # Always disconnect connectable tools
                 self._disconnect_connectable_tools()
@@ -2587,8 +2587,8 @@ class Team:
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
-                run_response.error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -2610,8 +2610,8 @@ class Team:
                     time.sleep(delay)
                     continue
 
-                run_response.error = create_team_run_error_event(run_response, error=str(e))
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -2971,8 +2971,8 @@ class Team:
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
-                run_response.error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -2980,7 +2980,7 @@ class Team:
 
                 await self._acleanup_and_store(run_response=run_response, session=team_session)
 
-                yield run_response.error
+                yield run_error
 
                 break
 
@@ -2997,8 +2997,8 @@ class Team:
                     continue
 
                 run_response.status = RunStatus.error
-                run_response.error = create_team_run_error_event(run_response, error=str(e))
-                run_response.events = add_team_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -3007,7 +3007,7 @@ class Team:
                 # Cleanup and store the run response and session
                 await self._acleanup_and_store(run_response=run_response, session=team_session)
 
-                yield run_response.error
+                yield run_error
 
             finally:
                 # Always disconnect connectable tools
