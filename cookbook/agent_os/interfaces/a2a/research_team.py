@@ -24,6 +24,7 @@ writer = Agent(
 
 research_team = Team(
     members=[researcher, writer],
+    id="research_team",
     name="Research Team",
     instructions="""
     You are a research team that helps users with research and content creation.
@@ -33,6 +34,7 @@ research_team = Team(
     get_member_information_tool=True,
     add_member_tools_to_context=True,
     add_history_to_context=True,
+    debug_mode=True
 )
 
 # Setup our AgentOS app

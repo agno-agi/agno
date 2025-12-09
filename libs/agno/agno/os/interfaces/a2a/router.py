@@ -102,15 +102,15 @@ def attach_routes(
         if stream:
             try:
                 event_stream = agent.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
-                    user_id=user_id,
-                    stream=True,
-                    stream_events=True,
+                        input=run_input.input_content,
+                        images=run_input.images,
+                        videos=run_input.videos,
+                        audio=run_input.audios,
+                        files=run_input.files,
+                        session_id=context_id,
+                        user_id=user_id,
+                        stream=True,
+                        stream_events=True,
                     **kwargs,
                 )
 
@@ -125,12 +125,12 @@ def attach_routes(
         else:
             try:
                 response = await agent.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
+                         input=run_input.input_content,
+                        images=run_input.images,
+                        videos=run_input.videos,
+                        audio=run_input.audios,
+                        files=run_input.files,                   
+                        session_id=context_id,
                     user_id=user_id,
                     **kwargs,
                 )
@@ -231,12 +231,11 @@ def attach_routes(
         if stream:
             try:
                 event_stream = team.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
+                        input=run_input.input_content,
+                        images=run_input.images,
+                        videos=run_input.videos,
+                        audio=run_input.audios,
+                        files=run_input.files,                    
                     user_id=user_id,
                     stream=True,
                     stream_events=True,
@@ -254,12 +253,12 @@ def attach_routes(
         else:
             try:
                 response = await team.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
+                          input=run_input.input_content,
+                        images=run_input.images,
+                        videos=run_input.videos,
+                        audio=run_input.audios,
+                        files=run_input.files,                  
+                        session_id=context_id,
                     user_id=user_id,
                     **kwargs,
                 )
