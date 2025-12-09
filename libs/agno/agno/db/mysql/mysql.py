@@ -116,8 +116,6 @@ class MySQLDb(BaseDb):
         self.db_engine: Engine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
-
-        # Schema creation flag
         self.create_schema: bool = create_schema
 
         # Initialize database session

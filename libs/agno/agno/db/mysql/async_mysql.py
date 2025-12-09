@@ -106,8 +106,6 @@ class AsyncMySQLDb(AsyncBaseDb):
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
-
-        # Schema creation flag
         self.create_schema: bool = create_schema
 
         # Initialize database session factory
