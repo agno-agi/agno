@@ -631,7 +631,7 @@ def count_tokens(
     # Every completion is primed with these tokens regardless of content
     total += 3
 
-    # Tools are tokenized separately from messages. Also, penAI internally combines
+    # Tools are tokenized separately from messages. Also, OpenAI internally combines
     # system message and tool definitions more efficiently, resulting in 4 fewer tokens
     # when both are present.
     if tools:
