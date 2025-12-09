@@ -981,7 +981,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content(content, upsert=False, skip_if_exists=True)
+        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")

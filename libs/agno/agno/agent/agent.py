@@ -1571,6 +1571,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1598,6 +1599,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1626,6 +1628,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1648,8 +1651,8 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
@@ -2547,6 +2550,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2573,6 +2577,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2601,6 +2606,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2621,8 +2627,8 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
