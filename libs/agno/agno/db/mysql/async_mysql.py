@@ -273,7 +273,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
 
-    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
@@ -361,17 +361,16 @@ class AsyncMySQLDb(AsyncBaseDb):
 
     async def _get_or_create_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Optional[Table]:
+    ) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            create_table_if_not_found (bool): Whether to create the table if it doesn't exist
 
         Returns:
-            Optional[Table]: SQLAlchemy Table object representing the schema, or None if not found.
+            Table: SQLAlchemy Table object representing the schema.
         """
 
         async with self.async_session_factory() as sess, sess.begin():
