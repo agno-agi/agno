@@ -16,13 +16,13 @@ from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
-    WorkflowResponse,
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
