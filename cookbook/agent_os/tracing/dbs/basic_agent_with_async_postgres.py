@@ -12,7 +12,7 @@ from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 
 # Set up database
-db = AsyncPostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = AsyncPostgresDb(db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai")
 
 agent = Agent(
     name="HackerNews Agent",

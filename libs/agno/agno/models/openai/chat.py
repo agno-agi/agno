@@ -814,6 +814,8 @@ class OpenAIChat(Model):
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
+        elif hasattr(response_message, "reasoning") and response_message.reasoning is not None:  # type: ignore
+            model_response.reasoning_content = response_message.reasoning  # type: ignore
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
@@ -846,6 +848,8 @@ class OpenAIChat(Model):
 
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content
+                elif hasattr(choice_delta, "reasoning") and choice_delta.reasoning is not None:
+                    model_response.reasoning_content = choice_delta.reasoning
 
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:

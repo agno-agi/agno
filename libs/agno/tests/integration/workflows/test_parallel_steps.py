@@ -52,7 +52,10 @@ def test_parallel_direct_execute():
     assert isinstance(result, StepOutput)
     assert result.step_name == "Direct Parallel"
     assert result.step_type == "Parallel"
-    assert "Parallel Direct Parallel completed with 2 results" in result.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in result.content
+    assert "Output A" in result.content
+    assert "Output B" in result.content
 
     # The actual step outputs should be in the steps field
     assert len(result.steps) == 2
@@ -71,7 +74,10 @@ async def test_parallel_direct_aexecute():
     assert isinstance(result, StepOutput)
     assert result.step_name == "Direct Async Parallel"
     assert result.step_type == "Parallel"
-    assert "Parallel Direct Async Parallel completed with 2 results" in result.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in result.content
+    assert "Output A" in result.content
+    assert "Output B" in result.content
 
     # The actual step outputs should be in the steps field
     assert len(result.steps) == 2
@@ -109,7 +115,10 @@ def test_parallel_direct_execute_stream():
 
     # Check the parallel container output
     parallel_output = step_outputs[0]
-    assert "Parallel Direct Stream Parallel completed with 2 results" in parallel_output.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in parallel_output.content
+    assert "Output A" in parallel_output.content
+    assert "Output B" in parallel_output.content
     assert len(parallel_output.steps) == 2
     assert find_content_in_steps(parallel_output, "Output A")
     assert find_content_in_steps(parallel_output, "Output B")
@@ -125,7 +134,9 @@ def test_parallel_direct_single_step():
     assert isinstance(result, StepOutput)
     assert result.step_name == "Single Step Parallel"
     assert result.step_type == "Parallel"
-    assert "Parallel Single Step Parallel completed with 1 result" in result.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in result.content
+    assert "Output A" in result.content
 
     # Single step should still be in the steps field
     assert len(result.steps) == 1
@@ -235,7 +246,10 @@ def test_basic_parallel(shared_db):
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert parallel_output.step_type == "Parallel"
-    assert "Parallel Parallel Phase completed with 2 results" in parallel_output.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in parallel_output.content
+    assert "Output A" in parallel_output.content
+    assert "Output B" in parallel_output.content
 
     # The actual step outputs should be in the nested steps
     assert len(parallel_output.steps) == 2
@@ -278,7 +292,9 @@ def test_parallel_with_agent(shared_db, test_agent):
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert parallel_output.step_type == "Parallel"
-    assert "Parallel Mixed Parallel completed with 2 results" in parallel_output.content
+    # Content should contain aggregated results from all inner steps
+    assert "## Parallel Execution Results" in parallel_output.content
+    assert "Output A" in parallel_output.content
 
     # Check nested steps contain both function and agent outputs
     assert len(parallel_output.steps) == 2

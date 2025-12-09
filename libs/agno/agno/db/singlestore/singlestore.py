@@ -57,6 +57,7 @@ class SingleStoreDb(BaseDb):
         versions_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        create_schema: bool = True,
     ):
         """
         Interface for interacting with a SingleStore database.
@@ -78,6 +79,8 @@ class SingleStoreDb(BaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
@@ -117,6 +120,7 @@ class SingleStoreDb(BaseDb):
         self.db_engine: Engine = _engine
         self.db_schema: Optional[str] = db_schema
         self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -240,7 +244,7 @@ class SingleStoreDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create schema if one is specified
-            if self.db_schema is not None:
+            if self.create_schema and self.db_schema is not None:
                 with self.Session() as sess, sess.begin():
                     create_schema(session=sess, db_schema=self.db_schema)
 

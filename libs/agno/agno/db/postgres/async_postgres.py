@@ -56,6 +56,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        create_schema: bool = True,
         db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
         """
@@ -80,6 +81,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
             db_id: Deprecated, use id instead.
 
         Raises:
@@ -116,6 +119,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
@@ -200,8 +204,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=self.db_schema)
+            if self.create_schema:
+                async with self.async_session_factory() as sess, sess.begin():
+                    await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
@@ -1237,7 +1242,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             # Generate ID if not present
             if cultural_knowledge.id is None:
@@ -1381,7 +1386,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             current_time = int(time.time())
 
@@ -1725,7 +1730,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = await self._get_table(table_type="knowledge")
+            table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
             async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())

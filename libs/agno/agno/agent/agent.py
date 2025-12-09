@@ -9,6 +9,7 @@ from inspect import iscoroutinefunction
 from os import getenv
 from textwrap import dedent
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -29,6 +30,9 @@ from typing import (
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.eval.base import BaseEval
 
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
@@ -131,7 +135,13 @@ from agno.utils.events import (
     create_tool_call_started_event,
     handle_event,
 )
-from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
+from agno.utils.hooks import (
+    copy_args_for_background,
+    filter_hook_args,
+    normalize_post_hooks,
+    normalize_pre_hooks,
+    should_run_hook_in_background,
+)
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -270,9 +280,9 @@ class Agent:
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
-    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
 
@@ -308,6 +318,8 @@ class Agent:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+    # Provide the introduction as the first message from the Agent
+    introduction: Optional[str] = None
     # Set to False to skip context building
     build_context: bool = True
 
@@ -436,7 +448,6 @@ class Agent:
         model: Optional[Union[Model, str]] = None,
         name: Optional[str] = None,
         id: Optional[str] = None,
-        introduction: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -476,8 +487,8 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
-        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None,
+        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -490,6 +501,7 @@ class Agent:
         send_media_to_model: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        introduction: Optional[str] = None,
         build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -1559,6 +1571,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1586,6 +1599,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1614,6 +1628,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1636,8 +1651,8 @@ class Agent:
                 "`run` method is not supported with an async database. Please use `arun` method instead."
             )
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
@@ -1664,9 +1679,9 @@ class Agent:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
+                self.pre_hooks = normalize_pre_hooks(self.pre_hooks)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
+                self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -1724,6 +1739,9 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
+            if attempt > 0:
+                log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
                 # Resolve dependencies
                 if run_context.dependencies is not None:
@@ -1801,74 +1819,69 @@ class Agent:
 
                 yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
-                try:
-                    if stream:
-                        response_iterator = self._run_stream(
-                            run_response=run_response,
-                            run_context=run_context,
-                            session=agent_session,
-                            user_id=user_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            yield_run_output=yield_run_output,
-                            debug_mode=debug_mode,
-                            background_tasks=background_tasks,
-                            **kwargs,
-                        )
-                        return response_iterator
-                    else:
-                        response = self._run(
-                            run_response=run_response,
-                            run_context=run_context,
-                            session=agent_session,
-                            user_id=user_id,
-                            add_history_to_context=add_history,
-                            add_dependencies_to_context=add_dependencies,
-                            add_session_state_to_context=add_session_state,
-                            response_format=response_format,
-                            debug_mode=debug_mode,
-                            background_tasks=background_tasks,
-                            **kwargs,
-                        )
-                        return response
-                except (InputCheckError, OutputCheckError) as e:
-                    log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                    raise e
-                except KeyboardInterrupt:
-                    run_response.content = "Operation cancelled by user"
-                    run_response.status = RunStatus.cancelled
+                if stream:
+                    response_iterator = self._run_stream(
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        yield_run_output=yield_run_output,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    return response_iterator
+                else:
+                    response = self._run(
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        add_history_to_context=add_history,
+                        add_dependencies_to_context=add_dependencies,
+                        add_session_state_to_context=add_session_state,
+                        response_format=response_format,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    return response
+            except (InputCheckError, OutputCheckError) as e:
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                raise e
+            except KeyboardInterrupt:
+                run_response.content = "Operation cancelled by user"
+                run_response.status = RunStatus.cancelled
 
-                    if stream:
-                        return generator_wrapper(  # type: ignore
-                            create_run_cancelled_event(
-                                from_run_response=run_response,
-                                reason="Operation cancelled by user",
-                            )
+                if stream:
+                    return generator_wrapper(  # type: ignore
+                        create_run_cancelled_event(
+                            from_run_response=run_response,
+                            reason="Operation cancelled by user",
                         )
-                    else:
-                        return run_response
-                except Exception as e:
-                    # Check if this is the last attempt
-                    if attempt < num_attempts - 1:
-                        # Calculate delay with exponential backoff if enabled
-                        if self.exponential_backoff:
-                            delay = self.delay_between_retries * (2**attempt)
-                        else:
-                            delay = self.delay_between_retries
-
-                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        # Final attempt failed - re-raise the exception
-                        log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
-                        raise
+                    )
+                else:
+                    return run_response
             except Exception as e:
-                log_error(f"Unexpected error: {str(e)}")
-                if attempt == num_attempts - 1:
+                # Check if this is the last attempt
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Final attempt failed - re-raise the exception
+                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
                     if stream:
                         return generator_wrapper(create_run_error_event(run_response, error=str(e)))  # type: ignore
                     raise e
@@ -2537,6 +2550,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2563,6 +2577,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2591,6 +2606,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -2611,8 +2627,8 @@ class Agent:
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
 
-        # Create a run_id for this specific run and register immediately for cancellation tracking
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
         register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
@@ -2639,9 +2655,9 @@ class Agent:
         # Normalise hooks & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
+                self.pre_hooks = normalize_pre_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
+                self.post_hooks = normalize_post_hooks(self.post_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         # Initialize session
@@ -2758,7 +2774,9 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+            if attempt > 0:
+                log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
                 # Pass the new run_response to _arun
                 if stream:
@@ -2958,7 +2976,8 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+            if attempt > 0:
+                log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
                 # Resolve dependencies
@@ -3604,7 +3623,8 @@ class Agent:
         )
 
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+            if attempt > 0:
+                log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
                 if stream:
@@ -6350,6 +6370,20 @@ class Agent:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                agent_session.upsert_run(
+                    RunOutput(
+                        run_id=str(uuid4()),
+                        session_id=session_id,
+                        agent_id=self.id,
+                        agent_name=self.name,
+                        user_id=user_id,
+                        content=self.introduction,
+                        messages=[
+                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                        ],
+                    )
+                )
 
         if self.cache_session:
             self._cached_session = agent_session
@@ -6393,6 +6427,20 @@ class Agent:
                 metadata=self.metadata,
                 created_at=int(time()),
             )
+            if self.introduction is not None:
+                agent_session.upsert_run(
+                    RunOutput(
+                        run_id=str(uuid4()),
+                        session_id=session_id,
+                        agent_id=self.id,
+                        agent_name=self.name,
+                        user_id=user_id,
+                        content=self.introduction,
+                        messages=[
+                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                        ],
+                    )
+                )
 
         if self.cache_session:
             self._cached_session = agent_session

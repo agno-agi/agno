@@ -15,7 +15,12 @@ from agno.os.routers.evals.schemas import (
     EvalSchema,
     UpdateEvalRunRequest,
 )
-from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
+from agno.os.routers.evals.utils import (
+    run_accuracy_eval,
+    run_agent_as_judge_eval,
+    run_performance_eval,
+    run_reliability_eval,
+)
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -118,6 +123,15 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
         db = await get_db(dbs, db_id, table)
+
+        # TODO: Delete me:
+        # Filtering out agent-as-judge by default for now,
+        # as they are not supported yet in the AgentOS UI.
+        eval_types = eval_types or [
+            EvalType.ACCURACY,
+            EvalType.PERFORMANCE,
+            EvalType.RELIABILITY,
+        ]
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -304,7 +318,7 @@ def attach_routes(
         operation_id="run_eval",
         summary="Execute Evaluation",
         description=(
-            "Run evaluation tests on agents or teams. Supports accuracy, performance, and reliability evaluations. "
+            "Run evaluation tests on agents or teams. Supports accuracy, agent-as-judge, performance, and reliability evaluations. "
             "Requires either agent_id or team_id, but not both."
         ),
         responses={
@@ -374,6 +388,7 @@ def attach_routes(
             if not team:
                 raise HTTPException(status_code=404, detail=f"Team with id '{eval_run_input.team_id}' not found")
 
+            # If model_id/model_provider specified, override team's model temporarily
             default_model = None
             if (
                 hasattr(team, "model")
@@ -381,13 +396,13 @@ def attach_routes(
                 and eval_run_input.model_id is not None
                 and eval_run_input.model_provider is not None
             ):
-                default_model = deepcopy(team.model)
+                default_model = deepcopy(team.model)  # Save original
                 if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
                     model_provider = eval_run_input.model_provider.lower()
                     model_id = eval_run_input.model_id.lower()
                     model_string = f"{model_provider}:{model_id}"
                     model = get_model(model_string)
-                    team.model = model
+                    team.model = model  # Override temporarily
 
             agent = None
 
@@ -397,6 +412,11 @@ def attach_routes(
         # Run the evaluation
         if eval_run_input.eval_type == EvalType.ACCURACY:
             return await run_accuracy_eval(
+                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+            )
+
+        elif eval_run_input.eval_type == EvalType.AGENT_AS_JUDGE:
+            return await run_agent_as_judge_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
@@ -416,8 +436,8 @@ def attach_routes(
 def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
-        description="Comma-separated eval types (accuracy,performance,reliability)",
-        examples=["accuracy,performance"],
+        description="Comma-separated eval types (accuracy,agent_as_judge,performance,reliability)",
+        examples=["accuracy,agent_as_judge,performance,reliability"],
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""
