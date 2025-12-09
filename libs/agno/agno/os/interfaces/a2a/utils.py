@@ -846,8 +846,8 @@ async def stream_a2a_response(
 
         # Handle all other data as Message metadata
         final_metadata: Dict[str, Any] = {}
-        if hasattr(completion_event, "metrics") and completion_event.metrics:
-            final_metadata["metrics"] = str(completion_event.metrics.__dict__) #to stop json error
+        if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
+            final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
         if hasattr(completion_event, "metadata") and completion_event.metadata:
             final_metadata.update(completion_event.metadata)
 

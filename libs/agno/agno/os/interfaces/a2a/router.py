@@ -13,6 +13,8 @@ try:
 except ImportError as e:
     raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
 
+import warnings
+
 from agno.agent import Agent
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
@@ -23,13 +25,7 @@ from agno.os.router import _get_request_kwargs
 from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
 from agno.team import Team
 from agno.workflow import Workflow
-from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    AgentSkill,
-)
-import warnings
-from a2a.server.apps.jsonrpc import fastapi_app
+
 
 def attach_routes(
     router: APIRouter,
@@ -78,26 +74,22 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_run_agent(request: Request, id:str):
+    async def a2a_run_agent(request: Request, id: str):
+        if not agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_run_agent)
-        # 1. Get the Agent, Team, or Workflow to run
-        """
-        agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
-        if not agent_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
-            )"""
-        
+
         # Detect streaming based on method in request
         method = request_body.get("method")
         stream = method == "message/stream"
-        entity: Optional[Union[Agent, Team, Workflow]] = None
-        if agents:
-            entity = get_agent_by_id(id, agents)
-        if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{id}' not found")
+
+        # 1. Get the Agent to run
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=stream)
@@ -106,36 +98,21 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the agent, team, or workflow
-
+        # 3. Run the Agent
         if stream:
             try:
-                if isinstance(entity, Workflow):
-                    event_stream = entity.arun(
-                        input=run_input.input_content,
-                        images=list(run_input.images) if run_input.images else None,
-                        videos=list(run_input.videos) if run_input.videos else None,
-                        audio=list(run_input.audios) if run_input.audios else None,
-                        files=list(run_input.files) if run_input.files else None,
-                        session_id=context_id,
-                        user_id=user_id,
-                        stream=True,
-                        stream_events=True,
-                        **kwargs,
-                    )
-                else:
-                    event_stream = entity.arun(  # type: ignore[assignment]
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context_id,
-                        user_id=user_id,
-                        stream=True,
-                        stream_events=True,
-                        **kwargs,
-                    )
+                event_stream = agent.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_events=True,
+                    **kwargs,
+                )
 
                 # 4. Stream the response
                 return StreamingResponse(
@@ -147,28 +124,16 @@ def attach_routes(
                 raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
         else:
             try:
-                if isinstance(entity, Workflow):
-                    response = await entity.arun(
-                        input=run_input.input_content,
-                        images=list(run_input.images) if run_input.images else None,
-                        videos=list(run_input.videos) if run_input.videos else None,
-                        audio=list(run_input.audios) if run_input.audios else None,
-                        files=list(run_input.files) if run_input.files else None,
-                        session_id=context_id,
-                        user_id=user_id,
-                        **kwargs,
-                    )
-                else:
-                    response = await entity.arun(
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context_id,
-                        user_id=user_id,
-                        **kwargs,
-                    )
+                response = await agent.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
 
                 # 4. Send the response
                 a2a_task = map_run_output_to_a2a_task(response)
@@ -177,7 +142,7 @@ def attach_routes(
                     result=a2a_task,
                 )
 
-            # Handle all critical errors
+            # Handle any critical error
             except Exception as e:
                 from a2a.types import Message as A2AMessage
                 from a2a.types import Part, Role, TextPart
@@ -199,6 +164,7 @@ def attach_routes(
                     id=request_body.get("id", "unknown"),
                     result=failed_task,
                 )
+
     @router.post(
         "/teams/{id}",
         operation_id="run_message",
@@ -237,20 +203,22 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_run_team(request: Request, id:str):
+    async def a2a_run_team(request: Request, id: str):
+        if not teams:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_run_team)
-        # 1. Get the Agent, Team, or Workflow to run
 
-        
         # Detect streaming based on method in request
         method = request_body.get("method")
         stream = method == "message/stream"
-        entity: Optional[Union[Agent, Team, Workflow]] = None
-        if teams:
-            entity = get_team_by_id(id, teams)
-        if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{id}' not found")
+
+        # 1. Get the Team to run
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=stream)
@@ -259,36 +227,21 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the agent, team, or workflow
-
+        # 3. Run the Team
         if stream:
             try:
-                if isinstance(entity, Workflow):
-                    event_stream = entity.arun(
-                        input=run_input.input_content,
-                        images=list(run_input.images) if run_input.images else None,
-                        videos=list(run_input.videos) if run_input.videos else None,
-                        audio=list(run_input.audios) if run_input.audios else None,
-                        files=list(run_input.files) if run_input.files else None,
-                        session_id=context_id,
-                        user_id=user_id,
-                        stream=True,
-                        stream_events=True,
-                        **kwargs,
-                    )
-                else:
-                    event_stream = entity.arun(  # type: ignore[assignment]
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context_id,
-                        user_id=user_id,
-                        stream=True,
-                        stream_events=True,
-                        **kwargs,
-                    )
+                event_stream = team.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_events=True,
+                    **kwargs,
+                )
 
                 # 4. Stream the response
                 return StreamingResponse(
@@ -300,28 +253,16 @@ def attach_routes(
                 raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
         else:
             try:
-                if isinstance(entity, Workflow):
-                    response = await entity.arun(
-                        input=run_input.input_content,
-                        images=list(run_input.images) if run_input.images else None,
-                        videos=list(run_input.videos) if run_input.videos else None,
-                        audio=list(run_input.audios) if run_input.audios else None,
-                        files=list(run_input.files) if run_input.files else None,
-                        session_id=context_id,
-                        user_id=user_id,
-                        **kwargs,
-                    )
-                else:
-                    response = await entity.arun(
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context_id,
-                        user_id=user_id,
-                        **kwargs,
-                    )
+                response = await team.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
 
                 # 4. Send the response
                 a2a_task = map_run_output_to_a2a_task(response)
@@ -352,6 +293,7 @@ def attach_routes(
                     id=request_body.get("id", "unknown"),
                     result=failed_task,
                 )
+
     @router.post(
         "/workflows/{id}",
         operation_id="run_message",
@@ -390,17 +332,22 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_run_workflow(request: Request, id:str):
+    async def a2a_run_workflow(request: Request, id: str):
+        if not workflows:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_run_workflow)
+
         # Detect streaming based on method in request
         method = request_body.get("method")
         stream = method == "message/stream"
-        entity: Optional[Union[Agent, Team, Workflow]] = None
-        if workflows:
-            entity = get_workflow_by_id(id, workflows)
-        if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{id}' not found")
+
+        # 1. Get the Workflow to run
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=stream)
@@ -409,36 +356,21 @@ def attach_routes(
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
-        # 3. Run the agent, team, or workflow
-
+        # 3. Run the Workflow
         if stream:
             try:
-                if isinstance(entity, Workflow):
-                    event_stream = entity.arun(
-                        input=run_input.input_content,
-                        images=list(run_input.images) if run_input.images else None,
-                        videos=list(run_input.videos) if run_input.videos else None,
-                        audio=list(run_input.audios) if run_input.audios else None,
-                        files=list(run_input.files) if run_input.files else None,
-                        session_id=context_id,
-                        user_id=user_id,
-                        stream=True,
-                        stream_events=True,
-                        **kwargs,
-                    )
-                else:
-                    event_stream = entity.arun(  # type: ignore[assignment]
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context_id,
-                        user_id=user_id,
-                        stream=True,
-                        stream_events=True,
-                        **kwargs,
-                    )
+                event_stream = workflow.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_events=True,
+                    **kwargs,
+                )
 
                 # 4. Stream the response
                 return StreamingResponse(
@@ -450,28 +382,16 @@ def attach_routes(
                 raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
         else:
             try:
-                if isinstance(entity, Workflow):
-                    response = await entity.arun(
-                        input=run_input.input_content,
-                        images=list(run_input.images) if run_input.images else None,
-                        videos=list(run_input.videos) if run_input.videos else None,
-                        audio=list(run_input.audios) if run_input.audios else None,
-                        files=list(run_input.files) if run_input.files else None,
-                        session_id=context_id,
-                        user_id=user_id,
-                        **kwargs,
-                    )
-                else:
-                    response = await entity.arun(
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context_id,
-                        user_id=user_id,
-                        **kwargs,
-                    )
+                response = await workflow.arun(
+                    input=run_input.input_content,
+                    images=list(run_input.images) if run_input.images else None,
+                    videos=list(run_input.videos) if run_input.videos else None,
+                    audio=list(run_input.audios) if run_input.audios else None,
+                    files=list(run_input.files) if run_input.files else None,
+                    session_id=context_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
 
                 # 4. Send the response
                 a2a_task = map_run_output_to_a2a_task(response)
@@ -502,6 +422,7 @@ def attach_routes(
                     id=request_body.get("id", "unknown"),
                     result=failed_task,
                 )
+
     @router.post(
         "/message/send",
         operation_id="send_message",
@@ -542,7 +463,12 @@ def attach_routes(
         response_model=SendMessageSuccessResponse,
     )
     async def a2a_send_message(request: Request):
-        warnings.warn("THIS ENDPOINT WILL BE DEPRECEATED SOON, USE /agents/{agents_id}", DeprecationWarning)
+        warnings.warn(
+            "This endpoint will be deprecated soon. Use /agents/{agents_id}, /teams/{teams_id}, or /workflows/{workflows_id} instead.",
+            DeprecationWarning,
+        )
+
+        # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_send_message)
 
@@ -624,6 +550,7 @@ def attach_routes(
                 id=request_body.get("id", "unknown"),
                 result=failed_task,
             )
+
     @router.post(
         "/message/stream",
         operation_id="stream_message",
@@ -638,9 +565,9 @@ def attach_routes(
                 "description": "Streaming response with task updates",
                 "content": {
                     "text/event-stream": {
-    "example": 'event: TaskStatusUpdateEvent\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n\n'
-    'event: Message\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n\n'
-}
+                        "example": 'event: TaskStatusUpdateEvent\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n\n'
+                        'event: Message\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n\n'
+                    }
                 },
             },
             400: {"description": "Invalid request or unsupported method"},
@@ -648,7 +575,12 @@ def attach_routes(
         },
     )
     async def a2a_stream_message(request: Request):
-        warnings.warn("THIS ENDPOINT WILL BE DEPRECEATED SOON, USE /agents/{agents_id}", DeprecationWarning)
+        warnings.warn(
+            "This endpoint will be deprecated soon. Use /agents/{agents_id}, /teams/{teams_id}, or /workflows/{workflows_id} instead.",
+            DeprecationWarning,
+        )
+
+        # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
         kwargs = await _get_request_kwargs(request, a2a_stream_message)
 
