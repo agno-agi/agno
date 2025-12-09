@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from typing import Dict, List, Union
 
@@ -9,7 +10,7 @@ from agno.utils.log import log_debug
 
 def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     """
-    Filter messages (in-place) to keep only the most recent N tool calls.
+    Filter messages (in-place) to keep only the most recent N tool call results.
 
     Args:
         messages: List of messages to filter (modified in-place)
@@ -22,7 +23,7 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     if tool_call_count <= max_tool_calls:
         return
 
-    # Collect tool_call_ids to keep (most recent N)
+    # Collect tool_call_ids to keep results for (most recent N)
     tool_call_ids_list: List[str] = []
     for msg in reversed(messages):
         if msg.role == "tool" and len(tool_call_ids_list) < max_tool_calls:
@@ -35,26 +36,10 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     filtered_messages = []
     for msg in messages:
         if msg.role == "tool":
-            # Keep only tool results in our window
-            if msg.tool_call_id in tool_call_ids_to_keep:
-                filtered_messages.append(msg)
-        elif msg.role == "assistant" and msg.tool_calls:
-            # Filter tool_calls within the assistant message
-            # Use deepcopy to ensure complete isolation of the filtered message
-            filtered_msg = deepcopy(msg)
-            # Filter tool_calls
-            if filtered_msg.tool_calls is not None:
-                filtered_msg.tool_calls = [
-                    tc for tc in filtered_msg.tool_calls if tc.get("id") in tool_call_ids_to_keep
-                ]
-
-            if filtered_msg.tool_calls:
-                # Has tool_calls remaining, keep it
-                filtered_messages.append(filtered_msg)
-            # skip empty messages
-            elif filtered_msg.content:
-                filtered_msg.tool_calls = None
-                filtered_messages.append(filtered_msg)
+            # Prune any tool results which are not in the keep list
+            if msg.tool_call_id not in tool_call_ids_to_keep:
+                msg.content = f"""[RESULT_PRUNED] tool_name:{msg.tool_name}, tool_args:{json.dumps(msg.tool_args)} result has been pruned to limit context size. You DO NOT know the details of this tool result anymore. If you need to access data from this tool, you MUST call the tool again."""
+            filtered_messages.append(msg)
         else:
             filtered_messages.append(msg)
 

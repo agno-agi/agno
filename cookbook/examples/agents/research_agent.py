@@ -118,7 +118,7 @@ research_agent = Agent(
     markdown=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
-    max_tool_calls_from_history=5,
+    max_tool_calls_from_history=5,  # Prune older tool results, keeping full details for last 5
     debug_mode=True,
 )
 
