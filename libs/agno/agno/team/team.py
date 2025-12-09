@@ -2026,7 +2026,7 @@ class Team:
 
                 self._cleanup_and_store(run_response=run_response, session=session)
 
-                yield run_response.error
+                return generator_wrapper(run_response.error)
 
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -2051,7 +2051,7 @@ class Team:
                 # Cleanup and store the run response and session
                 self._cleanup_and_store(run_response=run_response, session=session)
 
-                yield run_response.error
+                return generator_wrapper(run_response.error)
             finally:
                 # Always disconnect connectable tools
                 self._disconnect_connectable_tools()
@@ -2969,7 +2969,9 @@ class Team:
 
                 await self._acleanup_and_store(run_response=run_response, session=team_session)
 
-                yield run_response.error
+                async_generator_wrapper(run_response.error)
+
+                return
 
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -2994,7 +2996,7 @@ class Team:
                 # Cleanup and store the run response and session
                 await self._acleanup_and_store(run_response=run_response, session=team_session)
 
-                yield run_response.error
+                async_generator_wrapper(run_response.error)
 
             finally:
                 # Always disconnect connectable tools

@@ -1630,7 +1630,7 @@ class Agent:
                 )
 
                 # Yield the error event
-                yield run_response.error
+                return generator_wrapper(run_response.error)
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -1659,7 +1659,7 @@ class Agent:
                 )
 
                 # Yield the error event
-                yield run_response.error
+                return generator_wrapper(run_response.error)
             finally:
                 # Always disconnect connectable tools
                 self._disconnect_connectable_tools()
@@ -2679,7 +2679,9 @@ class Agent:
                 )
 
                 # Yield the error event
-                yield run_response.error
+                async_generator_wrapper(run_response.error)
+
+                return
 
             except Exception as e:
                 # Check if this is the last attempt
@@ -2715,7 +2717,8 @@ class Agent:
                 )
 
                 # Yield the error event
-                yield run_response.error
+                async_generator_wrapper(run_response.error)
+
             finally:
                 # Always disconnect connectable tools
                 self._disconnect_connectable_tools()
