@@ -519,9 +519,6 @@ class TeamRunOutput:
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
-    # Error details (populated when status is error)
-    error: Optional[RunErrorEvent] = None
-
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
@@ -564,7 +561,6 @@ class TeamRunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
-                "error",
             ]
         }
         if self.events is not None:
@@ -631,9 +627,6 @@ class TeamRunOutput:
 
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
-
-        if self.error is not None:
-            _dict["error"] = self.error.to_dict()
 
         return _dict
 
@@ -716,10 +709,6 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
-        error = data.pop("error", None)
-        if error is not None:
-            error = team_run_output_event_from_dict(error)  # type: ignore
-
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
 
@@ -743,7 +732,6 @@ class TeamRunOutput:
             citations=citations,
             tools=tools,
             events=events,
-            error=error,  # type: ignore
             **filtered_data,
         )
 
