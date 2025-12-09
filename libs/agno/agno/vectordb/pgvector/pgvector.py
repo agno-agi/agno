@@ -568,10 +568,6 @@ class PgVector(VectorDb):
                                 )
                             else:
                                 log_error(f"Error embedding document {i}: {result}")
-
-                    # Give httpx connections time to clean up before event loop closes
-                    # This prevents "Event loop is closed" errors during connection cleanup
-                    await asyncio.sleep(0.05)  # Small delay for connection cleanup
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
@@ -588,10 +584,6 @@ class PgVector(VectorDb):
                         )
                     else:
                         log_error(f"Error embedding document {i}: {result}")
-
-            # Give httpx connections time to clean up before event loop closes
-            # This prevents "Event loop is closed" errors during connection cleanup
-            await asyncio.sleep(0.05)  # Small delay for connection cleanup
 
     async def async_upsert(
         self,
