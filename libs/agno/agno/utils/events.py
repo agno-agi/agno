@@ -717,15 +717,17 @@ def handle_event(
         run_response.events.append(event)  # type: ignore
     return event
 
+
 def add_error_event(
-    error: RunErrorEvent ,
+    error: RunErrorEvent,
     events: Optional[List[RunOutputEvent]],
 ):
     if events is None:
         events = []
     events.append(error)
-    
+
     return events
+
 
 def add_team_error_event(
     error: TeamRunErrorEvent,

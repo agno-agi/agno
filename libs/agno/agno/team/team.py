@@ -108,6 +108,7 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
+    add_team_error_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -120,6 +121,7 @@ from agno.utils.events import (
     create_team_run_cancelled_event,
     create_team_run_completed_event,
     create_team_run_content_completed_event,
+    create_team_run_error_event,
     create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_session_summary_completed_event,
@@ -127,8 +129,6 @@ from agno.utils.events import (
     create_team_tool_call_completed_event,
     create_team_tool_call_started_event,
     handle_event,
-    add_team_error_event,
-    create_team_run_error_event,
 )
 from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
 from agno.utils.knowledge import get_agentic_or_user_search_filters
@@ -2302,35 +2302,35 @@ class Team:
 
         if stream:
             return self._run_stream(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=team_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_output=yield_run_output,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )  # type: ignore
 
         else:
             return self._run(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=team_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
 
     async def _arun(
         self,
@@ -2499,7 +2499,9 @@ class Team:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
+                await self._agenerate_response_with_output_model(
+                    model_response=model_response, run_messages=run_messages
+                )
 
                 # If a parser model is provided, structure the response separately
                 await self._aparse_response_with_parser_model(
@@ -2588,7 +2590,6 @@ class Team:
                 return run_response
 
             except Exception as e:
-
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
                     if self.exponential_backoff:
@@ -2664,7 +2665,6 @@ class Team:
         """
 
         memory_task = None
-
 
         # Set up retry logic
         num_attempts = self.retries + 1
@@ -2966,7 +2966,7 @@ class Team:
                     run_response.content = str(e)
 
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                
+
                 await self._acleanup_and_store(run_response=run_response, session=team_session)
 
                 yield run_response.error
@@ -3243,36 +3243,36 @@ class Team:
 
         if stream:
             return self._arun_stream(  # type: ignore
-                        input=validated_input,
-                        run_response=run_response,
-                        run_context=run_context,
-                        session_id=session_id,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_output=yield_run_output,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
+                input=validated_input,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
         else:
             return self._arun(  # type: ignore
-                        input=validated_input,
-                        run_response=run_response,
-                        run_context=run_context,
-                        session_id=session_id,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
+                input=validated_input,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
 
     def _update_run_response(
         self,

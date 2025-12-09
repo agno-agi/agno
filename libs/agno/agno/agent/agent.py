@@ -108,6 +108,7 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
+    add_error_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -130,7 +131,6 @@ from agno.utils.events import (
     create_tool_call_completed_event,
     create_tool_call_started_event,
     handle_event,
-    add_error_event,
 )
 from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
 from agno.utils.knowledge import get_agentic_or_user_search_filters
@@ -1043,7 +1043,7 @@ class Agent:
                 # Register run for cancellation tracking
                 register_run(run_response.run_id)  # type: ignore
 
-            # 1. Execute pre-hooks
+                # 1. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 self.model = cast(Model, self.model)
                 if self.pre_hooks is not None:
@@ -1162,7 +1162,9 @@ class Agent:
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                    wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
+                    wait_for_open_threads(
+                        memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
+                    )
 
                     return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
@@ -1841,114 +1843,108 @@ class Agent:
         # Set up retry logic
         num_attempts = self.retries + 1
 
-                # Resolve dependencies
+        # Resolve dependencies
         if run_context.dependencies is not None:
-                    self._resolve_run_dependencies(run_context=run_context)
+            self._resolve_run_dependencies(run_context=run_context)
 
         add_dependencies = (
-                    add_dependencies_to_context
-                    if add_dependencies_to_context is not None
-                    else self.add_dependencies_to_context
-                )
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
         add_session_state = (
-                    add_session_state_to_context
-                    if add_session_state_to_context is not None
-                    else self.add_session_state_to_context
-                )
-        add_history = (
-                    add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-                )
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
-                # When filters are passed manually
+        # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-                    run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
 
-                # Use stream override value when necessary
+        # Use stream override value when necessary
         if stream is None:
-                    stream = False if self.stream is None else self.stream
+            stream = False if self.stream is None else self.stream
 
-                # Considering both stream_events and stream_intermediate_steps (deprecated)
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
         if stream_intermediate_steps is not None:
-                    warnings.warn(
-                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
-                # Can't stream events if streaming is disabled
+        # Can't stream events if streaming is disabled
         if stream is False:
-                    stream_events = False
+            stream_events = False
 
         if stream_events is None:
-                    stream_events = False if self.stream_events is None else self.stream_events
+            stream_events = False if self.stream_events is None else self.stream_events
 
         self.stream = self.stream or stream
         self.stream_events = self.stream_events or stream_events
 
-                # Prepare arguments for the model
-        response_format = (
-                    self._get_response_format(run_context=run_context) if self.parser_model is None else None
-                )
+        # Prepare arguments for the model
+        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
-                # Merge agent metadata with run metadata
+        # Merge agent metadata with run metadata
         if self.metadata is not None and metadata is not None:
-                    merge_dictionaries(metadata, self.metadata)
+            merge_dictionaries(metadata, self.metadata)
 
-                # Create a new run_response for this attempt
+        # Create a new run_response for this attempt
         run_response = RunOutput(
-                    run_id=run_id,
-                    session_id=session_id,
-                    agent_id=self.id,
-                    user_id=user_id,
-                    agent_name=self.name,
-                    metadata=run_context.metadata,
-                    session_state=run_context.session_state,
-                    input=run_input,
-                )
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=self.id,
+            user_id=user_id,
+            agent_name=self.name,
+            metadata=run_context.metadata,
+            session_state=run_context.session_state,
+            input=run_input,
+        )
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
-                # Start the run metrics timer, to calculate the run duration
+        # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
         yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         if stream:
-                    response_iterator = self._run_stream(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_output=yield_run_output,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                    return response_iterator
+            response_iterator = self._run_stream(
+                run_response=run_response,
+                run_context=run_context,
+                session=agent_session,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            return response_iterator
         else:
-                    response = self._run(
-                        run_response=run_response,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                    return response
+            response = self._run(
+                run_response=run_response,
+                run_context=run_context,
+                session=agent_session,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            return response
 
     async def _arun(
         self,
@@ -1985,7 +1981,7 @@ class Agent:
         16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-        
+
         cultural_knowledge_task = None
         memory_task = None
 
@@ -2124,7 +2120,9 @@ class Agent:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
+                await self._agenerate_response_with_output_model(
+                    model_response=model_response, run_messages=run_messages
+                )
 
                 # If a parser model is provided, structure the response separately
                 await self._aparse_response_with_parser_model(
@@ -2216,7 +2214,7 @@ class Agent:
                 )
 
                 return run_response
-            
+
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
@@ -2238,7 +2236,7 @@ class Agent:
                 )
 
                 return run_response
-            
+
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
@@ -2334,7 +2332,7 @@ class Agent:
 
         memory_task = None
         cultural_knowledge_task = None
-        
+
         # 1. Read or create session. Reads from the database if provided.
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
@@ -2519,7 +2517,10 @@ class Agent:
 
                 # 10. Parse response with parser model if provided
                 async for event in self._aparse_response_with_parser_model_stream(
-                    session=agent_session, run_response=run_response, stream_events=stream_events, run_context=run_context
+                    session=agent_session,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                    run_context=run_context,
                 ):
                     yield event
 
@@ -2658,7 +2659,7 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                 )
-            
+
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
@@ -2669,7 +2670,7 @@ class Agent:
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
-                
+
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
                 # Cleanup and store the run response and session
@@ -2679,7 +2680,6 @@ class Agent:
                     run_context=run_context,
                     user_id=user_id,
                 )
-
 
                 # Yield the error event
                 yield run_response.error
@@ -2970,37 +2970,37 @@ class Agent:
 
         yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
-            # Pass the new run_response to _arun
+        # Pass the new run_response to _arun
         if stream:
-                return self._arun_stream(  # type: ignore
-                    run_response=run_response,
-                    run_context=run_context,
-                    user_id=user_id,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    yield_run_output=yield_run_output,
-                    session_id=session_id,
-                    add_history_to_context=add_history,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    debug_mode=debug_mode,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                )  # type: ignore[assignment]
+            return self._arun_stream(  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                session_id=session_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )  # type: ignore[assignment]
         else:
-                return self._arun(  # type: ignore
-                    run_response=run_response,
-                    run_context=run_context,
-                    user_id=user_id,
-                    response_format=response_format,
-                    session_id=session_id,
-                    add_history_to_context=add_history,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    debug_mode=debug_mode,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                )
+            return self._arun(  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                session_id=session_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
 
     @overload
     def continue_run(
@@ -5724,7 +5724,6 @@ class Agent:
                         if run_response.files is None:
                             run_response.files = []
                         run_response.files.append(file_obj)
-
 
                 reasoning_step: Optional[ReasoningStep] = None
 
@@ -11051,7 +11050,7 @@ class Agent:
         session: AgentSession,
         run_context: Optional[RunContext] = None,
         user_id: Optional[str] = None,
-    ) -> None:        #  Scrub the stored run based on storage flags
+    ) -> None:  #  Scrub the stored run based on storage flags
         self._scrub_run_output_for_storage(run_response)
 
         # Stop the timer for the Run duration
