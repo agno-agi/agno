@@ -1,13 +1,16 @@
 import weakref
 from dataclasses import asdict
 from datetime import timedelta
-from typing import Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
+
+if TYPE_CHECKING:
+    from agno.run import RunContext
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -44,6 +47,7 @@ class MCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
+        header_provider: Optional[Callable[["RunContext"], dict[str, Any]]] = None,
         **kwargs,
     ):
         """
@@ -61,6 +65,9 @@ class MCPTools(Toolkit):
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http"
             refresh_connection: If True, the connection and tools will be refreshed on each run
+            header_provider: Optional function that takes RunContext and returns dict of HTTP headers.
+                Only works with HTTP transports (sse, streamable-http).
+                Creates a new session per agent run with dynamic headers merged into connection config.
         """
         super().__init__(name="MCPTools", **kwargs)
 
@@ -73,6 +80,19 @@ class MCPTools(Toolkit):
         self.exclude_tools = exclude_tools
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
+
+        self.header_provider = header_provider
+
+        # Validate dynamic header configuration
+        if header_provider:
+            if transport not in ["sse", "streamable-http"]:
+                log_warning(
+                    f"header_provider specified but transport is '{transport}'. "
+                    "Dynamic headers only work with 'sse' or 'streamable-http' transports. "
+                    "Headers will be ignored."
+                )
+            else:
+                log_debug("Dynamic header support enabled for MCP tools")
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -135,6 +155,10 @@ class MCPTools(Toolkit):
         self._context = None
         self._session_context = None
 
+        # Session management for per-agent-run sessions with dynamic headers
+        self._run_sessions: dict[str, ClientSession] = {}  # Maps run_id to session
+        self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
+
         def cleanup():
             """Cancel active connections"""
             if self._connection_task and not self._connection_task.done():
@@ -146,6 +170,124 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    async def get_session_for_run(self, run_context: Optional["RunContext"] = None) -> ClientSession:
+        """
+        Get or create a session for the given run context.
+
+        If header_provider is set and run_context is provided, creates a new session
+        with dynamic headers merged into the connection config.
+
+        Args:
+            run_context: The RunContext for the current agent run
+
+        Returns:
+            ClientSession for the run
+        """
+        # If no header_provider or no run_context, use the default session
+        if not self.header_provider or not run_context:
+            if self.session is None:
+                raise ValueError("Session is not initialized")
+            return self.session
+
+        # Check if we already have a session for this run
+        run_id = run_context.run_id
+        if run_id in self._run_sessions:
+            return self._run_sessions[run_id]
+
+        # Create a new session with dynamic headers for this run
+        log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
+
+        # Generate dynamic headers from the provider
+        dynamic_headers = self.header_provider(run_context)
+
+        # Create new session with merged headers based on transport type
+        if self.transport == "sse":
+            sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in sse_params:
+                sse_params["url"] = self.url
+
+            # Merge dynamic headers into existing headers
+            existing_headers = sse_params.get("headers", {})
+            sse_params["headers"] = {**existing_headers, **dynamic_headers}
+
+            context = sse_client(**sse_params)  # type: ignore
+            client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
+
+        elif self.transport == "streamable-http":
+            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in streamable_http_params:
+                streamable_http_params["url"] = self.url
+
+            # Merge dynamic headers into existing headers
+            existing_headers = streamable_http_params.get("headers", {})
+            streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
+
+            context = streamablehttp_client(**streamable_http_params)  # type: ignore
+            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
+            if isinstance(params_timeout, timedelta):
+                params_timeout = int(params_timeout.total_seconds())
+            client_timeout = min(self.timeout_seconds, params_timeout)
+        else:
+            # stdio doesn't support headers, fall back to default session
+            log_warning(f"Cannot use dynamic headers with {self.transport} transport, using default session")
+            if self.session is None:
+                raise ValueError("Session is not initialized")
+            return self.session
+
+        # Enter the context and create session
+        session_params = await context.__aenter__()  # type: ignore
+        read, write = session_params[0:2]
+
+        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+        session = await session_context.__aenter__()  # type: ignore
+
+        # Initialize the session
+        await session.initialize()
+
+        # Store the session and context for cleanup
+        self._run_sessions[run_id] = session
+        self._run_session_contexts[run_id] = (context, session_context)
+
+        return session
+
+    async def cleanup_run_session(self, run_id: str) -> None:
+        """
+        Clean up the session for a specific run.
+
+        Note: Cleanup may fail due to async context manager limitations when
+        contexts are entered/exited across different tasks. Errors are logged
+        but not raised.
+        """
+        if run_id not in self._run_sessions:
+            return
+
+        try:
+            # Get the context managers
+            context, session_context = self._run_session_contexts.get(run_id, (None, None))
+
+            # Try to clean up session context
+            # Silently ignore cleanup errors - these are harmless
+            if session_context is not None:
+                try:
+                    await session_context.__aexit__(None, None, None)
+                except (RuntimeError, Exception):
+                    pass  # Silently ignore
+
+            # Try to clean up transport context
+            if context is not None:
+                try:
+                    await context.__aexit__(None, None, None)
+                except (RuntimeError, Exception):
+                    pass  # Silently ignore
+
+            # Remove from tracking regardless of cleanup success
+            # The connections will be cleaned up by garbage collection
+            del self._run_sessions[run_id]
+            del self._run_session_contexts[run_id]
+
+        except Exception:
+            pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
         if self.session is None:
@@ -227,17 +369,36 @@ class MCPTools(Toolkit):
         if not self._initialized:
             return
 
-        try:
-            if self._session_context is not None:
-                await self._session_context.__aexit__(None, None, None)
-                self.session = None
-                self._session_context = None
+        import warnings
 
-            if self._context is not None:
-                await self._context.__aexit__(None, None, None)
-                self._context = None
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to close MCP connection: {e}")
+        # Suppress async generator cleanup warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*async_generator.*")
+            warnings.filterwarnings("ignore", message=".*cancel scope.*")
+
+            try:
+                # Clean up all per-run sessions first
+                run_ids = list(self._run_sessions.keys())
+                for run_id in run_ids:
+                    await self.cleanup_run_session(run_id)
+
+                # Clean up the main session
+                if self._session_context is not None:
+                    try:
+                        await self._session_context.__aexit__(None, None, None)
+                    except (RuntimeError, Exception):
+                        pass  # Silently ignore cleanup errors
+                    self.session = None
+                    self._session_context = None
+
+                if self._context is not None:
+                    try:
+                        await self._context.__aexit__(None, None, None)
+                    except (RuntimeError, Exception):
+                        pass  # Silently ignore cleanup errors
+                    self._context = None
+            except (RuntimeError, BaseException):
+                pass  # Silently ignore all cleanup errors
 
         self._initialized = False
 
@@ -290,7 +451,12 @@ class MCPTools(Toolkit):
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(tool, self.session)  # type: ignore
+                    entrypoint = get_entrypoint_for_tool(
+                        tool=tool,
+                        session=self.session,  # type: ignore
+                        mcp_tools_instance=self,
+                        server_name=self.name or "MCPTools",
+                    )
                     # Create a Function for the tool
                     f = Function(
                         name=tool_name_prefix + tool.name,
