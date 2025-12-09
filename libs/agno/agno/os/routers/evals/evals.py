@@ -124,6 +124,15 @@ def attach_routes(
     ) -> PaginatedResponse[EvalSchema]:
         db = await get_db(dbs, db_id, table)
 
+        # TODO: Delete me:
+        # Filtering out agent-as-judge by default for now,
+        # as they are not supported yet in the AgentOS UI.
+        eval_types = eval_types or [
+            EvalType.ACCURACY,
+            EvalType.PERFORMANCE,
+            EvalType.RELIABILITY,
+        ]
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             eval_runs, total_count = await db.get_eval_runs(
