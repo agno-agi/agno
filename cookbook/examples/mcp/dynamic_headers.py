@@ -92,7 +92,7 @@ async def main():
 
     # Step 3: Connect to MCP server
     await mcp_tools.connect()
-    print(f"✅ Connected to MCP server")
+    print("Connected to MCP server")
     print(f"   Available tools: {list(mcp_tools.functions.keys())}\n")
 
     try:
