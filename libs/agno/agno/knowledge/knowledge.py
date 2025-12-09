@@ -69,7 +69,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
@@ -77,7 +77,7 @@ class Knowledge:
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
-            skip_if_exists = kwargs.get("skip_if_exists", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
                 await self.add_content_async(
                     name=argument.get("name"),
@@ -107,7 +107,7 @@ class Knowledge:
             include = kwargs.get("include")
             exclude = kwargs.get("exclude")
             upsert = kwargs.get("upsert", True)
-            skip_if_exists = kwargs.get("skip_if_exists", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             for path in paths:
                 await self.add_content_async(
@@ -190,7 +190,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
@@ -219,7 +219,7 @@ class Knowledge:
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
-            skip_if_exists = kwargs.get("skip_if_exists", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
                 self.add_content(
                     name=argument.get("name"),
@@ -249,7 +249,7 @@ class Knowledge:
             include = kwargs.get("include")
             exclude = kwargs.get("exclude")
             upsert = kwargs.get("upsert", True)
-            skip_if_exists = kwargs.get("skip_if_exists", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             for path in paths:
                 self.add_content(
@@ -351,7 +351,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
@@ -416,7 +416,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
     ) -> None:
         """
@@ -435,7 +435,7 @@ class Knowledge:
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
-            skip_if_exists: Whether to skip adding content if it already exists (default: True)
+            skip_if_exists: Whether to skip adding content if it already exists (default: False)
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
