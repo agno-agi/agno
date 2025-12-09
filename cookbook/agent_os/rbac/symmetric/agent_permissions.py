@@ -18,7 +18,6 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
-from agno.os.middleware import JWTMiddleware
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
 
