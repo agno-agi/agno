@@ -61,23 +61,20 @@ async def run_agent_streaming():
         print(f"Streaming from agent: {agent_id}")
         print("\nResponse: ", end="", flush=True)
 
-        # Stream the response
+        from agno.run.agent import RunContentEvent, RunCompletedEvent
+
         full_content = ""
-        async for line in client.stream_agent_run(
+        async for event in client.stream_agent_run(
             agent_id=agent_id,
             message="Tell me a short joke.",
         ):
-            if line.startswith("data: "):
-                try:
-                    data = json.loads(line[6:])
-                    if data.get("event") == "RunContent":
-                        content = data.get("content", "")
-                        print(content, end="", flush=True)
-                        full_content += content
-                except json.JSONDecodeError as e:
-                    print(
-                        f"Warning: Failed to decode JSON from line: {line[6:]}. Error: {e}"
-                    )
+            # Handle different event types
+            if isinstance(event, RunContentEvent):
+                print(event.content, end="", flush=True)
+                full_content += event.content
+            elif isinstance(event, RunCompletedEvent):
+                # Run completed - could access event.run_id here if needed
+                pass
 
         print("\n")
 

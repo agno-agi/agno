@@ -1,6 +1,7 @@
+import asyncio
 import json
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
@@ -37,7 +38,9 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
-from agno.run.agent import RunOutput
+from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
+from agno.run.team import BaseTeamRunEvent, team_run_output_event_from_dict
+from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 
 try:
     from httpx import AsyncClient
@@ -80,6 +83,22 @@ class AgentOSClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager and cleanup resources."""
         await self.close()
+
+    def __enter__(self) -> "AgentOSClient":
+        """Enter sync context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit sync context manager and cleanup resources."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            loop.create_task(self.close())
+        else:
+            asyncio.run(self.close())
 
     async def connect(self) -> "AgentOSClient":
         """Explicitly create HTTP client connection.
@@ -245,6 +264,46 @@ class AgentOSClient:
             async for line in response.aiter_lines():
                 yield line
 
+    async def _parse_sse_events(
+        self,
+        raw_stream: AsyncIterator[str],
+        event_parser: Callable[[dict], Any],
+    ) -> AsyncIterator[Any]:
+        """Parse SSE stream into typed event objects.
+
+        Args:
+            raw_stream: Raw SSE lines from streaming response
+            event_parser: Function to parse event dict into typed object
+
+        Yields:
+            Parsed event objects
+        """
+        from agno.utils.log import logger
+
+        async for line in raw_stream:
+            # Skip empty lines and comments (SSE protocol)
+            if not line or line.startswith(":"):
+                continue
+
+            # Parse SSE data lines
+            if line.startswith("data: "):
+                try:
+                    # Extract and parse JSON payload
+                    json_str = line[6:]  # Remove "data: " prefix
+                    event_dict = json.loads(json_str)
+
+                    # Parse into typed event using provided factory
+                    event = event_parser(event_dict)
+                    yield event
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse SSE JSON: {line[:100]}... | Error: {e}")
+                    continue  # Skip bad events, continue stream
+
+                except ValueError as e:
+                    logger.error(f"Unknown event type: {line[:100]}... | Error: {e}")
+                    continue  # Skip unknown events, continue stream
+
     # Discovery & Configuration Operations
 
     async def get_config(self) -> ConfigResponse:
@@ -383,7 +442,7 @@ class AgentOSClient:
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[RunOutputEvent]:
         """Stream an agent run response.
 
         Args:
@@ -398,7 +457,7 @@ class AgentOSClient:
             **kwargs: Additional parameters (session_state, dependencies, metadata, etc.)
 
         Yields:
-            str: Server-sent event lines
+            RunOutputEvent: Typed event objects (RunStartedEvent, RunContentEvent, etc.)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -424,8 +483,10 @@ class AgentOSClient:
             else:
                 data[key] = value
 
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
+        # Get raw SSE stream and parse into typed events
+        raw_stream = self._stream_post_form_data(endpoint, data)
+        async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
+            yield event
 
     async def continue_agent_run(
         self,
@@ -601,7 +662,7 @@ class AgentOSClient:
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
         context: Optional[Dict[str, Any]] = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[BaseTeamRunEvent]:
         """Stream a team run response.
 
         Args:
@@ -616,7 +677,7 @@ class AgentOSClient:
             context: Optional context dictionary
 
         Yields:
-            str: Server-sent event lines
+            BaseTeamRunEvent: Typed event objects (team and agent events)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -638,8 +699,10 @@ class AgentOSClient:
         if context:
             data["context"] = json.dumps(context)
 
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
+        # Get raw SSE stream and parse into typed events
+        raw_stream = self._stream_post_form_data(endpoint, data)
+        async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
+            yield event
 
     async def cancel_team_run(self, team_id: str, run_id: str) -> None:
         """Cancel a team run.
@@ -746,7 +809,7 @@ class AgentOSClient:
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
         context: Optional[Dict[str, Any]] = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Stream a workflow run response.
 
         Args:
@@ -761,7 +824,7 @@ class AgentOSClient:
             context: Optional context dictionary
 
         Yields:
-            str: Server-sent event lines
+            WorkflowRunOutputEvent: Typed event objects (workflow, team, and agent events)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -783,8 +846,10 @@ class AgentOSClient:
         if context:
             data["context"] = json.dumps(context)
 
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
+        # Get raw SSE stream and parse into typed events
+        raw_stream = self._stream_post_form_data(endpoint, data)
+        async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
+            yield event
 
     async def cancel_workflow_run(self, workflow_id: str, run_id: str) -> None:
         """Cancel a workflow run.

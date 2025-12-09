@@ -11,7 +11,7 @@ from agno.os import AgentOS
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.vectordb.lancedb import LanceDb, SearchType
+from agno.vectordb.chroma import ChromaDb
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -27,10 +27,9 @@ db = SqliteDb(db_file="tmp/cookbook_client.db")
 # =============================================================================
 
 knowledge = Knowledge(
-    vector_db=LanceDb(
-        uri="tmp/cookbook_lancedb",
-        table_name="cookbook_knowledge",
-        search_type=SearchType.hybrid,
+    vector_db=ChromaDb(
+        path="tmp/cookbook_chromadb",
+        collection="cookbook_knowledge",
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     contents_db=db,  # Required for content upload/management endpoints
