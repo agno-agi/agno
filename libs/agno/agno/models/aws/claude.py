@@ -79,7 +79,7 @@ class Claude(AnthropicClaude):
                     "aws_access_key": self.aws_access_key,
                     "aws_region": self.aws_region,
                 }
-        if not (self.aws_access_key or (self.aws_access_key and self.aws_secret_key)):
+        if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
             log_error(
                 "AWS credentials not found. Please either set the AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY and AWS_SECRET_KEY environment variables."
             )
