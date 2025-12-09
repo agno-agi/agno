@@ -52,6 +52,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
             stream_events=True,
             user_id=user_id,
             session_state=session_state,
+            run_id=run_id,
         )
 
         # Stream the response content in AG-UI format
@@ -92,6 +93,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
             stream_steps=True,
             user_id=user_id,
             session_state=session_state,
+            run_id=run_id,
         )
 
         # Stream the response content in AG-UI format
