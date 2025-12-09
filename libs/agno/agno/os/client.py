@@ -1,6 +1,5 @@
 import asyncio
 import json
-from os import getenv
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
 from agno.db.base import SessionType
@@ -68,11 +67,11 @@ class AgentOSClient:
 
         Args:
             base_url: Base URL of the AgentOS instance (e.g., "http://localhost:7777")
-            api_key: API key for authentication. Defaults to AGNO_API_KEY environment variable
+            api_key: API key for authentication. Must be explicitly provided if authentication is required.
             timeout: Request timeout in seconds (default: 300.0)
         """
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key or getenv("AGNO_API_KEY")
+        self.api_key = api_key
         self.timeout = timeout
         self._http_client: Optional[AsyncClient] = None
 

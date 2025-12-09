@@ -18,9 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Set test environment variables
-os.environ.setdefault("AGNO_API_KEY", "test-api-key")
-
 from agno.os.client import AgentOSClient
 
 
@@ -50,11 +47,10 @@ def test_init_with_api_key():
     assert client.api_key == "custom-key"
 
 
-def test_init_api_key_from_env():
-    """Verify API key falls back to environment variable."""
-    with patch.dict(os.environ, {"AGNO_API_KEY": "env-api-key"}):
-        client = AgentOSClient(base_url="http://localhost:7777")
-        assert client.api_key == "env-api-key"
+def test_init_api_key_defaults_to_none():
+    """Verify API key defaults to None when not provided."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    assert client.api_key is None
 
 
 @pytest.mark.asyncio

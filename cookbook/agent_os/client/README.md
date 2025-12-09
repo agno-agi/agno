@@ -248,7 +248,7 @@ If your AgentOS server requires authentication, provide an API key:
 ```python
 client = AgentOSClient(
     base_url="http://localhost:7777",
-    api_key="your-api-key",  # Or set AGNO_API_KEY environment variable
+    api_key="your-api-key",  # Required if authentication is needed
 )
 ```
 
