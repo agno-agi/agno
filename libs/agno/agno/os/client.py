@@ -1741,7 +1741,8 @@ class AgentOSClient:
             "num_iterations": num_iterations,
         }
 
-        data = await self._post(endpoint, payload)
+        endpoint = "/evals"
+        data = await self._post(endpoint, payload, params=params)
         if data is None:
             return None
         return EvalSchema.model_validate(data)

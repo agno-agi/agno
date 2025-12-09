@@ -58,20 +58,19 @@ async def run_team_streaming():
         print(f"Streaming from team: {team_id}")
         print("\nResponse: ", end="", flush=True)
 
+        from agno.run.team import RunContentEvent, RunCompletedEvent
+
         # Stream the response
-        async for line in client.stream_team_run(
+        async for event in client.stream_team_run(
             team_id=team_id,
             message="Tell me about Python programming in 2 sentences.",
         ):
-            if line.startswith("data: "):
-                try:
-                    data = json.loads(line[6:])
-                    # Team streaming uses "TeamRunContent" event
-                    if data.get("event") == "TeamRunContent":
-                        content = data.get("content", "")
-                        print(content, end="", flush=True)
-                except json.JSONDecodeError:
-                    pass
+            # Handle different event types
+            if isinstance(event, RunContentEvent):
+                print(event.content, end="", flush=True)
+            elif isinstance(event, RunCompletedEvent):
+                # Run completed - could access event.run_id here if needed
+                pass
 
         print("\n")
 
