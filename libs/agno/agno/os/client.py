@@ -434,7 +434,7 @@ class AgentOSClient:
         response_data = await self._post(endpoint, data, as_form=True)
         return RunOutput.from_dict(response_data)
 
-    async def stream_agent_run(
+    async def run_agent_stream(
         self,
         agent_id: str,
         message: str,

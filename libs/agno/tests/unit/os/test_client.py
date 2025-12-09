@@ -684,8 +684,8 @@ async def test_post_creates_client_lazily():
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_run_returns_typed_events():
-    """Verify stream_agent_run yields typed RunOutputEvent objects."""
+async def test_run_agent_stream_returns_typed_events():
+    """Verify run_agent_stream yields typed RunOutputEvent objects."""
     from agno.run.agent import RunStartedEvent, RunContentEvent, RunCompletedEvent
 
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -705,7 +705,7 @@ async def test_stream_agent_run_returns_typed_events():
         mock_stream.return_value = async_generator()
 
         events = []
-        async for event in client.stream_agent_run("agent-123", "test message"):
+        async for event in client.run_agent_stream("agent-123", "test message"):
             events.append(event)
 
         assert len(events) == 3
@@ -739,7 +739,7 @@ async def test_stream_handles_invalid_json():
 
         events = []
         with patch("agno.utils.log.logger") as mock_logger:
-            async for event in client.stream_agent_run("agent-123", "test"):
+            async for event in client.run_agent_stream("agent-123", "test"):
                 events.append(event)
 
             # Should skip invalid event and continue
@@ -773,7 +773,7 @@ async def test_stream_handles_unknown_event_type():
 
         events = []
         with patch("agno.utils.log.logger") as mock_logger:
-            async for event in client.stream_agent_run("agent-123", "test"):
+            async for event in client.run_agent_stream("agent-123", "test"):
                 events.append(event)
 
             # Should skip unknown event and continue
@@ -808,7 +808,7 @@ async def test_stream_handles_empty_lines():
         mock_stream.return_value = async_generator()
 
         events = []
-        async for event in client.stream_agent_run("agent-123", "test"):
+        async for event in client.run_agent_stream("agent-123", "test"):
             events.append(event)
 
         # Should only yield actual events

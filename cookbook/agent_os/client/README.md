@@ -100,7 +100,7 @@ workflow = await client.get_workflow("workflow-id")
 result = await client.run_agent(agent_id="agent-id", message="Hello")
 
 # Streaming run
-async for line in client.stream_agent_run(agent_id="agent-id", message="Hello"):
+async for line in client.run_agent_stream(agent_id="agent-id", message="Hello"):
     print(line)
 
 # Run with session context

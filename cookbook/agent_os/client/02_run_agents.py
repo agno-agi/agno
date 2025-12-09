@@ -64,7 +64,7 @@ async def run_agent_streaming():
         from agno.run.agent import RunContentEvent, RunCompletedEvent
 
         full_content = ""
-        async for event in client.stream_agent_run(
+        async for event in client.run_agent_stream(
             agent_id=agent_id,
             message="Tell me a short joke.",
         ):
