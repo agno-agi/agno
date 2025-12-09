@@ -21,36 +21,37 @@ async def run_accuracy_eval():
     print("Running Accuracy Evaluation")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        # Get available agents
-        config = await client.get_config()
-        if not config.agents:
-            print("No agents available")
-            return
+    client = AgentOSClient(base_url="http://localhost:7777")
+    
+    # Get available agents
+    config = await client.get_config()
+    if not config.agents:
+        print("No agents available")
+        return
 
-        agent_id = config.agents[0].id
-        print(f"Evaluating agent: {agent_id}")
+    agent_id = config.agents[0].id
+    print(f"Evaluating agent: {agent_id}")
 
-        # Run accuracy eval
-        try:
-            eval_result = await client.run_eval(
-                agent_id=agent_id,
-                eval_type=EvalType.ACCURACY,
-                input_text="What is 2 + 2?",
-                expected_output="4",
-            )
+    # Run accuracy eval
+    try:
+        eval_result = await client.run_eval(
+            agent_id=agent_id,
+            eval_type=EvalType.ACCURACY,
+            input_text="What is 2 + 2?",
+            expected_output="4",
+        )
 
-            if eval_result:
-                print(f"\nEval ID: {eval_result.id}")
-                print(f"Eval Type: {eval_result.eval_type}")
-                print(f"Eval Data: {eval_result.eval_data}")
-            else:
-                print("Evaluation returned no result")
+        if eval_result:
+            print(f"\nEval ID: {eval_result.id}")
+            print(f"Eval Type: {eval_result.eval_type}")
+            print(f"Eval Data: {eval_result.eval_data}")
+        else:
+            print("Evaluation returned no result")
 
-        except Exception as e:
-            print(f"Error running eval: {e}")
-            if hasattr(e, "response"):
-                print(f"Response: {e.response.text}")
+    except Exception as e:
+        print(f"Error running eval: {e}")
+        if hasattr(e, "response"):
+            print(f"Response: {e.response.text}")
 
 
 async def run_performance_eval():
@@ -59,36 +60,37 @@ async def run_performance_eval():
     print("Running Performance Evaluation")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        # Get available agents
-        config = await client.get_config()
-        if not config.agents:
-            print("No agents available")
-            return
+    client = AgentOSClient(base_url="http://localhost:7777")
+    
+    # Get available agents
+    config = await client.get_config()
+    if not config.agents:
+        print("No agents available")
+        return
 
-        agent_id = config.agents[0].id
-        print(f"Evaluating agent: {agent_id}")
+    agent_id = config.agents[0].id
+    print(f"Evaluating agent: {agent_id}")
 
-        # Run performance eval
-        try:
-            eval_result = await client.run_eval(
-                agent_id=agent_id,
-                eval_type=EvalType.PERFORMANCE,
-                input_text="Hello, how are you?",
-                num_iterations=2,  # Run twice to measure performance
-            )
+    # Run performance eval
+    try:
+        eval_result = await client.run_eval(
+            agent_id=agent_id,
+            eval_type=EvalType.PERFORMANCE,
+            input_text="Hello, how are you?",
+            num_iterations=2,  # Run twice to measure performance
+        )
 
-            if eval_result:
-                print(f"\nEval ID: {eval_result.id}")
-                print(f"Eval Type: {eval_result.eval_type}")
-                print(f"Performance Data: {eval_result.eval_data}")
-            else:
-                print("Evaluation returned no result")
+        if eval_result:
+            print(f"\nEval ID: {eval_result.id}")
+            print(f"Eval Type: {eval_result.eval_type}")
+            print(f"Performance Data: {eval_result.eval_data}")
+        else:
+            print("Evaluation returned no result")
 
-        except Exception as e:
-            print(f"Error running eval: {e}")
-            if hasattr(e, "response"):
-                print(f"Response: {e.response.text}")
+    except Exception as e:
+        print(f"Error running eval: {e}")
+        if hasattr(e, "response"):
+            print(f"Response: {e.response.text}")
 
 
 async def list_eval_runs():
@@ -97,19 +99,20 @@ async def list_eval_runs():
     print("Listing Evaluation Runs")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        try:
-            evals = await client.list_eval_runs()
-            print(f"\nFound {len(evals.data)} evaluation runs")
+    client = AgentOSClient(base_url="http://localhost:7777")
+    
+    try:
+        evals = await client.list_eval_runs()
+        print(f"\nFound {len(evals.data)} evaluation runs")
 
-            for eval_run in evals.data[:5]:  # Show first 5
-                print(f"\n- ID: {eval_run.id}")
-                print(f"  Name: {eval_run.name}")
-                print(f"  Type: {eval_run.eval_type}")
-                print(f"  Agent: {eval_run.agent_id}")
+        for eval_run in evals.data[:5]:  # Show first 5
+            print(f"\n- ID: {eval_run.id}")
+            print(f"  Name: {eval_run.name}")
+            print(f"  Type: {eval_run.eval_type}")
+            print(f"  Agent: {eval_run.agent_id}")
 
-        except Exception as e:
-            print(f"Error listing evals: {e}")
+    except Exception as e:
+        print(f"Error listing evals: {e}")
 
 
 async def get_eval_details():
@@ -118,26 +121,27 @@ async def get_eval_details():
     print("Getting Evaluation Details")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        try:
-            # First list evals to get an ID
-            evals = await client.list_eval_runs()
-            if not evals.data:
-                print("No evaluations found")
-                return
+    client = AgentOSClient(base_url="http://localhost:7777")
+    
+    try:
+        # First list evals to get an ID
+        evals = await client.list_eval_runs()
+        if not evals.data:
+            print("No evaluations found")
+            return
 
-            eval_id = evals.data[0].id
-            print(f"Getting details for eval: {eval_id}")
+        eval_id = evals.data[0].id
+        print(f"Getting details for eval: {eval_id}")
 
-            eval_run = await client.get_eval_run(eval_id)
-            print(f"\nEval ID: {eval_run.id}")
-            print(f"Name: {eval_run.name}")
-            print(f"Type: {eval_run.eval_type}")
-            print(f"Agent ID: {eval_run.agent_id}")
-            print(f"Data: {eval_run.eval_data}")
+        eval_run = await client.get_eval_run(eval_id)
+        print(f"\nEval ID: {eval_run.id}")
+        print(f"Name: {eval_run.name}")
+        print(f"Type: {eval_run.eval_type}")
+        print(f"Agent ID: {eval_run.agent_id}")
+        print(f"Data: {eval_run.eval_data}")
 
-        except Exception as e:
-            print(f"Error getting eval: {e}")
+    except Exception as e:
+        print(f"Error getting eval: {e}")
 
 
 async def main():

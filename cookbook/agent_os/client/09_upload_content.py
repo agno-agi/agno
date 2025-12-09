@@ -20,52 +20,53 @@ async def upload_text_content():
     print("Uploading Text Content")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        # Text content to upload
-        content = """
-        # Agno Framework Guide
-        
-        Agno is a powerful framework for building AI agents and teams.
-        
-        ## Key Features
-        - Agent creation with custom tools
-        - Team coordination for complex tasks
-        - Workflow automation
-        - Knowledge base integration
-        - Memory management
-        
-        ## Getting Started
-        1. Install agno: pip install agno
-        2. Create an agent with a model
-        3. Add tools for specific capabilities
-        4. Deploy with AgentOS
-        """
+    client = AgentOSClient(base_url="http://localhost:7777")
 
-        try:
-            print("Uploading text content...")
+    # Text content to upload
+    content = """
+    # Agno Framework Guide
+    
+    Agno is a powerful framework for building AI agents and teams.
+    
+    ## Key Features
+    - Agent creation with custom tools
+    - Team coordination for complex tasks
+    - Workflow automation
+    - Knowledge base integration
+    - Memory management
+    
+    ## Getting Started
+    1. Install agno: pip install agno
+    2. Create an agent with a model
+    3. Add tools for specific capabilities
+    4. Deploy with AgentOS
+    """
 
-            # Upload the content using text_content parameter
-            result = await client.upload_content(
-                text_content=content,
-                name="Agno Guide",
-                description="A guide to the Agno framework",
-            )
+    try:
+        print("Uploading text content...")
 
-            print("\nUpload successful!")
-            print(f"Content ID: {result.id}")
-            print(f"Status: {result.status}")
+        # Upload the content using text_content parameter
+        result = await client.upload_content(
+            text_content=content,
+            name="Agno Guide",
+            description="A guide to the Agno framework",
+        )
 
-            # Check status
-            if result.id:
-                print("\nChecking processing status...")
-                status = await client.get_content_status(result.id)
-                print(f"Status: {status.status}")
-                print(f"Message: {status.status_message}")
+        print("\nUpload successful!")
+        print(f"Content ID: {result.id}")
+        print(f"Status: {result.status}")
 
-        except Exception as e:
-            print(f"Error uploading: {e}")
-            if hasattr(e, "response"):
-                print(f"Response: {e.response.text}")
+        # Check status
+        if result.id:
+            print("\nChecking processing status...")
+            status = await client.get_content_status(result.id)
+            print(f"Status: {status.status}")
+            print(f"Message: {status.status_message}")
+
+    except Exception as e:
+        print(f"Error uploading: {e}")
+        if hasattr(e, "response"):
+            print(f"Response: {e.response.text}")
 
 
 async def list_uploaded_content():
@@ -74,19 +75,20 @@ async def list_uploaded_content():
     print("Listing Uploaded Content")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        try:
-            content = await client.list_content()
-            print(f"\nFound {len(content.data)} content items")
+    client = AgentOSClient(base_url="http://localhost:7777")
 
-            for item in content.data:
-                print(f"\n- ID: {item.id}")
-                print(f"  Name: {item.name}")
-                print(f"  Status: {item.status}")
-                print(f"  Type: {item.type}")
+    try:
+        content = await client.list_content()
+        print(f"\nFound {len(content.data)} content items")
 
-        except Exception as e:
-            print(f"Error listing content: {e}")
+        for item in content.data:
+            print(f"\n- ID: {item.id}")
+            print(f"  Name: {item.name}")
+            print(f"  Status: {item.status}")
+            print(f"  Type: {item.type}")
+
+    except Exception as e:
+        print(f"Error listing content: {e}")
 
 
 async def search_uploaded_content():
@@ -95,24 +97,25 @@ async def search_uploaded_content():
     print("Searching Knowledge Base")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        try:
-            # Search for content
-            results = await client.search_knowledge(
-                query="What is Agno?",
-                limit=5,
+    client = AgentOSClient(base_url="http://localhost:7777")
+
+    try:
+        # Search for content
+        results = await client.search_knowledge(
+            query="What is Agno?",
+            limit=5,
+        )
+
+        print(f"\nFound {len(results.data)} results")
+
+        for result in results.data:
+            content_preview = (
+                str(result.content)[:150] if hasattr(result, "content") else "N/A"
             )
+            print(f"\n- Content: {content_preview}...")
 
-            print(f"\nFound {len(results.data)} results")
-
-            for result in results.data:
-                content_preview = (
-                    str(result.content)[:150] if hasattr(result, "content") else "N/A"
-                )
-                print(f"\n- Content: {content_preview}...")
-
-        except Exception as e:
-            print(f"Error searching: {e}")
+    except Exception as e:
+        print(f"Error searching: {e}")
 
 
 async def delete_content():
@@ -121,29 +124,30 @@ async def delete_content():
     print("Deleting Content")
     print("=" * 60)
 
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        try:
-            # List content first
-            content = await client.list_content()
-            if not content.data:
-                print("No content to delete")
-                return
+    client = AgentOSClient(base_url="http://localhost:7777")
 
-            # Delete the first item (for demo purposes)
-            content_id = content.data[0].id
-            print(f"Deleting content: {content_id}")
+    try:
+        # List content first
+        content = await client.list_content()
+        if not content.data:
+            print("No content to delete")
+            return
 
-            await client.delete_content(content_id)
-            print("Content deleted successfully")
+        # Delete the first item (for demo purposes)
+        content_id = content.data[0].id
+        print(f"Deleting content: {content_id}")
 
-            # Verify deletion
-            content_after = await client.list_content()
-            print(f"Remaining content items: {len(content_after.data)}")
+        await client.delete_content(content_id)
+        print("Content deleted successfully")
 
-        except Exception as e:
-            print(f"Error deleting content: {e}")
-            if hasattr(e, "response"):
-                print(f"Response: {e.response.text}")
+        # Verify deletion
+        content_after = await client.list_content()
+        print(f"Remaining content items: {len(content_after.data)}")
+
+    except Exception as e:
+        print(f"Error deleting content: {e}")
+        if hasattr(e, "response"):
+            print(f"Response: {e.response.text}")
 
 
 async def main():

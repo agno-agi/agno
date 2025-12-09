@@ -73,17 +73,18 @@ import asyncio
 from agno.os.client import AgentOSClient
 
 async def main():
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        # Discover available agents
-        config = await client.get_config()
-        print(f"Agents: {[a.id for a in config.agents]}")
-        
-        # Run an agent
-        result = await client.run_agent(
-            agent_id="assistant",
-            message="Hello!",
-        )
-        print(f"Response: {result.content}")
+    client = AgentOSClient(base_url="http://localhost:7777")
+    
+    # Discover available agents
+    config = await client.get_config()
+    print(f"Agents: {[a.id for a in config.agents]}")
+    
+    # Run an agent
+    result = await client.run_agent(
+        agent_id="assistant",
+        message="Hello!",
+    )
+    print(f"Response: {result.content}")
 
 asyncio.run(main())
 ```
@@ -243,34 +244,24 @@ eval_run = await client.get_eval_run(eval_id="eval-id")
 
 ## Authentication
 
-If your AgentOS server requires authentication, provide an API key:
+If your AgentOS server requires authentication, pass headers to each request:
 
 ```python
-client = AgentOSClient(
-    base_url="http://localhost:7777",
-    api_key="your-api-key",  # Required if authentication is needed
-)
+headers = {"Authorization": "Bearer your-token"}
+
+# Pass headers to any request
+config = await client.get_config(headers=headers)
+result = await client.run_agent(agent_id="agent-id", message="Hello", headers=headers)
 ```
 
-## Connection Management
-
-### Using Context Manager (Recommended)
+## Usage
 
 ```python
-async with AgentOSClient(base_url="http://localhost:7777") as client:
-    # Client is automatically connected and cleaned up
-    result = await client.run_agent(...)
-```
-
-### Manual Connection
-
-```python
+# Create client instance
 client = AgentOSClient(base_url="http://localhost:7777")
-await client.connect()
-try:
-    result = await client.run_agent(...)
-finally:
-    await client.close()
+
+# Make requests directly
+result = await client.run_agent(agent_id="agent-id", message="Hello")
 ```
 
 ## Error Handling

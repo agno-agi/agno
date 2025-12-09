@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
@@ -6,6 +5,7 @@ from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.media import Audio, Image, Video
 from agno.media import File as MediaFile
+from agno.models.response import ToolExecution
 from agno.os.routers.evals.schemas import EvalSchema
 from agno.os.routers.knowledge.schemas import (
     ConfigResponseSchema as KnowledgeConfigResponse,
@@ -37,110 +37,55 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
-from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import BaseTeamRunEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 
 try:
-    from httpx import AsyncClient
+    from httpx import AsyncClient, Client
 except ImportError:
     raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
 
 class AgentOSClient:
-    """Async client for interacting with AgentOS API endpoints.
+    """Client for interacting with AgentOS API endpoints.
 
     Attributes:
         base_url: Base URL of the AgentOS instance
-        api_key: API key for authentication (optional)
         timeout: Request timeout in seconds
     """
 
     def __init__(
         self,
         base_url: str,
-        api_key: Optional[str] = None,
         timeout: int = 60,
     ):
         """Initialize AgentOSClient.
 
         Args:
             base_url: Base URL of the AgentOS instance (e.g., "http://localhost:7777")
-            api_key: API key for authentication. Must be explicitly provided if authentication is required.
-            timeout: Request timeout in seconds (default: 300.0)
+            timeout: Request timeout in seconds (default: 60)
         """
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.timeout = timeout
-        self._http_client: Optional[AsyncClient] = None
 
-    async def __aenter__(self) -> "AgentOSClient":
-        """Enter async context manager."""
-        await self.connect()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit async context manager and cleanup resources."""
-        await self.close()
-
-    def __enter__(self) -> "AgentOSClient":
-        """Enter sync context manager."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit sync context manager and cleanup resources."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            loop.create_task(self.close())
-        else:
-            asyncio.run(self.close())
-
-    async def connect(self) -> None:
-        """Explicitly create HTTP client connection.
-
-        Use this when you need to manage the client lifecycle manually
-        without using the async context manager.
-        """
-        await self._ensure_client()
-
-    async def close(self) -> None:
-        """Close HTTP client connections."""
-        if self._http_client:
-            await self._http_client.aclose()
-            self._http_client = None
-
-    async def _ensure_client(self) -> None:
-        """Ensure HTTP client is initialized."""
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-
-    def _get_headers(self) -> Dict[str, str]:
-        """Get HTTP headers for requests."""
-        headers: Dict[str, str] = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
-
-    async def _request(
+    def _request(
         self,
         method: str,
         endpoint: str,
         data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
         as_form: bool = False,
     ) -> Any:
-        """Execute HTTP request.
+        """Execute synchronous HTTP request.
 
         Args:
             method: HTTP method (GET, POST, PATCH, DELETE)
             endpoint: API endpoint path (without base URL)
             data: Request body data (optional)
             params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
             as_form: If True, send data as form data instead of JSON
 
         Returns:
@@ -149,12 +94,9 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        await self._ensure_client()
-
         url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
 
-        kwargs: Dict[str, Any] = {"headers": headers}
+        kwargs: Dict[str, Any] = {"headers": headers or {}}
         if data is not None:
             if as_form:
                 kwargs["data"] = data
@@ -163,20 +105,72 @@ class AgentOSClient:
         if params is not None:
             kwargs["params"] = params
 
-        response = await self._http_client.request(method, url, **kwargs)
-        response.raise_for_status()
+        with Client(timeout=self.timeout) as client:
+            response = client.request(method, url, **kwargs)
+            response.raise_for_status()
 
-        # Return None for empty responses (204 No Content, etc.)
-        if not response.content:
-            return None
-        return response.json()
+            # Return None for empty responses (204 No Content, etc.)
+            if not response.content:
+                return None
+            return response.json()
 
-    async def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        """Execute GET request.
+    async def _arequest(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        as_form: bool = False,
+    ) -> Any:
+        """Execute asynchronous HTTP request.
+
+        Args:
+            method: HTTP method (GET, POST, PATCH, DELETE)
+            endpoint: API endpoint path (without base URL)
+            data: Request body data (optional)
+            params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
+            as_form: If True, send data as form data instead of JSON
+
+        Returns:
+            Parsed JSON response, or None for empty responses
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        url = f"{self.base_url}{endpoint}"
+
+        kwargs: Dict[str, Any] = {"headers": headers or {}}
+        if data is not None:
+            if as_form:
+                kwargs["data"] = data
+            else:
+                kwargs["json"] = data
+        if params is not None:
+            kwargs["params"] = params
+
+        async with AsyncClient(timeout=self.timeout) as client:
+            response = await client.request(method, url, **kwargs)
+            response.raise_for_status()
+
+            # Return None for empty responses (204 No Content, etc.)
+            if not response.content:
+                return None
+            return response.json()
+
+    def _get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        """Execute synchronous GET request.
 
         Args:
             endpoint: API endpoint path (without base URL)
             params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             Parsed JSON response
@@ -184,21 +178,44 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        return await self._request("GET", endpoint, params=params)
+        return self._request("GET", endpoint, params=params, headers=headers)
 
-    async def _post(
+    async def _aget(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        """Execute asynchronous GET request.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        return await self._arequest("GET", endpoint, params=params, headers=headers)
+
+    async def _apost(
         self,
         endpoint: str,
         data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
         as_form: bool = False,
     ) -> Any:
-        """Execute POST request.
+        """Execute asynchronous POST request.
 
         Args:
             endpoint: API endpoint path (without base URL)
             data: Request body data (optional)
             params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
             as_form: If True, send data as form data instead of JSON
 
         Returns:
@@ -207,17 +224,22 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        return await self._request("POST", endpoint, data=data, params=params, as_form=as_form)
+        return await self._arequest("POST", endpoint, data=data, params=params, headers=headers, as_form=as_form)
 
-    async def _patch(
-        self, endpoint: str, data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None
+    async def _apatch(
+        self,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Any:
-        """Execute PATCH request.
+        """Execute asynchronous PATCH request.
 
         Args:
             endpoint: API endpoint path (without base URL)
             data: Request body data
             params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             Parsed JSON response
@@ -225,42 +247,51 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        return await self._request("PATCH", endpoint, data=data, params=params)
+        return await self._arequest("PATCH", endpoint, data=data, params=params, headers=headers)
 
-    async def _delete(
-        self, endpoint: str, data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None
+    async def _adelete(
+        self,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
-        """Execute DELETE request.
+        """Execute asynchronous DELETE request.
 
         Args:
             endpoint: API endpoint path (without base URL)
             data: Optional request body data
             params: Query parameters (optional)
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
-        await self._request("DELETE", endpoint, data=data, params=params)
+        await self._arequest("DELETE", endpoint, data=data, params=params, headers=headers)
 
-    async def _stream_post_form_data(self, endpoint: str, data: Dict[str, Any]) -> AsyncIterator[str]:
+    async def _astream_post_form_data(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> AsyncIterator[str]:
         """Stream POST request with form data.
 
         Args:
             endpoint: API endpoint path (without base URL)
             data: Form data dictionary
+            headers: HTTP headers to include in the request (optional)
 
         Yields:
             str: Lines from the streaming response
         """
-        await self._ensure_client()
-
         url = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
 
-        async with self._http_client.stream("POST", url, data=data, headers=headers) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                yield line
+        async with AsyncClient(timeout=self.timeout) as client:
+            async with client.stream("POST", url, data=data, headers=headers or {}) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    yield line
 
     async def _parse_sse_events(
         self,
@@ -304,7 +335,7 @@ class AgentOSClient:
 
     # Discovery & Configuration Operations
 
-    async def get_config(self) -> ConfigResponse:
+    async def get_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
         """Get AgentOS configuration and metadata.
 
         Returns comprehensive OS configuration including:
@@ -315,17 +346,23 @@ class AgentOSClient:
         - Interface configurations
         - Knowledge, evals, and metrics settings
 
+        Args:
+            headers: HTTP headers to include in the request (optional)
+
         Returns:
             ConfigResponse: Complete OS configuration
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        data = await self._get("/config")
+        data = await self._aget("/config", headers=headers)
         return ConfigResponse.model_validate(data)
 
-    async def get_models(self) -> List[Model]:
+    async def get_models(self, headers: Optional[Dict[str, str]] = None) -> List[Model]:
         """Get list of all models used by agents and teams.
+
+        Args:
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             List[Model]: List of model configurations
@@ -333,10 +370,10 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        data = await self._get("/models")
+        data = await self._aget("/models", headers=headers)
         return [Model.model_validate(item) for item in data]
 
-    async def list_agents(self) -> List[AgentSummaryResponse]:
+    async def list_agents(self, headers: Optional[Dict[str, str]] = None) -> List[AgentSummaryResponse]:
         """List all agents configured in the AgentOS instance.
 
         Returns summary information for each agent including:
@@ -344,20 +381,24 @@ class AgentOSClient:
         - Model configuration
         - Basic settings
 
+        Args:
+            headers: HTTP headers to include in the request (optional)
+
         Returns:
             List[AgentSummaryResponse]: List of agent summaries
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        data = await self._get("/agents")
+        data = await self._aget("/agents", headers=headers)
         return [AgentSummaryResponse.model_validate(item) for item in data]
 
-    async def get_agent(self, agent_id: str) -> AgentResponse:
+    async def get_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
         """Get detailed configuration for a specific agent.
 
         Args:
             agent_id: ID of the agent to retrieve
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             AgentResponse: Detailed agent configuration
@@ -365,7 +406,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if agent not found)
         """
-        data = await self._get(f"/agents/{agent_id}")
+        data = await self._aget(f"/agents/{agent_id}", headers=headers)
         return AgentResponse.model_validate(data)
 
     async def run_agent(
@@ -378,6 +419,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
+        headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> RunOutput:
         """Execute an agent run.
@@ -391,6 +433,7 @@ class AgentOSClient:
             audio: Optional list of Audio objects
             videos: Optional list of Video objects
             files: Optional list of MediaFile objects
+            headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters passed to the agent run, such as:
                 - session_state: Dict for session state
                 - dependencies: Dict for dependencies
@@ -426,7 +469,7 @@ class AgentOSClient:
             else:
                 data[key] = value
 
-        response_data = await self._post(endpoint, data, as_form=True)
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return RunOutput.from_dict(response_data)
 
     async def run_agent_stream(
@@ -439,6 +482,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
+        headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Stream an agent run response.
@@ -452,6 +496,7 @@ class AgentOSClient:
             audio: Optional list of Audio objects
             videos: Optional list of Video objects
             files: Optional list of MediaFile objects
+            headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters (session_state, dependencies, metadata, etc.)
 
         Yields:
@@ -482,7 +527,7 @@ class AgentOSClient:
                 data[key] = value
 
         # Get raw SSE stream and parse into typed events
-        raw_stream = self._stream_post_form_data(endpoint, data)
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
             yield event
 
@@ -494,6 +539,7 @@ class AgentOSClient:
         stream: bool = False,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> RunOutput:
         """Continue a paused agent run with tool results.
 
@@ -504,6 +550,7 @@ class AgentOSClient:
             stream: Whether to stream the response
             session_id: Optional session ID
             user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             RunOutput: The continued run response
@@ -518,7 +565,7 @@ class AgentOSClient:
         if user_id:
             data["user_id"] = user_id
 
-        response_data = await self._post(endpoint, data, as_form=True)
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return RunOutput.from_dict(response_data)
 
     async def continue_agent_run_stream(
@@ -528,6 +575,7 @@ class AgentOSClient:
         tools: List[ToolExecution],
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         """Stream a continued agent run response.
 
@@ -537,6 +585,7 @@ class AgentOSClient:
             tools: List of ToolExecution objects with tool results
             session_id: Optional session ID
             user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
 
         Yields:
             RunOutputEvent: Typed event objects (RunStartedEvent, RunContentEvent, etc.)
@@ -551,23 +600,24 @@ class AgentOSClient:
         if user_id:
             data["user_id"] = user_id
 
-        raw_stream = self._stream_post_form_data(endpoint, data)
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
             yield event
 
-    async def cancel_agent_run(self, agent_id: str, run_id: str) -> None:
+    async def cancel_agent_run(self, agent_id: str, run_id: str, headers: Optional[Dict[str, str]] = None) -> None:
         """Cancel an agent run.
 
         Args:
             agent_id: ID of the agent
             run_id: ID of the run to cancel
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        await self._post(f"/agents/{agent_id}/runs/{run_id}/cancel")
+        await self._apost(f"/agents/{agent_id}/runs/{run_id}/cancel", headers=headers)
 
-    async def list_teams(self) -> List[TeamSummaryResponse]:
+    async def list_teams(self, headers: Optional[Dict[str, str]] = None) -> List[TeamSummaryResponse]:
         """List all teams configured in the AgentOS instance.
 
         Returns summary information for each team including:
@@ -575,20 +625,24 @@ class AgentOSClient:
         - Model configuration
         - Member information
 
+        Args:
+            headers: HTTP headers to include in the request (optional)
+
         Returns:
             List[TeamSummaryResponse]: List of team summaries
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        data = await self._get("/teams")
+        data = await self._aget("/teams", headers=headers)
         return [TeamSummaryResponse.model_validate(item) for item in data]
 
-    async def get_team(self, team_id: str) -> TeamResponse:
+    async def get_team(self, team_id: str, headers: Optional[Dict[str, str]] = None) -> TeamResponse:
         """Get detailed configuration for a specific team.
 
         Args:
             team_id: ID of the team to retrieve
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             TeamResponse: Detailed team configuration
@@ -596,7 +650,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if team not found)
         """
-        data = await self._get(f"/teams/{team_id}")
+        data = await self._aget(f"/teams/{team_id}", headers=headers)
         return TeamResponse.model_validate(data)
 
     async def run_team(
@@ -609,6 +663,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
+        headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> TeamRunSchema:
         """Execute a team run.
@@ -622,6 +677,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
+            headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters passed to the team run
 
         Returns:
@@ -652,7 +708,7 @@ class AgentOSClient:
             else:
                 data[key] = value
 
-        response_data = await self._post(endpoint, data, as_form=True)
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return TeamRunSchema.model_validate(response_data)
 
     async def run_team_stream(
@@ -665,6 +721,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
+        headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[BaseTeamRunEvent]:
         """Stream a team run response.
@@ -678,6 +735,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
+            headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters passed to the team run
 
         Yields:
@@ -709,28 +767,32 @@ class AgentOSClient:
                 data[key] = value
 
         # Get raw SSE stream and parse into typed events
-        raw_stream = self._stream_post_form_data(endpoint, data)
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
             yield event
 
-    async def cancel_team_run(self, team_id: str, run_id: str) -> None:
+    async def cancel_team_run(self, team_id: str, run_id: str, headers: Optional[Dict[str, str]] = None) -> None:
         """Cancel a team run.
 
         Args:
             team_id: ID of the team
             run_id: ID of the run to cancel
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        await self._post(f"/teams/{team_id}/runs/{run_id}/cancel")
+        await self._apost(f"/teams/{team_id}/runs/{run_id}/cancel", headers=headers)
 
-    async def list_workflows(self) -> List[WorkflowSummaryResponse]:
+    async def list_workflows(self, headers: Optional[Dict[str, str]] = None) -> List[WorkflowSummaryResponse]:
         """List all workflows configured in the AgentOS instance.
 
         Returns summary information for each workflow including:
         - Workflow ID, name, description
         - Step information
+
+        Args:
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             List[WorkflowSummaryResponse]: List of workflow summaries
@@ -738,14 +800,15 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        data = await self._get("/workflows")
+        data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
-    async def get_workflow(self, workflow_id: str) -> WorkflowResponse:
+    async def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
             workflow_id: ID of the workflow to retrieve
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             WorkflowResponse: Detailed workflow configuration
@@ -753,7 +816,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if workflow not found)
         """
-        data = await self._get(f"/workflows/{workflow_id}")
+        data = await self._aget(f"/workflows/{workflow_id}", headers=headers)
         return WorkflowResponse.model_validate(data)
 
     async def run_workflow(
@@ -766,6 +829,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
+        headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> WorkflowRunSchema:
         """Execute a workflow run.
@@ -779,6 +843,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
+            headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters passed to the workflow run
         Returns:
             WorkflowRunSchema: The workflow run response
@@ -808,7 +873,7 @@ class AgentOSClient:
             else:
                 data[key] = value
 
-        response_data = await self._post(endpoint, data, as_form=True)
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return WorkflowRunSchema.model_validate(response_data)
 
     async def run_workflow_stream(
@@ -821,6 +886,7 @@ class AgentOSClient:
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
         files: Optional[List[MediaFile]] = None,
+        headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Stream a workflow run response.
@@ -834,6 +900,7 @@ class AgentOSClient:
             audio: Optional audio data
             videos: Optional list of videos
             files: Optional list of files
+            headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters passed to the workflow run.
 
         Yields:
@@ -865,21 +932,24 @@ class AgentOSClient:
                 data[key] = value
 
         # Get raw SSE stream and parse into typed events
-        raw_stream = self._stream_post_form_data(endpoint, data)
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
             yield event
 
-    async def cancel_workflow_run(self, workflow_id: str, run_id: str) -> None:
+    async def cancel_workflow_run(
+        self, workflow_id: str, run_id: str, headers: Optional[Dict[str, str]] = None
+    ) -> None:
         """Cancel a workflow run.
 
         Args:
             workflow_id: ID of the workflow
             run_id: ID of the run to cancel
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        await self._post(f"/workflows/{workflow_id}/runs/{run_id}/cancel")
+        await self._apost(f"/workflows/{workflow_id}/runs/{run_id}/cancel", headers=headers)
 
     async def create_memory(
         self,
@@ -888,6 +958,7 @@ class AgentOSClient:
         topics: Optional[List[str]] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> UserMemorySchema:
         """Create a new user memory.
 
@@ -897,6 +968,7 @@ class AgentOSClient:
             topics: Optional list of topics to categorize the memory
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             UserMemorySchema: The created memory
@@ -914,7 +986,7 @@ class AgentOSClient:
         if topics:
             payload["topics"] = topics
 
-        data = await self._post("/memories", payload, params=params)
+        data = await self._apost("/memories", payload, params=params, headers=headers)
         return UserMemorySchema.model_validate(data)
 
     async def get_memory(
@@ -923,6 +995,7 @@ class AgentOSClient:
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> UserMemorySchema:
         """Get a specific memory by ID.
 
@@ -931,6 +1004,7 @@ class AgentOSClient:
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             UserMemorySchema: The requested memory
@@ -946,7 +1020,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get(f"/memories/{memory_id}", params=params)
+        data = await self._aget(f"/memories/{memory_id}", params=params, headers=headers)
         return UserMemorySchema.model_validate(data)
 
     async def list_memories(
@@ -962,6 +1036,7 @@ class AgentOSClient:
         sort_order: str = "desc",
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[UserMemorySchema]:
         """List user memories with filtering and pagination.
 
@@ -977,6 +1052,7 @@ class AgentOSClient:
             sort_order: Sort order (asc or desc)
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             PaginatedResponse[UserMemorySchema]: Paginated list of memories
@@ -1005,7 +1081,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get("/memories", params=params)
+        data = await self._aget("/memories", params=params, headers=headers)
         return PaginatedResponse[UserMemorySchema].model_validate(data)
 
     async def update_memory(
@@ -1016,6 +1092,7 @@ class AgentOSClient:
         topics: Optional[List[str]] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> UserMemorySchema:
         """Update an existing memory.
 
@@ -1026,6 +1103,7 @@ class AgentOSClient:
             topics: Optional new list of topics
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             UserMemorySchema: The updated memory
@@ -1043,7 +1121,7 @@ class AgentOSClient:
         if topics:
             payload["topics"] = topics
 
-        data = await self._patch(f"/memories/{memory_id}", payload, params=params)
+        data = await self._apatch(f"/memories/{memory_id}", payload, params=params, headers=headers)
         return UserMemorySchema.model_validate(data)
 
     async def delete_memory(
@@ -1052,6 +1130,7 @@ class AgentOSClient:
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Delete a specific memory.
 
@@ -1060,6 +1139,7 @@ class AgentOSClient:
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1072,7 +1152,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        await self._delete(f"/memories/{memory_id}", params=params)
+        await self._adelete(f"/memories/{memory_id}", params=params, headers=headers)
 
     async def delete_memories(
         self,
@@ -1080,6 +1160,7 @@ class AgentOSClient:
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Delete multiple memories.
 
@@ -1088,6 +1169,7 @@ class AgentOSClient:
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1102,18 +1184,20 @@ class AgentOSClient:
         if user_id:
             payload["user_id"] = user_id
 
-        await self._delete("/memories", payload, params=params)
+        await self._adelete("/memories", payload, params=params, headers=headers)
 
     async def get_memory_topics(
         self,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         """Get all unique memory topics.
 
         Args:
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             List[str]: List of unique topic names
@@ -1127,7 +1211,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        return await self._get("/memory_topics", params=params)
+        return await self._aget("/memory_topics", params=params, headers=headers)
 
     async def get_user_memory_stats(
         self,
@@ -1135,6 +1219,7 @@ class AgentOSClient:
         page: int = 1,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[UserStatsSchema]:
         """Get user memory statistics.
 
@@ -1143,6 +1228,7 @@ class AgentOSClient:
             page: Page number
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             PaginatedResponse[UserStatsSchema]: Paginated user statistics
@@ -1156,7 +1242,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get("/user_memory_stats", params=params)
+        data = await self._aget("/user_memory_stats", params=params, headers=headers)
         return PaginatedResponse[UserStatsSchema].model_validate(data)
 
     # Session Operations
@@ -1173,6 +1259,7 @@ class AgentOSClient:
         sort_order: str = "desc",
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[SessionSchema]:
         """List sessions with filtering and pagination.
 
@@ -1187,6 +1274,7 @@ class AgentOSClient:
             sort_order: Sort order (asc or desc)
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             PaginatedResponse[SessionSchema]: Paginated list of sessions
@@ -1213,7 +1301,7 @@ class AgentOSClient:
             params["table"] = table
 
         endpoint = "/sessions?" + "&".join(f"{k}={v}" for k, v in params.items())
-        data = await self._get(endpoint)
+        data = await self._aget(endpoint, headers=headers)
         return PaginatedResponse[SessionSchema].model_validate(data)
 
     async def create_session(
@@ -1228,6 +1316,7 @@ class AgentOSClient:
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Create a new session.
 
@@ -1242,6 +1331,7 @@ class AgentOSClient:
             team_id: Team ID (for team sessions)
             workflow_id: Workflow ID (for workflow sessions)
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
@@ -1264,7 +1354,7 @@ class AgentOSClient:
             "workflow_id": workflow_id,
         }
 
-        data = await self._post("/sessions", payload, params=params)
+        data = await self._apost("/sessions", payload, params=params, headers=headers)
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.model_validate(data)
@@ -1280,6 +1370,7 @@ class AgentOSClient:
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Get a specific session by ID.
 
@@ -1289,6 +1380,7 @@ class AgentOSClient:
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
@@ -1304,7 +1396,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get(f"/sessions/{session_id}", params=params)
+        data = await self._aget(f"/sessions/{session_id}", params=params, headers=headers)
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.model_validate(data)
@@ -1322,6 +1414,7 @@ class AgentOSClient:
         created_before: Optional[int] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
         """Get all runs for a specific session.
 
@@ -1333,6 +1426,7 @@ class AgentOSClient:
             created_before: Filter runs created before this Unix timestamp
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             List of runs (RunSchema, TeamRunSchema, or WorkflowRunSchema)
@@ -1352,7 +1446,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get(f"/sessions/{session_id}/runs", params=params)
+        data = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
         # Parse runs based on session type and run content
         runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
@@ -1372,6 +1466,7 @@ class AgentOSClient:
         session_type: SessionType = SessionType.AGENT,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
         """Get a specific run from a session.
 
@@ -1381,6 +1476,7 @@ class AgentOSClient:
             session_type: Type of session (agent, team, or workflow)
             user_id: Optional user ID filter
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             RunSchema, TeamRunSchema, or WorkflowRunSchema
@@ -1394,7 +1490,7 @@ class AgentOSClient:
         if db_id:
             params["db_id"] = db_id
 
-        data = await self._get(f"/sessions/{session_id}/runs/{run_id}", params=params)
+        data = await self._aget(f"/sessions/{session_id}/runs/{run_id}", params=params, headers=headers)
 
         # Return appropriate schema based on run type
         if data.get("workflow_id") is not None:
@@ -1409,6 +1505,7 @@ class AgentOSClient:
         session_id: str,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Delete a specific session.
 
@@ -1416,6 +1513,7 @@ class AgentOSClient:
             session_id: ID of the session to delete
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1426,7 +1524,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        await self._delete(f"/sessions/{session_id}", params=params)
+        await self._adelete(f"/sessions/{session_id}", params=params, headers=headers)
 
     async def delete_sessions(
         self,
@@ -1435,6 +1533,7 @@ class AgentOSClient:
         session_type: SessionType = SessionType.AGENT,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Delete multiple sessions.
 
@@ -1444,6 +1543,7 @@ class AgentOSClient:
             session_type: Default session type filter
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1459,7 +1559,7 @@ class AgentOSClient:
             "session_types": [st.value for st in session_types],
         }
 
-        await self._delete("/sessions", payload, params=params)
+        await self._adelete("/sessions", payload, params=params, headers=headers)
 
     async def rename_session(
         self,
@@ -1468,6 +1568,7 @@ class AgentOSClient:
         session_type: SessionType = SessionType.AGENT,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Rename a session.
 
@@ -1477,6 +1578,7 @@ class AgentOSClient:
             session_type: Type of session (agent, team, or workflow)
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
@@ -1491,7 +1593,7 @@ class AgentOSClient:
             params["table"] = table
 
         payload = {"session_name": session_name}
-        data = await self._post(f"/sessions/{session_id}/rename", payload, params=params)
+        data = await self._apost(f"/sessions/{session_id}/rename", payload, params=params, headers=headers)
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.model_validate(data)
@@ -1510,6 +1612,7 @@ class AgentOSClient:
         summary: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Update session properties.
 
@@ -1522,6 +1625,7 @@ class AgentOSClient:
             summary: Optional new summary
             user_id: Optional user ID
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
@@ -1545,7 +1649,7 @@ class AgentOSClient:
         if summary is not None:
             payload["summary"] = summary
 
-        data = await self._patch(f"/sessions/{session_id}", payload, params=params)
+        data = await self._apatch(f"/sessions/{session_id}", payload, params=params, headers=headers)
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.model_validate(data)
@@ -1570,6 +1674,7 @@ class AgentOSClient:
         sort_order: str = "desc",
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[EvalSchema]:
         """List evaluation runs with filtering and pagination.
 
@@ -1586,6 +1691,7 @@ class AgentOSClient:
             sort_order: Sort order (asc or desc)
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             PaginatedResponse[EvalSchema]: Paginated list of evaluation runs
@@ -1616,7 +1722,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get("/eval-runs", params=params)
+        data = await self._aget("/eval-runs", params=params, headers=headers)
         return PaginatedResponse[EvalSchema].model_validate(data)
 
     async def get_eval_run(
@@ -1624,6 +1730,7 @@ class AgentOSClient:
         eval_run_id: str,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> EvalSchema:
         """Get a specific evaluation run by ID.
 
@@ -1631,6 +1738,7 @@ class AgentOSClient:
             eval_run_id: ID of the evaluation run to retrieve
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             EvalSchema: The evaluation run details
@@ -1644,7 +1752,7 @@ class AgentOSClient:
         if table:
             params["table"] = table
 
-        data = await self._get(f"/eval-runs/{eval_run_id}", params=params)
+        data = await self._aget(f"/eval-runs/{eval_run_id}", params=params, headers=headers)
         return EvalSchema.model_validate(data)
 
     async def delete_eval_runs(
@@ -1652,6 +1760,7 @@ class AgentOSClient:
         eval_run_ids: List[str],
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Delete multiple evaluation runs.
 
@@ -1659,6 +1768,7 @@ class AgentOSClient:
             eval_run_ids: List of evaluation run IDs to delete
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1670,7 +1780,7 @@ class AgentOSClient:
             params["table"] = table
 
         payload = {"eval_run_ids": eval_run_ids}
-        await self._delete("/eval-runs", payload, params=params)
+        await self._adelete("/eval-runs", payload, params=params, headers=headers)
 
     async def update_eval_run(
         self,
@@ -1678,6 +1788,7 @@ class AgentOSClient:
         name: str,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> EvalSchema:
         """Update an evaluation run (rename).
 
@@ -1686,6 +1797,7 @@ class AgentOSClient:
             name: New name for the evaluation run
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             EvalSchema: The updated evaluation run
@@ -1700,7 +1812,7 @@ class AgentOSClient:
             params["table"] = table
 
         payload = {"name": name}
-        data = await self._patch(f"/eval-runs/{eval_run_id}", payload, params=params)
+        data = await self._apatch(f"/eval-runs/{eval_run_id}", payload, params=params, headers=headers)
         return EvalSchema.model_validate(data)
 
     async def run_eval(
@@ -1716,6 +1828,7 @@ class AgentOSClient:
         num_iterations: int = 1,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Optional[EvalSchema]:
         """Execute an evaluation on an agent or team.
 
@@ -1731,6 +1844,7 @@ class AgentOSClient:
             num_iterations: Number of iterations for performance evaluations
             db_id: Optional database ID to use
             table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             EvalSchema: The evaluation result, or None if evaluation against remote agents
@@ -1757,7 +1871,7 @@ class AgentOSClient:
         }
 
         endpoint = "/evals"
-        data = await self._post(endpoint, payload, params=params)
+        data = await self._apost(endpoint, payload, params=params, headers=headers)
         if data is None:
             return None
         return EvalSchema.model_validate(data)
@@ -1779,6 +1893,7 @@ class AgentOSClient:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Upload content to the knowledge base.
 
@@ -1796,6 +1911,7 @@ class AgentOSClient:
             chunk_size: Chunk size for processing
             chunk_overlap: Chunk overlap for processing
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             ContentResponseSchema: The uploaded content info
@@ -1803,8 +1919,6 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        await self._ensure_client()
-
         params = {}
         if db_id:
             params["db_id"] = db_id
@@ -1814,7 +1928,6 @@ class AgentOSClient:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
         url_full = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
 
         # Build multipart form data
         form_data: Dict[str, Any] = {}
@@ -1842,13 +1955,14 @@ class AgentOSClient:
         if file_content:
             files["file"] = (file_name or "upload", file_content, file_content_type or "application/octet-stream")
 
-        if files:
-            response = await self._http_client.post(url_full, data=form_data, files=files, headers=headers)
-        else:
-            response = await self._http_client.post(url_full, data=form_data, headers=headers)
+        async with AsyncClient(timeout=self.timeout) as client:
+            if files:
+                response = await client.post(url_full, data=form_data, files=files, headers=headers or {})
+            else:
+                response = await client.post(url_full, data=form_data, headers=headers or {})
 
-        response.raise_for_status()
-        return ContentResponseSchema.model_validate(response.json())
+            response.raise_for_status()
+            return ContentResponseSchema.model_validate(response.json())
 
     async def update_content(
         self,
@@ -1858,6 +1972,7 @@ class AgentOSClient:
         metadata: Optional[Dict[str, Any]] = None,
         reader_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Update content properties.
 
@@ -1868,6 +1983,7 @@ class AgentOSClient:
             metadata: New metadata dictionary
             reader_id: ID of the reader to use
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             ContentResponseSchema: The updated content
@@ -1875,8 +1991,6 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        await self._ensure_client()
-
         params = {}
         if db_id:
             params["db_id"] = db_id
@@ -1886,7 +2000,6 @@ class AgentOSClient:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
         url_str = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
 
         form_data: Dict[str, Any] = {}
         if name:
@@ -1898,9 +2011,10 @@ class AgentOSClient:
         if reader_id:
             form_data["reader_id"] = reader_id
 
-        response = await self._http_client.patch(url_str, data=form_data, headers=headers)
-        response.raise_for_status()
-        return ContentResponseSchema.model_validate(response.json())
+        async with AsyncClient(timeout=self.timeout) as client:
+            response = await client.patch(url_str, data=form_data, headers=headers or {})
+            response.raise_for_status()
+            return ContentResponseSchema.model_validate(response.json())
 
     async def list_content(
         self,
@@ -1909,6 +2023,7 @@ class AgentOSClient:
         sort_by: str = "created_at",
         sort_order: str = "desc",
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[ContentResponseSchema]:
         """List all content in the knowledge base.
 
@@ -1918,6 +2033,7 @@ class AgentOSClient:
             sort_by: Field to sort by
             sort_order: Sort order (asc or desc)
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             PaginatedResponse[ContentResponseSchema]: Paginated list of content
@@ -1935,19 +2051,21 @@ class AgentOSClient:
             params["db_id"] = db_id
 
         endpoint = "/knowledge/content?" + "&".join(f"{k}={v}" for k, v in params.items())
-        data = await self._get(endpoint)
+        data = await self._aget(endpoint, headers=headers)
         return PaginatedResponse[ContentResponseSchema].model_validate(data)
 
     async def get_content(
         self,
         content_id: str,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Get a specific content by ID.
 
         Args:
             content_id: ID of the content to retrieve
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             ContentResponseSchema: The content details
@@ -1963,19 +2081,21 @@ class AgentOSClient:
         if params:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        data = await self._get(endpoint)
+        data = await self._aget(endpoint, headers=headers)
         return ContentResponseSchema.model_validate(data)
 
     async def delete_content(
         self,
         content_id: str,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> ContentResponseSchema:
         """Delete a specific content.
 
         Args:
             content_id: ID of the content to delete
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             ContentResponseSchema: The deleted content info
@@ -1983,8 +2103,6 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        await self._ensure_client()
-
         params = {}
         if db_id:
             params["db_id"] = db_id
@@ -1994,15 +2112,16 @@ class AgentOSClient:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
         url_str = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
 
-        response = await self._http_client.delete(url_str, headers=headers)
-        response.raise_for_status()
-        return ContentResponseSchema.model_validate(response.json())
+        async with AsyncClient(timeout=self.timeout) as client:
+            response = await client.delete(url_str, headers=headers or {})
+            response.raise_for_status()
+            return ContentResponseSchema.model_validate(response.json())
 
     async def delete_all_content(
         self,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> str:
         """Delete all content from the knowledge base.
 
@@ -2010,6 +2129,7 @@ class AgentOSClient:
 
         Args:
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             str: "success" if successful
@@ -2017,8 +2137,6 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        await self._ensure_client()
-
         params = {}
         if db_id:
             params["db_id"] = db_id
@@ -2028,22 +2146,24 @@ class AgentOSClient:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
         url_str = f"{self.base_url}{endpoint}"
-        headers = self._get_headers()
 
-        response = await self._http_client.delete(url_str, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        async with AsyncClient(timeout=self.timeout) as client:
+            response = await client.delete(url_str, headers=headers or {})
+            response.raise_for_status()
+            return response.json()
 
     async def get_content_status(
         self,
         content_id: str,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> ContentStatusResponse:
         """Get the processing status of a content item.
 
         Args:
             content_id: ID of the content
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             ContentStatusResponse: The content processing status
@@ -2059,7 +2179,7 @@ class AgentOSClient:
         if params:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        data = await self._get(endpoint)
+        data = await self._aget(endpoint, headers=headers)
         return ContentStatusResponse.model_validate(data)
 
     async def search_knowledge(
@@ -2072,6 +2192,7 @@ class AgentOSClient:
         limit: int = 20,
         page: int = 1,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[VectorSearchResult]:
         """Search the knowledge base.
 
@@ -2084,6 +2205,7 @@ class AgentOSClient:
             limit: Number of results per page
             page: Page number
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             PaginatedResponse[VectorSearchResult]: Paginated search results
@@ -2104,12 +2226,13 @@ class AgentOSClient:
         if db_id:
             payload["db_id"] = db_id
 
-        data = await self._post("/knowledge/search", payload)
+        data = await self._apost("/knowledge/search", payload, headers=headers)
         return PaginatedResponse[VectorSearchResult].model_validate(data)
 
     async def get_knowledge_config(
         self,
         db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> KnowledgeConfigResponse:
         """Get knowledge base configuration.
 
@@ -2117,6 +2240,7 @@ class AgentOSClient:
 
         Args:
             db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
 
         Returns:
             KnowledgeConfigResponse: Knowledge configuration
@@ -2132,5 +2256,5 @@ class AgentOSClient:
         if params:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        data = await self._get(endpoint)
+        data = await self._aget(endpoint, headers=headers)
         return KnowledgeConfigResponse.model_validate(data)

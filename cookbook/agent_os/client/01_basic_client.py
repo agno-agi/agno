@@ -30,22 +30,22 @@ from agno.os.client import AgentOSClient
 
 async def main():
     # Connect to AgentOS using async context manager
-    async with AgentOSClient(base_url="http://localhost:7777") as client:
-        # Get AgentOS configuration
-        config = await client.get_config()
-        print(f"Connected to: {config.name or config.os_id}")
-        print(f"Available agents: {[a.id for a in (config.agents or [])]}")
-        print(f"Available teams: {[t.id for t in (config.teams or [])]}")
-        print(f"Available workflows: {[w.id for w in (config.workflows or [])]}")
+    client = AgentOSClient(base_url="http://localhost:7777")
+    # Get AgentOS configuration
+    config = await client.get_config()
+    print(f"Connected to: {config.name or config.os_id}")
+    print(f"Available agents: {[a.id for a in (config.agents or [])]}")
+    print(f"Available teams: {[t.id for t in (config.teams or [])]}")
+    print(f"Available workflows: {[w.id for w in (config.workflows or [])]}")
 
-        # Get details about a specific agent
-        if config.agents:
-            agent_id = config.agents[0].id
-            agent = await client.get_agent(agent_id)
-            print("\nAgent Details:")
-            print(f"  Name: {agent.name}")
-            print(f"  Model: {agent.model}")
-            print(f"  Tools: {len(agent.tools or [])}")
+    # Get details about a specific agent
+    if config.agents:
+        agent_id = config.agents[0].id
+        agent = await client.get_agent(agent_id)
+        print("\nAgent Details:")
+        print(f"  Name: {agent.name}")
+        print(f"  Model: {agent.model}")
+        print(f"  Tools: {len(agent.tools or [])}")
 
 
 if __name__ == "__main__":
