@@ -43,7 +43,7 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS",
     agents=[research_agent],
     authorization=True,
-    jwt_config=AuthorizationConfig(
+    authorization_config=AuthorizationConfig(
         verification_key=JWT_SECRET,
         algorithm="HS256",
     ),

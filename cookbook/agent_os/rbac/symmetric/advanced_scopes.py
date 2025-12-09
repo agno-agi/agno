@@ -74,7 +74,7 @@ agent_os = AgentOS(
     description="RBAC Protected AgentOS with Simplified Scopes",
     agents=[web_search_agent, analyst_agent, admin_agent],
     authorization=True,  # Enable RBAC
-    jwt_config=AuthorizationConfig(
+    authorization_config=AuthorizationConfig(
         verification_key=JWT_SECRET,
         algorithm="HS256",
     ),
