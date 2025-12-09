@@ -158,9 +158,7 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.response import (
-    async_generator_wrapper,
     check_if_run_cancelled,
-    generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
@@ -2027,7 +2025,7 @@ class Team:
                 self._cleanup_and_store(run_response=run_response, session=session)
 
                 yield run_response.error
-                
+
                 break
 
             except Exception as e:
