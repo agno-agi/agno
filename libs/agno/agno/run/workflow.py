@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from agno.media import Audio, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -527,6 +528,19 @@ class WorkflowRunOutput:
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
+
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[list[RunRequirement]] = None
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
+    @property
+    def is_paused(self):
+        return self.status == RunStatus.paused
 
     @property
     def is_cancelled(self):

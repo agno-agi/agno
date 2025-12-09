@@ -40,6 +40,7 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
+from agno.run.requirement import WorkflowRunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
@@ -3834,6 +3835,119 @@ class Workflow:
                 background_tasks=background_tasks,
                 **kwargs,
             )
+
+    @overload
+    def continue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[True] = True,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
+
+    def continue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        """Continue a previous run."""
+        # 1. Load step map, partial response
+        # 2. Identify step to continue
+        # 3. Invoke rerun
+        pass
+
+    @overload
+    async def _acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput: ...
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
+
+    async def _acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        """Continue a previous run."""
+        # 1. Load step map, partial response
+        # 2. Identify step to continue
+        # 3. Invoke rerun
+        pass
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""

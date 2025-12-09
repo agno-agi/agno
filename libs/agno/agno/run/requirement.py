@@ -26,10 +26,11 @@ class RunRequirement:
     # External execution
     external_execution_result: Optional[str] = None
 
-    def __init__(self, tool_execution: ToolExecution):
+    def __init__(self, tool_execution: Optional[ToolExecution] = None):
         self.id = str(uuid4())
-        self.tool_execution = tool_execution
-        self.user_input_schema = tool_execution.user_input_schema
+        if tool_execution:
+            self.tool_execution = tool_execution
+            self.user_input_schema = tool_execution.user_input_schema
 
     @property
     def needs_confirmation(self) -> bool:
@@ -96,3 +97,44 @@ class RunRequirement:
     def is_resolved(self) -> bool:
         """Return True if the requirement has been resolved"""
         return not self.needs_confirmation and not self.needs_user_input and not self.needs_external_execution
+
+
+@dataclass
+class WorkflowRunRequirement(RunRequirement):
+    """Requirement to complete a paused workflow (used in HITL flows)"""
+
+    workflow_step_id: Optional[str] = None
+
+    def __init__(self, workflow_step_id: Optional[str] = None, tool_execution: Optional[ToolExecution] = None):
+        super().__init__(tool_execution)
+        self.workflow_step_id = workflow_step_id
+
+    def needs_confirmation(self) -> bool:
+        if self.confirmation is not None:
+            return False
+        if not self.workflow_step_id:
+            if not self.tool_execution:
+                return False
+            return self.tool_execution.requires_confirmation or False
+
+        return False
+
+    def needs_user_input(self) -> bool:
+        if self.user_input_schema and not all(field.value is not None for field in self.user_input_schema):
+            return True
+        if not self.workflow_step_id:
+            if not self.tool_execution:
+                return False
+            return self.tool_execution.requires_user_input or False
+
+        return False
+
+    def needs_external_execution(self) -> bool:
+        if self.external_execution_result is not None:
+            return True
+        if not self.workflow_step_id:
+            if not self.tool_execution:
+                return False
+            return self.tool_execution.external_execution_required or False
+
+        return False
