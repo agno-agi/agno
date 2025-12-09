@@ -40,7 +40,7 @@ async def run_agent_non_streaming():
         print(f"\nRun ID: {result.run_id}")
         print(f"Content: {result.content}")
         print(
-            f"Tokens: {result.metrics.get('total_tokens') if result.metrics else 'N/A'}"
+            f"Tokens: {result.metrics.total_tokens if result.metrics else 'N/A'}"
         )
 
 

@@ -20,11 +20,17 @@ The `AgentOSClient` provides programmatic access to AgentOS API endpoints, allow
 
 ### 1. Start the AgentOS Server
 
+**Prerequisites**: Set your OpenAI API key before starting the server:
+
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
 Use the included `server.py` which has all features needed for the examples:
 
 ```bash
 # From the repository root
-uv run python cookbook/agent_os/client/server.py
+python3 cookbook/agent_os/client/server.py
 
 # Or if running from this directory
 python server.py
@@ -34,7 +40,7 @@ The server runs on http://localhost:7777 and includes:
 - **Agents**: `assistant` (calculator, memory, knowledge), `researcher` (web search)
 - **Teams**: `researchteam` (coordinates both agents)
 - **Workflows**: `qaworkflow` (Q&A using assistant)
-- **Knowledge**: LanceDB vector store with contents database
+- **Knowledge**: ChromaDB vector store with contents database
 
 <details>
 <summary>Alternative: Create a minimal server inline</summary>
@@ -51,7 +57,10 @@ agent = Agent(
 )
 
 agent_os = AgentOS(agents=[agent])
-agent_os.serve()  # Runs on http://localhost:7777
+app = agent_os.get_app()
+
+if __name__ == "__main__":
+    agent_os.serve(app=app)  # Runs on http://localhost:7777
 ```
 
 Note: This minimal setup won't support all cookbook examples (e.g., memory, teams, workflows).
