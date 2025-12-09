@@ -1840,9 +1840,6 @@ class Agent:
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
 
-        # Set up retry logic
-        num_attempts = self.retries + 1
-
         # Resolve dependencies
         if run_context.dependencies is not None:
             self._resolve_run_dependencies(run_context=run_context)
