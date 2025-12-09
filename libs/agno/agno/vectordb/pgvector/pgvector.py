@@ -62,6 +62,7 @@ class PgVector(VectorDb):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
+        create_schema: bool = True,
     ):
         """
         Initialize the PgVector instance.
@@ -82,6 +83,8 @@ class PgVector(VectorDb):
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
             auto_upgrade_schema (bool): Automatically upgrade schema if True.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -146,6 +149,9 @@ class PgVector(VectorDb):
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
+
+        # Schema creation flag
+        self.create_schema: bool = create_schema
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -220,7 +226,7 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 log_debug("Creating extension: vector")
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-                if self.schema is not None:
+                if self.create_schema and self.schema is not None:
                     log_debug(f"Creating schema: {self.schema}")
                     sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
             log_debug(f"Creating table: {self.table_name}")
