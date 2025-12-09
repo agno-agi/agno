@@ -125,6 +125,9 @@ class StepInput:
 
     def _search_nested_steps(self, step_name: str) -> Optional["StepOutput"]:
         """Recursively search for a step output in nested steps (Parallel, Condition, etc.)"""
+        if not self.previous_step_outputs:
+            return None
+            
         for step_output in self.previous_step_outputs.values():
             result = self._search_in_step_output(step_output, step_name)
             if result:
