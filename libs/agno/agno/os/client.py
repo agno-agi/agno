@@ -533,7 +533,7 @@ class AgentOSClient:
         tools: List[Dict[str, Any]],
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[RunOutputEvent]:
         """Stream a continued agent run response.
 
         Args:
@@ -544,7 +544,7 @@ class AgentOSClient:
             user_id: Optional user ID
 
         Yields:
-            str: Server-sent event lines
+            RunOutputEvent: Typed event objects (RunStartedEvent, RunContentEvent, etc.)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -556,8 +556,9 @@ class AgentOSClient:
         if user_id:
             data["user_id"] = user_id
 
-        async for line in self._stream_post_form_data(endpoint, data):
-            yield line
+        raw_stream = self._stream_post_form_data(endpoint, data)
+        async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
+            yield event
 
     async def cancel_agent_run(self, agent_id: str, run_id: str) -> None:
         """Cancel an agent run.
