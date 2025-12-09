@@ -130,6 +130,7 @@ sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
 redis = ["redis", "redisvl"]
+mysql = ["pymysql", "asyncmy"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
