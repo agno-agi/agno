@@ -3,7 +3,6 @@ import collections.abc
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
 from hashlib import md5
 from pathlib import Path
 from time import sleep, time
@@ -39,24 +38,6 @@ from agno.tools.function import Function, FunctionCall, FunctionExecutionResult,
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
-
-
-class RetryReason(Enum):
-    """Reasons for requesting a model retry.
-
-    Values should match provider-specific finish reasons where applicable.
-    """
-
-    MALFORMED_FUNCTION_CALL = "MALFORMED_FUNCTION_CALL"  # Gemini finish_reason
-
-
-@dataclass
-class ModelRetryRequest:
-    """Request for the model to retry with guidance."""
-
-    reason: RetryReason
-    guidance_message: str
-    max_retries: int = 3
 
 
 @dataclass
@@ -172,14 +153,13 @@ class Model(ABC):
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
-    # Enable regenerating a response providing a guidance message to avoid the same error
+    # Enable retrying a model invocation once with a guidance message.
+    # This is useful for known errors avoidable with extra instructions.
     retry_with_guidance: bool = True
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
-        self._retry_request = None
-        self._retry_count = 0
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -210,7 +190,9 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
+                kwargs["messages"].append(
+                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
+                )
                 return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
@@ -239,7 +221,9 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
+                kwargs["messages"].append(
+                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
+                )
                 return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
@@ -270,7 +254,9 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
+                kwargs["messages"].append(
+                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
+                )
                 yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
                 return  # Success, exit after regeneration
 
@@ -303,7 +289,9 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporal_message=True))
+                kwargs["messages"].append(
+                    Message(role="user", content=e.retry_guidance_message, temporary_message=True)
+                )
                 async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
@@ -316,13 +304,13 @@ class Model(ABC):
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
-    def _remove_temporal_messages(self, messages: List[Message]) -> None:
+    def _remove_temporary_messages(self, messages: List[Message]) -> None:
         """Remove temporal messages from the given list.
 
         Args:
             messages: The list of messages to filter (modified in place).
         """
-        messages[:] = [m for m in messages if not m.temporal_message]
+        messages[:] = [m for m in messages if not m.temporary_message]
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
@@ -1407,25 +1395,6 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
-
-                # Handle retry requests from provider-specific errors
-                if self.should_retry():
-                    self._retry_count += 1
-
-                    # Remove previous retry guidance messages to avoid context pollution
-                    self._remove_retry_messages(messages)
-
-                    # Add the new retry guidance message
-                    user_message = Message(
-                        role="user",
-                        content=f"{self._get_retry_marker()}\n{self._retry_request.guidance_message}",  # type: ignore[union-attr]
-                    )
-                    messages.append(user_message)
-                    continue
-
-                # Clear retry state and remove any leftover retry messages on success
-                self._remove_retry_messages(messages)
-                self.clear_retry_request()
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:

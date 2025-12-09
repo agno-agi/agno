@@ -7,6 +7,7 @@ import pytest
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.google.gemini import RetryableModelProviderError
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE
 
 
 @pytest.fixture
@@ -65,7 +66,7 @@ def test_malformed_function_call_error_triggers_regeneration_attempt(model):
             return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
         else:
             # Assert that the regeneration marker is in the second call
-            assert model._get_regeneration_marker() in kwargs["contents"][1].parts[0].text
+            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][1].parts[0].text
             return create_mock_response(content="Successfully regenerated response")
 
     with patch.object(model.get_client().models, "generate_content", side_effect=mock_generate_content):
@@ -233,7 +234,7 @@ def test_guidance_message_is_added_to_messages(model):
             return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
         else:
             # Assert that the regeneration marker is in the second call
-            assert model._get_regeneration_marker() in kwargs["contents"][1].parts[0].text
+            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][1].parts[0].text
 
             return create_mock_response(content="Successfully regenerated response")
 
@@ -258,12 +259,14 @@ def test_guidance_message_is_not_in_final_response(model):
         if call_count["count"] == 1:
             return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
         else:
-            # Assert that the regeneration marker is in the second call
-            assert model._get_regeneration_marker() in kwargs["contents"][1].parts[0].text
+            # Assert that the guidance message is there before the second generation attempt
+            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][1].parts[0].text
 
             return create_mock_response(content="Successfully regenerated response")
 
     with patch.object(model.get_client().models, "generate_content", side_effect=mock_generate_content):
         response = agent.run("Test message")
 
-    assert model._get_regeneration_marker() not in response.content
+    # Assert that the guidance message is not in the final response
+    assert response.content is not None
+    assert MALFORMED_FUNCTION_CALL_GUIDANCE not in response.content

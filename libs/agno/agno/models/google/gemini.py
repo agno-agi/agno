@@ -4,7 +4,6 @@ import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from enum import Enum
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
@@ -15,6 +14,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model, RetryableModelProviderError
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -51,27 +51,6 @@ except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
     )
-
-
-class GeminiFinishReason(Enum):
-    """Gemini API finish reasons that may require special handling."""
-
-    STOP = "STOP"
-    MAX_TOKENS = "MAX_TOKENS"
-    SAFETY = "SAFETY"
-    RECITATION = "RECITATION"
-    MALFORMED_FUNCTION_CALL = "MALFORMED_FUNCTION_CALL"
-    OTHER = "OTHER"
-
-
-# Guidance message to regenerate a response after a MALFORMED_FUNCTION_CALL
-MALFORMED_FUNCTION_CALL_GUIDANCE = """The previous function call was malformed. Please try again with a valid function call.
-
-Guidelines:
-- Generate the function call JSON directly, do not generate code
-- Use the function name exactly as defined (no namespace prefixes like 'default_api.')
-- Ensure all required parameters are provided with correct types
-"""
 
 
 @dataclass
@@ -133,9 +112,6 @@ class Gemini(Model):
     project_id: Optional[str] = None
     location: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
-
-    # Retry configuration
-    malformed_function_call_retries: int = 3  # Max retries for MALFORMED_FUNCTION_CALL errors
 
     # Gemini client
     client: Optional[GeminiClient] = None
@@ -369,7 +345,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporal_messages(messages)
+                self._remove_temporary_messages(messages)
 
             return model_response
 
@@ -421,7 +397,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporal_messages(messages)
+                self._remove_temporary_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -477,7 +453,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporal_messages(messages)
+                self._remove_temporary_messages(messages)
 
             return model_response
 
@@ -531,7 +507,7 @@ class Gemini(Model):
 
             # If we were retrying the invoke with guidance, remove the guidance message
             if retrying_with_guidance is True:
-                self._remove_temporal_messages(messages)
+                self._remove_temporary_messages(messages)
 
             assistant_message.metrics.stop_timer()
 

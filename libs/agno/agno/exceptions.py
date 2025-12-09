@@ -175,5 +175,5 @@ class OutputCheckError(Exception):
 
 @dataclass
 class RetryableModelProviderError(Exception):
-    # Guidance message to try a regeneration after a provider error
+    # Guidance message to retry a model invocation after an error
     retry_guidance_message: Optional[str] = None

@@ -113,7 +113,7 @@ class Message(BaseModel):
     # The Unix timestamp the message was created.
     created_at: int = Field(default_factory=lambda: int(time()))
     # When True, the message will be sent to the Model but not persisted afterwards.
-    temporal_message: bool = False
+    temporary_message: bool = False
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
