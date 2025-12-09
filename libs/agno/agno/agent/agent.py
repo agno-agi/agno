@@ -1234,7 +1234,7 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_response.error = create_run_error_event(run_response, error=str(e))
+                run_response.error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
                 run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -1616,7 +1616,7 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_response.error = create_run_error_event(run_response, error=str(e))
+                run_response.error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
                 run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -2217,7 +2217,7 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_response.error = create_run_error_event(run_response, error=str(e))
+                run_response.error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
                 run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -2664,7 +2664,7 @@ class Agent:
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_response.error = create_run_error_event(run_response, error=str(e))
+                run_response.error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
                 run_response.events = add_error_event(error=run_response.error, events=run_response.events)
 
                 # If the content is None, set it to the error message
