@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import warnings
-from asyncio import CancelledError, create_task, sleep
+from asyncio import CancelledError, create_task
 from collections import ChainMap, deque
 from dataclasses import dataclass
 from inspect import iscoroutinefunction
@@ -2245,7 +2245,7 @@ class Agent:
                         delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    await sleep(delay)
+                    time.sleep(delay)
                     continue
 
                 run_response.status = RunStatus.error
@@ -2695,7 +2695,7 @@ class Agent:
                         delay = self.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    await sleep(delay)
+                    time.sleep(delay)
                     continue
 
                 # Handle exceptions during async streaming
