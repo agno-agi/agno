@@ -43,6 +43,13 @@ async def run_accuracy_eval(
 
     eval_run = EvalSchema.from_accuracy_eval(accuracy_eval=accuracy_eval, result=result)
 
+    # Restore original model after eval
+    if default_model is not None:
+        if agent is not None:
+            agent.model = default_model
+        elif team is not None:
+            team.model = default_model
+
     return eval_run
 
 
@@ -99,6 +106,13 @@ async def run_agent_as_judge_eval(
         model_id=model_id,
         model_provider=model_provider,
     )
+
+    # Restore original model after eval
+    if default_model is not None:
+        if agent is not None:
+            agent.model = default_model
+        elif team is not None:
+            team.model = default_model
 
     return eval_run
 
@@ -174,6 +188,13 @@ async def run_performance_eval(
         model_provider=model_provider,
     )
 
+    # Restore original model after eval
+    if default_model is not None:
+        if agent is not None:
+            agent.model = default_model
+        elif team is not None:
+            team.model = default_model
+
     return eval_run
 
 
@@ -221,5 +242,12 @@ async def run_reliability_eval(
         model_id=model_id,
         model_provider=model_provider,
     )
+
+    # Restore original model after eval
+    if default_model is not None:
+        if agent is not None:
+            agent.model = default_model
+        elif team is not None:
+            team.model = default_model
 
     return eval_run

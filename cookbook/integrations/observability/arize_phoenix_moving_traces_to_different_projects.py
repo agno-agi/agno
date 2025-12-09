@@ -13,20 +13,23 @@ import os
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from phoenix.otel import register
+from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation import dangerously_using_project
+from phoenix.otel import register
 from pydantic import BaseModel
 
 os.environ["PHOENIX_API_KEY"] = os.getenv("PHOENIX_API_KEY")
-os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "https://app.phoenix.arize.com/"  # Add the suffix for your organization
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = (
+    "https://app.phoenix.arize.com/"  # Add the suffix for your organization
+)
 
 # Register a single tracer provider (project name here is the default)
 tracer_provider = register(
     project_name="default",
     auto_instrument=True,
 )
+
 
 class StockPrice(BaseModel):
     stock_price: float
@@ -63,11 +66,15 @@ search_agent = Agent(
 async def main():
     # Run stock_agent and send traces to "default" project
     with dangerously_using_project("default"):
-        await stock_agent.aprint_response("What is the current price of Tesla?", stream=True)
+        await stock_agent.aprint_response(
+            "What is the current price of Tesla?", stream=True
+        )
 
     # Run search_agent and send traces to "Testing-agno" project
     with dangerously_using_project("Testing-agno"):
-        await search_agent.aprint_response("What is the latest news about AI?", stream=True)
+        await search_agent.aprint_response(
+            "What is the latest news about AI?", stream=True
+        )
 
 
 asyncio.run(main())

@@ -1,4 +1,5 @@
 import logging
+from copy import deepcopy
 from typing import List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -356,13 +357,20 @@ def attach_routes(
             if not agent:
                 raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.agent_id}' not found")
 
-            # If model_id/model_provider specified, use it for the evaluator (judge)
             default_model = None
-            if eval_run_input.model_id is not None and eval_run_input.model_provider is not None:
-                model_provider = eval_run_input.model_provider.lower()
-                model_id = eval_run_input.model_id.lower()
-                model_string = f"{model_provider}:{model_id}"
-                default_model = get_model(model_string)
+            if (
+                hasattr(agent, "model")
+                and agent.model is not None
+                and eval_run_input.model_id is not None
+                and eval_run_input.model_provider is not None
+            ):
+                default_model = deepcopy(agent.model)
+                if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
+                    agent.model = model
 
             team = None
 
@@ -371,13 +379,21 @@ def attach_routes(
             if not team:
                 raise HTTPException(status_code=404, detail=f"Team with id '{eval_run_input.team_id}' not found")
 
-            # If model_id/model_provider specified, use it for the evaluator (judge)
+            # If model_id/model_provider specified, override team's model temporarily
             default_model = None
-            if eval_run_input.model_id is not None and eval_run_input.model_provider is not None:
-                model_provider = eval_run_input.model_provider.lower()
-                model_id = eval_run_input.model_id.lower()
-                model_string = f"{model_provider}:{model_id}"
-                default_model = get_model(model_string)
+            if (
+                hasattr(team, "model")
+                and team.model is not None
+                and eval_run_input.model_id is not None
+                and eval_run_input.model_provider is not None
+            ):
+                default_model = deepcopy(team.model)  # Save original
+                if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
+                    team.model = model  # Override temporarily
 
             agent = None
 
