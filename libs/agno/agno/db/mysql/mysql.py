@@ -56,6 +56,7 @@ class MySQLDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        create_schema: bool = True,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -79,6 +80,8 @@ class MySQLDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -113,6 +116,7 @@ class MySQLDb(BaseDb):
         self.db_engine: Engine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -188,8 +192,9 @@ class MySQLDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=self.db_schema)
+            if self.create_schema:
+                with self.Session() as sess, sess.begin():
+                    create_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
