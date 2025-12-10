@@ -19,7 +19,7 @@ from phoenix.otel import register
 
 os.environ["PHOENIX_CLIENT_HEADERS"] = f"api_key={os.getenv('ARIZE_PHOENIX_API_KEY')}"
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = (
-    "https://app.phoenix.arize.com/s/kaustubh"  # Add the suffix for your organization
+    "https://app.phoenix.arize.com/"  # Add the suffix for your organization
 )
 
 # configure the Phoenix tracer
