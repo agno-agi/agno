@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_authentication_dependency, require_resource_access
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -142,6 +142,7 @@ def get_team_router(
             400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
             404: {"description": "Team not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def create_team_run(
         team_id: str,
@@ -185,13 +186,6 @@ def get_team_router(
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-
-        # Check if user has access to run this specific team (only if authorization is enabled)
-        if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import check_resource_access
-
-            if not check_resource_access(request, team_id, "teams", "run"):
-                raise HTTPException(status_code=403, detail="Access denied to run this team")
 
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -302,6 +296,7 @@ def get_team_router(
             404: {"description": "Team not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def cancel_team_run(
         team_id: str,
@@ -505,18 +500,12 @@ def get_team_router(
             },
             404: {"description": "Team not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-
-        # Check if user has access to this specific team (only if authorization is enabled)
-        if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import check_resource_access
-
-            if not check_resource_access(request, team_id, "teams", "read"):
-                raise HTTPException(status_code=403, detail="Access denied to this team")
 
         return await TeamResponse.from_team(team)
 

@@ -1604,3 +1604,336 @@ def test_traces_access_with_multiple_scopes(test_agent):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
+
+
+# ============================================================================
+# Cancel Endpoint Authorization Tests
+# ============================================================================
+
+
+def test_agent_cancel_with_run_scope(test_agent):
+    """Test that agents:run scope grants access to cancel endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope
+    token = create_jwt_token(scopes=["agents:test-agent:run"])
+
+    # Should be able to cancel (will return 500 since no run exists, but auth passes)
+    response = client.post(
+        "/agents/test-agent/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 500 means auth passed but run doesn't exist, 403 would mean auth failed
+    assert response.status_code == 500
+
+
+def test_agent_cancel_blocked_without_run_scope(test_agent, second_agent):
+    """Test that cancel is blocked without run scope for that agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-agent only
+    token = create_jwt_token(scopes=["agents:test-agent:run"])
+
+    # Should NOT be able to cancel second-agent
+    response = client.post(
+        "/agents/second-agent/runs/some-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_agent_cancel_with_global_scope(test_agent):
+    """Test that global agents:run scope grants access to cancel any agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global run scope
+    token = create_jwt_token(scopes=["agents:run"])
+
+    response = client.post(
+        "/agents/test-agent/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 500 means auth passed but run doesn't exist
+    assert response.status_code == 500
+
+
+def test_agent_continue_with_run_scope(test_agent):
+    """Test that agents:run scope grants access to continue endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope
+    token = create_jwt_token(scopes=["agents:test-agent:run"])
+
+    # Should be able to continue (will fail since no run exists, but auth passes)
+    response = client.post(
+        "/agents/test-agent/runs/nonexistent-run-id/continue",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"tools": "[]"},
+    )
+    # Response should not be 403 (auth passed)
+    assert response.status_code != 403
+
+
+def test_agent_continue_blocked_without_run_scope(test_agent, second_agent):
+    """Test that continue is blocked without run scope for that agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-agent only
+    token = create_jwt_token(scopes=["agents:test-agent:run"])
+
+    # Should NOT be able to continue second-agent
+    response = client.post(
+        "/agents/second-agent/runs/some-run-id/continue",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"tools": "[]"},
+    )
+    assert response.status_code == 403
+
+
+def test_team_cancel_with_run_scope(test_team):
+    """Test that teams:run scope grants access to cancel endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope
+    token = create_jwt_token(scopes=["teams:test-team:run"])
+
+    # Should be able to cancel (will return 500 since no run exists, but auth passes)
+    response = client.post(
+        "/teams/test-team/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 500 means auth passed but run doesn't exist, 403 would mean auth failed
+    assert response.status_code == 500
+
+
+def test_team_cancel_blocked_without_run_scope(test_team, second_team):
+    """Test that cancel is blocked without run scope for that team."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-team only
+    token = create_jwt_token(scopes=["teams:test-team:run"])
+
+    # Should NOT be able to cancel second-team
+    response = client.post(
+        "/teams/second-team/runs/some-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_team_cancel_with_global_scope(test_team):
+    """Test that global teams:run scope grants access to cancel any team."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global run scope
+    token = create_jwt_token(scopes=["teams:run"])
+
+    response = client.post(
+        "/teams/test-team/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 500 means auth passed but run doesn't exist
+    assert response.status_code == 500
+
+
+def test_workflow_cancel_with_run_scope(test_workflow):
+    """Test that workflows:run scope grants access to cancel endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope
+    token = create_jwt_token(scopes=["workflows:test-workflow:run"])
+
+    # Should be able to cancel (will return 500 since no run exists, but auth passes)
+    response = client.post(
+        "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 500 means auth passed but run doesn't exist, 403 would mean auth failed
+    assert response.status_code == 500
+
+
+def test_workflow_cancel_blocked_without_run_scope(test_workflow, second_workflow):
+    """Test that cancel is blocked without run scope for that workflow."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with run scope for test-workflow only
+    token = create_jwt_token(scopes=["workflows:test-workflow:run"])
+
+    # Should NOT be able to cancel second-workflow
+    response = client.post(
+        "/workflows/second-workflow/runs/some-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_workflow_cancel_with_global_scope(test_workflow):
+    """Test that global workflows:run scope grants access to cancel any workflow."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global run scope
+    token = create_jwt_token(scopes=["workflows:run"])
+
+    response = client.post(
+        "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 500 means auth passed but run doesn't exist
+    assert response.status_code == 500
+
+
+def test_cancel_with_wildcard_scope(test_agent, second_agent):
+    """Test that wildcard scope grants access to cancel any resource."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard run scope
+    token = create_jwt_token(scopes=["agents:*:run"])
+
+    # Should be able to cancel test-agent
+    response = client.post(
+        "/agents/test-agent/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 500  # Auth passed
+
+    # Should also be able to cancel second-agent
+    response = client.post(
+        "/agents/second-agent/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 500  # Auth passed
+
+
+def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):
+    """Test that admin scope grants access to cancel any resource type."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        teams=[test_team],
+        workflows=[test_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Admin token
+    token = create_jwt_token(scopes=["agent_os:admin"])
+
+    # Should be able to cancel agent
+    response = client.post(
+        "/agents/test-agent/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 500  # Auth passed
+
+    # Should be able to cancel team
+    response = client.post(
+        "/teams/test-team/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 500  # Auth passed
+
+    # Should be able to cancel workflow
+    response = client.post(
+        "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 500  # Auth passed

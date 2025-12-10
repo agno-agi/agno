@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.auth import get_authentication_dependency, require_resource_access, validate_websocket_token
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -410,18 +410,12 @@ def get_workflow_router(
             },
             404: {"description": "Workflow not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
     async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-
-        # Check if user has access to this specific workflow (only if authorization is enabled)
-        if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import check_resource_access
-
-            if not check_resource_access(request, workflow_id, "workflows", "read"):
-                raise HTTPException(status_code=403, detail="Access denied to this workflow")
 
         return await WorkflowResponse.from_workflow(workflow)
 
@@ -458,6 +452,7 @@ def get_workflow_router(
             404: {"description": "Workflow not found", "model": NotFoundResponse},
             500: {"description": "Workflow execution error", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def create_workflow_run(
         workflow_id: str,
@@ -498,13 +493,6 @@ def get_workflow_router(
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-
-        # Check if user has access to run this specific workflow (only if authorization is enabled)
-        if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import check_resource_access
-
-            if not check_resource_access(request, workflow_id, "workflows", "run"):
-                raise HTTPException(status_code=403, detail="Access denied to run this workflow")
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
@@ -557,6 +545,7 @@ def get_workflow_router(
             404: {"description": "Workflow or run not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel workflow run", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)

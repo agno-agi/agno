@@ -182,3 +182,63 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
 
     # Check if user has access to this specific resource
     return resource_id in accessible_ids
+
+
+def require_resource_access(resource_type: str, action: str, resource_id_param: str):
+    """
+    Create a dependency that checks if the user has access to a specific resource.
+
+    This dependency factory creates a FastAPI dependency that automatically checks
+    authorization when authorization is enabled. It extracts the resource ID from
+    the path parameters and verifies the user has the required access.
+
+    Args:
+        resource_type: Type of resource ("agents", "teams", "workflows")
+        action: Action to check ("read", "run")
+        resource_id_param: Name of the path parameter containing the resource ID
+
+    Returns:
+        A dependency function for use with FastAPI's Depends()
+
+    Usage:
+        @router.post("/agents/{agent_id}/runs")
+        async def create_agent_run(
+            agent_id: str,
+            request: Request,
+            _: None = Depends(require_resource_access("agents", "run", "agent_id")),
+        ):
+            ...
+
+        @router.get("/agents/{agent_id}")
+        async def get_agent(
+            agent_id: str,
+            request: Request,
+            _: None = Depends(require_resource_access("agents", "read", "agent_id")),
+        ):
+            ...
+
+    Examples:
+        >>> # Creates dependency for checking agent run access
+        >>> dep = require_resource_access("agents", "run", "agent_id")
+
+        >>> # Creates dependency for checking team read access
+        >>> dep = require_resource_access("teams", "read", "team_id")
+    """
+    # Map resource_type to singular form for error messages
+    resource_singular = {
+        "agents": "agent",
+        "teams": "team",
+        "workflows": "workflow",
+    }.get(resource_type, resource_type.rstrip("s"))
+
+    async def dependency(request: Request):
+        # Only check authorization if it's enabled
+        if not getattr(request.state, "authorization_enabled", False):
+            return
+
+        # Get the resource_id from path parameters
+        resource_id = request.path_params.get(resource_id_param)
+        if resource_id and not check_resource_access(request, resource_id, resource_type, action):
+            raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
+
+    return dependency
