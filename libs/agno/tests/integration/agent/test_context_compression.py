@@ -213,3 +213,94 @@ def test_compressed_context_structure(shared_db):
 
     # message_ids should be list in dict form
     assert isinstance(ctx_dict["message_ids"], list), "message_ids should serialize to list"
+
+
+def test_mid_run_compression_with_tools(shared_db):
+    """Test context compression during a single run with many tool calls."""
+    from agno.tools.calculator import CalculatorTools
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        tools=[CalculatorTools()],
+        compress_context=True,
+        compression_manager=CompressionManager(
+            compress_context=True,
+            compress_context_messages_limit=5,  # Low threshold to trigger mid-run
+        ),
+        add_history_to_context=True,
+        num_history_runs=5,
+        telemetry=False,
+    )
+
+    # Single run with multiple tool calls that should trigger compression
+    response = agent.run(
+        "Calculate the following in sequence: 10+5, then 15*2, then 30-8, then 22/2. "
+        "After all calculations, tell me the final result."
+    )
+
+    assert response.content is not None, "Agent should respond after tool calls"
+
+    # Check that the agent completed the task
+    session = agent.get_session(agent.session_id)
+    assert session is not None, "Session should exist"
+
+    # If compression triggered, compressed_context should exist
+    # (depends on number of tool calls generated)
+    if session.compressed_context is not None:
+        assert session.compressed_context.content, "Compressed context should have content"
+        assert len(session.compressed_context.message_ids) > 0, "Should track message IDs"
+
+
+def test_cross_run_summary_injection(shared_db):
+    """Test that compressed context summary is injected when loading history on next run."""
+    session_id = "test_summary_injection"
+
+    # Create first agent and run multiple times to trigger compression
+    agent1 = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_id=session_id,
+        compress_context=True,
+        compression_manager=CompressionManager(
+            compress_context=True,
+            compress_context_messages_limit=2,  # Very low to ensure compression
+        ),
+        add_history_to_context=True,
+        num_history_runs=10,
+        telemetry=False,
+    )
+
+    # Run with specific facts that should be in the summary
+    agent1.run("Remember this important fact: The capital of France is Paris.")
+    agent1.run("Another fact: The Eiffel Tower is 330 meters tall.")
+    agent1.run("One more: The Louvre has 380,000 objects.")
+
+    # Verify compression occurred
+    session1 = agent1.get_session(session_id)
+    assert session1 is not None, "Session should exist"
+    assert session1.compressed_context is not None, "Compression should have triggered"
+    stored_summary = session1.compressed_context.content
+    assert stored_summary, "Summary content should not be empty"
+
+    # Create a new agent instance with same session
+    agent2 = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        session_id=session_id,
+        compress_context=True,
+        compression_manager=CompressionManager(
+            compress_context=True,
+            compress_context_messages_limit=2,
+        ),
+        add_history_to_context=True,
+        num_history_runs=10,
+        telemetry=False,
+    )
+
+    # Ask about facts from the compressed context
+    response = agent2.run("What facts did I share about France and Paris?")
+
+    assert response.content is not None, "Agent should respond"
+    # The response should reference information from the compressed summary
+    # (The summary was injected when loading history)

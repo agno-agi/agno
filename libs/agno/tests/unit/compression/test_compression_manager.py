@@ -12,10 +12,10 @@ async def test_ashould_compress_below_token_limit():
     model = OpenAIChat(id="gpt-4o")
     messages = [Message(role="user", content="Hello")]
 
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=1000)
+    cm = CompressionManager(model=model, compress_tool_results=True, compress_token_limit=1000)
 
-    sync_result = cm.should_compress(messages, model=model)
-    async_result = await cm.ashould_compress(messages, model=model)
+    sync_result = cm.should_compress(messages)
+    async_result = await cm.ashould_compress(messages)
 
     assert sync_result == async_result
     assert sync_result is False
@@ -30,10 +30,10 @@ async def test_ashould_compress_above_token_limit():
     model = OpenAIChat(id="gpt-4o")
     messages = [Message(role="user", content="Hello " * 100)]
 
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=10)
+    cm = CompressionManager(model=model, compress_tool_results=True, compress_token_limit=10)
 
-    sync_result = cm.should_compress(messages, model=model)
-    async_result = await cm.ashould_compress(messages, model=model)
+    sync_result = cm.should_compress(messages)
+    async_result = await cm.ashould_compress(messages)
 
     assert sync_result == async_result
     assert sync_result is True
@@ -48,10 +48,10 @@ async def test_ashould_compress_disabled():
     model = OpenAIChat(id="gpt-4o")
     messages = [Message(role="user", content="Hello")]
 
-    cm = CompressionManager(compress_tool_results=False)
+    cm = CompressionManager(model=model, compress_tool_results=False)
 
-    sync_result = cm.should_compress(messages, model=model)
-    async_result = await cm.ashould_compress(messages, model=model)
+    sync_result = cm.should_compress(messages)
+    async_result = await cm.ashould_compress(messages)
 
     assert sync_result == async_result
     assert sync_result is False
@@ -65,8 +65,8 @@ def test_should_compress_below_token_limit():
     model = OpenAIChat(id="gpt-4o")
     messages = [Message(role="user", content="Hello")]
 
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=1000)
-    result = cm.should_compress(messages, model=model)
+    cm = CompressionManager(model=model, compress_tool_results=True, compress_token_limit=1000)
+    result = cm.should_compress(messages)
 
     assert result is False
 
@@ -79,8 +79,8 @@ def test_should_compress_above_token_limit():
     model = OpenAIChat(id="gpt-4o")
     messages = [Message(role="user", content="Hello " * 100)]
 
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=10)
-    result = cm.should_compress(messages, model=model)
+    cm = CompressionManager(model=model, compress_tool_results=True, compress_token_limit=10)
+    result = cm.should_compress(messages)
 
     assert result is True
 
@@ -98,14 +98,15 @@ def test_should_compress_disabled():
 
 
 def test_should_compress_default_count_limit():
-    """Test that compress_tool_results_limit defaults to 3 when nothing is set."""
+    """Test that compress_tool_results_limit defaults to 3."""
     from agno.compression.manager import CompressionManager
 
     cm = CompressionManager()
     assert cm.compress_tool_results_limit == 3
 
+    # Token limit can be set independently of count limit
     cm_with_token = CompressionManager(compress_token_limit=1000)
-    assert cm_with_token.compress_tool_results_limit is None
+    assert cm_with_token.compress_tool_results_limit == 3  # Still has default
 
     cm_with_count = CompressionManager(compress_tool_results_limit=5)
     assert cm_with_count.compress_tool_results_limit == 5

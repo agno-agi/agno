@@ -8410,9 +8410,18 @@ class Agent:
                 agent_id=self.id if self.team_id is not None else None,
             )
 
-            # Filter out messages that are part of compressed context
-            if compressed_ctx:
+            # Replace compressed messages with the stored summary
+            if compressed_ctx and compressed_ctx.message_ids:
                 history = [m for m in history if m.id not in compressed_ctx.message_ids]
+
+                # Insert the summary in place of compressed messages
+                if compressed_ctx.content:
+                    summary_msg = Message(
+                        role="user",
+                        content=f"Context summary:\n\n{compressed_ctx.content}",
+                        from_history=True,
+                    )
+                    history.insert(0, summary_msg)
 
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -8630,9 +8639,18 @@ class Agent:
                 agent_id=self.id if self.team_id is not None else None,
             )
 
-            # Filter out messages that are part of compressed context
-            if compressed_ctx:
+            # Replace compressed messages with the stored summary
+            if compressed_ctx and compressed_ctx.message_ids:
                 history = [m for m in history if m.id not in compressed_ctx.message_ids]
+
+                # Insert the summary in place of compressed messages
+                if compressed_ctx.content:
+                    summary_msg = Message(
+                        role="user",
+                        content=f"Context summary:\n\n{compressed_ctx.content}",
+                        from_history=True,
+                    )
+                    history.insert(0, summary_msg)
 
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages

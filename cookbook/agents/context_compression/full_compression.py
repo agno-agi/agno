@@ -72,6 +72,7 @@ agent = Agent(
     session_id="async_full_compression_demo",
     markdown=True,
     add_datetime_to_context=True,
+    debug_mode=True,
 )
 
 agent.print_response(
