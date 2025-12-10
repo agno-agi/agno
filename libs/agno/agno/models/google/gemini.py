@@ -1009,7 +1009,7 @@ class Gemini(Model):
             citations = Citations()
             citations_raw = {}
             citations_urls = []
-            web_search_queries = []
+            web_search_queries: List[str] = []
 
             if response.candidates and response.candidates[0].grounding_metadata is not None:
                 grounding_metadata: GroundingMetadata = response.candidates[0].grounding_metadata
