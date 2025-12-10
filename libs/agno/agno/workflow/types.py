@@ -410,7 +410,7 @@ class StepOutput:
             requirements = []
             for requirement in data["requirements"]:
                 if isinstance(requirement, dict):
-                    requirements.append(RunRequirement.from_dict(requirement))
+                    requirements.append(RunRequirement.from_dict(data=requirement))
                 elif isinstance(requirement, RunRequirement):
                     requirements.append(requirement)
 

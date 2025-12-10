@@ -15,6 +15,7 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
+from agno.run.requirement import WorkflowRunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
@@ -230,6 +231,7 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        requirements: Optional[List[WorkflowRunRequirement]] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -367,18 +369,27 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
-                        response = self.active_executor.run(  # type: ignore
-                            input=final_message,  # type: ignore
-                            images=images,
-                            videos=videos,
-                            audio=audios,
-                            files=step_input.files,
-                            session_id=session_id,
-                            user_id=user_id,
-                            session_state=session_state_copy,  # Send a copy to the executor
-                            run_context=run_context,
-                            **kwargs,
-                        )
+                        if requirements is not None and self.step_id == requirements[0].workflow_step_id:
+                            # We are continuing a paused run (HITL flow)
+                            response = self.active_executor.continue_run(  # type: ignore
+                                run_id=requirements[0].paused_agent_run_id,  # type: ignore
+                                session_id=requirements[0].paused_agent_session_id,  # type: ignore
+                                requirements=requirements,  # type: ignore[arg-type]
+                                **kwargs,
+                            )
+                        else:
+                            response = self.active_executor.run(  # type: ignore
+                                input=final_message,  # type: ignore
+                                images=images,
+                                videos=videos,
+                                audio=audios,
+                                files=step_input.files,
+                                session_id=session_id,
+                                user_id=user_id,
+                                session_state=session_state_copy,  # Send a copy to the executor
+                                run_context=run_context,
+                                **kwargs,
+                            )
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
@@ -1419,6 +1430,10 @@ class Step:
         # Extract metrics from response
         metrics = self._extract_metrics_from_response(response)
 
+        # Extract fields relevant fro user control flow (HITL) from agent/team runs
+        status = getattr(response, "status")
+        requirements = getattr(response, "requirements", None)
+
         return StepOutput(
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
@@ -1431,6 +1446,8 @@ class Step:
             videos=videos,
             audio=audio,
             metrics=metrics,
+            status=status,
+            requirements=requirements,
         )
 
     def _convert_function_result_to_response(self, result: Any) -> RunOutput:

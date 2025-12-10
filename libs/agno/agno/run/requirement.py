@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.models.response import ToolExecution, UserInputField
@@ -28,7 +28,7 @@ class RunRequirement:
 
     def __init__(
         self,
-        tool_execution: Optional[ToolExecution] = None,
+        tool_execution: Optional[Union[ToolExecution, Dict[str, Any]]] = None,
         created_at: Optional[datetime] = None,
         confirmation: Optional[bool] = None,
         confirmation_note: Optional[str] = None,
@@ -38,7 +38,9 @@ class RunRequirement:
         self.id = str(uuid4())
         self.created_at = created_at if created_at else datetime.now(timezone.utc)
 
-        if tool_execution:
+        if tool_execution is not None:
+            if not isinstance(tool_execution, ToolExecution):
+                tool_execution = ToolExecution.from_dict(tool_execution)
             self.tool_execution = tool_execution
             self.user_input_schema = tool_execution.user_input_schema
             return
@@ -52,7 +54,8 @@ class RunRequirement:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def from_dict(self, data: Dict[str, Any]) -> "RunRequirement":
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunRequirement":
         raw_tool_execution = data.get("tool_execution")
         tool_execution = (
             raw_tool_execution
@@ -143,17 +146,32 @@ class WorkflowRunRequirement(RunRequirement):
 
     workflow_step_id: Optional[str] = None
 
-    # TODO: should be a list to locate all paused runs in nested cases
+    # TODO: should be lists to locate all paused sessions/runs in nested cases
+    paused_agent_session_id: Optional[str] = None
     paused_agent_run_id: Optional[str] = None
 
     def __init__(
         self,
         workflow_step_id: Optional[str] = None,
+        paused_agent_session_id: Optional[str] = None,
         paused_agent_run_id: Optional[str] = None,
         tool_execution: Optional[ToolExecution] = None,
+        created_at: Optional[datetime] = None,
+        confirmation: Optional[bool] = None,
+        confirmation_note: Optional[str] = None,
+        user_input_schema: Optional[List[UserInputField]] = None,
+        external_execution_result: Optional[str] = None,
     ):
-        super().__init__(tool_execution)
+        super().__init__(
+            tool_execution=tool_execution,
+            created_at=created_at,
+            confirmation=confirmation,
+            confirmation_note=confirmation_note,
+            user_input_schema=user_input_schema,
+            external_execution_result=external_execution_result,
+        )
         self.workflow_step_id = workflow_step_id
+        self.paused_agent_session_id = paused_agent_session_id
         self.paused_agent_run_id = paused_agent_run_id
 
     def needs_confirmation(self) -> bool:
