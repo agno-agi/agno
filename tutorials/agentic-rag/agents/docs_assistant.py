@@ -2,16 +2,13 @@ import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.text_reader import TextReader
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector, SearchType
-from agno.filters import AND, EQ
 
 from db.session import docs_db
-from db.url import db_url
+from db.url import get_db_url
 
 # ============================================================================
 # Knowledge Base
@@ -20,13 +17,13 @@ knowledge = Knowledge(
     name="Agno Documentation",
     vector_db=PgVector(
         table_name="agno_docs",
-        db_url=db_url,
+        db_url=get_db_url(),
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     contents_db=docs_db,
 )
-    
+
 # ============================================================================
 # Create Knowledge Agent
 # ============================================================================

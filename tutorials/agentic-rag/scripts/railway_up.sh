@@ -44,39 +44,31 @@ echo "Waiting for database to be ready..."
 sleep 15
 
 echo ""
-echo "=== Creating API service ==="
-# Add a new service for the API
-railway add -s api
-
-echo ""
-echo "=== Linking to API service ==="
-railway service api
-
-echo ""
-echo "=== Setting environment variables ==="
-# Set variables using Railway's reference syntax for pgvector service
+echo "=== Creating API service with environment variables ==="
+# Add a new service for the API with variables using Railway's reference syntax
 # The pgvector template creates a service named "pgvector" with standard Postgres variables
-railway variables --set "OPENAI_API_KEY=$OPENAI_API_KEY"
-railway variables --set "DB_DRIVER=postgresql+psycopg"
-railway variables --set 'DB_USER=${{pgvector.PGUSER}}'
-railway variables --set 'DB_PASS=${{pgvector.PGPASSWORD}}'
-railway variables --set 'DB_HOST=${{pgvector.PGHOST}}'
-railway variables --set 'DB_PORT=${{pgvector.PGPORT}}'
-railway variables --set 'DB_DATABASE=${{pgvector.PGDATABASE}}'
+railway add --service api \
+  --variables "DB_DRIVER=postgresql+psycopg" \
+  --variables 'DB_USER=${{pgvector.PGUSER}}' \
+  --variables 'DB_PASS=${{pgvector.PGPASSWORD}}' \
+  --variables 'DB_HOST=${{pgvector.PGHOST}}' \
+  --variables 'DB_PORT=${{pgvector.PGPORT}}' \
+  --variables 'DB_DATABASE=${{pgvector.PGDATABASE}}' \
+  --variables "OPENAI_API_KEY=${OPENAI_API_KEY}"
 
 echo ""
 echo "=== Deploying application ==="
-railway up -d
+railway up --service api -d
 
 echo ""
 echo "=== Creating public domain ==="
-railway domain
+railway domain --service api
 
 echo ""
 echo "=== Deployment complete! ==="
 echo ""
 echo "Useful commands:"
-echo "  railway logs          - View application logs"
+echo "  railway logs --service api  - View application logs"
 echo "  railway status        - Check deployment status"
 echo "  railway open          - Open project in browser"
 echo "  railway variables     - View environment variables"

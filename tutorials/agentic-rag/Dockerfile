@@ -1,52 +1,33 @@
-# Multi-stage build for better optimization
-FROM agnohq/python:3.12 AS base
+FROM agnohq/python:3.12
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Create non-root user
 ARG USER=app
-ARG UID=61000
-ARG GID=61000
 ARG APP_DIR=/app
+ENV APP_DIR=${APP_DIR}
+ENV PYTHONPATH=${APP_DIR}
 
-RUN groupadd -g ${GID} ${USER} \
-    && useradd -g ${GID} -u ${UID} -ms /bin/bash -d ${APP_DIR} ${USER}
-
-# Development stage for dependencies
-FROM base AS deps
+# Create user and home directory
+RUN groupadd -g 61000 ${USER} \
+  && useradd -g 61000 -u 61000 -ms /bin/bash -d ${APP_DIR} ${USER}
 
 WORKDIR ${APP_DIR}
 
-# Copy dependency files first for better layer caching
-COPY requirements.txt pyproject.toml ./
+# Copy requirements.txt
+COPY requirements.txt ./
 
-# Install dependencies
+# Install requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Production stage
-FROM base AS production
+# Copy project files
+COPY . .
 
-WORKDIR ${APP_DIR}
-
-# Copy installed packages from deps stage
-COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=deps /usr/local/bin /usr/local/bin
-
-# Copy application code
-COPY --chown=${USER}:${USER} . .
-
-# Create necessary directories and set permissions
-RUN mkdir -p /var/log/app \
-    && chown -R ${USER}:${USER} ${APP_DIR} /var/log/app
+# Set permissions for the /app directory
+RUN chown -R ${USER}:${USER} ${APP_DIR}
 
 # Switch to non-root user
 USER ${USER}
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
