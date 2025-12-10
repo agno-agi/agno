@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from typing_extensions import Literal
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_warning, log_info
+from agno.utils.log import log_info, log_warning
 
 try:
     from openai import AsyncOpenAI
