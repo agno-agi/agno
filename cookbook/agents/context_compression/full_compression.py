@@ -18,11 +18,11 @@ from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 compression_manager = CompressionManager(
-    compress_context_token_limit=15000,
+    compress_token_limit=15000,
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         DuckDuckGoTools(),
     ],

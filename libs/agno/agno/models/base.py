@@ -526,7 +526,6 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
 
             while True:
                 # Compress context or tool results BEFORE making API call
@@ -730,7 +729,6 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
@@ -1161,7 +1159,6 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
@@ -1391,7 +1388,6 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
