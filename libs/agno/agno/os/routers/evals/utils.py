@@ -66,14 +66,14 @@ async def run_agent_as_judge_eval(
 
     # Run agent/team to get output
     if agent:
-        agent_response = await agent.arun(eval_run_input.input)
+        agent_response = await agent.arun(eval_run_input.input, stream=False)
         output = str(agent_response.content) if agent_response.content else ""
         model_id = agent.model.id if agent and agent.model else None
         model_provider = agent.model.provider if agent and agent.model else None
         agent_id = agent.id
         team_id = None
     elif team:
-        team_response = await team.arun(eval_run_input.input)
+        team_response = await team.arun(eval_run_input.input, stream=False)
         output = str(team_response.content) if team_response.content else ""
         model_id = team.model.id if team and team.model else None
         model_provider = team.model.provider if team and team.model else None
@@ -125,39 +125,21 @@ async def run_performance_eval(
     default_model: Optional[Model] = None,
 ) -> EvalSchema:
     """Run a performance evaluation for the given agent or team"""
-    # Create sync or async function based on DB type
-    if isinstance(db, AsyncBaseDb):
-        if agent:
+    if agent:
 
-            async def run_component():  # type: ignore
-                return await agent.arun(eval_run_input.input)
+        async def run_component():  # type: ignore
+            return await agent.arun(eval_run_input.input, stream=False)
 
-            model_id = agent.model.id if agent and agent.model else None
-            model_provider = agent.model.provider if agent and agent.model else None
+        model_id = agent.model.id if agent and agent.model else None
+        model_provider = agent.model.provider if agent and agent.model else None
 
-        elif team:
+    elif team:
 
-            async def run_component():  # type: ignore
-                return await team.arun(eval_run_input.input)
+        async def run_component():  # type: ignore
+            return await team.arun(eval_run_input.input, stream=False)
 
-            model_id = team.model.id if team and team.model else None
-            model_provider = team.model.provider if team and team.model else None
-    else:
-        if agent:
-
-            def run_component():  # type: ignore
-                return agent.run(eval_run_input.input)
-
-            model_id = agent.model.id if agent and agent.model else None
-            model_provider = agent.model.provider if agent and agent.model else None
-
-        elif team:
-
-            def run_component():
-                return team.run(eval_run_input.input)
-
-            model_id = team.model.id if team and team.model else None
-            model_provider = team.model.provider if team and team.model else None
+        model_id = team.model.id if team and team.model else None
+        model_provider = team.model.provider if team and team.model else None
 
     performance_eval = PerformanceEval(
         db=db,
@@ -171,11 +153,7 @@ async def run_performance_eval(
         model_provider=model_provider,
     )
 
-    # PerformanceEval needs sync/async check because it wraps a function
-    if isinstance(db, AsyncBaseDb):
-        result = await performance_eval.arun(print_results=False, print_summary=False)
-    else:
-        result = performance_eval.run(print_results=False, print_summary=False)
+    result = await performance_eval.arun(print_results=False, print_summary=False)
     if not result:
         raise HTTPException(status_code=500, detail="Failed to run performance evaluation")
 
@@ -210,7 +188,7 @@ async def run_reliability_eval(
         raise HTTPException(status_code=400, detail="expected_tool_calls is required for reliability evaluations")
 
     if agent:
-        agent_response = await agent.arun(eval_run_input.input)
+        agent_response = await agent.arun(eval_run_input.input, stream=False)
         reliability_eval = ReliabilityEval(
             db=db,
             name=eval_run_input.name,
@@ -221,7 +199,7 @@ async def run_reliability_eval(
         model_provider = agent.model.provider if agent and agent.model else None
 
     elif team:
-        team_response = await team.arun(eval_run_input.input)
+        team_response = await team.arun(eval_run_input.input, stream=False)
         reliability_eval = ReliabilityEval(
             db=db,
             name=eval_run_input.name,
