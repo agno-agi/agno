@@ -21,6 +21,7 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
+from agno.os.router import _get_request_kwargs
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import Team
 from agno.workflow import Workflow
@@ -37,8 +38,8 @@ def attach_routes(
 
     @router.post(
         "/agents/{id}",
-        operation_id="run_message",
-        name="run_message",
+        operation_id="run_message_agent",
+        name="run_message_agent",
         description="Send a message to an Agno Agent. The Agent is identified via the path parameter '{id}'. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
         response_model_exclude_none=True,
@@ -166,8 +167,8 @@ def attach_routes(
 
     @router.post(
         "/teams/{id}",
-        operation_id="run_message",
-        name="run_message",
+        operation_id="run_message_team",
+        name="run_message_team",
         description="Send a message to an Agno Team. The Team is identified via the path parameter '{id}'. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
         response_model_exclude_none=True,
@@ -294,8 +295,8 @@ def attach_routes(
 
     @router.post(
         "/workflows/{id}",
-        operation_id="run_message",
-        name="run_message",
+        operation_id="run_message_workflow",
+        name="run_message_workflow",
         description="Send a message to an Agno Workflow. The Workflow is identified via the path parameter '{id}'. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
         response_model_exclude_none=True,
