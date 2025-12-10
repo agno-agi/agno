@@ -2153,8 +2153,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             else_=0,
         )
 
-    async def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    async def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
 
         Uses INSERT ... ON CONFLICT DO UPDATE (upsert) to handle concurrent inserts
         atomically and avoid race conditions.

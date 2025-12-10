@@ -1,23 +1,21 @@
 """
-Test script to reproduce the UniqueViolation race condition in upsert_trace (SYNC version).
+Test script to reproduce the UniqueViolation race condition in upsert_trace.
 
 This script demonstrates the race condition that occurs when multiple concurrent
-calls to upsert_trace() attempt to insert the same trace_id using the synchronous
-PostgresDb class.
+calls to upsert_trace() attempt to insert the same trace_id.
 
 The race condition window:
-1. Thread A: SELECT - finds no existing trace
-2. Thread B: SELECT - finds no existing trace (before A's INSERT commits)
-3. Thread A: INSERT - succeeds
-4. Thread B: INSERT - FAILS with UniqueViolation
+1. Task A: SELECT - finds no existing trace
+2. Task B: SELECT - finds no existing trace (before A's INSERT commits)
+3. Task A: INSERT - succeeds
+4. Task B: INSERT - FAILS with IntegrityError (Duplicate entry)
 """
 
+import asyncio
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from threading import Barrier
 
-from agno.db.postgres import PostgresDb
+from agno.db.mysql import AsyncMySQLDb
 from agno.tracing.schemas import Trace
 
 
@@ -43,23 +41,23 @@ def create_test_trace(trace_id: str, name: str, task_id: int) -> Trace:
     )
 
 
-def concurrent_create_trace(
-    db: PostgresDb,
+async def concurrent_create_trace(
+    db: AsyncMySQLDb,
     trace: Trace,
     task_id: int,
-    barrier: Barrier,
+    barrier: asyncio.Barrier,
 ) -> dict:
-    """Run a single concurrent task that tries to create a trace using PostgresDb."""
+    """Run a single concurrent task that tries to create a trace using AsyncMySQLDb."""
     result = {"task_id": task_id, "success": False, "error": None}
 
     try:
-        # Wait for all threads to be ready
+        # Wait for all tasks to be ready
         print(f"  Task {task_id:2d}: Waiting at barrier...")
-        barrier.wait()
+        await barrier.wait()
 
-        # All threads release simultaneously - RACE CONDITION WINDOW
+        # All tasks release simultaneously - RACE CONDITION WINDOW
         print(f"  Task {task_id:2d}: Calling db.upsert_trace()...")
-        db.upsert_trace(trace)
+        await db.upsert_trace(trace)
 
         result["success"] = True
         print(f"  Task {task_id:2d}: SUCCESS")
@@ -68,12 +66,12 @@ def concurrent_create_trace(
         error_str = str(e)
         result["error"] = error_str
 
-        # Check for the specific UniqueViolation error
-        if "UniqueViolation" in error_str or "duplicate key" in error_str.lower():
-            print(f"  Task {task_id:2d}: FAILED - UniqueViolation!")
-            # Print the full error like the user's original error
+        # Check for the specific IntegrityError (MySQL's Duplicate entry)
+        if "Duplicate entry" in error_str or "IntegrityError" in error_str:
+            print(f"  Task {task_id:2d}: FAILED - IntegrityError (Duplicate entry)!")
+            # Print the full error
             print(f"\n{'!' * 60}")
-            print("FULL ERROR (same as user's original error):")
+            print("FULL ERROR:")
             print(f"{'!' * 60}")
             print(f"ERROR Error creating trace: {e}")
             print(f"{'!' * 60}\n")
@@ -83,81 +81,75 @@ def concurrent_create_trace(
     return result
 
 
-def cleanup_trace(db: PostgresDb, trace_id: str):
+async def cleanup_trace(db: AsyncMySQLDb, trace_id: str):
     """Delete a specific trace from the table."""
     try:
-        table = db._get_table(table_type="traces", create_table_if_not_found=True)
+        table = await db._get_table(table_type="traces", create_table_if_not_found=True)
         if table is not None:
-            with db.session_factory() as sess, sess.begin():
+            async with db.async_session_factory() as sess, sess.begin():
                 from sqlalchemy import delete
 
-                sess.execute(delete(table).where(table.c.trace_id == trace_id))
+                await sess.execute(delete(table).where(table.c.trace_id == trace_id))
     except Exception as e:
         print(f"Cleanup error (can be ignored): {e}")
 
 
-def run_race_test(db: PostgresDb, num_tasks: int = 10):
-    """Run a single race condition test using PostgresDb.upsert_trace()."""
+async def run_race_test(db: AsyncMySQLDb, num_tasks: int = 10):
+    """Run a single race condition test using AsyncMySQLDb.upsert_trace()."""
     # Use a unique trace_id for this test run
     trace_id = f"race-test-{uuid.uuid4().hex[:8]}"
 
     print(f"\n{'=' * 60}")
-    print("RACE CONDITION TEST (SYNC)")
+    print("RACE CONDITION TEST (ASYNC MYSQL)")
     print(f"{'=' * 60}")
     print(f"Trace ID: {trace_id}")
-    print(f"Concurrent threads: {num_tasks}")
+    print(f"Concurrent tasks: {num_tasks}")
     print(f"{'=' * 60}\n")
 
     # Create barrier for synchronization
-    barrier = Barrier(num_tasks)
+    barrier = asyncio.Barrier(num_tasks)
 
     # Create traces - all with the same trace_id
     traces = [create_test_trace(trace_id, f"Agent.run-task-{i}", i) for i in range(num_tasks)]
 
-    # Launch all tasks concurrently using ThreadPoolExecutor
-    results = []
-    with ThreadPoolExecutor(max_workers=num_tasks) as executor:
-        futures = [executor.submit(concurrent_create_trace, db, traces[i], i, barrier) for i in range(num_tasks)]
+    # Launch all tasks concurrently
+    tasks = [asyncio.create_task(concurrent_create_trace(db, traces[i], i, barrier)) for i in range(num_tasks)]
 
-        for future in as_completed(futures):
-            try:
-                results.append(future.result())
-            except Exception as e:
-                results.append({"task_id": -1, "success": False, "error": str(e)})
+    # Wait for all tasks
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Analyze results
     print(f"\n{'=' * 60}")
     print("RESULTS")
     print(f"{'=' * 60}")
 
-    successes = sum(1 for r in results if r["success"])
-    failures = sum(1 for r in results if not r["success"])
+    successes = sum(1 for r in results if not isinstance(r, Exception) and r["success"])
+    failures = sum(1 for r in results if isinstance(r, Exception) or not r["success"])
 
     print(f"\nSuccesses: {successes}")
     print(f"Failures: {failures}")
 
     # Cleanup - commented out to see entries in database
-    # cleanup_trace(db, trace_id)
+    # await cleanup_trace(db, trace_id)
 
 
-def main():
-    # Database configuration - same as cookbook example
-    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+async def main():
+    # Database configuration - MySQL connection
+    db_url = "mysql+asyncmy://ai:ai@localhost:3306/ai"
 
-    print(f"Database URL: {db_url.split('@')[1] if '@' in db_url else db_url}")
+    print(f"Database URL: {db_url}")
 
-    # Create PostgresDb instance (same pattern as cookbook)
-    db = PostgresDb(
+    # Create AsyncMySQLDb instance
+    db = AsyncMySQLDb(
         db_url=db_url,
-        db_schema="ai",
-        traces_table="agno_traces_race_test_sync",
+        traces_table="agno_traces_race_test",
     )
 
     try:
         # Pre-create/cache the table to avoid table creation race conditions
         # This ensures the table exists before concurrent tests start
         print("Initializing table...")
-        db._get_table(table_type="traces", create_table_if_not_found=True)
+        await db._get_table(table_type="traces", create_table_if_not_found=True)
         print("Table ready.")
 
         # Run multiple attempts
@@ -165,12 +157,12 @@ def main():
         tasks_per_attempt = 15
 
         print(f"\n{'#' * 60}")
-        print(f"RUNNING {attempts} ATTEMPTS WITH {tasks_per_attempt} CONCURRENT THREADS EACH")
+        print(f"RUNNING {attempts} ATTEMPTS WITH {tasks_per_attempt} CONCURRENT TASKS EACH")
         print(f"{'#' * 60}")
 
         for attempt in range(attempts):
             print(f"\n--- Attempt {attempt + 1}/{attempts} ---")
-            run_race_test(db, tasks_per_attempt)
+            await run_race_test(db, tasks_per_attempt)
 
         # Final summary
         print(f"\n{'#' * 60}")
@@ -178,14 +170,14 @@ def main():
         print(f"{'#' * 60}")
         print(f"Total attempts: {attempts}")
         print(f"Tasks per attempt: {tasks_per_attempt}")
-        print("\nNote: Check ERROR logs above for UniqueViolation errors.")
+        print("\nNote: Check ERROR logs above for IntegrityError (Duplicate entry) errors.")
         print("If you see ERROR logs, the race condition exists and needs the upsert fix.")
 
     finally:
         # Cleanup: dispose of the engine
         if db.db_engine:
-            db.db_engine.dispose()
+            await db.db_engine.dispose()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

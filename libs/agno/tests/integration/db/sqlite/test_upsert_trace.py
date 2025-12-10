@@ -1,8 +1,8 @@
 """
-Test script to reproduce the UniqueViolation race condition in create_trace (SYNC version).
+Test script to reproduce the UniqueViolation race condition in upsert_trace (SYNC version).
 
 This script demonstrates the race condition that occurs when multiple concurrent
-calls to create_trace() attempt to insert the same trace_id using the synchronous
+calls to upsert_trace() attempt to insert the same trace_id using the synchronous
 SqliteDb class.
 
 The race condition window:
@@ -58,8 +58,8 @@ def concurrent_create_trace(
         barrier.wait()
 
         # All threads release simultaneously - RACE CONDITION WINDOW
-        print(f"  Task {task_id:2d}: Calling db.create_trace()...")
-        db.create_trace(trace)
+        print(f"  Task {task_id:2d}: Calling db.upsert_trace()...")
+        db.upsert_trace(trace)
 
         result["success"] = True
         print(f"  Task {task_id:2d}: SUCCESS")
@@ -97,7 +97,7 @@ def cleanup_trace(db: SqliteDb, trace_id: str):
 
 
 def run_race_test(db: SqliteDb, num_tasks: int = 10):
-    """Run a single race condition test using SqliteDb.create_trace()."""
+    """Run a single race condition test using SqliteDb.upsert_trace()."""
     # Use a unique trace_id for this test run
     trace_id = f"race-test-{uuid.uuid4().hex[:8]}"
 

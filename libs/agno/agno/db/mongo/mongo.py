@@ -2028,8 +2028,8 @@ class MongoDb(BaseDb):
             log_info(f"Migrated {len(memories)} memories to collection: {self.memory_table_name}")
 
     # --- Traces ---
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
 
         Args:
             trace: The Trace object to store (one per trace_id).

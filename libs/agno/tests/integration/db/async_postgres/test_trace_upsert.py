@@ -1,8 +1,8 @@
 """
-Test script to reproduce the UniqueViolation race condition in create_trace.
+Test script to reproduce the UniqueViolation race condition in upsert_trace.
 
 This script demonstrates the race condition that occurs when multiple concurrent
-calls to create_trace() attempt to insert the same trace_id.
+calls to upsert_trace() attempt to insert the same trace_id.
 
 The race condition window:
 1. Task A: SELECT - finds no existing trace
@@ -56,8 +56,8 @@ async def concurrent_create_trace(
         await barrier.wait()
 
         # All tasks release simultaneously - RACE CONDITION WINDOW
-        print(f"  Task {task_id:2d}: Calling db.create_trace()...")
-        await db.create_trace(trace)
+        print(f"  Task {task_id:2d}: Calling db.upsert_trace()...")
+        await db.upsert_trace(trace)
 
         result["success"] = True
         print(f"  Task {task_id:2d}: SUCCESS")
@@ -95,7 +95,7 @@ async def cleanup_trace(db: AsyncPostgresDb, trace_id: str):
 
 
 async def run_race_test(db: AsyncPostgresDb, num_tasks: int = 10):
-    """Run a single race condition test using AsyncPostgresDb.create_trace()."""
+    """Run a single race condition test using AsyncPostgresDb.upsert_trace()."""
     # Use a unique trace_id for this test run
     trace_id = f"race-test-{uuid.uuid4().hex[:8]}"
 
