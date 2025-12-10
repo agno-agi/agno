@@ -58,6 +58,7 @@ class PostgresDb(BaseDb):
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         id: Optional[str] = None,
+        create_schema: bool = True,
     ):
         """
         Interface for interacting with a PostgreSQL database.
@@ -81,6 +82,8 @@ class PostgresDb(BaseDb):
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
             id (Optional[str]): ID of the database.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -205,8 +208,9 @@ class PostgresDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=self.db_schema)
+            if self.create_schema:
+                with self.Session() as sess, sess.begin():
+                    create_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
