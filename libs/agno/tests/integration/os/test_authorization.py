@@ -16,7 +16,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
-from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.os.middleware import JWTMiddleware, TokenSource

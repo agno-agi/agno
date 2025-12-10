@@ -4,7 +4,6 @@ import pytest
 
 from agno.os.middleware import JWTMiddleware, TokenSource
 
-
 # Test JWT secret for middleware initialization
 JWT_SECRET = "test-secret-key-for-helper-tests"
 
@@ -533,4 +532,3 @@ class TestMiddlewareInitialization:
 
         assert middleware.token_source == TokenSource.COOKIE
         assert middleware.cookie_name == "my_jwt"
-

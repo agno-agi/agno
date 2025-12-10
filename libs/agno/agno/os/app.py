@@ -586,7 +586,7 @@ class AgentOS:
             self._add_jwt_middleware(fastapi_app)
 
         return fastapi_app
-    
+
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
         from agno.os.middleware.jwt import JWTMiddleware
 
@@ -619,7 +619,6 @@ class AgentOS:
             authorization=self.authorization,
             verify_audience=verify_audience,
         )
-
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.

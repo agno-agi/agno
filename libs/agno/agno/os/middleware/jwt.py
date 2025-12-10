@@ -178,7 +178,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             self.scope_mappings = scope_mappings or {}
 
-        self.excluded_route_paths = excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
+        self.excluded_route_paths = (
+            excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
+        )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
 
     def _get_default_excluded_routes(self) -> List[str]:

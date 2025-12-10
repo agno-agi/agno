@@ -3,7 +3,7 @@ from typing import List, Set
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from agno.os.scopes import AgentOSScope, get_accessible_resource_ids
+from agno.os.scopes import get_accessible_resource_ids
 from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
