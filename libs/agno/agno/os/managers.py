@@ -65,10 +65,12 @@ class WebSocketHandler:
             else:
                 data = {"type": "message", "content": str(event)}
 
-            # Add event_index and run_id for reconnection support (if provided)
+            # Add event_index for reconnection support (if provided)
             if event_index is not None:
                 data["event_index"] = event_index
-            if run_id:
+            # Only set run_id if not already present in the event data
+            # This preserves the agent's own run_id for agent events
+            if run_id and "run_id" not in data:
                 data["run_id"] = run_id
 
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
