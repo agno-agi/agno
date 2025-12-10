@@ -120,7 +120,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
-        self._create_schema: bool = create_schema
+        self.create_schema: bool = create_schema
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
