@@ -1018,13 +1018,13 @@ class Gemini(Model):
                 web_search_queries = grounding_metadata.web_search_queries or []
                 citation_pairs: List[Tuple[str, str]] = []
                 for chunk in chunks:
-                    if not isinstance(chunk, dict):
+                    if not chunk:
                         continue
-                    web = chunk.get("web")
-                    if not isinstance(web, dict):
+                    web = chunk.web
+                    if not web:
                         continue
-                    uri = web.get("uri")
-                    title = web.get("title")
+                    uri = web.uri
+                    title = web.title
                     if uri:
                         citation_pairs.append((uri, title))
 
@@ -1170,18 +1170,17 @@ class Gemini(Model):
                 grounding_metadata = response_delta.candidates[0].grounding_metadata
                 citations.raw["grounding_metadata"] = grounding_metadata.model_dump()
                 citations.search_queries = grounding_metadata.web_search_queries or []
-
                 # Extract url and title
                 chunks = grounding_metadata.grounding_chunks or []
                 citation_pairs: List[Tuple[str, str]] = []
                 for chunk in chunks:
-                    if not isinstance(chunk, dict):
+                    if not chunk:
                         continue
-                    web = chunk.get("web")
-                    if not isinstance(web, dict):
+                    web = chunk.web
+                    if not web:
                         continue
-                    uri = web.get("uri")
-                    title = web.get("title")
+                    uri = web.uri
+                    title = web.title
                     if uri:
                         citation_pairs.append((uri, title))
 

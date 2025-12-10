@@ -17,8 +17,9 @@ response = agent.run(
 )
 
 for chunk in response:
-    if chunk.citations is not None and chunk.citations.urls:
+    if chunk.citations is not None:
         print("Citations:")
-        print(chunk.citations.urls)
+        if chunk.citations.urls:
+            print(chunk.citations.urls)
     if chunk.content:
         print(chunk.content, end="", flush=True)
