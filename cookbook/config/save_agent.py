@@ -17,7 +17,7 @@ agent = Agent(
 agent.print_response("How many people live in Canada?")
 
 # Save the agent to the database
-# agent.save()
+agent.save()
 
 # By default, upsert is True, so the agent will be updated if it already exists. To prevent this, you can set upsert to False.
 # The command below will raise an error if the agent already exists.
@@ -30,7 +30,7 @@ agent.print_response("How many people live in Canada?")
 
 # Delete the agent from the database.
 # By default, delete will delete the current version of the agent. And set the next version as the current version.
-# agent.delete()
+agent.delete()
 
 # Delete all versions of the agent
 # This will delete all versions of the agent
