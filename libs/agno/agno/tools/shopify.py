@@ -11,11 +11,11 @@ Required scopes:
 - read_analytics (for analytics data)
 """
 
-from os import getenv
 import json
 from collections import Counter
 from datetime import datetime, timedelta
 from itertools import combinations
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -74,7 +74,7 @@ class ShopifyTools(Toolkit):
     def _make_graphql_request(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Make an authenticated GraphQL request to the Shopify Admin API."""
         headers = {
-            "X-Shopify-Access-Token": self.access_token,
+            "X-Shopify-Access-Token": self.access_token or "",
             "Content-Type": "application/json",
         }
 
@@ -198,28 +198,30 @@ class ShopifyTools(Toolkit):
         products = []
         for edge in result.get("products", {}).get("edges", []):
             node = edge["node"]
-            products.append({
-                "id": node["id"],
-                "title": node["title"],
-                "status": node["status"],
-                "total_inventory": node.get("totalInventory"),
-                "created_at": node.get("createdAt"),
-                "price_range": {
-                    "min": node.get("priceRangeV2", {}).get("minVariantPrice", {}).get("amount"),
-                    "max": node.get("priceRangeV2", {}).get("maxVariantPrice", {}).get("amount"),
-                    "currency": node.get("priceRangeV2", {}).get("minVariantPrice", {}).get("currencyCode"),
-                },
-                "variants": [
-                    {
-                        "id": v["node"]["id"],
-                        "title": v["node"]["title"],
-                        "sku": v["node"].get("sku"),
-                        "price": v["node"]["price"],
-                        "inventory": v["node"].get("inventoryQuantity"),
-                    }
-                    for v in node.get("variants", {}).get("edges", [])
-                ],
-            })
+            products.append(
+                {
+                    "id": node["id"],
+                    "title": node["title"],
+                    "status": node["status"],
+                    "total_inventory": node.get("totalInventory"),
+                    "created_at": node.get("createdAt"),
+                    "price_range": {
+                        "min": node.get("priceRangeV2", {}).get("minVariantPrice", {}).get("amount"),
+                        "max": node.get("priceRangeV2", {}).get("maxVariantPrice", {}).get("amount"),
+                        "currency": node.get("priceRangeV2", {}).get("minVariantPrice", {}).get("currencyCode"),
+                    },
+                    "variants": [
+                        {
+                            "id": v["node"]["id"],
+                            "title": v["node"]["title"],
+                            "sku": v["node"].get("sku"),
+                            "price": v["node"]["price"],
+                            "inventory": v["node"].get("inventoryQuantity"),
+                        }
+                        for v in node.get("variants", {}).get("edges", [])
+                    ],
+                }
+            )
 
         return json.dumps(products, indent=2)
 
@@ -227,30 +229,38 @@ class ShopifyTools(Toolkit):
         self,
         max_results: int = 50,
         status: Optional[str] = None,
-        days_back: int = 30,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Get recent orders from the store.
 
         Args:
             max_results: Maximum number of orders to return (default 50, max 250).
             status: Filter by financial status - 'paid', 'pending', 'refunded' (optional).
-            days_back: Number of days to look back for orders (default 30).
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing list of orders with id, total, customer, and line items.
         """
-        log_debug(f"Fetching orders: max_results={max_results}, status={status}, days_back={days_back}")
+        log_debug(
+            f"Fetching orders: max_results={max_results}, status={status}, created_after={created_after}, created_before={created_before}"
+        )
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        query_parts = [f'created_at:>={date_filter}']
+        query_parts = []
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
         if status:
-            query_parts.append(f'financial_status:{status}')
+            query_parts.append(f"financial_status:{status}")
 
-        query_filter = " AND ".join(query_parts)
+        query_filter = " AND ".join(query_parts) if query_parts else ""
+        query_param = f', query: "{query_filter}"' if query_filter else ""
 
         query = f"""
         query {{
-            orders(first: {min(max_results, 250)}, query: "{query_filter}", sortKey: CREATED_AT, reverse: true) {{
+            orders(first: {min(max_results, 250)}{query_param}, sortKey: CREATED_AT, reverse: true) {{
                 edges {{
                     node {{
                         id
@@ -308,57 +318,73 @@ class ShopifyTools(Toolkit):
         for edge in result.get("orders", {}).get("edges", []):
             node = edge["node"]
             customer = node.get("customer") or {}
-            orders.append({
-                "id": node["id"],
-                "name": node["name"],
-                "created_at": node["createdAt"],
-                "financial_status": node.get("displayFinancialStatus"),
-                "fulfillment_status": node.get("displayFulfillmentStatus"),
-                "total": node.get("totalPriceSet", {}).get("shopMoney", {}).get("amount"),
-                "subtotal": node.get("subtotalPriceSet", {}).get("shopMoney", {}).get("amount"),
-                "currency": node.get("totalPriceSet", {}).get("shopMoney", {}).get("currencyCode"),
-                "customer": {
-                    "id": customer.get("id"),
-                    "email": customer.get("email"),
-                    "name": f"{customer.get('firstName', '')} {customer.get('lastName', '')}".strip(),
-                } if customer else None,
-                "line_items": [
-                    {
-                        "id": item["node"]["id"],
-                        "title": item["node"]["title"],
-                        "quantity": item["node"]["quantity"],
-                        "unit_price": item["node"].get("originalUnitPriceSet", {}).get("shopMoney", {}).get("amount"),
-                        "sku": item["node"].get("variant", {}).get("sku") if item["node"].get("variant") else None,
+            orders.append(
+                {
+                    "id": node["id"],
+                    "name": node["name"],
+                    "created_at": node["createdAt"],
+                    "financial_status": node.get("displayFinancialStatus"),
+                    "fulfillment_status": node.get("displayFulfillmentStatus"),
+                    "total": node.get("totalPriceSet", {}).get("shopMoney", {}).get("amount"),
+                    "subtotal": node.get("subtotalPriceSet", {}).get("shopMoney", {}).get("amount"),
+                    "currency": node.get("totalPriceSet", {}).get("shopMoney", {}).get("currencyCode"),
+                    "customer": {
+                        "id": customer.get("id"),
+                        "email": customer.get("email"),
+                        "name": f"{customer.get('firstName', '')} {customer.get('lastName', '')}".strip(),
                     }
-                    for item in node.get("lineItems", {}).get("edges", [])
-                ],
-            })
+                    if customer
+                    else None,
+                    "line_items": [
+                        {
+                            "id": item["node"]["id"],
+                            "title": item["node"]["title"],
+                            "quantity": item["node"]["quantity"],
+                            "unit_price": item["node"]
+                            .get("originalUnitPriceSet", {})
+                            .get("shopMoney", {})
+                            .get("amount"),
+                            "sku": item["node"].get("variant", {}).get("sku") if item["node"].get("variant") else None,
+                        }
+                        for item in node.get("lineItems", {}).get("edges", [])
+                    ],
+                }
+            )
 
         return json.dumps(orders, indent=2)
 
     def get_top_selling_products(
         self,
-        days_back: int = 30,
         limit: int = 10,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Get the top selling products by quantity sold.
 
         Analyzes order data to find which products sell the most.
 
         Args:
-            days_back: Number of days to analyze (default 30).
             limit: Number of top products to return (default 10).
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing ranked list of top products with sales data.
         """
-        log_debug(f"Calculating top selling products: days_back={days_back}, limit={limit}")
+        log_debug(
+            f"Calculating top selling products: limit={limit}, created_after={created_after}, created_before={created_before}"
+        )
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        query_parts = ["financial_status:paid"]
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
+        query_filter = " AND ".join(query_parts)
 
         query = f"""
         query {{
-            orders(first: 250, query: "created_at:>={date_filter} AND financial_status:paid", sortKey: CREATED_AT) {{
+            orders(first: 250, query: "{query_filter}", sortKey: CREATED_AT) {{
                 edges {{
                     node {{
                         lineItems(first: 100) {{
@@ -421,11 +447,7 @@ class ShopifyTools(Toolkit):
                 product_sales[product_id]["order_count"] += 1
 
         # Sort by quantity and limit
-        sorted_products = sorted(
-            product_sales.values(),
-            key=lambda x: x["total_quantity"],
-            reverse=True
-        )[:limit]
+        sorted_products = sorted(product_sales.values(), key=lambda x: x["total_quantity"], reverse=True)[:limit]
 
         # Add ranking
         for i, product in enumerate(sorted_products):
@@ -436,9 +458,10 @@ class ShopifyTools(Toolkit):
 
     def get_products_bought_together(
         self,
-        days_back: int = 90,
         min_occurrences: int = 2,
         limit: int = 20,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Find products that are frequently bought together.
 
@@ -446,20 +469,26 @@ class ShopifyTools(Toolkit):
         Useful for cross-selling and bundle recommendations.
 
         Args:
-            days_back: Number of days to analyze (default 90).
             min_occurrences: Minimum times a pair must appear together (default 2).
             limit: Number of product pairs to return (default 20).
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing ranked list of product pairs with co-occurrence count.
         """
-        log_debug(f"Finding products bought together: days_back={days_back}")
+        log_debug(f"Finding products bought together: created_after={created_after}, created_before={created_before}")
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        query_parts = ["financial_status:paid"]
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
+        query_filter = " AND ".join(query_parts)
 
         query = f"""
         query {{
-            orders(first: 250, query: "created_at:>={date_filter} AND financial_status:paid") {{
+            orders(first: 250, query: "{query_filter}") {{
                 edges {{
                     node {{
                         lineItems(first: 100) {{
@@ -583,10 +612,7 @@ class ShopifyTools(Toolkit):
             currency = order.get("totalPriceSet", {}).get("shopMoney", {}).get("currencyCode")
             date = order["createdAt"][:10]  # Extract date part
 
-            items_in_order = sum(
-                item["node"]["quantity"]
-                for item in order.get("lineItems", {}).get("edges", [])
-            )
+            items_in_order = sum(item["node"]["quantity"] for item in order.get("lineItems", {}).get("edges", []))
 
             total_revenue += amount
             total_orders += 1
@@ -617,7 +643,8 @@ class ShopifyTools(Toolkit):
 
     def get_order_analytics(
         self,
-        days_back: int = 30,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Get comprehensive order analytics for a time period.
 
@@ -625,18 +652,25 @@ class ShopifyTools(Toolkit):
         fulfillment rates, and more.
 
         Args:
-            days_back: Number of days to analyze (default 30).
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing various order metrics and statistics.
         """
-        log_debug(f"Generating order analytics: days_back={days_back}")
+        log_debug(f"Generating order analytics: created_after={created_after}, created_before={created_before}")
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        query_parts = []
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
+        query_filter = " AND ".join(query_parts) if query_parts else ""
+        query_param = f', query: "{query_filter}"' if query_filter else ""
 
         query = f"""
         query {{
-            orders(first: 250, query: "created_at:>={date_filter}", sortKey: CREATED_AT) {{
+            orders(first: 250{query_param}, sortKey: CREATED_AT) {{
                 edges {{
                     node {{
                         displayFinancialStatus
@@ -721,7 +755,10 @@ class ShopifyTools(Toolkit):
         avg_items_per_order = total_items / total_orders if total_orders > 0 else 0
 
         analytics = {
-            "period_days": days_back,
+            "period": {
+                "created_after": created_after,
+                "created_before": created_before,
+            },
             "total_orders": total_orders,
             "total_revenue": round(total_revenue, 2),
             "total_subtotal": round(total_subtotal, 2),
@@ -742,13 +779,15 @@ class ShopifyTools(Toolkit):
     def get_product_sales_breakdown(
         self,
         product_id: str,
-        days_back: int = 30,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Get detailed sales breakdown for a specific product.
 
         Args:
             product_id: The Shopify product ID (gid://shopify/Product/xxx or just the number).
-            days_back: Number of days to analyze (default 30).
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing product sales data including quantity, revenue, and variant breakdown.
@@ -759,11 +798,16 @@ class ShopifyTools(Toolkit):
         if not product_id.startswith("gid://"):
             product_id = f"gid://shopify/Product/{product_id}"
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        query_parts = ["financial_status:paid"]
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
+        query_filter = " AND ".join(query_parts)
 
         query = f"""
         query {{
-            orders(first: 250, query: "created_at:>={date_filter} AND financial_status:paid") {{
+            orders(first: 250, query: "{query_filter}") {{
                 edges {{
                     node {{
                         createdAt
@@ -809,7 +853,6 @@ class ShopifyTools(Toolkit):
         currency = None
         variant_breakdown: Dict[str, Dict[str, Any]] = {}
         daily_sales: Dict[str, Dict[str, Any]] = {}
-        seen_orders: set = set()
 
         for order_edge in result.get("orders", {}).get("edges", []):
             order = order_edge["node"]
@@ -869,7 +912,10 @@ class ShopifyTools(Toolkit):
         breakdown = {
             "product_id": product_id,
             "product_title": product_title,
-            "period_days": days_back,
+            "period": {
+                "created_after": created_after,
+                "created_before": created_before,
+            },
             "total_quantity_sold": total_quantity,
             "total_revenue": round(total_revenue, 2),
             "order_count": order_count,
@@ -962,18 +1008,20 @@ class ShopifyTools(Toolkit):
         order_list = []
         for order_edge in orders:
             order = order_edge["node"]
-            order_list.append({
-                "id": order["id"],
-                "name": order["name"],
-                "created_at": order["createdAt"],
-                "financial_status": order.get("displayFinancialStatus"),
-                "fulfillment_status": order.get("displayFulfillmentStatus"),
-                "total": order.get("totalPriceSet", {}).get("shopMoney", {}).get("amount"),
-                "items": [
-                    {"title": item["node"]["title"], "quantity": item["node"]["quantity"]}
-                    for item in order.get("lineItems", {}).get("edges", [])
-                ],
-            })
+            order_list.append(
+                {
+                    "id": order["id"],
+                    "name": order["name"],
+                    "created_at": order["createdAt"],
+                    "financial_status": order.get("displayFinancialStatus"),
+                    "fulfillment_status": order.get("displayFulfillmentStatus"),
+                    "total": order.get("totalPriceSet", {}).get("shopMoney", {}).get("amount"),
+                    "items": [
+                        {"title": item["node"]["title"], "quantity": item["node"]["quantity"]}
+                        for item in order.get("lineItems", {}).get("edges", [])
+                    ],
+                }
+            )
 
         response = {
             "customer": customer_info,
@@ -1030,22 +1078,24 @@ class ShopifyTools(Toolkit):
         products = []
         for edge in result.get("products", {}).get("edges", []):
             node = edge["node"]
-            products.append({
-                "id": node["id"],
-                "title": node["title"],
-                "total_inventory": node.get("totalInventory"),
-                "tracks_inventory": node.get("tracksInventory"),
-                "variants": [
-                    {
-                        "id": v["node"]["id"],
-                        "title": v["node"]["title"],
-                        "sku": v["node"].get("sku"),
-                        "inventory_quantity": v["node"].get("inventoryQuantity"),
-                        "inventory_policy": v["node"].get("inventoryPolicy"),
-                    }
-                    for v in node.get("variants", {}).get("edges", [])
-                ],
-            })
+            products.append(
+                {
+                    "id": node["id"],
+                    "title": node["title"],
+                    "total_inventory": node.get("totalInventory"),
+                    "tracks_inventory": node.get("tracksInventory"),
+                    "variants": [
+                        {
+                            "id": v["node"]["id"],
+                            "title": v["node"]["title"],
+                            "sku": v["node"].get("sku"),
+                            "inventory_quantity": v["node"].get("inventoryQuantity"),
+                            "inventory_policy": v["node"].get("inventoryPolicy"),
+                        }
+                        for v in node.get("variants", {}).get("edges", [])
+                    ],
+                }
+            )
 
         return json.dumps(products, indent=2)
 
@@ -1065,7 +1115,7 @@ class ShopifyTools(Toolkit):
         """
         log_debug(f"Finding low stock products: threshold={threshold}")
 
-        query = f"""
+        query = """
         query {{
             products(first: 250, query: "status:ACTIVE") {{
                 edges {{
@@ -1108,17 +1158,18 @@ class ShopifyTools(Toolkit):
                         "inventory_quantity": v["node"].get("inventoryQuantity"),
                     }
                     for v in node.get("variants", {}).get("edges", [])
-                    if v["node"].get("inventoryQuantity") is not None
-                    and v["node"]["inventoryQuantity"] <= threshold
+                    if v["node"].get("inventoryQuantity") is not None and v["node"]["inventoryQuantity"] <= threshold
                 ]
 
                 if low_stock_variants:
-                    low_stock.append({
-                        "id": node["id"],
-                        "title": node["title"],
-                        "total_inventory": total_inv,
-                        "low_stock_variants": low_stock_variants,
-                    })
+                    low_stock.append(
+                        {
+                            "id": node["id"],
+                            "title": node["title"],
+                            "total_inventory": total_inv,
+                            "low_stock_variants": low_stock_variants,
+                        }
+                    )
 
         # Sort by total inventory (lowest first)
         low_stock.sort(key=lambda x: x["total_inventory"])
@@ -1127,26 +1178,42 @@ class ShopifyTools(Toolkit):
 
     def get_sales_trends(
         self,
-        days_back: int = 30,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
         compare_previous_period: bool = True,
     ) -> str:
         """Get sales trends comparing current period to previous period.
 
         Args:
-            days_back: Number of days for current period (default 30).
-            compare_previous_period: Whether to compare with previous period (default True).
+            created_after: Start date for analysis period (YYYY-MM-DD format, optional).
+            created_before: End date for analysis period (YYYY-MM-DD format, optional).
+            compare_previous_period: Whether to compare with previous period of same length (default True).
 
         Returns:
             JSON string containing current period metrics and comparison with previous period.
         """
-        log_debug(f"Calculating sales trends: days_back={days_back}")
+        log_debug(f"Calculating sales trends: created_after={created_after}, created_before={created_before}")
 
+        # Use provided dates or default to last 30 days
         now = datetime.now()
-        current_start = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        current_end = now.strftime("%Y-%m-%d")
+        if created_before:
+            current_end_dt = datetime.strptime(created_before, "%Y-%m-%d")
+        else:
+            current_end_dt = now
+        current_end = current_end_dt.strftime("%Y-%m-%d")
 
-        previous_start = (now - timedelta(days=days_back * 2)).strftime("%Y-%m-%d")
-        previous_end = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        if created_after:
+            current_start_dt = datetime.strptime(created_after, "%Y-%m-%d")
+        else:
+            current_start_dt = current_end_dt - timedelta(days=30)
+        current_start = current_start_dt.strftime("%Y-%m-%d")
+
+        # Calculate previous period of same length
+        period_days = (current_end_dt - current_start_dt).days
+        previous_end_dt = current_start_dt - timedelta(days=1)
+        previous_start_dt = previous_end_dt - timedelta(days=period_days)
+        previous_start = previous_start_dt.strftime("%Y-%m-%d")
+        previous_end = previous_end_dt.strftime("%Y-%m-%d")
 
         def fetch_period_data(start: str, end: str) -> Dict[str, Any]:
             query = f"""
@@ -1178,14 +1245,15 @@ class ShopifyTools(Toolkit):
 
             orders = result.get("orders", {}).get("edges", [])
             total_revenue = sum(
-                float(o["node"].get("totalPriceSet", {}).get("shopMoney", {}).get("amount", 0))
-                for o in orders
+                float(o["node"].get("totalPriceSet", {}).get("shopMoney", {}).get("amount", 0)) for o in orders
             )
             total_items = sum(
                 sum(item["node"]["quantity"] for item in o["node"].get("lineItems", {}).get("edges", []))
                 for o in orders
             )
-            currency = orders[0]["node"].get("totalPriceSet", {}).get("shopMoney", {}).get("currencyCode") if orders else None
+            currency = (
+                orders[0]["node"].get("totalPriceSet", {}).get("shopMoney", {}).get("currencyCode") if orders else None
+            )
 
             return {
                 "total_orders": len(orders),
@@ -1218,12 +1286,17 @@ class ShopifyTools(Toolkit):
 
                 # Calculate changes
                 if previous_data["total_revenue"] > 0:
-                    revenue_change = ((current_data["total_revenue"] - previous_data["total_revenue"]) / previous_data["total_revenue"]) * 100
+                    revenue_change = (
+                        (current_data["total_revenue"] - previous_data["total_revenue"])
+                        / previous_data["total_revenue"]
+                    ) * 100
                 else:
                     revenue_change = 100 if current_data["total_revenue"] > 0 else 0
 
                 if previous_data["total_orders"] > 0:
-                    orders_change = ((current_data["total_orders"] - previous_data["total_orders"]) / previous_data["total_orders"]) * 100
+                    orders_change = (
+                        (current_data["total_orders"] - previous_data["total_orders"]) / previous_data["total_orders"]
+                    ) * 100
                 else:
                     orders_change = 100 if current_data["total_orders"] > 0 else 0
 
@@ -1238,25 +1311,34 @@ class ShopifyTools(Toolkit):
 
     def get_average_order_value(
         self,
-        days_back: int = 30,
         group_by: str = "day",
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Get average order value over time.
 
         Args:
-            days_back: Number of days to analyze (default 30).
             group_by: How to group data - 'day', 'week', or 'month' (default 'day').
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing average order value trends.
         """
-        log_debug(f"Calculating AOV: days_back={days_back}, group_by={group_by}")
+        log_debug(
+            f"Calculating AOV: group_by={group_by}, created_after={created_after}, created_before={created_before}"
+        )
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        query_parts = ["financial_status:paid"]
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
+        query_filter = " AND ".join(query_parts)
 
         query = f"""
         query {{
-            orders(first: 250, query: "created_at:>={date_filter} AND financial_status:paid", sortKey: CREATED_AT) {{
+            orders(first: 250, query: "{query_filter}", sortKey: CREATED_AT) {{
                 edges {{
                     node {{
                         createdAt
@@ -1316,10 +1398,13 @@ class ShopifyTools(Toolkit):
             for key, values in sorted(grouped.items())
         ]
 
-        overall_avg = sum(o["total_revenue"] for o in aov_data) / sum(o["order_count"] for o in aov_data)
+        overall_avg = sum(o["total_revenue"] for o in aov_data) / sum(o["order_count"] for o in aov_data)  # type: ignore
 
         response = {
-            "period_days": days_back,
+            "period": {
+                "created_after": created_after,
+                "created_before": created_before,
+            },
             "group_by": group_by,
             "overall_average_order_value": round(overall_avg, 2),
             "currency": currency,
@@ -1330,27 +1415,36 @@ class ShopifyTools(Toolkit):
 
     def get_repeat_customers(
         self,
-        days_back: int = 90,
         min_orders: int = 2,
         limit: int = 50,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
     ) -> str:
         """Find customers who have made multiple purchases.
 
         Args:
-            days_back: Number of days to analyze (default 90).
             min_orders: Minimum number of orders to qualify as repeat customer (default 2).
             limit: Maximum number of customers to return (default 50).
+            created_after: Only include orders created after this date (YYYY-MM-DD format, optional).
+            created_before: Only include orders created before this date (YYYY-MM-DD format, optional).
 
         Returns:
             JSON string containing repeat customers with their order counts and total spend.
         """
-        log_debug(f"Finding repeat customers: days_back={days_back}, min_orders={min_orders}")
+        log_debug(
+            f"Finding repeat customers: min_orders={min_orders}, created_after={created_after}, created_before={created_before}"
+        )
 
-        date_filter = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        query_parts = ["financial_status:paid"]
+        if created_after:
+            query_parts.append(f"created_at:>={created_after}")
+        if created_before:
+            query_parts.append(f"created_at:<={created_before}")
+        query_filter = " AND ".join(query_parts)
 
         query = f"""
         query {{
-            orders(first: 250, query: "created_at:>={date_filter} AND financial_status:paid") {{
+            orders(first: 250, query: "{query_filter}") {{
                 edges {{
                     node {{
                         customer {{
@@ -1416,11 +1510,13 @@ class ShopifyTools(Toolkit):
         repeat_customers.sort(key=lambda x: x["orders_in_period"], reverse=True)
 
         response = {
-            "period_days": days_back,
+            "period": {
+                "created_after": created_after,
+                "created_before": created_before,
+            },
             "min_orders_threshold": min_orders,
             "repeat_customer_count": len(repeat_customers),
             "customers": repeat_customers[:limit],
         }
 
         return json.dumps(response, indent=2)
-

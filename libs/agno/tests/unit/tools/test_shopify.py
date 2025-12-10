@@ -1,7 +1,6 @@
 """Unit tests for ShopifyTools class."""
 
 import json
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -136,6 +135,7 @@ def test_init_with_credentials():
     assert tools.api_version == "2025-10"
     assert tools.timeout == 30
 
+
 def test_init_with_env_variables():
     """Test initialization with environment variables."""
     with patch.dict(
@@ -149,6 +149,7 @@ def test_init_with_env_variables():
         assert tools.shop_name == "env-store"
         assert tools.access_token == "env_token"
 
+
 def test_init_with_custom_api_version():
     """Test initialization with custom API version."""
     tools = ShopifyTools(
@@ -157,6 +158,7 @@ def test_init_with_custom_api_version():
         api_version="2024-10",
     )
     assert tools.api_version == "2024-10"
+
 
 def test_init_with_custom_timeout():
     """Test initialization with custom timeout."""
@@ -167,6 +169,7 @@ def test_init_with_custom_timeout():
     )
     assert tools.timeout == 60
 
+
 def test_base_url_construction():
     """Test that base URL is correctly constructed."""
     tools = ShopifyTools(
@@ -176,6 +179,7 @@ def test_base_url_construction():
     )
     expected_url = "https://my-store.myshopify.com/admin/api/2025-10/graphql.json"
     assert tools.base_url == expected_url
+
 
 def test_tools_registration():
     """Test that all expected tools are registered."""
@@ -214,6 +218,7 @@ def test_successful_request(shopify_tools, mock_httpx_client):
     assert result == {"shop": {"name": "Test Store"}}
     mock_httpx_client.post.assert_called_once()
 
+
 def test_request_with_variables(shopify_tools, mock_httpx_client):
     """Test GraphQL request with variables."""
     mock_response = MagicMock()
@@ -227,6 +232,7 @@ def test_request_with_variables(shopify_tools, mock_httpx_client):
 
     assert result == {"product": {"title": "Test"}}
 
+
 def test_request_with_errors(shopify_tools, mock_httpx_client):
     """Test GraphQL request that returns errors."""
     mock_response = MagicMock()
@@ -236,6 +242,7 @@ def test_request_with_errors(shopify_tools, mock_httpx_client):
     result = shopify_tools._make_graphql_request("query { shop { name } }")
 
     assert "error" in result
+
 
 def test_request_json_decode_error(shopify_tools, mock_httpx_client):
     """Test handling of JSON decode errors."""
@@ -260,6 +267,7 @@ def test_get_shop_info_success(shopify_tools, mock_httpx_client, mock_shop_respo
     assert result_data["name"] == "Test Store"
     assert result_data["email"] == "test@example.com"
     assert result_data["currencyCode"] == "USD"
+
 
 def test_get_shop_info_error(shopify_tools, mock_httpx_client):
     """Test shop info with error response."""
@@ -286,6 +294,7 @@ def test_get_products_success(shopify_tools, mock_httpx_client, mock_products_re
     assert result_data[0]["title"] == "Test Product"
     assert result_data[0]["status"] == "ACTIVE"
 
+
 def test_get_products_with_status_filter(shopify_tools, mock_httpx_client, mock_products_response):
     """Test products retrieval with status filter."""
     mock_response = MagicMock()
@@ -296,6 +305,7 @@ def test_get_products_with_status_filter(shopify_tools, mock_httpx_client, mock_
     result_data = json.loads(result)
 
     assert len(result_data) == 1
+
 
 def test_get_products_max_results_limit(shopify_tools, mock_httpx_client, mock_products_response):
     """Test that max_results is capped at 250."""
@@ -315,12 +325,13 @@ def test_get_orders_success(shopify_tools, mock_httpx_client, mock_orders_respon
     mock_response.json.return_value = mock_orders_response
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_orders(max_results=10, days_back=30)
+    result = shopify_tools.get_orders(max_results=10, created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert len(result_data) == 1
     assert result_data[0]["name"] == "#1001"
     assert result_data[0]["financial_status"] == "PAID"
+
 
 def test_get_orders_with_status_filter(shopify_tools, mock_httpx_client, mock_orders_response):
     """Test orders retrieval with status filter."""
@@ -333,6 +344,7 @@ def test_get_orders_with_status_filter(shopify_tools, mock_httpx_client, mock_or
 
     assert len(result_data) == 1
 
+
 def test_get_orders_customer_info(shopify_tools, mock_httpx_client, mock_orders_response):
     """Test that customer info is properly extracted."""
     mock_response = MagicMock()
@@ -344,7 +356,6 @@ def test_get_orders_customer_info(shopify_tools, mock_httpx_client, mock_orders_
 
     assert result_data[0]["customer"]["email"] == "customer@example.com"
     assert result_data[0]["customer"]["name"] == "John Doe"
-
 
 
 def test_get_top_selling_products_success(shopify_tools, mock_httpx_client):
@@ -382,14 +393,13 @@ def test_get_top_selling_products_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_top_selling_products(days_back=30, limit=5)
+    result = shopify_tools.get_top_selling_products(limit=5, created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert len(result_data) == 1
     assert result_data[0]["title"] == "Best Seller Product"
     assert result_data[0]["total_quantity"] == 10
     assert result_data[0]["rank"] == 1
-
 
 
 def test_get_products_bought_together_success(shopify_tools, mock_httpx_client):
@@ -461,7 +471,7 @@ def test_get_products_bought_together_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_products_bought_together(days_back=90, min_occurrences=2)
+    result = shopify_tools.get_products_bought_together(min_occurrences=2, created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert len(result_data) == 1
@@ -496,7 +506,6 @@ def test_get_sales_by_date_range_success(shopify_tools, mock_httpx_client):
     assert result_data["total_items_sold"] == 3
 
 
-
 def test_get_order_analytics_success(shopify_tools, mock_httpx_client):
     """Test successful order analytics retrieval."""
     mock_response = MagicMock()
@@ -521,12 +530,13 @@ def test_get_order_analytics_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_order_analytics(days_back=30)
+    result = shopify_tools.get_order_analytics(created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert result_data["total_orders"] == 1
     assert result_data["total_revenue"] == 50.00
     assert result_data["average_order_value"] == 50.00
+
 
 def test_get_order_analytics_no_orders(shopify_tools, mock_httpx_client):
     """Test order analytics with no orders."""
@@ -534,7 +544,7 @@ def test_get_order_analytics_no_orders(shopify_tools, mock_httpx_client):
     mock_response.json.return_value = {"data": {"orders": {"edges": []}}}
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_order_analytics(days_back=30)
+    result = shopify_tools.get_order_analytics()
     result_data = json.loads(result)
 
     assert "message" in result_data
@@ -551,7 +561,6 @@ def test_get_inventory_levels_success(shopify_tools, mock_httpx_client, mock_pro
 
     assert len(result_data) == 1
     assert result_data[0]["total_inventory"] == 100
-
 
 
 def test_get_low_stock_products_success(shopify_tools, mock_httpx_client):
@@ -593,7 +602,6 @@ def test_get_low_stock_products_success(shopify_tools, mock_httpx_client):
     assert result_data[0]["total_inventory"] == 5
 
 
-
 def test_get_sales_trends_success(shopify_tools, mock_httpx_client):
     """Test successful sales trends retrieval."""
     mock_response = MagicMock()
@@ -613,12 +621,11 @@ def test_get_sales_trends_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_sales_trends(days_back=30, compare_previous_period=True)
+    result = shopify_tools.get_sales_trends(created_after="2024-01-01", compare_previous_period=True)
     result_data = json.loads(result)
 
     assert "current_period" in result_data
     assert result_data["current_period"]["total_revenue"] == 100.00
-
 
 
 def test_get_average_order_value_success(shopify_tools, mock_httpx_client):
@@ -646,10 +653,11 @@ def test_get_average_order_value_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_average_order_value(days_back=30, group_by="day")
+    result = shopify_tools.get_average_order_value(group_by="day", created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert result_data["overall_average_order_value"] == 75.00
+
 
 def test_get_average_order_value_no_orders(shopify_tools, mock_httpx_client):
     """Test average order value with no orders."""
@@ -657,11 +665,10 @@ def test_get_average_order_value_no_orders(shopify_tools, mock_httpx_client):
     mock_response.json.return_value = {"data": {"orders": {"edges": []}}}
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_average_order_value(days_back=30)
+    result = shopify_tools.get_average_order_value()
     result_data = json.loads(result)
 
     assert "message" in result_data
-
 
 
 def test_get_repeat_customers_success(shopify_tools, mock_httpx_client):
@@ -703,12 +710,11 @@ def test_get_repeat_customers_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_repeat_customers(days_back=90, min_orders=2)
+    result = shopify_tools.get_repeat_customers(min_orders=2, created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert result_data["repeat_customer_count"] == 1
     assert result_data["customers"][0]["orders_in_period"] == 2
-
 
 
 def test_get_customer_order_history_success(shopify_tools, mock_httpx_client, mock_orders_response):
@@ -724,6 +730,7 @@ def test_get_customer_order_history_success(shopify_tools, mock_httpx_client, mo
     assert "orders" in result_data
     assert len(result_data["orders"]) == 1
 
+
 def test_get_customer_order_history_no_orders(shopify_tools, mock_httpx_client):
     """Test customer order history with no orders."""
     mock_response = MagicMock()
@@ -734,7 +741,6 @@ def test_get_customer_order_history_no_orders(shopify_tools, mock_httpx_client):
     result_data = json.loads(result)
 
     assert "message" in result_data
-
 
 
 def test_get_product_sales_breakdown_success(shopify_tools, mock_httpx_client):
@@ -777,12 +783,13 @@ def test_get_product_sales_breakdown_success(shopify_tools, mock_httpx_client):
     }
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_product_sales_breakdown("gid://shopify/Product/123", days_back=30)
+    result = shopify_tools.get_product_sales_breakdown("gid://shopify/Product/123", created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert result_data["product_title"] == "Test Product"
     assert result_data["total_quantity_sold"] == 2
     assert result_data["total_revenue"] == 50.00
+
 
 def test_get_product_sales_breakdown_with_numeric_id(shopify_tools, mock_httpx_client):
     """Test product sales breakdown with numeric ID."""
@@ -825,10 +832,11 @@ def test_get_product_sales_breakdown_with_numeric_id(shopify_tools, mock_httpx_c
     mock_httpx_client.post.return_value = mock_response
 
     # Test with numeric ID (should be normalized to full GID format)
-    result = shopify_tools.get_product_sales_breakdown("123", days_back=30)
+    result = shopify_tools.get_product_sales_breakdown("123", created_after="2024-01-01")
     result_data = json.loads(result)
 
     assert result_data["product_title"] == "Test Product"
+
 
 def test_get_product_sales_breakdown_not_found(shopify_tools, mock_httpx_client):
     """Test product sales breakdown when product not found."""
@@ -836,15 +844,13 @@ def test_get_product_sales_breakdown_not_found(shopify_tools, mock_httpx_client)
     mock_response.json.return_value = {"data": {"orders": {"edges": []}}}
     mock_httpx_client.post.return_value = mock_response
 
-    result = shopify_tools.get_product_sales_breakdown("gid://shopify/Product/999", days_back=30)
+    result = shopify_tools.get_product_sales_breakdown("gid://shopify/Product/999")
     result_data = json.loads(result)
 
     assert "error" in result_data
-
 
 
 def test_toolkit_name():
     """Test that toolkit has correct name."""
     tools = ShopifyTools(shop_name="test-store", access_token="test_token")
     assert tools.name == "shopify"
-

@@ -27,7 +27,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.shopify import ShopifyTools
 
-# Create an agent for sales analysis
 sales_agent = Agent(
     name="Sales Analyst",
     model=OpenAIChat(id="gpt-4o"),
@@ -41,7 +40,9 @@ sales_agent = Agent(
         "3. Highlight notable patterns or concerns",
         "4. Suggest next steps when appropriate",
         "Always present numbers clearly and use comparisons to add context.",
+        "If you need to get information about the store, like currency, call the `get_shop_info` tool.",
     ],
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -54,27 +55,13 @@ if __name__ == "__main__":
     )
 
     # Example 2: Products bought together
-    print("Finding product bundles...")
-    response = sales_agent.run(
+    sales_agent.print_response(
         "Which products are frequently bought together? "
         "I want to create product bundles for my store."
     )
-    print(response.content)
-    print("\n" + "=" * 50 + "\n")
 
     # Example 3: Sales trends
-    print("Analyzing sales trends...")
-    response = sales_agent.run(
-        "How are my sales trending compared to last month? "
+    sales_agent.print_response(
+        "How are my sales trending compared over the last 3 months? "
         "Are we up or down in terms of revenue and order count?"
     )
-    print(response.content)
-    print("\n" + "=" * 50 + "\n")
-
-    # Example 4: Low stock alerts
-    print("Checking inventory...")
-    response = sales_agent.run(
-        "Which products are running low on stock and might need reordering soon?"
-    )
-    print(response.content)
-
