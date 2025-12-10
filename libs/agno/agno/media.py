@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
-from agno.utils.log import log_error
 
 from pydantic import BaseModel, field_validator, model_validator
+
+from agno.utils.log import log_error
 
 
 class Image(BaseModel):
@@ -397,7 +398,7 @@ class File(BaseModel):
         format: Optional[str] = None,
     ) -> "File":
         """Create File from base64 encoded content or plain text.
-        
+
         Handles both base64-encoded binary content and plain text content
         (which is stored as UTF-8 strings for text/* MIME types).
         """
