@@ -56,6 +56,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        create_schema: bool = True,
         db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
         """
@@ -80,6 +81,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
             db_id: Deprecated, use id instead.
 
         Raises:
@@ -116,6 +119,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
@@ -200,8 +204,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=self.db_schema)
+            if self.create_schema:
+                async with self.async_session_factory() as sess, sess.begin():
+                    await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
@@ -1237,7 +1242,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             # Generate ID if not present
             if cultural_knowledge.id is None:
@@ -1381,7 +1386,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             current_time = int(time.time())
 
@@ -1725,7 +1730,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = await self._get_table(table_type="knowledge")
+            table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
             async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
@@ -2186,14 +2191,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if trace.workflow_id is not None:
                         update_values["workflow_id"] = trace.workflow_id
 
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     await sess.execute(stmt)
                 else:
@@ -2293,10 +2290,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             from agno.tracing.schemas import Trace
 
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
             table = await self._get_table(table_type="traces")
 
             # Get spans table for JOIN
@@ -2310,7 +2303,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2378,12 +2370,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             table = await self._get_table(table_type="traces")
 
             async with self.async_session_factory() as sess:
@@ -2424,7 +2410,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
-                log_debug(f"Total matching sessions: {total_count}")
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
@@ -2432,7 +2417,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
-                log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
                 stats_list = []
