@@ -1157,7 +1157,7 @@ class Gemini(Model):
 
                 # Extract url and title
                 chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                
+
                 citation_pairs = []
                 for chunk in chunks:
                     if not isinstance(chunk, dict):
