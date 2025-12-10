@@ -84,7 +84,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self,
         app,
         verification_key: Optional[str] = None,
-        secret_key: Optional[str] = None,
+        secret_key: Optional[str] = None,  # Deprecated
         algorithm: str = "RS256",
         validate: bool = True,
         authorization: Optional[bool] = None,
@@ -141,6 +141,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # JWT configuration
         self.verification_key = verification_key or getenv("JWT_VERIFICATION_KEY", "")
         if not self.verification_key and secret_key:
+            log_warning("secret_key is deprecated. Use verification_key instead.")
             self.verification_key = secret_key
         if not self.verification_key:
             raise ValueError(
@@ -177,7 +178,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             self.scope_mappings = scope_mappings or {}
 
-        self.excluded_route_paths = excluded_route_paths or self._get_default_excluded_routes()
+        self.excluded_route_paths = excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
 
     def _get_default_excluded_routes(self) -> List[str]:

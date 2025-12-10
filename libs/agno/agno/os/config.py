@@ -10,6 +10,7 @@ class AuthorizationConfig(BaseModel):
 
     verification_key: Optional[str] = None
     algorithm: Optional[str] = None
+    verify_audience: Optional[bool] = None
 
 
 class EvalsDomainConfig(BaseModel):

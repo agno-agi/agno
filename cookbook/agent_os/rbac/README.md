@@ -15,6 +15,14 @@ The system supports:
 3. **Per-Resource Scopes** - Granular agent/team/workflow permissions
 4. **Wildcard Support** - Flexible permission patterns
 
+## AgentOS Control Plane
+
+RBAC on AgentOS is compatible with the AgentOS Control Plane. When connecting your AgentOS, you'll need to enable "Authorization" for traffic from the control plane to have the required JWT token with the correct scopes.
+
+See the [documentation](https://docs.agno.com/agent-os/security/overview) for more information about AgentOS Security.
+
+Note: Only Asymmetric keys are supported for AgentOS Control Plane traffic.  The public key will be provided by the control plane when you connect your AgentOS.
+
 ## JWT Signing Algorithms
 
 AgentOS supports both symmetric and asymmetric JWT signing:

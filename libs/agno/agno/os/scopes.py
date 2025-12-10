@@ -51,6 +51,7 @@ class AgentOSScope(str, Enum):
     - evals:read - View evaluation runs
     - evals:write - Create and update evaluation runs
     - evals:delete - Delete evaluation runs
+    - traces:read - View traces and trace statistics
 
     Per-Resource Scopes (with resource ID):
     - agents:<agent-id>:read - Read specific agent
@@ -429,6 +430,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /eval-runs": ["evals:write"],
         "PATCH /eval-runs/*": ["evals:write"],
         "DELETE /eval-runs": ["evals:delete"],
+        # Trace endpoints
+        "GET /traces": ["traces:read"],
+        "GET /traces/*": ["traces:read"],
+        "GET /trace_session_stats": ["traces:read"],
     }
 
 

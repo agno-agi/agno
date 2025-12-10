@@ -29,60 +29,62 @@ TEST_OS_ID = "test-os"
 
 
 @pytest.fixture
-def test_agent():
+def test_agent(shared_db):
     """Create a basic test agent."""
     return Agent(
         name="test-agent",
         id="test-agent",
-        db=InMemoryDb(),
+        db=shared_db,
         instructions="You are a test agent.",
     )
 
 
 @pytest.fixture
-def second_agent():
+def second_agent(shared_db):
     """Create a second test agent for multi-agent tests."""
     return Agent(
         name="second-agent",
         id="second-agent",
-        db=InMemoryDb(),
+        db=shared_db,
         instructions="You are another test agent.",
     )
 
 
 @pytest.fixture
-def third_agent():
+def third_agent(shared_db):
     """Create a third test agent for filtering tests."""
     return Agent(
         name="third-agent",
         id="third-agent",
-        db=InMemoryDb(),
+        db=shared_db,
         instructions="You are a third test agent.",
     )
 
 
 @pytest.fixture
-def test_team(test_agent, second_agent):
+def test_team(test_agent, second_agent, shared_db):
     """Create a basic test team."""
     return Team(
         name="test-team",
         id="test-team",
+        db=shared_db,
         members=[test_agent, second_agent],
     )
 
 
 @pytest.fixture
-def second_team(test_agent):
+def second_team(test_agent, shared_db):
     """Create a second test team."""
     return Team(
         name="second-team",
         id="second-team",
         members=[test_agent],
+        db=shared_db,
     )
 
 
 @pytest.fixture
-def test_workflow():
+def test_workflow(shared_db):
     """Create a basic test workflow."""
 
     async def simple_workflow(session_state):
@@ -92,11 +94,12 @@ def test_workflow():
         name="test-workflow",
         id="test-workflow",
         steps=simple_workflow,
+        db=shared_db,
     )
 
 
 @pytest.fixture
-def second_workflow():
+def second_workflow(shared_db):
     """Create a second test workflow."""
 
     async def another_workflow(session_state):
@@ -106,6 +109,7 @@ def second_workflow():
         name="second-workflow",
         id="second-workflow",
         steps=another_workflow,
+        db=shared_db,
     )
 
 
@@ -1402,3 +1406,201 @@ def test_admin_sees_all_resources(test_agent, second_agent, test_team, test_work
         data={"message": "test"},
     )
     assert response.status_code in [200, 201]
+
+
+# ============================================================================
+# Trace Endpoint Authorization Tests
+# ============================================================================
+
+
+def test_traces_access_with_valid_scope(test_agent):
+    """Test that traces:read scope grants access to traces endpoints."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with traces:read scope
+    token = create_jwt_token(scopes=["traces:read"])
+
+    # Should be able to list traces
+    response = client.get(
+        "/traces",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+
+def test_traces_access_denied_without_scope(test_agent):
+    """Test that missing traces:read scope denies access to traces endpoints."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with only agents scope, no traces scope
+    token = create_jwt_token(scopes=["agents:read"])
+
+    # Should NOT be able to list traces
+    response = client.get(
+        "/traces",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_traces_admin_access(test_agent):
+    """Test that admin scope grants access to traces endpoints."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Admin token
+    token = create_jwt_token(scopes=["agent_os:admin"])
+
+    # Should be able to list traces
+    response = client.get(
+        "/traces",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+
+def test_trace_detail_access_with_valid_scope(test_agent):
+    """Test that traces:read scope grants access to trace detail endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with traces:read scope
+    token = create_jwt_token(scopes=["traces:read"])
+
+    # Should be able to get trace detail (will return 404 since trace doesn't exist, but auth passes)
+    response = client.get(
+        "/traces/nonexistent-trace-id",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 404 means auth passed but trace not found, 403 would mean auth failed
+    assert response.status_code == 404
+
+
+def test_trace_detail_access_denied_without_scope(test_agent):
+    """Test that missing traces:read scope denies access to trace detail endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with only agents scope, no traces scope
+    token = create_jwt_token(scopes=["agents:read"])
+
+    # Should NOT be able to get trace detail
+    response = client.get(
+        "/traces/some-trace-id",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_trace_session_stats_access_with_valid_scope(test_agent):
+    """Test that traces:read scope grants access to trace session stats endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with traces:read scope
+    token = create_jwt_token(scopes=["traces:read"])
+
+    # Should be able to get trace session stats
+    response = client.get(
+        "/trace_session_stats",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+
+def test_trace_session_stats_access_denied_without_scope(test_agent):
+    """Test that missing traces:read scope denies access to trace session stats endpoint."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with only agents scope, no traces scope
+    token = create_jwt_token(scopes=["agents:read"])
+
+    # Should NOT be able to get trace session stats
+    response = client.get(
+        "/trace_session_stats",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_traces_access_with_multiple_scopes(test_agent):
+    """Test that users with both traces and agents scopes can access both."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_key=JWT_SECRET, algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with both scopes
+    token = create_jwt_token(scopes=["agents:read", "traces:read"])
+
+    # Should be able to list agents
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    # Should be able to list traces
+    response = client.get(
+        "/traces",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
