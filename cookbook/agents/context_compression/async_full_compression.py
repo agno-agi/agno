@@ -8,6 +8,7 @@ This example demonstrates context compression across multiple runs:
 
 Run: python cookbook/agents/context_compression/full_compression.py
 """
+
 from textwrap import dedent
 
 from agno.agent import Agent

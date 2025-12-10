@@ -876,11 +876,13 @@ class Agent:
             if self.compression_manager.model is None:
                 self.compression_manager.model = self.model
 
-            # Sync context compression settings
+            # Sync compression settings from agent to manager
+            if self.compress_tool_results:
+                self.compression_manager.compress_tool_results = True
             if self.compress_context:
                 self.compression_manager.compress_context = True
 
-            # Check compression flags on the compression manager
+            # Sync compression settings from manager to agent
             if self.compression_manager.compress_tool_results:
                 self.compress_tool_results = True
             if self.compression_manager.compress_context:
@@ -1151,11 +1153,6 @@ class Agent:
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
-            # Set up compression manager with existing compressed IDs
-            if self.compression_manager and self.compress_context:
-                ctx = session.compressed_context
-                self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1167,12 +1164,12 @@ class Agent:
                 compression_manager=self.compression_manager
                 if (self.compress_tool_results or self.compress_context)
                 else None,
+                compressed_context=session.get_compressed_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if self.compression_manager and self.compression_manager.last_compressed_context:
-                session.compressed_context = self.compression_manager.last_compressed_context
-                self.compression_manager.last_compressed_context = None
+            if model_response.compressed_context:
+                session.set_compressed_context(model_response.compressed_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2062,11 +2059,6 @@ class Agent:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Set up compression manager with existing compressed IDs
-            if self.compression_manager and self.compress_context:
-                ctx = agent_session.compressed_context
-                self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
             # 9. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -2079,12 +2071,12 @@ class Agent:
                 compression_manager=self.compression_manager
                 if (self.compress_tool_results or self.compress_context)
                 else None,
+                compressed_context=agent_session.get_compressed_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if self.compression_manager and self.compression_manager.last_compressed_context:
-                agent_session.compressed_context = self.compression_manager.last_compressed_context
-                self.compression_manager.last_compressed_context = None
+            if model_response.compressed_context:
+                agent_session.set_compressed_context(model_response.compressed_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3234,11 +3226,6 @@ class Agent:
             # 2. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
-            # Set up compression manager with existing compressed IDs
-            if self.compression_manager and self.compress_context:
-                ctx = session.compressed_context
-                self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
@@ -3248,12 +3235,12 @@ class Agent:
                 compression_manager=self.compression_manager
                 if (self.compress_tool_results or self.compress_context)
                 else None,
+                compressed_context=session.get_compressed_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if self.compression_manager and self.compression_manager.last_compressed_context:
-                session.compressed_context = self.compression_manager.last_compressed_context
-                self.compression_manager.last_compressed_context = None
+            if model_response.compressed_context:
+                session.set_compressed_context(model_response.compressed_context)
 
             # Check for cancellation after model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3857,11 +3844,6 @@ class Agent:
             # 7. Handle the updated tools
             await self._ahandle_tool_call_updates(run_response=run_response, run_messages=run_messages, tools=_tools)
 
-            # Set up compression manager with existing compressed IDs
-            if self.compression_manager and self.compress_context:
-                ctx = agent_session.compressed_context
-                self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
             # 8. Get model response
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -3872,12 +3854,12 @@ class Agent:
                 compression_manager=self.compression_manager
                 if (self.compress_tool_results or self.compress_context)
                 else None,
+                compressed_context=agent_session.get_compressed_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if self.compression_manager and self.compression_manager.last_compressed_context:
-                agent_session.compressed_context = self.compression_manager.last_compressed_context
-                self.compression_manager.last_compressed_context = None
+            if model_response.compressed_context:
+                agent_session.set_compressed_context(model_response.compressed_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5224,11 +5206,6 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Set up compression manager with existing compressed IDs
-        if self.compression_manager and self.compress_context:
-            ctx = session.compressed_context
-            self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5241,6 +5218,7 @@ class Agent:
             compression_manager=self.compression_manager
             if (self.compress_tool_results or self.compress_context)
             else None,
+            compressed_context=session.get_compressed_context() if self.compress_context else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -5291,9 +5269,8 @@ class Agent:
             run_response.response_audio = model_response.audio
 
         # Store compressed context if compression occurred
-        if self.compression_manager and self.compression_manager.last_compressed_context:
-            session.compressed_context = self.compression_manager.last_compressed_context
-            self.compression_manager.last_compressed_context = None
+        if model_response.compressed_context:
+            session.set_compressed_context(model_response.compressed_context)
 
     async def _ahandle_model_response_stream(
         self,
@@ -5323,11 +5300,6 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Set up compression manager with existing compressed IDs
-        if self.compression_manager and self.compress_context:
-            ctx = session.compressed_context
-            self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5340,6 +5312,7 @@ class Agent:
             compression_manager=self.compression_manager
             if (self.compress_tool_results or self.compress_context)
             else None,
+            compressed_context=session.get_compressed_context() if self.compress_context else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -5392,9 +5365,8 @@ class Agent:
             run_response.response_audio = model_response.audio
 
         # Store compressed context if compression occurred
-        if self.compression_manager and self.compression_manager.last_compressed_context:
-            session.compressed_context = self.compression_manager.last_compressed_context
-            self.compression_manager.last_compressed_context = None
+        if model_response.compressed_context:
+            session.set_compressed_context(model_response.compressed_context)
 
     def _handle_model_response_chunk(
         self,
@@ -5430,6 +5402,11 @@ class Agent:
             )
         else:
             model_response_event = cast(ModelResponse, model_response_event)
+
+            # Accumulate compressed_context if present
+            if model_response_event.compressed_context is not None:
+                model_response.compressed_context = model_response_event.compressed_context
+
             # If the model response is an assistant_response, yield a RunOutput
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
                 content_type = "str"
@@ -8429,7 +8406,7 @@ class Agent:
             from copy import deepcopy
 
             # Get compressed context for filtering messages
-            compressed_ctx = session.compressed_context
+            compressed_ctx = session.get_compressed_context()
 
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
             # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -8649,7 +8626,7 @@ class Agent:
             from copy import deepcopy
 
             # Get compressed context for filtering messages
-            compressed_ctx = session.compressed_context
+            compressed_ctx = session.get_compressed_context()
 
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
             # Standard conversation roles ("user", "assistant", "tool") should never be filtered

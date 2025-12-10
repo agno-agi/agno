@@ -51,8 +51,6 @@ def serialize_session_json_fields(session: dict) -> dict:
         session["summary"] = json.dumps(session["summary"], cls=CustomJSONEncoder)
     if session.get("runs") is not None:
         session["runs"] = json.dumps(session["runs"], cls=CustomJSONEncoder)
-    if session.get("compressed_context") is not None:
-        session["compressed_context"] = json.dumps(session["compressed_context"], cls=CustomJSONEncoder)
 
     return session
 
@@ -116,11 +114,5 @@ def deserialize_session_json_fields(session: dict) -> dict:
             session["runs"] = json.loads(session["runs"])
         except (json.JSONDecodeError, TypeError) as e:
             log_warning(f"Warning: Could not parse runs as JSON, keeping as string: {e}")
-
-    if session.get("compressed_context") is not None and isinstance(session["compressed_context"], str):
-        try:
-            session["compressed_context"] = json.loads(session["compressed_context"])
-        except (json.JSONDecodeError, TypeError) as e:
-            log_warning(f"Warning: Could not parse compressed_context as JSON: {e}")
 
     return session

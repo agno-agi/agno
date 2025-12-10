@@ -1599,10 +1599,6 @@ class Team:
             # 6. Get the model response for the team leader
             self.model = cast(Model, self.model)
 
-            if self.compression_manager and self.compress_context:
-                ctx = session.compressed_context
-                self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
@@ -1613,12 +1609,12 @@ class Team:
                 compression_manager=self.compression_manager
                 if (self.compress_tool_results or self.compress_context)
                 else None,
+                compressed_context=session.get_compressed_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if self.compression_manager and self.compression_manager.last_compressed_context:
-                session.compressed_context = self.compression_manager.last_compressed_context
-                self.compression_manager.last_compressed_context = None
+            if model_response.compressed_context:
+                session.set_compressed_context(model_response.compressed_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2457,11 +2453,6 @@ class Team:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Set up compression manager with existing compressed IDs
-            if self.compression_manager and self.compress_context:
-                ctx = team_session.compressed_context
-                self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
             # 8. Get the model response for the team leader
             model_response = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -2474,12 +2465,12 @@ class Team:
                 compression_manager=self.compression_manager
                 if (self.compress_tool_results or self.compress_context)
                 else None,
+                compressed_context=team_session.get_compressed_context() if self.compress_context else None,
             )  # type: ignore
 
             # Store compressed context if compression occurred
-            if self.compression_manager and self.compression_manager.last_compressed_context:
-                team_session.compressed_context = self.compression_manager.last_compressed_context
-                self.compression_manager.last_compressed_context = None
+            if model_response.compressed_context:
+                team_session.set_compressed_context(model_response.compressed_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3311,11 +3302,6 @@ class Team:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Set up compression manager with existing compressed IDs
-        if self.compression_manager and self.compress_context:
-            ctx = session.compressed_context
-            self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
         full_model_response = ModelResponse()
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -3325,6 +3311,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
+            compressed_context=session.get_compressed_context() if self.compress_context else None,
             compression_manager=self.compression_manager
             if (self.compress_tool_results or self.compress_context)
             else None,
@@ -3342,9 +3329,8 @@ class Team:
             )
 
         # Store compressed context if compression occurred
-        if self.compression_manager and self.compression_manager.last_compressed_context:
-            session.compressed_context = self.compression_manager.last_compressed_context
-            self.compression_manager.last_compressed_context = None
+        if full_model_response.compressed_context:
+            session.set_compressed_context(full_model_response.compressed_context)
 
         # 3. Update TeamRunOutput
         if full_model_response.content is not None:
@@ -3416,11 +3402,6 @@ class Team:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Set up compression manager with existing compressed IDs
-        if self.compression_manager and self.compress_context:
-            ctx = session.compressed_context
-            self.compression_manager.existing_compressed_ids = ctx.message_ids if ctx else None
-
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -3430,6 +3411,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
+            compressed_context=session.get_compressed_context() if self.compress_context else None,
             run_response=run_response,
             compression_manager=self.compression_manager
             if (self.compress_tool_results or self.compress_context)
@@ -3450,9 +3432,8 @@ class Team:
                 yield event
 
         # Store compressed context if compression occurred
-        if self.compression_manager and self.compression_manager.last_compressed_context:
-            session.compressed_context = self.compression_manager.last_compressed_context
-            self.compression_manager.last_compressed_context = None
+        if full_model_response.compressed_context:
+            session.set_compressed_context(full_model_response.compressed_context)
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -3539,6 +3520,11 @@ class Team:
                 return
         else:
             model_response_event = cast(ModelResponse, model_response_event)
+
+            # Accumulate compressed_context if present
+            if model_response_event.compressed_context is not None:
+                full_model_response.compressed_context = model_response_event.compressed_context
+
             # If the model response is an assistant_response, yield a RunOutput
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
                 content_type = "str"
@@ -6428,7 +6414,7 @@ class Team:
         if add_history_to_context:
             from copy import deepcopy
 
-            compressed_ctx = session.compressed_context
+            compressed_ctx = session.get_compressed_context()
 
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
             # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -6567,7 +6553,7 @@ class Team:
         if add_history_to_context:
             from copy import deepcopy
 
-            compressed_ctx = session.compressed_context
+            compressed_ctx = session.get_compressed_context()
 
             # Only skip messages from history when system_message_role is NOT a standard conversation role.
             # Standard conversation roles ("user", "assistant", "tool") should never be filtered

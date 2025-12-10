@@ -699,7 +699,6 @@ class SqliteDb(BaseDb):
                         metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
                         summary=serialized_session.get("summary"),
-                        compressed_context=serialized_session.get("compressed_context"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
                     )
@@ -710,7 +709,6 @@ class SqliteDb(BaseDb):
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
                             summary=serialized_session.get("summary"),
-                            compressed_context=serialized_session.get("compressed_context"),
                             agent_data=serialized_session.get("agent_data"),
                             session_data=serialized_session.get("session_data"),
                             metadata=serialized_session.get("metadata"),
@@ -735,7 +733,6 @@ class SqliteDb(BaseDb):
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
                         summary=serialized_session.get("summary"),
-                        compressed_context=serialized_session.get("compressed_context"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
                         team_data=serialized_session.get("team_data"),
@@ -749,7 +746,6 @@ class SqliteDb(BaseDb):
                             team_id=serialized_session.get("team_id"),
                             user_id=serialized_session.get("user_id"),
                             summary=serialized_session.get("summary"),
-                            compressed_context=serialized_session.get("compressed_context"),
                             runs=serialized_session.get("runs"),
                             team_data=serialized_session.get("team_data"),
                             session_data=serialized_session.get("session_data"),
@@ -876,7 +872,6 @@ class SqliteDb(BaseDb):
                                 "metadata": serialized_session.get("metadata"),
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
-                                "compressed_context": serialized_session.get("compressed_context"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
                             }
@@ -894,7 +889,6 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                compressed_context=stmt.excluded.compressed_context,
                                 updated_at=stmt.excluded.updated_at,
                             ),
                         )
@@ -930,7 +924,6 @@ class SqliteDb(BaseDb):
                                 "user_id": serialized_session.get("user_id"),
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
-                                "compressed_context": serialized_session.get("compressed_context"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
                                 "team_data": serialized_session.get("team_data"),
@@ -951,7 +944,6 @@ class SqliteDb(BaseDb):
                                 metadata=stmt.excluded.metadata,
                                 runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
-                                compressed_context=stmt.excluded.compressed_context,
                                 updated_at=stmt.excluded.updated_at,
                             ),
                         )

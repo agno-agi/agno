@@ -38,8 +38,6 @@ class AgentSession:
     runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
-    # Compressed context from context compression
-    compressed_context: Optional["CompressedContext"] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -51,7 +49,6 @@ class AgentSession:
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
-        session_dict["compressed_context"] = self.compressed_context.to_dict() if self.compressed_context else None
 
         return session_dict
 
@@ -74,10 +71,6 @@ class AgentSession:
         if summary is not None and isinstance(summary, dict):
             summary = SessionSummary.from_dict(summary)
 
-        compressed_context = data.get("compressed_context")
-        if compressed_context is not None and isinstance(compressed_context, dict):
-            compressed_context = CompressedContext.from_dict(compressed_context)
-
         metadata = data.get("metadata")
 
         return cls(
@@ -93,7 +86,6 @@ class AgentSession:
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
             summary=summary,
-            compressed_context=compressed_context,
         )
 
     def upsert_run(self, run: RunOutput):
@@ -267,3 +259,18 @@ class AgentSession:
         if self.summary is None:
             return None
         return self.summary
+
+    def get_compressed_context(self) -> Optional[CompressedContext]:
+        """Get compressed context from session_data."""
+        if self.session_data and "compressed_context" in self.session_data:
+            ctx_data = self.session_data["compressed_context"]
+            if isinstance(ctx_data, dict):
+                return CompressedContext.from_dict(ctx_data)
+            return ctx_data
+        return None
+
+    def set_compressed_context(self, ctx: CompressedContext) -> None:
+        """Store compressed context in session_data."""
+        if self.session_data is None:
+            self.session_data = {}
+        self.session_data["compressed_context"] = ctx.to_dict()

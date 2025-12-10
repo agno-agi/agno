@@ -488,6 +488,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional[Any] = None,
+        compressed_context: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -530,7 +531,10 @@ class Model(ABC):
             while True:
                 # Compress context or tool results BEFORE making API call
                 if compression_manager and compression_manager.should_compress(messages, tools):
-                    compression_manager.compress(messages, tools)
+                    new_context = compression_manager.compress(messages, tools, compressed_context)
+                    if new_context is not None:
+                        model_response.compressed_context = new_context
+                        compressed_context = new_context  # Update for subsequent iterations
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -700,6 +704,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional[Any] = None,
+        compressed_context: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -732,7 +737,10 @@ class Model(ABC):
             while True:
                 # Compress context or tool results BEFORE making API call
                 if compression_manager and compression_manager.should_compress(messages, tools):
-                    await compression_manager.acompress(messages, tools)
+                    new_context = await compression_manager.acompress(messages, tools, compressed_context)
+                    if new_context is not None:
+                        model_response.compressed_context = new_context
+                        compressed_context = new_context  # Update for next model loop
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
@@ -1119,6 +1127,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional[Any] = None,
+        compressed_context: Optional[Any] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1158,8 +1167,12 @@ class Model(ABC):
 
             while True:
                 # Compress context or tool results BEFORE invoke
+                pending_compressed_context = None
                 if compression_manager and compression_manager.should_compress(messages, tools):
-                    compression_manager.compress(messages, tools)
+                    new_context = compression_manager.compress(messages, tools, compressed_context)
+                    if new_context is not None:
+                        compressed_context = new_context  # Update for subsequent iterations
+                        pending_compressed_context = new_context  # Save for yielded response
 
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
@@ -1177,6 +1190,10 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
+                        # Set compressed_context on first yielded ModelResponse
+                        if pending_compressed_context and isinstance(response, ModelResponse):
+                            response.compressed_context = pending_compressed_context
+                            pending_compressed_context = None
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
                         yield response
@@ -1192,6 +1209,9 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     )
+                    # Set compressed_context on non-streaming response
+                    if pending_compressed_context:
+                        model_response.compressed_context = pending_compressed_context
                     if self.cache_response:
                         streaming_responses.append(model_response)
                     yield model_response
@@ -1337,6 +1357,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional[Any] = None,
+        compressed_context: Optional[Any] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1376,8 +1397,12 @@ class Model(ABC):
 
             while True:
                 # Compress context or tool results BEFORE making API call
+                pending_compressed_context = None
                 if compression_manager and compression_manager.should_compress(messages, tools):
-                    await compression_manager.acompress(messages, tools)
+                    new_context = await compression_manager.acompress(messages, tools, compressed_context)
+                    if new_context is not None:
+                        compressed_context = new_context  # Update for subsequent iterations
+                        pending_compressed_context = new_context  # Save for yielded response
 
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
@@ -1395,6 +1420,10 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
+                        # Set compressed_context on first yielded ModelResponse
+                        if pending_compressed_context and isinstance(model_response, ModelResponse):
+                            model_response.compressed_context = pending_compressed_context
+                            pending_compressed_context = None
                         if self.cache_response and isinstance(model_response, ModelResponse):
                             streaming_responses.append(model_response)
                         yield model_response
@@ -1410,6 +1439,9 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     )
+                    # Set compressed_context on non-streaming response
+                    if pending_compressed_context:
+                        model_response.compressed_context = pending_compressed_context
                     if self.cache_response:
                         streaming_responses.append(model_response)
                     yield model_response
