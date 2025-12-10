@@ -1236,7 +1236,13 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -1265,8 +1271,8 @@ class Agent:
 
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_response.error = create_run_error_event(run_response, error=str(e))
-                run_response.events = add_error_event(error=run_response.error, events=run_response.events)
+                run_error = create_run_error_event(run_response, error=str(e))
+                run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -1618,7 +1624,13 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -1662,7 +1674,7 @@ class Agent:
                 )
 
                 # Yield the error event
-                yield run_response.error
+                yield run_error
             finally:
                 # Always disconnect connectable tools
                 self._disconnect_connectable_tools()
@@ -2221,7 +2233,13 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -2668,7 +2686,13 @@ class Agent:
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e), error_id=e.error_id, error_type=e.type, additional_data=e.additional_data)
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message

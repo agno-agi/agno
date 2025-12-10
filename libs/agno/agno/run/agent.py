@@ -550,7 +550,6 @@ class RunOutput:
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
-
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
@@ -692,7 +691,6 @@ class RunOutput:
 
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
-
 
         return _dict
 
