@@ -1,23 +1,17 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
 
-agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
-    tools=[
-        ReasoningTools(add_instructions=True),
-        YFinanceTools(),
-    ],
-    instructions=[
-        "Use tables to display data.",
-        "Include sources in your response.",
-        "Only include the report in your response. No other text.",
-    ],
+reasoning_agent = Agent(
+    model=Claude(id="claude-sonnet-4-5"),
+    tools=[ParallelTools(), ReasoningTools(add_instructions=True)],
+    instructions="Only include the final answer in your response. No yapping.",
     markdown=True,
 )
-agent.print_response(
-    "Write a report on NVDA",
+
+reasoning_agent.print_response(
+    "Write a report on continuous learning in AI systems.",
     stream=True,
     show_full_reasoning=True,
 )

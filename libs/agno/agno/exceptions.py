@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -170,3 +171,9 @@ class OutputCheckError(Exception):
         self.message = message
         self.check_trigger = check_trigger
         self.additional_data = additional_data
+
+
+@dataclass
+class RetryableModelProviderError(Exception):
+    # Guidance message to retry a model invocation after an error
+    retry_guidance_message: Optional[str] = None

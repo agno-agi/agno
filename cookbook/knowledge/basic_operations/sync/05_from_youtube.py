@@ -1,16 +1,12 @@
-"""This cookbook shows how to add content from a local file to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/14_sync.py` to run the cookbook
+"""This cookbook shows how to add content from a Youtube video to Knowledge.
+
+1. Run: `python cookbook/agent_concepts/knowledge/05_from_youtube.py` to run the cookbook
 """
 
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-contents_db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
-)
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
@@ -20,10 +16,11 @@ knowledge = Knowledge(
     ),
 )
 
+# Add from Youtube link to knowledge. Youtube links are automatically detected and the reader is assigned automatically.
 knowledge.add_content(
-    name="CV",
-    path="cookbook/knowledge/testing_resources/cv_1.pdf",
-    metadata={"user_tag": "Engineering Candidates"},
+    name="Agents from Scratch",
+    url="https://www.youtube.com/watch?v=nLkBNnnA8Ac",
+    metadata={"user_tag": "Youtube video"},
 )
 
 
@@ -36,6 +33,6 @@ agent = Agent(
 )
 
 agent.print_response(
-    "What skills does Jordan Mitchell have?",
+    "What can you tell me about the building agents?",
     markdown=True,
 )
