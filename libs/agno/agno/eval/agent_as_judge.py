@@ -281,24 +281,25 @@ class AgentAsJudgeEval(BaseEval):
                 </output>
             """)
 
-            response = evaluator_agent.run(prompt).content
-            if not isinstance(response, (NumericJudgeResponse, BinaryJudgeResponse)):
-                raise EvalError(f"Invalid response: {response}")
+            response = evaluator_agent.run(prompt, stream=False)
+            judge_response = response.content
+            if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
+                raise EvalError(f"Invalid response: {judge_response}")
 
             # Determine pass/fail based on scoring strategy and response type
-            if isinstance(response, NumericJudgeResponse):
-                score = response.score
+            if isinstance(judge_response, NumericJudgeResponse):
+                score = judge_response.score
                 passed = score >= self.threshold
             else:  # BinaryJudgeResponse
                 score = None
-                passed = response.passed
+                passed = judge_response.passed
 
             evaluation = AgentAsJudgeEvaluation(
                 input=input,
                 output=output,
                 criteria=self.criteria,
                 score=score,
-                reason=response.reason,
+                reason=judge_response.reason,
                 passed=passed,
             )
 
@@ -332,7 +333,7 @@ class AgentAsJudgeEval(BaseEval):
                 </output>
             """)
 
-            response = await evaluator_agent.arun(prompt)
+            response = await evaluator_agent.arun(prompt, stream=False)
             judge_response = response.content
             if not isinstance(judge_response, (NumericJudgeResponse, BinaryJudgeResponse)):
                 raise EvalError(f"Invalid response: {judge_response}")
