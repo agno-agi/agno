@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import Metrics
+from agno.run.base import RunStatus
+from agno.run.requirement import RunRequirement
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_warning
 from agno.utils.media import (
@@ -127,7 +129,7 @@ class StepInput:
         """Recursively search for a step output in nested steps (Parallel, Condition, etc.)"""
         if not self.previous_step_outputs:
             return None
-            
+
         for step_output in self.previous_step_outputs.values():
             result = self._search_in_step_output(step_output, step_name)
             if result:
@@ -311,6 +313,21 @@ class StepOutput:
 
     steps: Optional[List["StepOutput"]] = None
 
+    status: Optional[RunStatus] = None
+
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self) -> bool:
+        return self.status == RunStatus.paused
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [req for req in self.requirements if not req.is_resolved()]
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified content field
@@ -345,6 +362,12 @@ class StepOutput:
         if self.steps:
             result["steps"] = [step.to_dict() for step in self.steps]
 
+        if self.status is not None:
+            result["status"] = self.status.value if self.status is not None else None
+
+        if self.requirements is not None:
+            result["requirements"] = [req.to_dict() for req in self.requirements]
+
         return result
 
     @classmethod
@@ -374,6 +397,23 @@ class StepOutput:
         if steps_data:
             steps = [cls.from_dict(step_data) for step_data in steps_data]
 
+        status = None
+        if "status" in data and data["status"] is not None:
+            status_value = data["status"]
+            if isinstance(status_value, str):
+                status = RunStatus(status_value)
+            elif isinstance(status_value, RunStatus):
+                status = status_value
+
+        requirements = None
+        if "requirements" in data and data["requirements"] is not None:
+            requirements = []
+            for requirement in data["requirements"]:
+                if isinstance(requirement, dict):
+                    requirements.append(RunRequirement.from_dict(requirement))
+                elif isinstance(requirement, RunRequirement):
+                    requirements.append(requirement)
+
         return cls(
             step_name=data.get("step_name"),
             step_id=data.get("step_id"),
@@ -391,6 +431,8 @@ class StepOutput:
             error=data.get("error"),
             stop=data.get("stop", False),
             steps=steps,
+            status=status,
+            requirements=requirements,
         )
 
 
