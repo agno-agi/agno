@@ -30,7 +30,10 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
 
 
 def get_openai_reasoning(
-    reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None
+    reasoning_agent: "Agent",
+    messages: List[Message],
+    main_run_metrics: Optional[Any] = None,
+    main_run_response: Optional[Any] = None,
 ) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
@@ -50,6 +53,20 @@ def get_openai_reasoning(
         logger.warning(f"Reasoning error: {e}")
         return None
 
+    # Accumulate reasoning agent's metrics into main run_response if provided
+    if main_run_response is not None and reasoning_agent_response.metrics is not None:
+        from agno.metrics import accumulate_model_metrics
+        from agno.models.response import ModelResponse
+
+        # Create a ModelResponse with the metrics from the reasoning agent's run
+        reasoning_model_response = ModelResponse()
+        reasoning_model_response.response_usage = reasoning_agent_response.metrics
+
+        # Get the reasoning model from the reasoning agent
+        reasoning_model = reasoning_agent.model if hasattr(reasoning_agent, "model") else None
+        if reasoning_model is not None:
+            accumulate_model_metrics(reasoning_model_response, reasoning_model, "reasoning_model", main_run_response)
+
     reasoning_content: str = ""
     # We use the normal content as no reasoning content is returned
     if reasoning_agent_response.content is not None:
@@ -62,7 +79,7 @@ def get_openai_reasoning(
         else:
             reasoning_content = content
 
-    # Extract metrics from reasoning agent's assistant messages
+    # Extract metrics from reasoning agent's assistant messages for the message
     reasoning_metrics = None
     if reasoning_agent_response.messages is not None:
         for msg in reversed(reasoning_agent_response.messages):
@@ -99,7 +116,10 @@ def get_openai_reasoning(
 
 
 async def aget_openai_reasoning(
-    reasoning_agent: "Agent", messages: List[Message], main_run_metrics: Optional[Any] = None
+    reasoning_agent: "Agent",
+    messages: List[Message],
+    main_run_metrics: Optional[Any] = None,
+    main_run_response: Optional[Any] = None,
 ) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.agent import RunOutput
 
@@ -119,6 +139,20 @@ async def aget_openai_reasoning(
         logger.warning(f"Reasoning error: {e}")
         return None
 
+    # Accumulate reasoning agent's metrics into main run_response if provided
+    if main_run_response is not None and reasoning_agent_response.metrics is not None:
+        from agno.metrics import accumulate_model_metrics
+        from agno.models.response import ModelResponse
+
+        # Create a ModelResponse with the metrics from the reasoning agent's run
+        reasoning_model_response = ModelResponse()
+        reasoning_model_response.response_usage = reasoning_agent_response.metrics
+
+        # Get the reasoning model from the reasoning agent
+        reasoning_model = reasoning_agent.model if hasattr(reasoning_agent, "model") else None
+        if reasoning_model is not None:
+            accumulate_model_metrics(reasoning_model_response, reasoning_model, "reasoning_model", main_run_response)
+
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
         # Extract content between <think> tags if present
@@ -130,7 +164,7 @@ async def aget_openai_reasoning(
         else:
             reasoning_content = content
 
-    # Extract metrics from reasoning agent's assistant messages
+    # Extract metrics from reasoning agent's assistant messages for the message
     reasoning_metrics = None
     if reasoning_agent_response.messages is not None:
         for msg in reversed(reasoning_agent_response.messages):

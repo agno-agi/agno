@@ -233,13 +233,11 @@ class SessionSummaryManager:
             messages=messages, response_format=response_format, run_response=run_response
         )
 
-        # Extract assistant message from messages (added by model.response())
-        # and add to run_messages.session_summary_model_messages for metrics tracking
-        if run_messages is not None and messages:
-            # The last message should be the assistant message created by model.response()
-            # model.response() always appends an assistant message to the messages list
-            assistant_message = messages[-1]
-            run_messages.session_summary_model_messages.append(assistant_message)
+        # Accumulate metrics immediately if run_response is provided
+        if run_response is not None:
+            from agno.metrics import accumulate_model_metrics
+
+            accumulate_model_metrics(summary_response, self.model, "session_summary_model", run_response)
 
         session_summary = self._process_summary_response(summary_response, self.model)
 
@@ -274,13 +272,11 @@ class SessionSummaryManager:
             messages=messages, response_format=response_format, run_response=run_response
         )
 
-        # Extract assistant message from messages (added by model.aresponse())
-        # and add to run_messages.session_summary_model_messages for metrics tracking
-        if run_messages is not None and messages:
-            # The last message should be the assistant message created by model.aresponse()
-            # model.aresponse() always appends an assistant message to the messages list
-            assistant_message = messages[-1]
-            run_messages.session_summary_model_messages.append(assistant_message)
+        # Accumulate metrics immediately if run_response is provided
+        if run_response is not None:
+            from agno.metrics import accumulate_model_metrics
+
+            accumulate_model_metrics(summary_response, self.model, "session_summary_model", run_response)
 
         session_summary = self._process_summary_response(summary_response, self.model)
 

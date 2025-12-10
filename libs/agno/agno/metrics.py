@@ -1,8 +1,14 @@
 from dataclasses import asdict, dataclass
 from time import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.utils.timer import Timer
+
+if TYPE_CHECKING:
+    from agno.models.base import Model
+    from agno.models.response import ModelResponse
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
 
 
 @dataclass
@@ -104,6 +110,8 @@ class ToolCallMetrics:
 class MessageMetrics:
     """Metrics for individual messages - token consumption and message-level timing.
     Only set on assistant messages from model responses."""
+
+    # We should make these NONE instead of 0. then on _add, check for None and add 0 if None
 
     # Main token consumption values
     input_tokens: int = 0
@@ -558,3 +566,81 @@ class SessionMetrics(RunMetrics):
         )
 
         return result
+
+
+def accumulate_model_metrics(
+    model_response: "ModelResponse",
+    model: "Model",
+    model_type: str,
+    run_response: "Union[RunOutput, TeamRunOutput]",
+) -> None:
+    """Accumulate metrics from a model response into run_response.metrics.
+
+    This is a standalone function that can be used by managers and other components
+    that don't have direct access to Agent instances.
+
+    Args:
+        model_response: The ModelResponse containing response_usage metrics
+        model: The Model instance that generated the response
+        model_type: Type identifier ("model", "output_model", "reasoning_model", etc.)
+        run_response: The RunOutput to accumulate metrics into
+    """
+
+    # If response_usage is None, return early (no metrics to accumulate)
+    if model_response.response_usage is None:
+        return
+
+    usage = model_response.response_usage
+
+    # Initialize run_response.metrics if None
+    if run_response.metrics is None:
+        run_response.metrics = RunMetrics()
+        run_response.metrics.start_timer()
+
+    # Initialize details dict if None
+    if run_response.metrics.details is None:
+        run_response.metrics.details = {}
+
+    # Get model info
+    model_id = model.id
+    model_provider = model.get_provider()
+
+    # Create ModelMetrics entry
+    model_metrics = ModelMetrics(
+        id=model_id,
+        provider=model_provider,
+        input_tokens=usage.input_tokens or 0,
+        output_tokens=usage.output_tokens or 0,
+        total_tokens=usage.total_tokens or 0,
+        time_to_first_token=usage.time_to_first_token,
+    )
+
+    # Add to details dict (create list if needed)
+    if model_type not in run_response.metrics.details:
+        run_response.metrics.details[model_type] = []
+    run_response.metrics.details[model_type].append(model_metrics)
+
+    # Accumulate token counts to top-level metrics
+    run_response.metrics.input_tokens += usage.input_tokens or 0
+    run_response.metrics.output_tokens += usage.output_tokens or 0
+    run_response.metrics.total_tokens += usage.total_tokens or 0
+    run_response.metrics.audio_input_tokens += usage.audio_input_tokens or 0
+    run_response.metrics.audio_output_tokens += usage.audio_output_tokens or 0
+    run_response.metrics.audio_total_tokens += usage.audio_total_tokens or 0
+    run_response.metrics.cache_read_tokens += usage.cache_read_tokens or 0
+    run_response.metrics.cache_write_tokens += usage.cache_write_tokens or 0
+    run_response.metrics.reasoning_tokens += usage.reasoning_tokens or 0
+
+    # Handle time_to_first_token: only set top-level if model_type is "model" or "reasoning_model"
+    # and current value is None or later (we want the earliest)
+    if model_type in ("model", "reasoning_model") and usage.time_to_first_token is not None:
+        if run_response.metrics.time_to_first_token is None:
+            run_response.metrics.time_to_first_token = usage.time_to_first_token
+        elif usage.time_to_first_token < run_response.metrics.time_to_first_token:
+            run_response.metrics.time_to_first_token = usage.time_to_first_token
+
+    # Merge provider_metrics if present
+    if usage.provider_metrics is not None:
+        if run_response.metrics.provider_metrics is None:
+            run_response.metrics.provider_metrics = {}
+        run_response.metrics.provider_metrics.update(usage.provider_metrics)

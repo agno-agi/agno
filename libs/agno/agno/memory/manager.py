@@ -45,9 +45,6 @@ class MemoryManager:
     # Model used for memory management
     model: Optional[Model] = None
 
-    # Internal: Last assistant message created by memory model (for metrics tracking)
-    _last_assistant_message: Optional[Message] = None
-
     # Provide the system message for the manager as a string. If not provided, the default system message will be used.
     system_message: Optional[str] = None
     # Provide the memory capture instructions for the manager as a string. If not provided, the default memory capture instructions will be used.
@@ -1095,17 +1092,11 @@ class MemoryManager:
             run_response=run_response,
         )
 
-        # Extract assistant message from messages_for_model (added by model.response())
-        # Store it for the caller to add to run_messages if needed
-        if messages_for_model:
-            # The last message should be the assistant message created by model.response()
-            last_message = messages_for_model[-1]
-            if last_message.role == "assistant" and last_message.metrics is not None:
-                self._last_assistant_message = last_message
-            else:
-                self._last_assistant_message = None
-        else:
-            self._last_assistant_message = None
+        # Accumulate metrics immediately if run_response is provided
+        if run_response is not None:
+            from agno.metrics import accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, "memory_model", run_response)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -1186,17 +1177,11 @@ class MemoryManager:
             run_response=run_response,
         )
 
-        # Extract assistant message from messages_for_model (added by model.aresponse())
-        # Store it for the caller to add to run_messages if needed
-        if messages_for_model:
-            # The last message should be the assistant message created by model.aresponse()
-            last_message = messages_for_model[-1]
-            if last_message.role == "assistant" and last_message.metrics is not None:
-                self._last_assistant_message = last_message
-            else:
-                self._last_assistant_message = None
-        else:
-            self._last_assistant_message = None
+        # Accumulate metrics immediately if run_response is provided
+        if run_response is not None:
+            from agno.metrics import accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, "memory_model", run_response)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True

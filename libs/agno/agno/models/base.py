@@ -913,6 +913,10 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
+        # Copy response_usage from provider_response to model_response
+        if provider_response.response_usage is not None:
+            model_response.response_usage = provider_response.response_usage
+
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -969,6 +973,10 @@ class Model(ABC):
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
+
+        # Copy response_usage from provider_response to model_response
+        if provider_response.response_usage is not None:
+            model_response.response_usage = provider_response.response_usage
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -1114,6 +1122,33 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
+        # Accumulate metrics at the end of the stream if run_response is provided
+        if run_response is not None and assistant_message.metrics is not None:
+            from agno.metrics import RunMetrics, accumulate_model_metrics
+            from agno.models.response import ModelResponse
+
+            # Get model_type from run_response context if available, otherwise default to "model"
+            model_type = getattr(run_response, "_current_model_type", "model")
+
+            # Create a ModelResponse with the metrics from the assistant message
+            model_response_with_metrics = ModelResponse()
+            # Convert MessageMetrics back to RunMetrics for accumulation
+            run_metrics = RunMetrics(
+                input_tokens=assistant_message.metrics.input_tokens,
+                output_tokens=assistant_message.metrics.output_tokens,
+                total_tokens=assistant_message.metrics.total_tokens,
+                audio_input_tokens=assistant_message.metrics.audio_input_tokens,
+                audio_output_tokens=assistant_message.metrics.audio_output_tokens,
+                audio_total_tokens=assistant_message.metrics.audio_total_tokens,
+                cache_read_tokens=assistant_message.metrics.cache_read_tokens,
+                cache_write_tokens=assistant_message.metrics.cache_write_tokens,
+                reasoning_tokens=assistant_message.metrics.reasoning_tokens,
+                time_to_first_token=assistant_message.metrics.time_to_first_token,
+                provider_metrics=assistant_message.metrics.provider_metrics,
+            )
+            model_response_with_metrics.response_usage = run_metrics
+            accumulate_model_metrics(model_response_with_metrics, self, model_type, run_response)
+
     def response_stream(
         self,
         messages: List[Message],
@@ -1125,6 +1160,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional[Any] = None,
+        model_type: str = "model",
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1171,19 +1207,31 @@ class Model(ABC):
                 model_response = ModelResponse()
                 if stream_model_response:
                     # Generate response
-                    for response in self.process_response_stream(
-                        messages=messages,
-                        assistant_message=assistant_message,
-                        stream_data=stream_data,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
-                    ):
-                        if self.cache_response and isinstance(response, ModelResponse):
-                            streaming_responses.append(response)
-                        yield response
+                    # Temporarily set model_type on run_response for metrics accumulation
+                    if run_response is not None:
+                        original_model_type = getattr(run_response, "_current_model_type", None)
+                        setattr(run_response, "_current_model_type", model_type)
+                    try:
+                        for response in self.process_response_stream(
+                            messages=messages,
+                            assistant_message=assistant_message,
+                            stream_data=stream_data,
+                            response_format=response_format,
+                            tools=_tool_dicts,
+                            tool_choice=tool_choice or self._tool_choice,
+                            run_response=run_response,
+                            compress_tool_results=_compress_tool_results,
+                        ):
+                            if self.cache_response and isinstance(response, ModelResponse):
+                                streaming_responses.append(response)
+                            yield response
+                    finally:
+                        # Restore original model_type
+                        if run_response is not None:
+                            if original_model_type is not None:
+                                setattr(run_response, "_current_model_type", original_model_type)
+                            else:
+                                delattr(run_response, "_current_model_type")
 
                 else:
                     self._process_model_response(
@@ -1335,6 +1383,33 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
+        # Accumulate metrics at the end of the stream if run_response is provided
+        if run_response is not None and assistant_message.metrics is not None:
+            from agno.metrics import RunMetrics, accumulate_model_metrics
+            from agno.models.response import ModelResponse
+
+            # Get model_type from run_response context if available, otherwise default to "model"
+            model_type = getattr(run_response, "_current_model_type", "model")
+
+            # Create a ModelResponse with the metrics from the assistant message
+            model_response_with_metrics = ModelResponse()
+            # Convert MessageMetrics back to RunMetrics for accumulation
+            run_metrics = RunMetrics(
+                input_tokens=assistant_message.metrics.input_tokens,
+                output_tokens=assistant_message.metrics.output_tokens,
+                total_tokens=assistant_message.metrics.total_tokens,
+                audio_input_tokens=assistant_message.metrics.audio_input_tokens,
+                audio_output_tokens=assistant_message.metrics.audio_output_tokens,
+                audio_total_tokens=assistant_message.metrics.audio_total_tokens,
+                cache_read_tokens=assistant_message.metrics.cache_read_tokens,
+                cache_write_tokens=assistant_message.metrics.cache_write_tokens,
+                reasoning_tokens=assistant_message.metrics.reasoning_tokens,
+                time_to_first_token=assistant_message.metrics.time_to_first_token,
+                provider_metrics=assistant_message.metrics.provider_metrics,
+            )
+            model_response_with_metrics.response_usage = run_metrics
+            accumulate_model_metrics(model_response_with_metrics, self, model_type, run_response)
+
     async def aresponse_stream(
         self,
         messages: List[Message],
@@ -1346,6 +1421,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional[Any] = None,
+        model_type: str = "model",
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1389,16 +1465,31 @@ class Model(ABC):
                 model_response = ModelResponse()
                 if stream_model_response:
                     # Generate response
-                    async for model_response in self.aprocess_response_stream(
-                        messages=messages,
-                        assistant_message=assistant_message,
-                        stream_data=stream_data,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
-                    ):
+                    # Temporarily set model_type on run_response for metrics accumulation
+                    if run_response is not None:
+                        original_model_type = getattr(run_response, "_current_model_type", None)
+                        setattr(run_response, "_current_model_type", model_type)
+                    try:
+                        async for model_response_delta in self.aprocess_response_stream(
+                            messages=messages,
+                            assistant_message=assistant_message,
+                            stream_data=stream_data,
+                            response_format=response_format,
+                            tools=_tool_dicts,
+                            tool_choice=tool_choice or self._tool_choice,
+                            run_response=run_response,
+                            compress_tool_results=_compress_tool_results,
+                        ):
+                            if self.cache_response and isinstance(model_response_delta, ModelResponse):
+                                streaming_responses.append(model_response_delta)
+                            yield model_response_delta
+                    finally:
+                        # Restore original model_type
+                        if run_response is not None:
+                            if original_model_type is not None:
+                                setattr(run_response, "_current_model_type", original_model_type)
+                            else:
+                                delattr(run_response, "_current_model_type")
                         if self.cache_response and isinstance(model_response, ModelResponse):
                             streaming_responses.append(model_response)
                         yield model_response
