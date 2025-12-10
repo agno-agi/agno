@@ -31,7 +31,8 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
+from agno.os.router import get_base_router
+from agno.os.routers.agents import get_agent_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
@@ -39,7 +40,9 @@ from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
+from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
+from agno.os.routers.workflows import get_websocket_router, get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
@@ -296,6 +299,9 @@ class AgentOS:
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_agent_router(self, settings=self.settings))
+        self._add_router(app, get_team_router(self, settings=self.settings))
+        self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
         # Add A2A interface if relevant
