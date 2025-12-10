@@ -1631,7 +1631,7 @@ class Agent:
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
             if attempt > 0:
-                log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
+                log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
                 # Register run for cancellation tracking
