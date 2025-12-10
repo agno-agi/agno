@@ -15,7 +15,9 @@ agent = Agent(
 )
 
 # Ask questions that require current information
-response = agent.run("What are the latest developments in AI technology this week?", stream=True)
+response = agent.run(
+    "What are the latest developments in AI technology this week?", stream=True
+)
 response_str = ""
 print("Citations:")
 print("=" * 80)

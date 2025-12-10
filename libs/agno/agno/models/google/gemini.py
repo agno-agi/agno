@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -1016,7 +1016,6 @@ class Gemini(Model):
 
                 chunks = grounding_metadata.grounding_chunks or []
                 web_search_queries = grounding_metadata.web_search_queries or []
-                citation_pairs: List[Tuple[str, str]] = []
                 for chunk in chunks:
                     if not chunk:
                         continue
@@ -1026,11 +1025,7 @@ class Gemini(Model):
                     uri = web.uri
                     title = web.title
                     if uri:
-                        citation_pairs.append((uri, title))
-
-                # Create citation objects from filtered pairs
-                grounding_urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
-                citations_urls.extend(grounding_urls)
+                        citations_urls.append(UrlCitation(url=uri, title=title))
 
             # Handle URLs from URL context tool
             if (
@@ -1172,7 +1167,6 @@ class Gemini(Model):
                 citations.search_queries = grounding_metadata.web_search_queries or []
                 # Extract url and title
                 chunks = grounding_metadata.grounding_chunks or []
-                citation_pairs: List[Tuple[str, str]] = []
                 for chunk in chunks:
                     if not chunk:
                         continue
@@ -1182,10 +1176,7 @@ class Gemini(Model):
                     uri = web.uri
                     title = web.title
                     if uri:
-                        citation_pairs.append((uri, title))
-
-                # Create citation objects from filtered pairs
-                citations.urls.extend([UrlCitation(url=url, title=title) for url, title in citation_pairs])
+                        citations.urls.append(UrlCitation(url=uri, title=title))
 
             # Handle URLs from URL context tool
             if (
