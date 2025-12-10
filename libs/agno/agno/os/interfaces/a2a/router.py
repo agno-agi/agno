@@ -77,7 +77,7 @@ def attach_routes(
         warnings.warn("This endpoint is deprecated. Use /v1/message:send instead.")
 
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_send_message)
+        kwargs = await get_request_kwargs(request, a2a_send_message)
 
         # 1. Get the Agent, Team, or Workflow to run
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
@@ -185,7 +185,7 @@ def attach_routes(
         warnings.warn("This endpoint is deprecated. Use /v1/message:stream instead.")
 
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_stream_message)
+        kwargs = await get_request_kwargs(request, a2a_stream_message)
 
         # 1. Get the Agent, Team, or Workflow to run
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId")
