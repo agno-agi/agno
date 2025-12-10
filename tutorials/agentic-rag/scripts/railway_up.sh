@@ -31,7 +31,7 @@ if [ -z "$OPENAI_API_KEY" ]; then
 fi
 
 echo "=== Initializing Railway project ==="
-railway init -n "agentic-rag"
+railway init -n "agentic-rag-os"
 
 echo ""
 echo "=== Deploying PgVector database ==="
@@ -47,7 +47,7 @@ echo ""
 echo "=== Creating API service with environment variables ==="
 # Add a new service for the API with variables using Railway's reference syntax
 # The pgvector template creates a service named "pgvector" with standard Postgres variables
-railway add --service api \
+railway add --service agentic-rag-os \
   --variables "DB_DRIVER=postgresql+psycopg" \
   --variables 'DB_USER=${{pgvector.PGUSER}}' \
   --variables 'DB_PASS=${{pgvector.PGPASSWORD}}' \
@@ -56,19 +56,13 @@ railway add --service api \
   --variables 'DB_DATABASE=${{pgvector.PGDATABASE}}' \
   --variables "OPENAI_API_KEY=${OPENAI_API_KEY}"
 
-echo ""
-echo "=== Deploying application ==="
-railway up --service api -d
+echo -e "🚀 Deploying application...\n"
+railway up --service agentic-rag-os -d
 
-echo ""
-echo "=== Creating public domain ==="
-railway domain --service api
+echo -e "🔗 Creating domain...\n"
+railway domain --service agentic-rag-os
 
-echo ""
-echo "=== Deployment complete! ==="
-echo ""
-echo "Useful commands:"
-echo "  railway logs --service api  - View application logs"
-echo "  railway status        - Check deployment status"
-echo "  railway open          - Open project in browser"
-echo "  railway variables     - View environment variables"
+echo -e "Note: It may take up to 5 minutes for the domain to reach ready state while the application is deploying.\n"
+
+echo -e "✅ Deployment complete!\n"
+echo -e "💡 Tip: Run 'railway logs --service agentic-rag-os' to view your application logs.\n"

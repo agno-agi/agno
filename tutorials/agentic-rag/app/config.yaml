@@ -1,8 +1,3 @@
-available_models:
-  - "gpt-4o"
-  - "gpt-4o-mini"
-  - "claude-sonnet-4-5"
-  
 chat:
   quick_prompts:
     docs-assistant:

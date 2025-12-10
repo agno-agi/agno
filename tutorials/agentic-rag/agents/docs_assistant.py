@@ -46,25 +46,10 @@ knowledge_agent = Agent(
 
 if __name__ == "__main__":
     # Add content to knowledge base
+    print("Adding content to knowledge base...")
     asyncio.run(
         knowledge.add_content_async(
             url="https://docs.agno.com/llms-full.txt",
         )
     )
-
-    # Example 1: Basic search with agentic filters
-    knowledge_agent.print_response("How do I create an agent in Agno?", stream=True)
-
-    # # # Example 2: Manual knowledge filters (dict)
-    # # knowledge_agent.print_response(
-    # #     "What models are available?",
-    # #     knowledge_filters={"category": "llms"},
-    # #     stream=True,
-    # # )
-
-    # # # Example 3: Filter expressions (more complex queries)
-    # # knowledge_agent.print_response(
-    # #     "What documentation is available?",
-    # #     knowledge_filters=[AND(EQ("category", "llms"), EQ("doc_type", "reference"))],
-    # #     stream=True,
-    # # )
+    print("Content added to knowledge base.")

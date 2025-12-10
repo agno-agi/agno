@@ -24,7 +24,7 @@ if "%OPENAI_API_KEY%"=="" (
 echo ========================================
 echo Initializing Railway project...
 echo ========================================
-cmd /c railway init -n "agentic-rag"
+cmd /c railway init -n "agentic-rag-os"
 echo.
 
 echo ========================================
@@ -40,9 +40,9 @@ timeout /t 15 /nobreak >nul
 echo.
 
 echo ========================================
-echo Creating API service with environment variables...
+echo Creating application service with environment variables...
 echo ========================================
-cmd /c railway add --service api ^
+cmd /c railway add --service agentic-rag-os ^
   --variables "DB_DRIVER=postgresql+psycopg" ^
   --variables "DB_USER=${{pgvector.PGUSER}}" ^
   --variables "DB_PASS=${{pgvector.PGPASSWORD}}" ^
@@ -55,13 +55,13 @@ echo.
 echo ========================================
 echo Deploying application...
 echo ========================================
-cmd /c railway up --service api -d
+cmd /c railway up --service agentic-rag-os -d
 echo.
 
 echo ========================================
 echo Creating public domain...
 echo ========================================
-cmd /c railway domain --service api
+cmd /c railway domain --service agentic-rag-os
 echo.
 
 echo ========================================
@@ -69,7 +69,7 @@ echo Deployment complete!
 echo ========================================
 echo.
 echo Useful commands:
-echo   railway logs --service api  - View application logs
+echo   railway logs --service agentic-rag-os  - View application logs
 echo   railway status              - Check deployment status
 echo   railway open                - Open project in browser
 echo   railway variables           - View environment variables
