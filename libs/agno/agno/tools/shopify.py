@@ -18,13 +18,10 @@ from itertools import combinations
 from os import getenv
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
-
-try:
-    import httpx
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
 
 class ShopifyTools(Toolkit):
