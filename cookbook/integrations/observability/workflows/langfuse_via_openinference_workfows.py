@@ -8,7 +8,6 @@ This example shows how to instrument your agno agent with OpenInference and send
   - export LANGFUSE_SECRET_KEY=<your-key>
 """
 
-import asyncio
 import base64
 import os
 
