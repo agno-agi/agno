@@ -1791,9 +1791,6 @@ class Agent:
                 if stream_events is None:
                     stream_events = False if self.stream_events is None else self.stream_events
 
-                self.stream = self.stream or stream
-                self.stream_events = self.stream_events or stream_events
-
                 # Prepare arguments for the model
                 response_format = (
                     self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -2717,9 +2714,6 @@ class Agent:
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
 
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
         self.model = cast(Model, self.model)
 
         # Get knowledge filters
@@ -3025,9 +3019,6 @@ class Agent:
                 # Can't stream events if streaming is disabled
                 if stream is False:
                     stream_events = False
-
-                self.stream = self.stream or stream
-                self.stream_events = self.stream_events or stream_events
 
                 # Run can be continued from previous run response or from passed run_response context
                 if run_response is not None:
@@ -3594,9 +3585,6 @@ class Agent:
         # Can't have stream_intermediate_steps if stream is False
         if stream is False:
             stream_events = False
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
 
         # Get knowledge filters
         knowledge_filters = knowledge_filters
