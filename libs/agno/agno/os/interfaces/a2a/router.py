@@ -21,7 +21,7 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-from agno.os.router import _get_request_kwargs
+
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import Team
 from agno.workflow import Workflow
@@ -80,7 +80,7 @@ def attach_routes(
 
         # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_run_agent)
+        kwargs = await get_request_kwargs(request, a2a_run_agent)
 
         # Detect streaming based on method in request
         method = request_body.get("method")
@@ -209,7 +209,7 @@ def attach_routes(
 
         # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_run_team)
+        kwargs = await get_request_kwargs(request, a2a_run_team)
 
         # Detect streaming based on method in request
         method = request_body.get("method")
@@ -337,7 +337,7 @@ def attach_routes(
 
         # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_run_workflow)
+        kwargs = await get_request_kwargs(request, a2a_run_workflow)
 
         # Detect streaming based on method in request
         method = request_body.get("method")
