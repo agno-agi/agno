@@ -1,5 +1,6 @@
 """Table schemas and related utils used by the PostgresDb class"""
 
+from enum import Enum
 from typing import Any
 
 try:
@@ -157,6 +158,20 @@ SPAN_TABLE_SCHEMA = {
     "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
+CONFIG_TABLE = {
+    "config_id": {"type": String, "primary_key": True},
+    "version": {"type": String, "primary_key": True},
+    "config_type": {"type": String, "nullable": False, "index": True},  # "agent", "team", "workflow"
+    "name": {"type": String, "nullable": True, "index": True},
+    "description": {"type": String, "nullable": True},
+    "config": {"type": JSONB, "nullable": False},
+    "is_current": {"type": Boolean, "default": False, "index": True},
+    "notes": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -178,6 +193,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
+        "configs": CONFIG_TABLE,
     }
 
     schema = schemas.get(table_type, {})

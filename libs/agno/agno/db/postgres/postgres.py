@@ -6,7 +6,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import BaseDb, ConfigType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
@@ -56,6 +56,7 @@ class PostgresDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        config_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -79,6 +80,7 @@ class PostgresDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            config_table (Optional[str]): Name of the table to store configurations.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -111,6 +113,7 @@ class PostgresDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            config_table=config_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -118,6 +121,36 @@ class PostgresDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
+
+    # -- Serialization methods --
+    def to_dict(self):
+        base = super().to_dict()
+        base.update(
+            {
+                "db_url": self.db_url,
+                "db_schema": self.db_schema,
+                "type": "postgres",
+            }
+        )
+        return base
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            db_url=data.get("db_url"),
+            db_schema=data.get("db_schema"),
+            session_table=data.get("session_table"),
+            culture_table=data.get("culture_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            config_table=data.get("config_table"),
+            id=data.get("id"),
+        )
 
     # -- DB methods --
     def table_exists(self, table_name: str) -> bool:
@@ -141,6 +174,7 @@ class PostgresDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.config_table_name, "configs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -314,6 +348,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.traces_table
+
+        if table_type == "configs":
+            self.config_table = self._get_or_create_table(
+                table_name=self.config_table_name,
+                table_type="configs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.config_table
 
         if table_type == "spans":
             # Ensure traces table exists first (spans has FK to traces)
@@ -2835,3 +2877,398 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # --- Config ---
+    def get_config(
+        self,
+        config_id: str,
+        version: Optional[str] = None,
+        config_type: Optional[ConfigType] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a config by ID and optionally version.
+
+        Args:
+            config_id: The config ID.
+            version: Specific version. If None, returns current version (or latest if no current).
+            config_type: Optional type filter.
+
+        Returns:
+            Config dictionary or None if not found.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                if version is not None:
+                    stmt = select(table).where(
+                        table.c.config_id == config_id,
+                        table.c.version == version,
+                        table.c.deleted_at.is_(None),
+                    )
+                    if config_type is not None:
+                        stmt = stmt.where(table.c.config_type == config_type.value)
+
+                    result = sess.execute(stmt).fetchone()
+                else:
+                    # Try current first
+                    stmt = select(table).where(
+                        table.c.config_id == config_id,
+                        table.c.is_current.is_(True),
+                        table.c.deleted_at.is_(None),
+                    )
+                    if config_type is not None:
+                        stmt = stmt.where(table.c.config_type == config_type.value)
+
+                    result = sess.execute(stmt).fetchone()
+
+                    # Fallback to latest by created_at
+                    if result is None:
+                        stmt = (
+                            select(table)
+                            .where(
+                                table.c.config_id == config_id,
+                                table.c.deleted_at.is_(None),
+                            )
+                            .order_by(table.c.created_at.desc())
+                            .limit(1)
+                        )
+                        if config_type is not None:
+                            stmt = stmt.where(table.c.config_type == config_type.value)
+
+                        result = sess.execute(stmt).fetchone()
+
+                if result is None:
+                    return None
+
+                return dict(result._mapping)
+
+        except Exception as e:
+            log_error(f"Error getting config: {e}")
+            raise e
+
+    def upsert_config(
+        self,
+        config_id: str,
+        version: str,
+        config_type: ConfigType,
+        config: Dict[str, Any],
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        notes: Optional[str] = None,
+        is_current: bool = True,
+        upsert: bool = True,
+    ) -> None:
+        """Create or update a config version.
+
+        Args:
+            config_id: Unique identifier for the config.
+            version: Version string (e.g., "v1", "1.0.0").
+            config_type: Type of config (agent, team, workflow).
+            config: The config data as a dictionary.
+            name: Human-readable name.
+            description: Optional description.
+            notes: Optional notes about this version.
+            is_current: Whether this is the current version. Defaults to True.
+            upsert: If True, update existing version. If False, raise error if exists.
+
+        Raises:
+            ValueError: If upsert=False and version already exists.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="configs", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                if not upsert:
+                    existing = sess.execute(
+                        select(table).where(
+                            table.c.config_id == config_id,
+                            table.c.version == version,
+                            table.c.deleted_at.is_(None),
+                        )
+                    ).fetchone()
+                    if existing:
+                        raise ValueError(f"Config {config_id} version {version} already exists")
+
+                if is_current:
+                    update_stmt = (
+                        table.update()
+                        .where(table.c.config_id == config_id)
+                        .where(table.c.is_current.is_(True))
+                        .where(table.c.config_type == config_type.value)
+                        .values(is_current=False)
+                    )
+                    sess.execute(update_stmt)
+
+                if upsert:
+                    stmt = postgresql.insert(table).values(
+                        config_id=config_id,
+                        version=version,
+                        config_type=config_type.value,
+                        name=name,
+                        description=description,
+                        config=config,
+                        is_current=is_current,
+                        notes=notes,
+                        created_at=int(time.time()),
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["config_id", "version"],
+                        set_=dict(
+                            name=name,
+                            description=description,
+                            config=config,
+                            is_current=is_current,
+                            notes=notes,
+                            updated_at=int(time.time()),
+                        ),
+                    )
+                else:
+                    stmt = table.insert().values(
+                        config_id=config_id,
+                        version=version,
+                        config_type=config_type.value,
+                        name=name,
+                        description=description,
+                        config=config,
+                        is_current=is_current,
+                        notes=notes,
+                        created_at=int(time.time()),
+                    )
+
+                sess.execute(stmt)
+
+            log_debug(f"{'Upserted' if upsert else 'Created'} config {config_id} version {version}")
+
+        except Exception as e:
+            log_error(f"Error upserting config: {e}")
+            raise e
+
+    def delete_config(
+        self,
+        config_id: str,
+        version: Optional[str] = None,
+        all_versions: bool = False,
+    ) -> int:
+        """Delete a config or specific version.
+
+        Args:
+            config_id: The config ID.
+            version: Specific version to delete.
+            all_versions: Delete all versions of the config.
+
+        Returns:
+            Number of rows deleted.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return 0
+
+            with self.Session() as sess, sess.begin():
+                if all_versions:
+                    # Delete all versions
+                    stmt = (
+                        table.update()
+                        .where(table.c.config_id == config_id)
+                        .values(deleted_at=int(time.time()), is_current=False)
+                    )
+                    result = sess.execute(stmt)
+                else:
+                    # Check if we're deleting the current version
+                    if version is not None:
+                        check_stmt = select(table.c.is_current).where(
+                            table.c.config_id == config_id,
+                            table.c.version == version,
+                        )
+                        row = sess.execute(check_stmt).fetchone()
+                        was_current = row and row.is_current
+                    else:
+                        # No version specified, delete current
+                        was_current = True
+                        version_stmt = select(table.c.version).where(
+                            table.c.config_id == config_id,
+                            table.c.is_current.is_(True),
+                        )
+                        row = sess.execute(version_stmt).fetchone()
+                        if row is None:
+                            return 0
+                        version = row.version
+
+                    # Soft delete the version
+                    stmt = (
+                        table.update()
+                        .where(table.c.config_id == config_id)
+                        .where(table.c.version == version)
+                        .values(deleted_at=int(time.time()), is_current=False)
+                    )
+                    result = sess.execute(stmt)
+
+                    # Promote next latest to current
+                    if was_current and result.rowcount > 0:
+                        next_current_stmt = (
+                            select(table.c.version)
+                            .where(table.c.config_id == config_id)
+                            .where(table.c.deleted_at.is_(None))
+                            .order_by(table.c.created_at.desc())
+                            .limit(1)
+                        )
+                        next_row = sess.execute(next_current_stmt).fetchone()
+                        if next_row:
+                            promote_stmt = (
+                                table.update()
+                                .where(table.c.config_id == config_id)
+                                .where(table.c.version == next_row.version)
+                                .values(is_current=True)
+                            )
+                            sess.execute(promote_stmt)
+
+            log_debug(f"Deleted {result.rowcount} config(s)")
+            return result.rowcount
+
+        except Exception as e:
+            log_error(f"Error deleting config: {e}")
+            raise e
+
+    def get_config_versions(
+        self,
+        config_id: str,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get all versions of a config.
+
+        Args:
+            config_id: The config ID.
+            include_deleted: Whether to include soft-deleted versions.
+
+        Returns:
+            List of config dictionaries, newest first.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.config_id == config_id).order_by(table.c.created_at.desc())
+
+                if not include_deleted:
+                    stmt = stmt.where(table.c.deleted_at.is_(None))
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting config versions: {e}")
+            raise e
+
+    def get_configs_by_type(
+        self,
+        config_type: ConfigType,
+        current_only: bool = True,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get all configs of a given type.
+
+        Args:
+            config_type: The type of configs to retrieve.
+            current_only: Only return current versions. Defaults to True.
+            include_deleted: Whether to include soft-deleted configs.
+
+        Returns:
+            List of config dictionaries.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.config_type == config_type.value)
+
+                if current_only:
+                    stmt = stmt.where(table.c.is_current == True)
+
+                if not include_deleted:
+                    stmt = stmt.where(table.c.deleted_at.is_(None))
+
+                stmt = stmt.order_by(table.c.created_at.desc())
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting configs by type: {e}")
+            raise e
+
+    def set_current_version(
+        self,
+        config_id: str,
+        version: str,
+    ) -> bool:
+        """Set a specific version as the current version.
+
+        Args:
+            config_id: The config ID.
+            version: The version to set as current.
+
+        Returns:
+            True if successful, False if version not found.
+
+        Raises:
+            Exception: If an error occurs during update.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Check version exists
+                check_stmt = select(table).where(
+                    table.c.config_id == config_id,
+                    table.c.version == version,
+                )
+                if sess.execute(check_stmt).fetchone() is None:
+                    return False
+
+                # Unset current
+                unset_stmt = (
+                    table.update()
+                    .where(table.c.config_id == config_id)
+                    .where(table.c.is_current == True)
+                    .values(is_current=False)
+                )
+                sess.execute(unset_stmt)
+
+                # Set new current
+                set_stmt = (
+                    table.update()
+                    .where(table.c.config_id == config_id)
+                    .where(table.c.version == version)
+                    .values(is_current=True, updated_at=int(time.time()))
+                )
+                sess.execute(set_stmt)
+
+            log_debug(f"Set {config_id} current version to {version}")
+            return True
+
+        except Exception as e:
+            log_error(f"Error setting current version: {e}")
+            raise e

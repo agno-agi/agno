@@ -305,6 +305,13 @@ class OpenAIChat(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "OpenAIChat":
+        """
+        Create an OpenAIChat model from a dictionary.
+        """
+        return cls(**data)
+
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
