@@ -24,7 +24,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgentRunException, ModelProviderError
+from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
@@ -153,6 +153,9 @@ class Model(ABC):
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
+    # Enable retrying a model invocation once with a guidance message.
+    # This is useful for known errors avoidable with extra instructions.
+    retry_with_guidance: bool = True
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
@@ -186,6 +189,9 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+                return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -212,6 +218,9 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+                return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -240,6 +249,10 @@ class Model(ABC):
                     sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+                yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
+                return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -269,6 +282,11 @@ class Model(ABC):
                     await asyncio.sleep(delay)
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+                async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
+                    yield response
+                return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -277,6 +295,14 @@ class Model(ABC):
         fields = {"name", "id", "provider"}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
+
+    def _remove_temporarys(self, messages: List[Message]) -> None:
+        """Remove temporal messages from the given list.
+
+        Args:
+            messages: The list of messages to filter (modified in place).
+        """
+        messages[:] = [m for m in messages if not m.temporary]
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
