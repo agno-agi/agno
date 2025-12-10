@@ -64,9 +64,8 @@ def require_scopes(required_scopes: List[str]):
     """
     Create a FastAPI dependency that checks for required scopes.
 
-    This is a helper function for future use when you want to add
-    scope requirements directly to specific endpoints using FastAPI's
-    Depends() mechanism.
+    This is a helper function to add scope requirements 
+    directly to specific endpoints using FastAPI' Depends() mechanism.
 
     Usage:
         @router.get("/endpoint", dependencies=[Depends(require_scopes(["scope:read"]))])
