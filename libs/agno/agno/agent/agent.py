@@ -1155,9 +1155,7 @@ class Agent:
 
             # We should break out of the run function
             if any(tool_call.is_paused for tool_call in run_response.tools or []):
-                wait_for_open_threads(
-                    memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future
-                )
+                wait_for_open_threads(memory_future=memory_future, cultural_knowledge_future=cultural_knowledge_future)
 
                 return self._handle_agent_run_paused(run_response=run_response, session=session, user_id=user_id)
 
@@ -1614,7 +1612,7 @@ class Agent:
 
         # Initialize session early for error handling
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
-        # Set the id for the run 
+        # Set the id for the run
         run_id = run_id or str(uuid4())
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
@@ -1629,8 +1627,6 @@ class Agent:
                 stacklevel=2,
             )
 
-        log_debug(f"Runnig Anurag")
-
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
@@ -1639,7 +1635,7 @@ class Agent:
 
             try:
                 # Register run for cancellation tracking
-                register_run(run_id) 
+                register_run(run_id)
 
                 background_tasks = kwargs.pop("background_tasks", None)
                 if background_tasks is not None:
@@ -1712,14 +1708,18 @@ class Agent:
                     self._resolve_run_dependencies(run_context=run_context)
 
                 add_dependencies = (
-                    add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+                    add_dependencies_to_context
+                    if add_dependencies_to_context is not None
+                    else self.add_dependencies_to_context
                 )
                 add_session_state = (
                     add_session_state_to_context
                     if add_session_state_to_context is not None
                     else self.add_session_state_to_context
                 )
-                add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+                add_history = (
+                    add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+                )
 
                 # When filters are passed manually
                 if self.knowledge_filters or knowledge_filters:
@@ -1749,7 +1749,9 @@ class Agent:
                 self.stream_events = self.stream_events or stream_events
 
                 # Prepare arguments for the model
-                response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
+                response_format = (
+                    self._get_response_format(run_context=run_context) if self.parser_model is None else None
+                )
                 self.model = cast(Model, self.model)
 
                 # Merge agent metadata with run metadata
@@ -1809,7 +1811,7 @@ class Agent:
                         **kwargs,
                     )
                     return response
-            
+
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 log_info(f"Run {run_response.run_id} was cancelled during streaming")
@@ -1836,67 +1838,67 @@ class Agent:
                     return run_response
 
             except (InputCheckError, OutputCheckError) as e:
-                    # Handle exceptions during streaming
-                    run_response.status = RunStatus.error
-                    # Add error event to list of events
-                    run_error = create_run_error_event(
-                        run_response,
-                        error=str(e),
-                        error_id=e.error_id,
-                        error_type=e.type,
-                        additional_data=e.additional_data,
-                    )
-                    run_response.events = add_error_event(error=run_error, events=run_response.events)
+                # Handle exceptions during streaming
+                run_response.status = RunStatus.error
+                # Add error event to list of events
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
+                run_response.events = add_error_event(error=run_error, events=run_response.events)
 
-                    # If the content is None, set it to the error message
-                    if run_response.content is None:
-                        run_response.content = str(e)
+                # If the content is None, set it to the error message
+                if run_response.content is None:
+                    run_response.content = str(e)
 
-                    log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                    self._cleanup_and_store(
-                        run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
-                    )
+                self._cleanup_and_store(
+                    run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                )
 
-                    if stream:
-                        yield run_error
-                        break
-                    else:
-                        return run_response
+                if stream:
+                    yield run_error
+                    break
+                else:
+                    return run_response
 
             except Exception as e:
-                    if attempt < num_attempts - 1:
-                        # Calculate delay with exponential backoff if enabled
-                        if self.exponential_backoff:
-                            delay = self.delay_between_retries * (2**attempt)
-                        else:
-                            delay = self.delay_between_retries
-
-                        log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                        time.sleep(delay)
-                        continue
-
-                    run_response.status = RunStatus.error
-                    # Add error event to list of events
-                    run_error = create_run_error_event(run_response, error=str(e))
-                    run_response.events = add_error_event(error=run_error, events=run_response.events)
-
-                    # If the content is None, set it to the error message
-                    if run_response.content is None:
-                        run_response.content = str(e)
-
-                    log_error(f"Error in Agent run: {str(e)}")
-
-                    # Cleanup and store the run response and session
-                    self._cleanup_and_store(
-                        run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
-                    )
-
-                    if stream:
-                        yield run_error
-                        break
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
                     else:
-                        return run_response
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+
+                run_response.status = RunStatus.error
+                # Add error event to list of events
+                run_error = create_run_error_event(run_response, error=str(e))
+                run_response.events = add_error_event(error=run_error, events=run_response.events)
+
+                # If the content is None, set it to the error message
+                if run_response.content is None:
+                    run_response.content = str(e)
+
+                log_error(f"Error in Agent run: {str(e)}")
+
+                # Cleanup and store the run response and session
+                self._cleanup_and_store(
+                    run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                )
+
+                if stream:
+                    yield run_error
+                    break
+                else:
+                    return run_response
 
     async def _arun(
         self,
@@ -1945,7 +1947,6 @@ class Agent:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
-
                 # 1. Read or create session. Reads from the database if provided.
                 agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 

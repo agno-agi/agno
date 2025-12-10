@@ -2045,7 +2045,6 @@ class Team:
             )
             yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
-
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
@@ -2053,7 +2052,6 @@ class Team:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
-
                 # Register run for cancellation tracking
                 register_run(run_id)  # type: ignore
 
@@ -2128,14 +2126,18 @@ class Team:
 
                 # Determine runtime context parameters
                 add_dependencies = (
-                    add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+                    add_dependencies_to_context
+                    if add_dependencies_to_context is not None
+                    else self.add_dependencies_to_context
                 )
                 add_session_state = (
                     add_session_state_to_context
                     if add_session_state_to_context is not None
                     else self.add_session_state_to_context
                 )
-                add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+                add_history = (
+                    add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+                )
 
                 # When filters are passed manually
                 if self.knowledge_filters or knowledge_filters:
@@ -2263,7 +2265,7 @@ class Team:
                     break
                 else:
                     return run_response
-            
+
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
                 run_error = create_team_run_error_event(
@@ -2353,7 +2355,6 @@ class Team:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
-
                 if run_context.dependencies is not None:
                     await self._aresolve_run_dependencies(run_context=run_context)
 
