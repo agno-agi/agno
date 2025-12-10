@@ -21,8 +21,6 @@ Required scopes:
 - read_analytics (for analytics data)
 """
 
-from os import getenv
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.shopify import ShopifyTools
