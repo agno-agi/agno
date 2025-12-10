@@ -915,6 +915,7 @@ class OpenAIChat(Model):
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = response_usage.total_tokens or 0
+        metrics.cost = getattr(response_usage, "cost", None)
 
         # Add the prompt_tokens_details field
         if prompt_token_details := response_usage.prompt_tokens_details:
