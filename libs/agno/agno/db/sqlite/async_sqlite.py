@@ -1825,7 +1825,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = await self._get_table(table_type="knowledge")
+            table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
             if table is None:
                 return None
 
