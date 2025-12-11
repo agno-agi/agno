@@ -1050,6 +1050,7 @@ class Knowledge:
             content_io = io.BytesIO(content_bytes)
 
             if content.reader:
+                print(f"content.reader: {content.reader}")
                 log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                 read_documents = content.reader.read(content_io, name=name)
             else:
@@ -1074,6 +1075,7 @@ class Knowledge:
 
                 # Respect an explicitly provided reader; otherwise select based on file type
                 if content.reader:
+                    print(f"content.reader: {content.reader}")
                     log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
                     reader = content.reader
                 else:
@@ -2768,6 +2770,7 @@ class Knowledge:
         # Initialize empty readers dict - readers will be created on-demand
         if self.readers is None:
             self.readers = {}
+        print(f"construct_readers: {self.readers}")
 
     def add_reader(self, reader: Reader):
         """Add a custom reader to the knowledge base."""
@@ -2783,6 +2786,24 @@ class Knowledge:
         """Get all currently loaded readers (only returns readers that have been used)."""
         if self.readers is None:
             self.readers = {}
+        elif not isinstance(self.readers, dict):
+            # Defensive check: if readers is not a dict (e.g., was set to a list), convert it
+            if isinstance(self.readers, list):
+                readers_dict: Dict[str, Reader] = {}
+                for reader in self.readers:
+                    if isinstance(reader, Reader):
+                        reader_key = self._generate_reader_key(reader)
+                        # Handle potential duplicate keys by appending index if needed
+                        original_key = reader_key
+                        counter = 1
+                        while reader_key in readers_dict:
+                            reader_key = f"{original_key}_{counter}"
+                            counter += 1
+                        readers_dict[reader_key] = reader
+                self.readers = readers_dict
+            else:
+                # For any other unexpected type, reset to empty dict
+                self.readers = {}
 
         return self.readers
 

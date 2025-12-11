@@ -73,6 +73,9 @@ class Reader:
     def chunk_document(self, document: Document) -> List[Document]:
         if self.chunking_strategy is None:
             self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
+        print(f"Chunking document: {document.name}")
+        print(self.chunking_strategy.chunk_size)
+        print(self.chunking_strategy.overlap)
         return self.chunking_strategy.chunk(document)  # type: ignore
 
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:

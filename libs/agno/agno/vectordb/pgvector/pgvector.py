@@ -869,6 +869,13 @@ class PgVector(VectorDb):
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
+            for sr in search_results:
+                print(sr.name)
+                print(sr.meta_data)
+                print(sr.content)
+                print(sr.embedding)
+                print(sr.usage)
+                print("--------------------------------")
             return search_results
         except Exception as e:
             log_error(f"Error during vector search: {e}")
@@ -1111,6 +1118,13 @@ class PgVector(VectorDb):
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
+            for sr in search_results:
+                print(sr.name)
+                print(sr.meta_data)
+                print(sr.content)
+                print(sr.embedding)
+                print(sr.usage)
+                print("--------------------------------")
             return search_results
         except Exception as e:
             log_error(f"Error during hybrid search: {e}")
