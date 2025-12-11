@@ -8,7 +8,6 @@ from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
     format_team_tools,
-    get_team_input_schema_dict,
 )
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
@@ -102,6 +101,13 @@ class TeamResponse(BaseModel):
         )
         team_tools = _tools
         formatted_tools = format_team_tools(team_tools) if team_tools else None
+
+        input_schema_dict = None
+        if team.input_schema is not None:
+            try:
+                input_schema_dict = team.input_schema.model_json_schema()
+            except Exception:
+                pass
 
         model_name = team.model.name or team.model.__class__.__name__ if team.model else None
         model_provider = team.model.provider or team.model.__class__.__name__ if team.model else ""
@@ -253,5 +259,5 @@ class TeamResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=members if members else None,
             metadata=team.metadata,
-            input_schema=get_team_input_schema_dict(team),
+            input_schema=input_schema_dict,
         )

@@ -148,30 +148,7 @@ def get_base_router(
         agent_summaries = []
         if os.agents:
             for agent in os.agents:
-                if isinstance(agent, RemoteAgent):
-                    # Fetch config from remote AgentOS
-                    try:
-                        async with agent.get_client() as client:
-                            remote_agent = await client.get_agent(agent.id)
-                            agent_summaries.append(
-                                AgentSummaryResponse(
-                                    id=remote_agent.id,
-                                    name=remote_agent.name,
-                                    description=None,  # Summary doesn't include description
-                                )
-                            )
-                    except Exception as e:
-                        log_warning(f"Failed to fetch remote agent {agent.id}: {e}")
-                        # Add placeholder with just the ID
-                        agent_summaries.append(
-                            AgentSummaryResponse(
-                                id=agent.id,
-                                name=f"Remote Agent: {agent.id}",
-                                description="(unavailable)",
-                            )
-                        )
-                else:
-                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
+                agent_summaries.append(AgentSummaryResponse.from_agent(agent))
 
         team_summaries = []
         if os.teams:

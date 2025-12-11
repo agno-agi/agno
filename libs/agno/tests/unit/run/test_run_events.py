@@ -187,9 +187,10 @@ def test_session_state_mutability():
 
 def test_api_schema_session_state():
     """Test that API schemas include session_state."""
+    from agno.schema.os.os import RunSchema, TeamRunSchema
+
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
-    from agno.schema.os.os import RunSchema, TeamRunSchema
 
     # Test RunSchema
     run_output = RunOutput(run_id="test_123", session_state={"api_data": "value"})

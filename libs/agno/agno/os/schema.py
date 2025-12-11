@@ -103,7 +103,8 @@ class AgentSummaryResponse(BaseModel):
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+        db_id = agent.db_id if hasattr(agent, "db_id") and agent.db_id else agent.db.id if agent.db else None
+        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=db_id)
 
 
 class TeamSummaryResponse(BaseModel):

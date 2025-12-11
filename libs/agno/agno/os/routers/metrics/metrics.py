@@ -10,7 +10,7 @@ from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
-from agno.schema.os.os import (
+from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,

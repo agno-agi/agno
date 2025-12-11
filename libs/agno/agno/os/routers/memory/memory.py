@@ -20,7 +20,7 @@ from agno.os.routers.memory.schemas import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
-from agno.schema.os.os import (
+from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,

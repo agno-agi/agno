@@ -19,8 +19,10 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
+from agno.os.routers.agents.schema import AgentResponse
+from agno.os.routers.teams.schema import TeamResponse
+from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
-    AgentResponse,
     AgentSessionDetailSchema,
     AgentSummaryResponse,
     ConfigResponse,
@@ -28,11 +30,9 @@ from agno.os.schema import (
     PaginatedResponse,
     RunSchema,
     SessionSchema,
-    TeamResponse,
     TeamRunSchema,
     TeamSessionDetailSchema,
     TeamSummaryResponse,
-    WorkflowResponse,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
@@ -40,6 +40,7 @@ from agno.os.schema import (
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import BaseTeamRunEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
+from agno.utils.http import get_default_async_client, get_default_sync_client
 
 try:
     from httpx import AsyncClient, Client
@@ -58,13 +59,13 @@ class AgentOSClient:
     def __init__(
         self,
         base_url: str,
-        timeout: int = 60,
+        timeout: float = 60.0,
     ):
         """Initialize AgentOSClient.
 
         Args:
             base_url: Base URL of the AgentOS instance (e.g., "http://localhost:7777")
-            timeout: Request timeout in seconds (default: 60)
+            timeout: Request timeout in seconds (default: 60.0)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -105,7 +106,9 @@ class AgentOSClient:
         if params is not None:
             kwargs["params"] = params
 
-        with Client(timeout=self.timeout) as client:
+        sync_client = get_default_sync_client()
+
+        with sync_client as client:
             response = client.request(method, url, **kwargs)
             response.raise_for_status()
 
@@ -149,8 +152,10 @@ class AgentOSClient:
                 kwargs["json"] = data
         if params is not None:
             kwargs["params"] = params
+            
+        async_client = get_default_async_client()
 
-        async with AsyncClient(timeout=self.timeout) as client:
+        async with async_client as client:
             response = await client.request(method, url, **kwargs)
             response.raise_for_status()
 
@@ -335,7 +340,29 @@ class AgentOSClient:
 
     # Discovery & Configuration Operations
 
-    async def get_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
+    def get_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
+        """Get AgentOS configuration and metadata.
+
+        Returns comprehensive OS configuration including:
+        - OS metadata (id, description, version)
+        - List of available agents
+        - List of available teams
+        - List of available workflows
+        - Interface configurations
+        - Knowledge, evals, and metrics settings
+
+        Args:
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            ConfigResponse: Complete OS configuration
+            
+        We need this sync version so it can be used for other sync use-cases upstream
+        """
+        data = self._get("/config", headers=headers)
+        return ConfigResponse.model_validate(data)
+    
+    async def aget_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
         """Get AgentOS configuration and metadata.
 
         Returns comprehensive OS configuration including:

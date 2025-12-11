@@ -25,7 +25,7 @@ from agno.os.routers.knowledge.schemas import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
-from agno.schema.os.os import (
+from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,

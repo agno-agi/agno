@@ -19,7 +19,7 @@ class BaseRemote:
     def __init__(
         self,
         base_url: str,
-        timeout: float = 300.0,
+        timeout: float = 60.0,
     ):
         """Initialize BaseRemote for remote execution.
 
@@ -28,7 +28,7 @@ class BaseRemote:
 
         Args:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
-            timeout: Request timeout in seconds (default: 300)
+            timeout: Request timeout in seconds (default: 60)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
@@ -42,15 +42,16 @@ class BaseRemote:
         Returns:
             AgentOSClient: Client configured for this remote resource's base URL
         """
+        from agno.client import AgentOSClient
         return AgentOSClient(
             base_url=self.base_url,
-            timeout=30.0,
+            timeout=self.timeout,
         )
 
     @lru_cache(maxsize=1)
     def _get_config(self) -> Any:
-        with self.get_client() as client:
-            return client.get_config()
+        client = self.get_client()
+        return client.get_config()
 
     @abstractmethod
     def arun(  # type: ignore

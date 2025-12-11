@@ -18,42 +18,6 @@ from agno.workflow.types import StepInput
 # Setup the database
 db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-# Setup basic agents, teams and workflows
-basic_agent = Agent(
-    name="Basic Agent",
-    db=db,
-    enable_session_summaries=True,
-    enable_user_memories=True,
-    add_history_to_context=True,
-    num_history_runs=3,
-    add_datetime_to_context=True,
-    markdown=True,
-)
-
-basic_team = Team(
-    id="basic-team",
-    name="Basic Team",
-    model=OpenAIChat(id="gpt-4o"),
-    db=db,
-    members=[basic_agent],
-    enable_user_memories=True,
-)
-
-basic_workflow = Workflow(
-    id="basic-workflow",
-    name="Basic Workflow",
-    description="Just a simple workflow",
-    db=db,
-    steps=[
-        Step(
-            name="step1",
-            description="Just a simple step",
-            agent=basic_agent,
-        )
-    ],
-    add_workflow_history_to_steps=True,
-)
-
 # === SETUP ADVANCED WORKFLOW ===
 story_writer = Agent(
     name="Story Writer",
@@ -135,10 +99,10 @@ advanced_workflow = Workflow(
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example app for basic agent, team and workflow",
-    agents=[RemoteAgent(base_url="http://localhost:7778", agent_id="basic-agent")],
-    teams=[RemoteTeam(base_url="http://localhost:7778", team_id="basic-team")],
+    agents=[RemoteAgent(base_url="http://localhost:7778", agent_id="assistant-agent")],
+    teams=[RemoteTeam(base_url="http://localhost:7778", team_id="research-team")],
     workflows=[
-        RemoteWorkflow(base_url="http://localhost:7778", workflow_id="basic-workflow"),
+        RemoteWorkflow(base_url="http://localhost:7778", workflow_id="qa-workflow"),
         advanced_workflow,
     ],
 )

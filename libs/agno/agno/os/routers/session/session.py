@@ -9,7 +9,7 @@ from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.auth import get_authentication_dependency
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
-from agno.schema.os.os import (
+from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
     CreateSessionRequest,

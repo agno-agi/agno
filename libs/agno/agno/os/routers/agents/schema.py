@@ -8,7 +8,6 @@ from agno.models.message import Message
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
     format_tools,
-    get_agent_input_schema_dict,
 )
 from agno.run import RunContext
 from agno.run.agent import RunOutput
@@ -109,6 +108,14 @@ class AgentResponse(BaseModel):
         additional_input = agent.additional_input
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
+
+        input_schema_dict = None
+        if agent.input_schema is not None:
+            try:
+                input_schema_dict = agent.input_schema.model_json_schema()
+            except Exception:
+                pass
+
 
         # Build model only if it has at least one non-null field
         model_name = agent.model.name if (agent.model and agent.model.name) else None
@@ -257,5 +264,5 @@ class AgentResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             introduction=agent.introduction,
             metadata=agent.metadata,
-            input_schema=get_agent_input_schema_dict(agent),
+            input_schema=input_schema_dict,
         )

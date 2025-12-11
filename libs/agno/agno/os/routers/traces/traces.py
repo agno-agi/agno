@@ -14,7 +14,7 @@ from agno.os.routers.traces.schemas import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db, parse_datetime_to_utc
-from agno.schema.os.os import (
+from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,

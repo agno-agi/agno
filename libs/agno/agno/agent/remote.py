@@ -1,4 +1,5 @@
 import json
+from functools import cached_property
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
 
 from pydantic import BaseModel
@@ -39,15 +40,31 @@ class RemoteAgent(BaseRemote):
     def id(self) -> str:
         return self.agent_id
 
-    @property
-    def db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
+    @cached_property
+    def _agent_config(self) -> Optional[Any]:
+        """Get the agent config from remote, cached after first access."""
         from agno.os.schema import ConfigResponse
-
         config: ConfigResponse = self._get_config()
         for agent in config.agents:
             if agent.id == self.agent_id:
-                return agent.db
+                return agent
         return None
+
+    @cached_property
+    def name(self) -> str:
+        if self._agent_config is not None:
+            return self._agent_config.name
+        return self.agent_id
+
+    @cached_property
+    def description(self) -> str:
+        if self._agent_config is not None:
+            return self._agent_config.description
+        return ""
+
+    @cached_property
+    def db_id(self) -> Optional[str]:
+        return self._agent_config.db_id if self._agent_config else None
 
     def _get_runs_endpoint(self) -> str:
         """Get the API endpoint for the configured resource."""
