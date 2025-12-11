@@ -1,4 +1,5 @@
 """Unit tests for workflow support in WhatsApp and AgUI interfaces"""
+
 import pytest
 
 from agno.agent import Agent
@@ -11,22 +12,15 @@ from agno.workflow.step import Step
 
 def create_test_workflow():
     """Create a simple test workflow"""
-    agent = Agent(
-        name="Test Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions="You are a helpful assistant"
-    )
+    agent = Agent(name="Test Agent", model=OpenAIChat(id="gpt-4o-mini"), instructions="You are a helpful assistant")
 
     step = Step(name="test_step", agent=agent)
 
-    return Workflow(
-        name="Test Workflow",
-        description="A test workflow for unit testing",
-        steps=[step]
-    )
+    return Workflow(name="Test Workflow", description="A test workflow for unit testing", steps=[step])
 
 
 # WhatsApp Interface Tests
+
 
 def test_whatsapp_with_workflow():
     """Test WhatsApp interface initialization with workflow"""
@@ -87,6 +81,7 @@ def test_whatsapp_tags_configuration():
 
 # AgUI Interface Tests
 
+
 def test_agui_with_workflow():
     """Test AGUI interface initialization with workflow"""
     workflow = create_test_workflow()
@@ -146,12 +141,13 @@ def test_agui_tags_configuration():
 
 # Workflow Properties Tests
 
+
 def test_workflow_properties_preserved():
     """Test that workflow properties are preserved in interface"""
     workflow = Workflow(
         name="Complex Workflow",
         description="A complex test workflow",
-        steps=[Step(name="step1", agent=Agent(model=OpenAIChat(id="gpt-4o-mini")))]
+        steps=[Step(name="step1", agent=Agent(model=OpenAIChat(id="gpt-4o-mini")))],
     )
 
     # Test with WhatsApp
@@ -177,6 +173,7 @@ def test_multiple_interfaces_same_workflow():
 
 
 # Router Validation Tests
+
 
 def test_whatsapp_router_has_status_endpoint():
     """Test that WhatsApp router includes status endpoint"""
