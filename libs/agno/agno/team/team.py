@@ -2063,7 +2063,7 @@ class Team:
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -2265,13 +2265,13 @@ class Team:
 
                 # Yield the cancellation event
                 if stream:
-                    run_error = handle_event(
+                    cancelled_run_error = handle_event(
                         create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                         run_response,
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
                     )
-                    return generator_wrapper(run_error)  # type: ignore
+                    return generator_wrapper(cancelled_run_error)  # type: ignore
                 else:
                     return run_response
             except (InputCheckError, OutputCheckError) as e:
@@ -2323,6 +2323,9 @@ class Team:
                 else:
                     return run_response
 
+        # If we get here, all retries failed (shouldn't happen with current logic)
+        raise Exception(f"Failed after {num_attempts} attempts.")
+
     async def _arun(
         self,
         run_response: TeamRunOutput,
@@ -2362,7 +2365,7 @@ class Team:
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -2668,7 +2671,7 @@ class Team:
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:

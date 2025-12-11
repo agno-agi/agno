@@ -1640,7 +1640,7 @@ class Agent:
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -1820,43 +1820,19 @@ class Agent:
                         **kwargs,
                     )
                     return response
-
-            except RunCancelledException as e:
-                # Handle run cancellation during streaming
-                log_info(f"Run {run_response.run_id} was cancelled during streaming")
-                run_response.content = str(e)
-                run_response.status = RunStatus.cancelled
-
-                # Yield the cancellation event
-                run_error = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                    run_response,
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
-
-                # Cleanup and store the run response and session
-                self._cleanup_and_store(
-                    run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
-                )
-
-                if stream:
-                    return generator_wrapper(run_error)  # type: ignore
-                else:
-                    return run_response
-
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                run_error = create_run_error_event(
-                    run_response,
-                    error=str(e),
-                    error_id=e.error_id,
-                    error_type=e.type,
-                    additional_data=e.additional_data,
-                )
-                run_response.events = add_error_event(error=run_error, events=run_response.events)
+                if stream:
+                    run_error = create_run_error_event(
+                        run_response,
+                        error=str(e),
+                        error_id=e.error_id,
+                        error_type=e.type,
+                        additional_data=e.additional_data,
+                    )
+                    run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -1872,7 +1848,27 @@ class Agent:
                     return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
+            except RunCancelledException as e:
+                # Handle run cancellation during streaming
+                log_info(f"Run {run_response.run_id} was cancelled during streaming")
+                run_response.content = str(e)
+                run_response.status = RunStatus.cancelled
 
+                # Cleanup and store the run response and session
+                self._cleanup_and_store(
+                    run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
+                )
+
+                if stream:
+                    cancelled_run_error = handle_event(
+                        create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                    return generator_wrapper(cancelled_run_error)  # type: ignore
+                else:
+                    return run_response
             except KeyboardInterrupt:
                 if stream:
                     return generator_wrapper(  # type: ignore
@@ -1915,6 +1911,9 @@ class Agent:
                     return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
+
+        # If we get here, all retries failed (shouldn't happen with current logic)
+        raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -1959,7 +1958,7 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -2313,7 +2312,7 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -3108,7 +3107,7 @@ class Agent:
         num_attempts = self.retries + 1
 
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Agent continue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
@@ -3749,7 +3748,7 @@ class Agent:
         )
 
         for attempt in range(num_attempts):
-            if attempt > 0:
+            if num_attempts > 1:
                 log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
