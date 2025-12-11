@@ -96,7 +96,16 @@ def _select_tokenizer(model_id: str) -> Tuple[str, Any]:
 
 # OpenAI internally represents function/tool definitions in a TypeScript-like format for tokenization
 def _format_function_definitions(tools: List[Dict[str, Any]]) -> str:
-    """Format tool definitions as a TypeScript namespace for token counting"""
+    """
+    Formats tool definitions as a TypeScript namespace.
+
+    Returns:
+        A TypeScript namespace string representation of all tools.
+
+    Example:
+        Input tool: {"function": {"name": "get_weather", "parameters": {...}}}
+        Output: "namespace functions {\ntype get_weather = (_: {...}) => any;\n}"
+    """
     lines = []
     lines.append("namespace functions {")
     lines.append("")
@@ -125,7 +134,20 @@ def _format_function_definitions(tools: List[Dict[str, Any]]) -> str:
 
 
 def _format_object_parameters(parameters: Dict[str, Any], indent: int) -> str:
-    """Format JSON Schema object parameters as TypeScript object properties."""
+    """
+    Format JSON Schema object properties as TypeScript object properties.
+
+    Args:
+        parameters: A JSON Schema object with 'properties' and optional 'required' keys.
+        indent: Number of spaces for indentation.
+
+    Returns:
+        TypeScript property definitions, one per line.
+
+    Example:
+        Input: {"properties": {"name": {"type": "string"}}, "required": ["name"]}
+        Output: "name: string,"
+    """
     properties = parameters.get("properties", {})
     if not properties:
         return ""
@@ -150,9 +172,20 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
     """
     Convert a JSON Schema type to its TypeScript equivalent.
 
+    Recursively handles nested types including arrays and objects.
+
+    Args:
+        props: A JSON Schema property definition containing 'type' and optionally
+            'enum', 'items' (for arrays), or 'properties' (for objects).
+        indent: The current indentation level for nested object formatting.
+
+    Returns:
+        A TypeScript type string.
+
     Example:
-        Input: {"type": "string", "enum": ["low", "high"]}
-        Output: '"low" | "high"'
+        - {"type": "string"} -> "string"
+        - {"type": "string", "enum": ["low", "high"]} -> '"low" | "high"'
+        - {"type": "array", "items": {"type": "number"}} -> "number[]"
     """
     type_name = props.get("type", "any")
 
@@ -190,6 +223,7 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
 
 
 def _get_image_type(data: bytes) -> Optional[str]:
+    """Returns the image format from magic bytes in the file header."""
     if len(data) < 12:
         return None
     # PNG: 8-byte signature
@@ -211,6 +245,7 @@ def _get_image_type(data: bytes) -> Optional[str]:
 
 
 def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = None) -> Tuple[int, int]:
+    """Returns the image dimensions (width, height) from raw image bytes."""
     import io
     import struct
 
@@ -264,6 +299,7 @@ def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = No
 
 
 def _get_image_dimensions(image: Image) -> Tuple[int, int]:
+    """Returns the image dimensions (width, height) from an Image object."""
     try:
         # Try to get format hint from metadata to skip magic byte detection
         img_format = image.format
@@ -360,21 +396,21 @@ def count_tool_tokens(
 
 
 def count_schema_tokens(
-    response_format: Optional[Union[Dict, Type["BaseModel"]]],
+    output_schema: Optional[Union[Dict, Type["BaseModel"]]],
     model_id: str = "gpt-4o",
 ) -> int:
-    """Estimate tokens for output_schema/response_format."""
-    if response_format is None:
+    """Estimate tokens for output_schema/output_schema."""
+    if output_schema is None:
         return 0
 
     try:
         from pydantic import BaseModel
 
-        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
             # Convert Pydantic model to JSON schema
-            schema = response_format.model_json_schema()
-        elif isinstance(response_format, dict):
-            schema = response_format
+            schema = output_schema.model_json_schema()
+        elif isinstance(output_schema, dict):
+            schema = output_schema
         else:
             return 0
 
@@ -536,21 +572,22 @@ def _count_media_tokens(message: Message) -> int:
 
 def _count_message_tokens(message: Message, model_id: str = "gpt-4o") -> int:
     tokens = 0
+    text_parts: List[str] = []
 
-    # Count content tokens
+    # Collect content text
     content = message.get_content(use_compressed_content=True)
     if content:
         if isinstance(content, str):
-            tokens += count_text_tokens(content, model_id)
+            text_parts.append(content)
         elif isinstance(content, list):
             # Handle multimodal content blocks
             for item in content:
                 if isinstance(item, str):
-                    tokens += count_text_tokens(item, model_id)
+                    text_parts.append(item)
                 elif isinstance(item, dict):
                     item_type = item.get("type", "")
                     if item_type == "text":
-                        tokens += count_text_tokens(item.get("text", ""), model_id)
+                        text_parts.append(item.get("text", ""))
                     elif item_type == "image_url":
                         # Handle OpenAI-style content lists without populating message.images
                         image_url_data = item.get("image_url", {})
@@ -560,31 +597,34 @@ def _count_message_tokens(message: Message, model_id: str = "gpt-4o") -> int:
                         temp_image = Image(url=url, detail=detail)
                         tokens += count_image_tokens(temp_image)
                     else:
-                        tokens += count_text_tokens(json.dumps(item), model_id)
+                        text_parts.append(json.dumps(item))
         else:
-            tokens += count_text_tokens(str(content), model_id)
+            text_parts.append(str(content))
 
-    # Count tool call tokens (assistant messages with function calls)
+    # Collect tool call arguments
     if message.tool_calls:
         for tool_call in message.tool_calls:
             if isinstance(tool_call, dict) and "function" in tool_call:
                 args = tool_call["function"].get("arguments", "")
-                tokens += count_text_tokens(str(args), model_id)
+                text_parts.append(str(args))
 
-    # Count tool response tokens
+    # Collect tool response id
     if message.tool_call_id:
-        tokens += count_text_tokens(message.tool_call_id, model_id)
+        text_parts.append(message.tool_call_id)
 
-    # Count reasoning content
+    # Collect reasoning content
     if message.reasoning_content:
-        tokens += count_text_tokens(message.reasoning_content, model_id)
-
+        text_parts.append(message.reasoning_content)
     if message.redacted_reasoning_content:
-        tokens += count_text_tokens(message.redacted_reasoning_content, model_id)
+        text_parts.append(message.redacted_reasoning_content)
 
-    # Count name field tokens
+    # Collect name field
     if message.name:
-        tokens += count_text_tokens(message.name, model_id)
+        text_parts.append(message.name)
+
+    # Count all text tokens in a single call
+    if text_parts:
+        tokens += count_text_tokens(" ".join(text_parts), model_id)
 
     # Count all media attachments
     tokens += _count_media_tokens(message)
@@ -596,7 +636,7 @@ def count_tokens(
     messages: List[Message],
     tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     model_id: str = "gpt-4o",
-    response_format: Optional[Union[Dict, Type["BaseModel"]]] = None,
+    output_schema: Optional[Union[Dict, Type["BaseModel"]]] = None,
 ) -> int:
     total = 0
     model_id = model_id.lower()
@@ -610,8 +650,8 @@ def count_tokens(
     if tools:
         total += count_tool_tokens(tools, model_id)
 
-    # Add response_format/output_schema tokens
-    if response_format is not None:
-        total += count_schema_tokens(response_format, model_id)
+    # Add output_schema/output_schema tokens
+    if output_schema is not None:
+        total += count_schema_tokens(output_schema, model_id)
 
     return total

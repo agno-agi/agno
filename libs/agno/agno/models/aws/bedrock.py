@@ -362,7 +362,7 @@ class AwsBedrock(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
@@ -380,18 +380,18 @@ class AwsBedrock(Model):
                 tokens += count_tool_tokens(tools, self.id)
 
             # Count schema tokens
-            tokens += count_schema_tokens(response_format, self.id)
+            tokens += count_schema_tokens(output_schema, self.id)
 
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return super().count_tokens(messages, tools, response_format)
+            return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
@@ -410,12 +410,12 @@ class AwsBedrock(Model):
                 tokens += count_tool_tokens(tools, self.id)
 
             # Count schema tokens
-            tokens += count_schema_tokens(response_format, self.id)
+            tokens += count_schema_tokens(output_schema, self.id)
 
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return await super().acount_tokens(messages, tools, response_format)
+            return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
         self,

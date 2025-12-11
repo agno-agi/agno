@@ -462,7 +462,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         from agno.utils.tokens import count_tokens
 
@@ -470,16 +470,16 @@ class Model(ABC):
             messages,
             tools=list(tools) if tools else None,
             model_id=self.id,
-            response_format=response_format,
+            output_schema=output_schema,
         )
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        return self.count_tokens(messages, tools, response_format)
+        return self.count_tokens(messages, tools, output_schema=output_schema)
 
     def response(
         self,
@@ -497,7 +497,7 @@ class Model(ABC):
 
         Args:
             messages: List of messages to send to the model
-            response_format: Response format to use
+            response_format: Response format to use (alias)
             tools: List of tools to use. This includes the original Function objects and dicts for built-in tools.
             tool_choice: Tool choice to use
             tool_call_limit: Tool call limit
@@ -709,6 +709,7 @@ class Model(ABC):
         """
         Generate an asynchronous response from the model.
         """
+
         try:
             # Check cache if enabled
             if self.cache_response:
@@ -2560,7 +2561,7 @@ class Model(ABC):
 
         # Deep copy all attributes except client objects
         for k, v in self.__dict__.items():
-            if k in {"response_format", "_tools", "_functions"}:
+            if k in {"output_schema", "_tools", "_functions"}:
                 continue
             # Skip client objects
             if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
