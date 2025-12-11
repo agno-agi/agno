@@ -1824,15 +1824,14 @@ class Agent:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
                 # Add error event to list of events
-                if stream:
-                    run_error = create_run_error_event(
-                        run_response,
-                        error=str(e),
-                        error_id=e.error_id,
-                        error_type=e.type,
-                        additional_data=e.additional_data,
-                    )
-                    run_response.events = add_error_event(error=run_error, events=run_response.events)
+                run_error = create_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
+                run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -1853,6 +1852,12 @@ class Agent:
                 log_info(f"Run {run_response.run_id} was cancelled during streaming")
                 run_response.content = str(e)
                 run_response.status = RunStatus.cancelled
+                cancelled_run_error = handle_event(
+                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
 
                 # Cleanup and store the run response and session
                 self._cleanup_and_store(
@@ -1860,12 +1865,6 @@ class Agent:
                 )
 
                 if stream:
-                    cancelled_run_error = handle_event(
-                        create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                        run_response,
-                        events_to_skip=self.events_to_skip,  # type: ignore
-                        store_events=self.store_events,
-                    )
                     return generator_wrapper(cancelled_run_error)  # type: ignore
                 else:
                     return run_response

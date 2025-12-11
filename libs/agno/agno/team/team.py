@@ -2240,14 +2240,15 @@ class Team:
                     )
             except InputCheckError as e:
                 run_response.status = RunStatus.error
-                run_error = create_team_run_error_event(
-                    run_response,
-                    error=str(e),
-                    error_id=e.error_id,
-                    error_type=e.type,
-                    additional_data=e.additional_data,
-                )
-                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if stream:
+                    run_error = create_team_run_error_event(
+                        run_response,
+                        error=str(e),
+                        error_id=e.error_id,
+                        error_type=e.type,
+                        additional_data=e.additional_data,
+                    )
+                    run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
