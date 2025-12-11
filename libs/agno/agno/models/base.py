@@ -497,7 +497,7 @@ class Model(ABC):
 
         Args:
             messages: List of messages to send to the model
-            response_format: Response format to use (alias)
+            response_format: Response format to use
             tools: List of tools to use. This includes the original Function objects and dicts for built-in tools.
             tool_choice: Tool choice to use
             tool_call_limit: Tool call limit
@@ -2561,7 +2561,7 @@ class Model(ABC):
 
         # Deep copy all attributes except client objects
         for k, v in self.__dict__.items():
-            if k in {"output_schema", "_tools", "_functions"}:
+            if k in {"response_format", "_tools", "_functions"}:
                 continue
             # Skip client objects
             if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
