@@ -169,6 +169,7 @@ from agno.utils.reasoning import (
 )
 from agno.utils.response import (
     check_if_run_cancelled,
+    generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import generate_id_from_name, parse_response_model_str
@@ -2253,8 +2254,7 @@ class Team:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
                 if stream:
-                    yield run_error
-                    break
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
             except RunCancelledException as e:
@@ -2264,37 +2264,37 @@ class Team:
                 run_response.content = str(e)
 
                 # Yield the cancellation event
-                run_error = handle_event(
-                    create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                    run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
-
                 if stream:
-                    yield run_error
-                    break
+                    run_error = handle_event(
+                        create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
-
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
-                run_error = create_team_run_error_event(
-                    run_response,
-                    error=str(e),
-                    error_id=e.error_id,
-                    error_type=e.type,
-                    additional_data=e.additional_data,
-                )
-                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+
+                if stream:
+                    # Add error event to list of events
+                    run_error = create_team_run_error_event(
+                        run_response,
+                        error=str(e),
+                        error_id=e.error_id,
+                        error_type=e.type,
+                        additional_data=e.additional_data,
+                    )
+                    run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+
                 if run_response.content is None:
                     run_response.content = str(e)
 
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
                 if stream:
-                    yield run_error
-                    break
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
             except Exception as e:
@@ -2310,16 +2310,16 @@ class Team:
                     continue
 
                 run_response.status = RunStatus.error
-                run_error = create_team_run_error_event(run_response, error=str(e))
-                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if stream:
+                    run_error = create_team_run_error_event(run_response, error=str(e))
+                    run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
 
                 log_error(f"Error in Team run: {str(e)}")
 
                 if stream:
-                    yield run_error
-                    break
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
 
