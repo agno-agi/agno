@@ -129,6 +129,7 @@ async def run_workflow(workflow: Workflow, input: RunAgentInput) -> AsyncIterato
             input=messages,
             session_id=input.thread_id,
             stream=True,
+            stream_events=True,
             user_id=user_id,
             session_state=session_state,
             run_id=run_id,

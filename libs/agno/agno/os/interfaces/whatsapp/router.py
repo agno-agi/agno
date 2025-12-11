@@ -145,7 +145,15 @@ def attach_routes(
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
             elif workflow:
-                response = await workflow.arun(message_text, user_id=phone_number, session_id=f"wa:{phone_number}")  # type: ignore
+                response = await workflow.arun(
+                    message_text,
+                    user_id=phone_number,
+                    session_id=f"wa:{phone_number}",
+                    images=[Image(content=await get_media_async(message_image))] if message_image else None,
+                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    videos=[Video(content=await get_media_async(message_video))] if message_video else None,
+                    audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
+                )
 
             if response.reasoning_content:
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
