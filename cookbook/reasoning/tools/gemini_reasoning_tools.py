@@ -13,7 +13,7 @@ reasoning_agent = Agent(
         YFinanceTools(),
     ],
     instructions="Use tables where possible",
-    stream_intermediate_steps=True,
+    stream_events=True,
     markdown=True,
 )
 reasoning_agent.print_response(

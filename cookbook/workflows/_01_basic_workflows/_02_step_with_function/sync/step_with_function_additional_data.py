@@ -146,7 +146,6 @@ if __name__ == "__main__":
         },
         markdown=True,
         stream=True,
-        stream_intermediate_steps=True,
     )
 
     print("\n" + "=" * 60 + "\n")

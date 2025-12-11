@@ -21,7 +21,7 @@ def setup_vector_db():
 @pytest.mark.skip(reason="Skipping test")
 def test_website_knowledge_base_directory(setup_vector_db):
     """Test loading multiple websites into the knowledge base."""
-    urls = ["https://docs.agno.com/introduction/agents", "https://fastapi.tiangolo.com/"]
+    urls = ["https://docs.agno.com/basics/agents/overview", "https://fastapi.tiangolo.com/"]
 
     kb = Knowledge(vector_db=setup_vector_db)
 
@@ -48,7 +48,7 @@ def test_website_knowledge_base_single_url(setup_vector_db):
     """Test loading a single website into the knowledge base."""
     kb = Knowledge(vector_db=setup_vector_db)
     kb.add_contents(
-        urls=["https://docs.agno.com/introduction/agents"],
+        urls=["https://docs.agno.com/basics/agents/overview"],
         reader=WebsiteReader(max_links=1),
     )
 
@@ -70,7 +70,7 @@ def test_website_knowledge_base_single_url(setup_vector_db):
 @pytest.mark.asyncio
 async def test_website_knowledge_base_async_directory(setup_vector_db):
     """Test asynchronously loading multiple websites into the knowledge base."""
-    urls = ["https://docs.agno.com/introduction/agents", "https://fastapi.tiangolo.com/"]
+    urls = ["https://docs.agno.com/basics/agents/overview", "https://fastapi.tiangolo.com/"]
 
     kb = Knowledge(vector_db=setup_vector_db)
     await kb.add_contents_async(
@@ -101,7 +101,7 @@ async def test_website_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single website into the knowledge base."""
     kb = Knowledge(vector_db=setup_vector_db)
     await kb.add_contents_async(
-        urls=["https://docs.agno.com/introduction/agents"],
+        urls=["https://docs.agno.com/basics/agents/overview"],
         reader=WebsiteReader(max_links=1),
     )
 

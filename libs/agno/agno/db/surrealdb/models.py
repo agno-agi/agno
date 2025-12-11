@@ -1,11 +1,12 @@
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from textwrap import dedent
-from typing import List, Literal, Optional, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from surrealdb import RecordID
 
 from agno.db.base import SessionType
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -16,12 +17,15 @@ from agno.session.workflow import WorkflowSession
 
 TableType = Literal[
     "agents",
+    "culture",
     "evals",
     "knowledge",
     "memories",
     "metrics",
     "sessions",
+    "spans",
     "teams",
+    "traces",
     "users",
     "workflows",
 ]
@@ -204,6 +208,48 @@ def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: s
     return dict_
 
 
+def deserialize_cultural_knowledge(cultural_knowledge_raw: dict) -> CulturalKnowledge:
+    copy = cultural_knowledge_raw.copy()
+
+    copy = deserialize_record_id(copy, "id")
+    copy = desurrealize_dates(copy)
+
+    # Extract content, categories, and notes from the content field
+    content_json = copy.get("content", {}) or {}
+    if isinstance(content_json, dict):
+        copy["content"] = content_json.get("content")
+        copy["categories"] = content_json.get("categories")
+        copy["notes"] = content_json.get("notes")
+
+    return CulturalKnowledge.from_dict(copy)
+
+
+def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_table_name: str) -> dict:
+    dict_ = asdict(cultural_knowledge)
+    if cultural_knowledge.id is not None:
+        dict_["id"] = RecordID(culture_table_name, cultural_knowledge.id)
+
+    # Serialize content, categories, and notes into a single content dict for DB storage
+    content_dict: Dict[str, Any] = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    # Replace the separate fields with the combined content field
+    dict_["content"] = content_dict if content_dict else None
+    # Remove the now-redundant fields since they're in content
+    dict_.pop("categories", None)
+    dict_.pop("notes", None)
+
+    # surrealize dates
+    dict_ = surrealize_dates(dict_)
+
+    return dict_
+
+
 def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = eval_run_record_raw.copy()
 
@@ -249,11 +295,40 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
+    elif table_type == "culture":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
     elif table_type == "sessions":
         return dedent(f"""
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "traces":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id UNIQUE;
+            DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id;
+            DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_agent_id ON {table_name} FIELDS agent_id;
+            DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
+            DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
+            DEFINE INDEX idx_status ON {table_name} FIELDS status;
+            DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
+            """)
+    elif table_type == "spans":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_span_id ON {table_name} FIELDS span_id UNIQUE;
+            DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id;
+            DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;
+            DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
             """)
     else:
         return define_table

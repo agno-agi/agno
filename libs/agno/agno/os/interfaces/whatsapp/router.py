@@ -171,7 +171,6 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                             f"Could not process image content for user {phone_number}. Type: {type(image_content)}"
                         )
                         await _send_whatsapp_message(phone_number, response.content)  # type: ignore
-                await _send_whatsapp_message(phone_number, response.content)  # type: ignore
             else:
                 await _send_whatsapp_message(phone_number, response.content)  # type: ignore
 

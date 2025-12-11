@@ -19,5 +19,4 @@ agent = Agent(
 agent.print_response(
     "Write a brief report comparing NVDA to TSLA",
     stream=True,
-    stream_intermediate_steps=True,
 )

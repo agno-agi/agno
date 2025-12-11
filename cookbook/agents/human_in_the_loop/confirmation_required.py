@@ -1,4 +1,4 @@
-"""🤝 Human-in-the-Loop: Adding User Confirmation to Tool Calls
+"""🤝 Human-in-the-Loop (HITL): Adding User Confirmation to Tool Calls
 
 This example shows how to implement human-in-the-loop functionality in your Agno tools.
 It shows how to:
@@ -28,6 +28,7 @@ from rich.prompt import Prompt
 console = Console()
 
 
+# This tool will require user confirmation before execution
 @tool(requires_confirmation=True)
 def get_top_hackernews_stories(num_stories: int) -> str:
     """Fetch top stories from Hacker News.
@@ -63,11 +64,12 @@ agent = Agent(
 )
 
 run_response = agent.run("Fetch the top 2 hackernews stories.")
-if run_response.is_paused:
-    for tool in run_response.tools_requiring_confirmation:
+
+for requirement in run_response.active_requirements:
+    if requirement.needs_confirmation:
         # Ask for confirmation
         console.print(
-            f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+            f"Tool name [bold blue]{requirement.tool_execution.tool_name}({requirement.tool_execution.tool_args})[/] requires confirmation."
         )
         message = (
             Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
@@ -75,18 +77,22 @@ if run_response.is_paused:
             .lower()
         )
 
+        # Confirm or reject the requirement
         if message == "n":
-            tool.confirmed = False
+            requirement.reject()
         else:
-            # We update the tools in place
-            tool.confirmed = True
+            requirement.confirm()
 
-run_response = agent.continue_run(run_response=run_response)
-# Or
-# run_response = agent.continue_run(run_id=run_response.run_id, updated_tools=run_response.tools)
+
+run_response = agent.continue_run(
+    run_id=run_response.run_id,
+    requirements=run_response.requirements,
+)
+
+# You can also pass the updated tools when continuing the run:
+# run_response = agent.continue_run(
+#     run_id=run_response.run_id,
+#     updated_tools=run_response.tools,
+# )
 
 pprint.pprint_run_response(run_response)
-
-
-# Or for simple debug flow
-# agent.print_response("Fetch the top 2 hackernews stories")

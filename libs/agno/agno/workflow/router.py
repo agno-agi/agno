@@ -1,9 +1,11 @@
 import inspect
+import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     RouterExecutionCompletedEvent,
@@ -108,10 +110,13 @@ class Router:
             audio=current_audio + all_audio,
         )
 
-    def _route_steps(self, step_input: StepInput) -> List[Step]:  # type: ignore[return-value]
+    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
-            result = self.selector(step_input)
+            if session_state is not None and self._selector_has_session_state_param():
+                result = self.selector(step_input, session_state)  # type: ignore[call-arg]
+            else:
+                result = self.selector(step_input)
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -124,13 +129,21 @@ class Router:
 
         return []
 
-    async def _aroute_steps(self, step_input: StepInput) -> List[Step]:  # type: ignore[return-value]
+    async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
         """Async version of step routing"""
         if callable(self.selector):
+            has_session_state = session_state is not None and self._selector_has_session_state_param()
+
             if inspect.iscoroutinefunction(self.selector):
-                result = await self.selector(step_input)
+                if has_session_state:
+                    result = await self.selector(step_input, session_state)  # type: ignore[call-arg]
+                else:
+                    result = await self.selector(step_input)
             else:
-                result = self.selector(step_input)
+                if has_session_state:
+                    result = self.selector(step_input, session_state)  # type: ignore[call-arg]
+                else:
+                    result = self.selector(step_input)
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -143,17 +156,30 @@ class Router:
 
         return []
 
+    def _selector_has_session_state_param(self) -> bool:
+        """Check if the selector function has a session_state parameter"""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "session_state" in sig.parameters
+        except Exception:
+            return False
+
     def execute(
         self,
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -163,7 +189,10 @@ class Router:
         self._prepare_steps()
 
         # Route to appropriate steps
-        steps_to_execute = self._route_steps(step_input)
+        if run_context is not None and run_context.session_state is not None:
+            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+        else:
+            steps_to_execute = self._route_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -187,10 +216,12 @@ class Router:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput]
@@ -244,7 +275,9 @@ class Router:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -254,6 +287,7 @@ class Router:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the router with streaming support"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -263,10 +297,22 @@ class Router:
         router_step_id = str(uuid4())
 
         # Route to appropriate steps
-        steps_to_execute = self._route_steps(step_input)
+        if run_context is not None and run_context.session_state is not None:
+            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+        else:
+            steps_to_execute = self._route_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield router started event
             yield RouterExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -282,7 +328,7 @@ class Router:
 
         if not steps_to_execute:
             # Yield router completed event for empty case
-            if stream_intermediate_steps and workflow_run_response:
+            if stream_events and workflow_run_response:
                 yield RouterExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
@@ -310,16 +356,18 @@ class Router:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     parent_step_id=router_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -368,7 +416,7 @@ class Router:
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield router completed event
             yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -399,11 +447,13 @@ class Router:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Async execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -413,7 +463,10 @@ class Router:
         self._prepare_steps()
 
         # Route to appropriate steps
-        steps_to_execute = await self._aroute_steps(step_input)
+        if run_context is not None and run_context.session_state is not None:
+            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+        else:
+            steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -438,10 +491,12 @@ class Router:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
@@ -497,7 +552,9 @@ class Router:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
@@ -507,6 +564,7 @@ class Router:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the router with streaming support"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -516,10 +574,22 @@ class Router:
         router_step_id = str(uuid4())
 
         # Route to appropriate steps
-        steps_to_execute = await self._aroute_steps(step_input)
+        if run_context is not None and run_context.session_state is not None:
+            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+        else:
+            steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield router started event
             yield RouterExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -534,7 +604,7 @@ class Router:
             )
 
         if not steps_to_execute:
-            if stream_intermediate_steps and workflow_run_response:
+            if stream_events and workflow_run_response:
                 # Yield router completed event for empty case
                 yield RouterExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -565,16 +635,18 @@ class Router:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     parent_step_id=router_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -623,7 +695,7 @@ class Router:
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield router completed event
             yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

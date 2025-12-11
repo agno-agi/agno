@@ -1,5 +1,7 @@
 import asyncio
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
@@ -7,6 +9,7 @@ from uuid import uuid4
 
 from agno.models.metrics import Metrics
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ParallelExecutionCompletedEvent,
@@ -99,7 +102,7 @@ class Parallel:
                 step_name=self.name or "Parallel",
                 step_id=str(uuid4()),
                 step_type=StepType.PARALLEL,
-                content=f"Parallel {self.name or 'execution'} completed with 1 result",
+                content=self._build_aggregated_content(step_outputs),
                 executor_name=self.name or "Parallel",
                 images=single_result.images,
                 videos=single_result.videos,
@@ -113,8 +116,8 @@ class Parallel:
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
-        # Multiple results - aggregate them
-        aggregated_content = f"Parallel {self.name or 'execution'} completed with {len(step_outputs)} results"
+        # Multiple results - aggregate them with actual content from all steps
+        aggregated_content = self._build_aggregated_content(step_outputs)
 
         # Combine all media from parallel steps
         all_images = []
@@ -200,10 +203,12 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -214,10 +219,14 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
@@ -235,7 +244,9 @@ class Parallel:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    run_context=run_context,
                     session_state=step_session_state,
+                    background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
             except Exception as exc:
@@ -257,8 +268,9 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks with their original indices
+            # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
-                executor.submit(execute_step_with_index, indexed_step): indexed_step[0]
+                executor.submit(copy_context().run, execute_step_with_index, indexed_step): indexed_step[0]
                 for indexed_step in indexed_steps
             }
 
@@ -288,7 +300,7 @@ class Parallel:
                         )
                     )
 
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
@@ -316,16 +328,19 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -337,12 +352,25 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -385,16 +413,18 @@ class Parallel:
                     step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -422,7 +452,11 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
-            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
+            # Use copy_context().run to propagate context variables to child threads
+            futures = [
+                executor.submit(copy_context().run, execute_step_stream_with_index, indexed_step)
+                for indexed_step in indexed_steps
+            ]
 
             # Process events from queue as they arrive
             completed_steps = 0
@@ -464,7 +498,7 @@ class Parallel:
                     logger.error(f"Future completion error: {e}")
 
         # Merge all session_state changes back into the original session_state
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
@@ -483,7 +517,7 @@ class Parallel:
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -505,10 +539,12 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -519,10 +555,14 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
@@ -541,6 +581,8 @@ class Parallel:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
@@ -594,7 +636,7 @@ class Parallel:
                 log_debug(f"Parallel step {step_name} completed")
 
         # Smart merge all session_state changes back into the original session_state
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
@@ -622,16 +664,19 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        stream_events: bool = False,
         stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -643,12 +688,25 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
-        if stream_intermediate_steps and workflow_run_response:
+        # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        stream_events = stream_events or stream_intermediate_steps
+
+        if stream_events and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -691,16 +749,18 @@ class Parallel:
                     step_input,
                     session_id=session_id,
                     user_id=user_id,
-                    stream_intermediate_steps=stream_intermediate_steps,
+                    stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))
@@ -758,7 +818,7 @@ class Parallel:
         await asyncio.gather(*tasks, return_exceptions=True)
 
         # Merge all session_state changes back into the original session_state
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
@@ -777,7 +837,7 @@ class Parallel:
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        if stream_intermediate_steps and workflow_run_response:
+        if stream_events and workflow_run_response:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

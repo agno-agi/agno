@@ -13,6 +13,7 @@ import json
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 
 # In-memory database to store user shopping lists
 # Organized by user ID and session ID
@@ -50,11 +51,14 @@ def remove_item(session_state, item: str) -> str:
     return f"Item {item} removed from the shopping list"
 
 
-def get_shopping_list(session_state) -> str:
+def get_shopping_list(run_context: RunContext) -> str:
     """Get the current user's shopping list."""
 
-    current_user_id = session_state["current_user_id"]
-    current_session_id = session_state["current_session_id"]
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    current_user_id = run_context.session_state["current_user_id"]
+    current_session_id = run_context.session_state["current_session_id"]
     return f"Shopping list for user {current_user_id} and session {current_session_id}: \n{json.dumps(shopping_list[current_user_id][current_session_id], indent=2)}"
 
 

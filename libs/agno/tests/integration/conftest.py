@@ -1,14 +1,27 @@
 import os
 import tempfile
 import uuid
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
 
 from agno.db.postgres import PostgresDb
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.session import Session
+
+
+@pytest.fixture(autouse=True)
+def reset_async_client():
+    """Reset global async HTTP client between tests to avoid event loop conflicts."""
+    import agno.utils.http as http_utils
+
+    # Reset before test
+    http_utils._global_async_client = None
+    yield
+    # Reset after test
+    http_utils._global_async_client = None
 
 
 @pytest.fixture
@@ -43,6 +56,15 @@ def shared_db(temp_storage_db_file):
     # Use a unique table name for each test run
     table_name = f"sessions_{uuid.uuid4().hex[:8]}"
     db = SqliteDb(session_table=table_name, db_file=temp_storage_db_file)
+    return db
+
+
+@pytest.fixture
+def async_shared_db(temp_storage_db_file):
+    """Create a SQLite storage for sessions."""
+    # Use a unique table name for each test run
+    table_name = f"sessions_{uuid.uuid4().hex[:8]}"
+    db = AsyncSqliteDb(session_table=table_name, db_file=temp_storage_db_file)
     return db
 
 
@@ -124,3 +146,8 @@ def sqlite_db_real(temp_storage_db_file) -> SqliteDb:
         knowledge_table="test_knowledge",
         db_file=temp_storage_db_file,
     )
+
+
+@pytest.fixture
+def image_path():
+    return Path(__file__).parent / "res" / "images" / "golden_gate.png"
