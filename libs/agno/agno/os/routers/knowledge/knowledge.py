@@ -256,6 +256,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             description=update_data.description,
             metadata=update_data.metadata,
         )
+        print("CONTENT METADATA: ", content.metadata)
 
         if update_data.reader_id:
             if knowledge.readers and update_data.reader_id in knowledge.readers:
