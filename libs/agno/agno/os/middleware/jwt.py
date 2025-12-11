@@ -48,6 +48,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         secret_key: Optional[str] = None,
         algorithm: str = "HS256",
+        audience: str | Iterable[str] | None = None,
         token_source: TokenSource = TokenSource.HEADER,
         token_header_key: str = "Authorization",
         cookie_name: str = "access_token",
@@ -58,7 +59,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         session_id_claim: str = "session_id",
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
-        audience: str | Iterable[str] | None = None,
     ):
         """
         Initialize the JWT middleware.
@@ -67,6 +67,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             app: The FastAPI app instance
             secret_key: The secret key to use for JWT validation (optional, will use JWT_SECRET_KEY environment variable if not provided)
             algorithm: The algorithm to use for JWT validation
+            audience: Optional audience claim to validate against the token's 'aud' claim
             token_header_key: The key to use for the Authorization header (only used when token_source is header)
             token_source: Where to extract the JWT token from (header, cookie, or both)
             cookie_name: The name of the cookie containing the JWT token (only used when token_source is cookie/both)
@@ -77,7 +78,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             session_id_claim: The claim to use for session ID extraction
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
-            audience: Optional audience claim to validate against the token's 'aud' claim
         """
         super().__init__(app)
         self.secret_key = secret_key or getenv("JWT_SECRET_KEY")
