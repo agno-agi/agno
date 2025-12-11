@@ -13,13 +13,10 @@ Required scopes:
 import json
 from typing import Any, List, Optional
 
+import httpx
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
-
-try:
-    import httpx
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
 
 class SpotifyTools(Toolkit):

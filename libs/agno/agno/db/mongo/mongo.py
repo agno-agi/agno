@@ -2217,11 +2217,6 @@ class MongoDb(BaseDb):
         try:
             from agno.tracing.schemas import Trace as TraceSchema
 
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, "
-                f"user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
             collection = self._get_collection(table_type="traces")
             if collection is None:
                 log_debug("Traces collection not found")
@@ -2235,7 +2230,6 @@ class MongoDb(BaseDb):
             if run_id:
                 query["run_id"] = run_id
             if session_id:
-                log_debug(f"Filtering by session_id={session_id}")
                 query["session_id"] = session_id
             if user_id:
                 query["user_id"] = user_id
@@ -2257,14 +2251,12 @@ class MongoDb(BaseDb):
 
             # Get total count
             total_count = collection.count_documents(query)
-            log_debug(f"Total matching traces: {total_count}")
 
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
             cursor = collection.find(query).sort("start_time", -1).skip(skip).limit(limit or 20)
 
             results = list(cursor)
-            log_debug(f"Returning page {page} with {len(results)} traces")
 
             traces = []
             for row in results:
@@ -2318,12 +2310,6 @@ class MongoDb(BaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             collection = self._get_collection(table_type="traces")
             if collection is None:
                 log_debug("Traces collection not found")
@@ -2369,7 +2355,6 @@ class MongoDb(BaseDb):
             count_pipeline = pipeline + [{"$count": "total"}]
             count_result = list(collection.aggregate(count_pipeline))
             total_count = count_result[0]["total"] if count_result else 0
-            log_debug(f"Total matching sessions: {total_count}")
 
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
@@ -2377,7 +2362,6 @@ class MongoDb(BaseDb):
             pipeline.append({"$limit": limit or 20})
 
             results = list(collection.aggregate(pipeline))
-            log_debug(f"Returning page {page} with {len(results)} session stats")
 
             # Convert to list of dicts with datetime objects
             stats_list = []

@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 
 agent = Agent(
-    model=Claude(id="claude-opus-4-1-20250805", betas=["web-fetch-2025-09-10"]),
+    model=Claude(id="claude-opus-4-5", betas=["web-fetch-2025-09-10"]),
     tools=[
         {
             "type": "web_fetch_20250910",

@@ -7,7 +7,7 @@ remote AgentOS instances, including discovery, configuration inspection, and exe
 from os import getenv
 from typing import Any, Dict, List, Optional
 
-from agno.schema.os.os import (
+from agno.os.schema import (
     AgentResponse,
     AgentSummaryResponse,
     ConfigResponse,

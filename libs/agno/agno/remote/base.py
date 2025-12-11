@@ -18,24 +18,19 @@ if TYPE_CHECKING:
 class BaseRemote:
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
+        base_url: str,
         timeout: float = 300.0,
     ):
         """Initialize BaseRemote for remote execution.
 
         For local execution, provide agent/team/workflow instances.
-        For remote execution, provide base_url and agent_id/team_id/workflow_id.
+        For remote execution, provide base_url.
 
         Args:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
-            agent_id: ID of remote agent
-            team_id: ID of remote team
-            workflow_id: ID of remote workflow
             timeout: Request timeout in seconds (default: 300)
         """
-        self.base_url = base_url.rstrip("/") if base_url else None
-        self.api_key: Optional[str] = api_key
+        self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
 
     def get_client(self) -> "AgentOSClient":
@@ -49,7 +44,6 @@ class BaseRemote:
         """
         return AgentOSClient(
             base_url=self.base_url,
-            api_key=self.api_key,
             timeout=30.0,
         )
 

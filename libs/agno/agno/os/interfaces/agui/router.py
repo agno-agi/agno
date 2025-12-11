@@ -53,6 +53,7 @@ async def run_agent(agent: Union[Agent, BaseRemote], run_input: RunAgentInput) -
             stream_events=True,
             user_id=user_id,
             session_state=session_state,
+            run_id=run_id,
         )
 
         # Stream the response content in AG-UI format
@@ -93,6 +94,7 @@ async def run_team(team: Union[Team, BaseRemote], input: RunAgentInput) -> Async
             stream_steps=True,
             user_id=user_id,
             session_state=session_state,
+            run_id=run_id,
         )
 
         # Stream the response content in AG-UI format

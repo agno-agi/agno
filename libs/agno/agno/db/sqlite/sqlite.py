@@ -362,7 +362,6 @@ class SqliteDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
-            log_debug(f"Loaded existing table {table_name}")
             return table
 
         except Exception as e:
@@ -2217,14 +2216,6 @@ class SqliteDb(BaseDb):
                     if trace.workflow_id is not None:
                         update_values["workflow_id"] = trace.workflow_id
 
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     sess.execute(stmt)
                 else:
@@ -2347,7 +2338,6 @@ class SqliteDb(BaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2369,14 +2359,12 @@ class SqliteDb(BaseDb):
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching traces: {total_count}")
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} traces")
 
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
@@ -2413,12 +2401,6 @@ class SqliteDb(BaseDb):
         """
         try:
             from sqlalchemy import func
-
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
 
             table = self._get_table(table_type="traces")
             if table is None:
@@ -2463,14 +2445,12 @@ class SqliteDb(BaseDb):
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching sessions: {total_count}")
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
                 from datetime import datetime

@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -14,26 +14,7 @@ from starlette.requests import Request
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
-from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
-from agno.os.routers.evals import get_eval_router
-from agno.os.routers.health import get_health_router
-from agno.os.routers.home import get_home_router
-from agno.os.routers.knowledge import get_knowledge_router
-from agno.os.routers.memory import get_memory_router
-from agno.os.routers.metrics import get_metrics_router
-from agno.os.routers.session import get_session_router
-from agno.os.routers.traces import get_traces_router
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import (
-    collect_mcp_tools_from_team,
-    collect_mcp_tools_from_workflow,
-    find_conflicting_routes,
-    load_yaml_config,
-    setup_tracing_for_os,
-    update_cors_middleware,
-)
-from agno.schema.os.config import (
+from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
     EvalsConfig,
@@ -48,6 +29,28 @@ from agno.schema.os.config import (
     SessionDomainConfig,
     TracesConfig,
     TracesDomainConfig,
+)
+from agno.os.interfaces.base import BaseInterface
+from agno.os.router import get_base_router
+from agno.os.routers.agents import get_agent_router
+from agno.os.routers.evals import get_eval_router
+from agno.os.routers.health import get_health_router
+from agno.os.routers.home import get_home_router
+from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.memory import get_memory_router
+from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.session import get_session_router
+from agno.os.routers.teams import get_team_router
+from agno.os.routers.traces import get_traces_router
+from agno.os.routers.workflows import get_websocket_router, get_workflow_router
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import (
+    collect_mcp_tools_from_team,
+    collect_mcp_tools_from_workflow,
+    find_conflicting_routes,
+    load_yaml_config,
+    setup_tracing_for_os,
+    update_cors_middleware,
 )
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_warning
@@ -67,6 +70,15 @@ async def mcp_lifespan(_, mcp_tools):
     # Shutdown logic: Close all contextual MCP connections
     for tool in mcp_tools:
         await tool.close()
+
+
+@asynccontextmanager
+async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Initializes databases in the event loop"""
+    if agent_os.auto_provision_dbs:
+        agent_os._initialize_sync_databases()
+        await agent_os._initialize_async_databases()
+    yield
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -287,6 +299,9 @@ class AgentOS:
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_agent_router(self, settings=self.settings))
+        self._add_router(app, get_team_router(self, settings=self.settings))
+        self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
         # Add A2A interface if relevant
@@ -475,41 +490,36 @@ class AgentOS:
             if self.enable_mcp_server and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
 
+            # The async database lifespan
+            lifespans.append(partial(db_lifespan, agent_os=self))
+
             # Combine lifespans and set them in the app
             if lifespans:
                 fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
 
         else:
-            if self.enable_mcp_server:
-                from contextlib import asynccontextmanager
+            lifespans = []
 
+            # User provided lifespan
+            if self.lifespan:
+                lifespans.append(self._add_agent_os_to_lifespan_function(self.lifespan))
+
+            # MCP tools lifespan
+            if self.mcp_tools:
+                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+
+            # MCP server lifespan
+            if self.enable_mcp_server:
                 from agno.os.mcp import get_mcp_server
 
                 self._mcp_app = get_mcp_server(self)
+                lifespans.append(self._mcp_app.lifespan)
 
-                final_lifespan = self._mcp_app.lifespan  # type: ignore
-                if self.lifespan is not None:
-                    # Wrap the user lifespan with agent_os parameter
-                    wrapped_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
+            # Async database initialization lifespan
+            lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
-                    # Combine both lifespans
-                    @asynccontextmanager
-                    async def combined_lifespan(app: FastAPI):
-                        # Run both lifespans
-                        async with wrapped_lifespan(app):  # type: ignore
-                            async with self._mcp_app.lifespan(app):  # type: ignore
-                                yield
-
-                    final_lifespan = combined_lifespan  # type: ignore
-
-                fastapi_app = self._make_app(lifespan=final_lifespan)
-            else:
-                # Wrap the user lifespan with agent_os parameter
-                wrapped_user_lifespan = None
-                if self.lifespan is not None:
-                    wrapped_user_lifespan = self._add_agent_os_to_lifespan_function(self.lifespan)
-
-                fastapi_app = self._make_app(lifespan=wrapped_user_lifespan)
+            final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
+            fastapi_app = self._make_app(lifespan=final_lifespan)
 
         self._add_built_in_routes(app=fastapi_app)
 
@@ -692,36 +702,14 @@ class AgentOS:
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
 
-        # Initialize/scaffold all discovered databases
+        # Initialize all discovered databases
         if self.auto_provision_dbs:
-            import asyncio
-            import concurrent.futures
+            self._pending_async_db_init = True
 
-            try:
-                # If we're already in an event loop, run in a separate thread
-                asyncio.get_running_loop()
-
-                def run_in_new_loop():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(self._initialize_databases())
-                    finally:
-                        new_loop.close()
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(run_in_new_loop)
-                    future.result()  # Wait for completion
-
-            except RuntimeError:
-                # No event loop running, use asyncio.run
-                asyncio.run(self._initialize_databases())
-
-    async def _initialize_databases(self) -> None:
-        """Initialize all discovered databases and create all Agno tables that don't exist yet."""
+    def _initialize_sync_databases(self) -> None:
+        """Initialize sync databases."""
         from itertools import chain
 
-        # Collect all database instances and remove duplicates by identity
         unique_dbs = list(
             {
                 id(db): db
@@ -731,37 +719,39 @@ class AgentOS:
             }.values()
         )
 
-        # Separate sync and async databases
-        sync_dbs: List[Tuple[str, BaseDb]] = []
-        async_dbs: List[Tuple[str, AsyncBaseDb]] = []
+        for db in unique_dbs:
+            if isinstance(db, AsyncBaseDb):
+                continue  # Skip async dbs
+
+            try:
+                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
+                    db._create_all_tables()
+            except Exception as e:
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+
+    async def _initialize_async_databases(self) -> None:
+        """Initialize async databases."""
+
+        from itertools import chain
+
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
 
         for db in unique_dbs:
-            target = async_dbs if isinstance(db, AsyncBaseDb) else sync_dbs
-            target.append((db.id, db))  # type: ignore
+            if not isinstance(db, AsyncBaseDb):
+                continue  # Skip sync dbs
 
-        # Initialize sync databases
-        for db_id, db in sync_dbs:
             try:
-                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
-                    db._create_all_tables()
-                else:
-                    log_debug(f"No table initialization needed for {db.__class__.__name__}")
-
-            except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db_id}): {e}")
-
-        # Initialize async databases
-        for db_id, db in async_dbs:
-            try:
-                log_debug(f"Initializing async {db.__class__.__name__} (id: {db_id})")
-
-                if hasattr(db, "_create_all_tables") and callable(getattr(db, "_create_all_tables")):
+                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
-                else:
-                    log_debug(f"No table initialization needed for async {db.__class__.__name__}")
-
             except Exception as e:
-                log_warning(f"Failed to initialize async database {db.__class__.__name__} (id: {db_id}): {e}")
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""

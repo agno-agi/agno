@@ -3,8 +3,6 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import ForeignKey, Index, UniqueConstraint
-
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
@@ -32,7 +30,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, and_, cast, func, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -45,6 +43,7 @@ except ImportError:
 class MySQLDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
@@ -57,7 +56,7 @@ class MySQLDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        id: Optional[str] = None,
+        create_schema: bool = True,
     ):
         """
         Interface for interacting with a MySQL database.
@@ -68,6 +67,7 @@ class MySQLDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
+            id (Optional[str]): ID of the database.
             db_url (Optional[str]): The database URL to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
@@ -80,7 +80,8 @@ class MySQLDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
-            id (Optional[str]): ID of the database.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -115,6 +116,7 @@ class MySQLDb(BaseDb):
         self.db_engine: Engine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -190,8 +192,9 @@ class MySQLDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=self.db_schema)
+            if self.create_schema:
+                with self.Session() as sess, sess.begin():
+                    create_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
             table_created = False
@@ -252,6 +255,9 @@ class MySQLDb(BaseDb):
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
+            (self.culture_table_name, "culture"),
+            (self.trace_table_name, "traces"),
+            (self.span_table_name, "spans"),
             (self.versions_table_name, "versions"),
         ]
 
@@ -1109,8 +1115,11 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): Optional user ID to filter topics.
 
         Returns:
             List[str]: List of memory topics.
@@ -2514,14 +2523,6 @@ class MySQLDb(BaseDb):
                     if trace.workflow_id is not None:
                         update_values["workflow_id"] = trace.workflow_id
 
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
                     stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
                     sess.execute(stmt)
                 else:
@@ -2642,7 +2643,6 @@ class MySQLDb(BaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2664,14 +2664,12 @@ class MySQLDb(BaseDb):
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching traces: {total_count}")
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} traces")
 
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
@@ -2709,12 +2707,6 @@ class MySQLDb(BaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             table = self._get_table(table_type="traces")
             if table is None:
                 log_debug("Traces table not found")
@@ -2758,14 +2750,12 @@ class MySQLDb(BaseDb):
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching sessions: {total_count}")
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
                 stats_list = []
