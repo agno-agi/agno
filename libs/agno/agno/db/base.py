@@ -308,8 +308,8 @@ class BaseDb(ABC):
 
     # --- Traces ---
     @abstractmethod
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
 
         Args:
             trace: The Trace object to store (one per trace_id).
@@ -759,11 +759,11 @@ class AsyncBaseDb(ABC):
 
     # --- Traces ---
     @abstractmethod
-    async def create_trace(self, trace) -> None:
-        """Create a single trace record in the database.
+    async def upsert_trace(self, trace) -> None:
+        """Create or update a single trace record in the database.
 
         Args:
-            trace: The Trace object to store (one per trace_id).
+            trace: The Trace object to update (one per trace_id).
         """
         raise NotImplementedError
 
