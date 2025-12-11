@@ -1,7 +1,5 @@
 """Tests for Knowledge.get_readers() method, specifically testing list to dict conversion."""
 
-import pytest
-
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.text_reader import TextReader
@@ -90,11 +88,13 @@ class CustomReader(Reader):
     @classmethod
     def get_supported_chunking_strategies(cls):
         from agno.knowledge.chunking.strategy import ChunkingStrategyType
+
         return [ChunkingStrategyType.FIXED_SIZE_CHUNKER]
 
     @classmethod
     def get_supported_content_types(cls):
         from agno.knowledge.types import ContentType
+
         return [ContentType.TXT]
 
     def read(self, obj, name=None):
@@ -252,4 +252,3 @@ def test_get_readers_preserves_existing_dict_on_multiple_calls():
     assert result1 is result2
     assert result1 is knowledge.readers
     assert len(result1) == 2
-
