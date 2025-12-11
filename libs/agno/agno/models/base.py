@@ -1801,6 +1801,17 @@ class Model(ABC):
                 log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                 function_call.error = str(e)
                 function_call_success = False
+
+            # For generators, re-capture updated_session_state after consumption
+            # since session_state modifications were made during iteration
+            if function_execution_result.updated_session_state is None:
+                if (
+                    function_call.function._run_context is not None
+                    and function_call.function._run_context.session_state is not None
+                ):
+                    function_execution_result.updated_session_state = function_call.function._run_context.session_state
+                elif function_call.function._session_state is not None:
+                    function_execution_result.updated_session_state = function_call.function._session_state
         else:
             from agno.tools.function import ToolResult
 
@@ -2327,7 +2338,29 @@ class Model(ABC):
                     log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                     function_call.error = str(e)
                     function_call_success = False
-            else:
+
+            # For generators (sync or async), re-capture updated_session_state after consumption
+            # since session_state modifications were made during iteration
+            if async_function_call_output is not None or isinstance(
+                function_call.result,
+                (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
+            ):
+                if updated_session_state is None:
+                    if (
+                        function_call.function._run_context is not None
+                        and function_call.function._run_context.session_state is not None
+                    ):
+                        updated_session_state = function_call.function._run_context.session_state
+                    elif function_call.function._session_state is not None:
+                        updated_session_state = function_call.function._session_state
+
+            if not (
+                async_function_call_output is not None
+                or isinstance(
+                    function_call.result,
+                    (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
+                )
+            ):
                 from agno.tools.function import ToolResult
 
                 if isinstance(function_execution_result.result, ToolResult):
