@@ -1832,8 +1832,7 @@ class Agent:
                 )
 
                 if stream:
-                    yield run_error  # type: ignore
-                    break
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
 
@@ -1861,10 +1860,19 @@ class Agent:
                 )
 
                 if stream:
-                    yield run_error
-                    break
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
+
+            except KeyboardInterrupt:
+                if stream:
+                    return generator_wrapper(  # type: ignore
+                        create_run_cancelled_event(run_response, "Operation cancelled by user")  # type: ignore
+                    )
+                else:
+                    run_response.content = "Operation cancelled by user"  # type: ignore
+                    run_response.status = RunStatus.cancelled  # type: ignore
+                    return run_response  # type: ignore
 
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -1895,8 +1903,7 @@ class Agent:
                 )
 
                 if stream:
-                    yield run_error
-                    break
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
 
