@@ -2172,7 +2172,6 @@ class Agent:
                 )
 
                 return run_response
-
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
@@ -2200,7 +2199,6 @@ class Agent:
                 )
 
                 return run_response
-
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
