@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -31,6 +32,9 @@ from typing import (
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.eval.base import BaseEval
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
@@ -130,7 +134,13 @@ from agno.utils.events import (
     create_team_tool_call_started_event,
     handle_event,
 )
-from agno.utils.hooks import copy_args_for_background, filter_hook_args, normalize_hooks, should_run_hook_in_background
+from agno.utils.hooks import (
+    copy_args_for_background,
+    filter_hook_args,
+    normalize_post_hooks,
+    normalize_pre_hooks,
+    should_run_hook_in_background,
+)
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -349,9 +359,9 @@ class Team:
 
     # --- Team Hooks ---
     # Functions called right after team session is loaded, before processing starts
-    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None
     # Functions called after output is generated but before the response is returned
-    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None
+    post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
 
@@ -520,8 +530,8 @@ class Team:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
-        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail]]] = None,
+        pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None,
+        post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Union[Model, str]] = None,
@@ -1534,6 +1544,8 @@ class Team:
             add_history_to_context=add_history_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
+            stream=False,
+            stream_events=False,
         )
 
         # 3. Prepare run messages
@@ -1734,6 +1746,8 @@ class Team:
             add_history_to_context=add_history_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
+            stream=True,
+            stream_events=stream_events,
         )
 
         # 3. Prepare run messages
@@ -2067,9 +2081,9 @@ class Team:
                 # Normalise hook & guardails
                 if not self._hooks_normalised:
                     if self.pre_hooks:
-                        self.pre_hooks = normalize_hooks(self.pre_hooks)  # type: ignore
+                        self.pre_hooks = normalize_pre_hooks(self.pre_hooks)  # type: ignore
                     if self.post_hooks:
-                        self.post_hooks = normalize_hooks(self.post_hooks)  # type: ignore
+                        self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
                     self._hooks_normalised = True
 
                 session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -2156,9 +2170,6 @@ class Team:
 
                 if stream_events is None:
                     stream_events = False if self.stream_events is None else self.stream_events
-
-                self.stream = self.stream or stream
-                self.stream_events = self.stream_events or stream_events
 
                 self.model = cast(Model, self.model)
 
@@ -2420,6 +2431,8 @@ class Team:
                     add_history_to_context=add_history_to_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
+                    stream=False,
+                    stream_events=False,
                 )
 
                 # 5. Prepare run messages
@@ -2722,6 +2735,10 @@ class Team:
                     files=run_input.files,
                     debug_mode=debug_mode,
                     add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    stream=True,
+                    stream_events=stream_events,
                 )
 
                 # 6. Prepare run messages
@@ -3123,9 +3140,9 @@ class Team:
         # Normalise hook & guardails
         if not self._hooks_normalised:
             if self.pre_hooks:
-                self.pre_hooks = normalize_hooks(self.pre_hooks, async_mode=True)  # type: ignore
+                self.pre_hooks = normalize_pre_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
-                self.post_hooks = normalize_hooks(self.post_hooks, async_mode=True)  # type: ignore
+                self.post_hooks = normalize_post_hooks(self.post_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3177,9 +3194,6 @@ class Team:
 
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
 
         self.model = cast(Model, self.model)
 
@@ -4353,6 +4367,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4425,6 +4440,7 @@ class Team:
                 session_id=session_id,
                 session_state=session_state,
                 user_id=user_id,
+                run_id=run_id,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -4453,6 +4469,7 @@ class Team:
                 session_id=session_id,
                 session_state=session_state,
                 user_id=user_id,
+                run_id=run_id,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -4476,6 +4493,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4543,6 +4561,7 @@ class Team:
                 session_id=session_id,
                 session_state=session_state,
                 user_id=user_id,
+                run_id=run_id,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -4571,6 +4590,7 @@ class Team:
                 session_id=session_id,
                 session_state=session_state,
                 user_id=user_id,
+                run_id=run_id,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -5482,6 +5502,8 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Function, dict]]:
         # Connect tools that require connection management
@@ -5576,8 +5598,8 @@ class Team:
                 team_run_context=team_run_context,
                 input=user_message_content,
                 user_id=user_id,
-                stream=self.stream or False,
-                stream_events=self.stream_events or False,
+                stream=stream or False,
+                stream_events=stream_events or False,
                 async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
