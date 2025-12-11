@@ -116,3 +116,54 @@ def test_no_compression_below_threshold(shared_db):
     tool_messages = [m for m in response.messages if m.role == "tool"]
     for msg in tool_messages:
         assert msg.compressed_content is None, "No compression should occur below threshold"
+
+
+def test_compression_sync_stream(shared_db):
+    """Test tool compression works with sync streaming."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[search_tool, get_data],
+        db=shared_db,
+        compress_tool_results=True,
+        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        instructions="Use the tools as requested. Make multiple tool calls when asked.",
+        telemetry=False,
+    )
+
+    response = agent.run(
+        "Search for 'streaming test' and then search for 'async patterns'",
+        stream=True,
+    )
+
+    tool_messages = [m for m in response.messages if m.role == "tool"]
+    assert len(tool_messages) >= 2, "Expected at least 2 tool calls"
+
+    # ALL tool messages must be compressed
+    for msg in tool_messages:
+        assert msg.compressed_content is not None, "All tool messages should be compressed in stream mode"
+
+
+@pytest.mark.asyncio
+async def test_compression_async_stream(shared_db):
+    """Test tool compression works with async streaming."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[search_tool, get_data],
+        db=shared_db,
+        compress_tool_results=True,
+        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        instructions="Use the tools as requested. Make multiple tool calls when asked.",
+        telemetry=False,
+    )
+
+    response = await agent.arun(
+        "Search for 'async streaming' and then search for 'event loops'",
+        stream=True,
+    )
+
+    tool_messages = [m for m in response.messages if m.role == "tool"]
+    assert len(tool_messages) >= 2, "Expected at least 2 tool calls"
+
+    # ALL tool messages must be compressed
+    for msg in tool_messages:
+        assert msg.compressed_content is not None, "All tool messages should be compressed in async stream mode"

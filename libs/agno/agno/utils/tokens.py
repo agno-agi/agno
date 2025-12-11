@@ -576,6 +576,7 @@ def _count_message_tokens(
     model_id: str = "gpt-4o",
     tokens_per_message: int = 3,
     tokens_per_name: int = 1,
+    compress_tool_results: bool = False,
 ) -> int:
     tokens = tokens_per_message
 
@@ -584,7 +585,7 @@ def _count_message_tokens(
         tokens += count_text_tokens(message.role, model_id)
 
     # Count content tokens (supports compressed content for context compression)
-    content = message.get_content(use_compressed_content=True)
+    content = message.get_content(use_compressed_content=compress_tool_results)
     if content:
         if isinstance(content, str):
             tokens += count_text_tokens(content, model_id)
@@ -644,6 +645,7 @@ def count_tokens(
     model_id: str = "gpt-4o",
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     response_format: Optional[Union[Dict, Type]] = None,
+    compress_tool_results: bool = False,
 ) -> int:
     total = 0
 
@@ -657,7 +659,7 @@ def count_tokens(
             tokens_per_message, tokens_per_name = 3, 1
 
         for msg in messages:
-            total += _count_message_tokens(msg, model_id, tokens_per_message, tokens_per_name)
+            total += _count_message_tokens(msg, model_id, tokens_per_message, tokens_per_name, compress_tool_results)
 
     # Add 3 tokens for reply priming: <|start|>assistant<|message|>
     # Every completion is primed with these tokens regardless of content

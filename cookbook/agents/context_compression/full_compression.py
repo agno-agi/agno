@@ -3,8 +3,6 @@ Full Context Compression Example
 
 This example demonstrates context compression across multiple runs:
 - Compression triggers when token count exceeds the limit
-- Compressed context persists to database between runs
-- Old messages are filtered, keeping only the summary + recent messages
 
 Run: python cookbook/agents/context_compression/full_compression.py
 """
@@ -18,13 +16,15 @@ from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 compression_manager = CompressionManager(
-    compress_token_limit=15000,
+    compress_token_limit=5000,
+    # compress_context_messages_limit = 10, Compress context after every 10 messages
+    compress_context=True,
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
-        DuckDuckGoTools(),
+        DuckDuckGoTools(verify_ssl=False),
     ],
     # Research instructions
     instructions=[
@@ -64,12 +64,11 @@ agent = Agent(
     ## Strategic Recommendations
     {Actionable insights and next steps}
     """),
-    db=SqliteDb(db_file="tmp/dbs/async_full_compression.db"),
+    db=SqliteDb(db_file="tmp/dbs/full_compression.db"),
     compression_manager=compression_manager,
-    compress_context=True,
     add_history_to_context=True,
     num_history_runs=5,
-    session_id="async_full_compression_demo",
+    session_id="full_compression_demo",
     markdown=True,
     add_datetime_to_context=True,
     debug_mode=True,

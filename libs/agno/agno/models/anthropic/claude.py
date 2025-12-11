@@ -406,8 +406,9 @@ class Claude(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=compress_tool_results)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -427,8 +428,9 @@ class Claude(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=compress_tool_results)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)

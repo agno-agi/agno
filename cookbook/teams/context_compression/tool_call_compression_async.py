@@ -59,12 +59,10 @@ research_team = Team(
 )
 
 
-async def main():
-    await research_team.aprint_response(
-        "What are the latest developments in AI agents? Which companies dominate the market? Find the latest news and reports on the companies.",
-        stream=True,
-    )
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(
+        research_team.aprint_response(
+            "What are the latest developments in AI agents? Which companies dominate the market? Find the latest news and reports on the companies.",
+            stream=True,
+        )
+    )

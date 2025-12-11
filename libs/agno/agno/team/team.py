@@ -943,9 +943,13 @@ class Team:
             if self.compression_manager.model is None:
                 self.compression_manager.model = self.model
 
+            # Sync compression settings from team to manager
+            if self.compress_tool_results:
+                self.compression_manager.compress_tool_results = True
             if self.compress_context:
                 self.compression_manager.compress_context = True
 
+            # Sync compression settings from manager to team
             if self.compression_manager.compress_tool_results:
                 self.compress_tool_results = True
             if self.compression_manager.compress_context:

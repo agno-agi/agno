@@ -526,9 +526,10 @@ class OpenAIResponses(Model):
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_input = self._format_messages(messages, compress_tool_results=compress_tool_results)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
             response = self.get_client().responses.input_tokens.count(
@@ -540,17 +541,18 @@ class OpenAIResponses(Model):
             return response.input_tokens + count_schema_tokens(response_format, self.id)
         except Exception as e:
             log_warning(f"Failed to count tokens via API: {e}")
-            return super().count_tokens(messages, tools, response_format)
+            return super().count_tokens(messages, tools, response_format, compress_tool_results)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_input = self._format_messages(messages, compress_tool_results=compress_tool_results)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
             response = await self.get_async_client().responses.input_tokens.count(
@@ -562,7 +564,7 @@ class OpenAIResponses(Model):
             return response.input_tokens + count_schema_tokens(response_format, self.id)
         except Exception as e:
             log_warning(f"Failed to count tokens via API: {e}")
-            return await super().acount_tokens(messages, tools, response_format)
+            return await super().acount_tokens(messages, tools, response_format, compress_tool_results)
 
     def invoke(
         self,

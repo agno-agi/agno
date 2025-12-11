@@ -43,9 +43,10 @@ def test_context_compression_sync(context_compression_agent, shared_db):
     assert session is not None, "Session should exist"
 
     # Compression should have triggered (messages exceed limit of 3)
-    assert session.compressed_context is not None, "Compression should have triggered"
-    assert session.compressed_context.content, "Compressed context should have content"
-    assert len(session.compressed_context.message_ids) > 0, "Should track compressed message IDs"
+    compressed_ctx = session.get_compressed_context()
+    assert compressed_ctx is not None, "Compression should have triggered"
+    assert compressed_ctx.content, "Compressed context should have content"
+    assert len(compressed_ctx.message_ids) > 0, "Should track compressed message IDs"
 
 
 def test_context_compression_persists(shared_db):
@@ -74,8 +75,9 @@ def test_context_compression_persists(shared_db):
     # Get session and verify compression occurred
     session1 = agent1.get_session(session_id)
     assert session1 is not None, "Session should exist"
-    assert session1.compressed_context is not None, "Compression should have triggered after 3 runs"
-    assert session1.compressed_context.content, "Compressed context should have content"
+    compressed_ctx1 = session1.get_compressed_context()
+    assert compressed_ctx1 is not None, "Compression should have triggered after 3 runs"
+    assert compressed_ctx1.content, "Compressed context should have content"
 
     # Create a new agent instance with same session to verify persistence
     agent2 = Agent(
@@ -140,7 +142,7 @@ def test_no_context_compression_when_disabled(shared_db):
 
     session = agent.get_session(agent.session_id)
     assert session is not None, "Session should exist"
-    assert session.compressed_context is None, "No compression should occur when disabled"
+    assert session.get_compressed_context() is None, "No compression should occur when disabled"
 
 
 def test_no_context_compression_below_threshold(shared_db):
@@ -162,7 +164,7 @@ def test_no_context_compression_below_threshold(shared_db):
 
     session = agent.get_session(agent.session_id)
     assert session is not None, "Session should exist"
-    assert session.compressed_context is None, "No compression below threshold"
+    assert session.get_compressed_context() is None, "No compression below threshold"
 
 
 def test_compressed_context_structure(shared_db):
@@ -189,9 +191,8 @@ def test_compressed_context_structure(shared_db):
     assert session is not None, "Session should exist"
 
     # Compression should have triggered
-    assert session.compressed_context is not None, "Compression should have triggered"
-
-    ctx = session.compressed_context
+    ctx = session.get_compressed_context()
+    assert ctx is not None, "Compression should have triggered"
     # Verify structure
     assert hasattr(ctx, "content"), "Should have content attribute"
     assert hasattr(ctx, "message_ids"), "Should have message_ids attribute"
@@ -247,9 +248,10 @@ def test_mid_run_compression_with_tools(shared_db):
 
     # If compression triggered, compressed_context should exist
     # (depends on number of tool calls generated)
-    if session.compressed_context is not None:
-        assert session.compressed_context.content, "Compressed context should have content"
-        assert len(session.compressed_context.message_ids) > 0, "Should track message IDs"
+    compressed_ctx = session.get_compressed_context()
+    if compressed_ctx is not None:
+        assert compressed_ctx.content, "Compressed context should have content"
+        assert len(compressed_ctx.message_ids) > 0, "Should track message IDs"
 
 
 def test_cross_run_summary_injection(shared_db):
@@ -279,8 +281,9 @@ def test_cross_run_summary_injection(shared_db):
     # Verify compression occurred
     session1 = agent1.get_session(session_id)
     assert session1 is not None, "Session should exist"
-    assert session1.compressed_context is not None, "Compression should have triggered"
-    stored_summary = session1.compressed_context.content
+    compressed_ctx1 = session1.get_compressed_context()
+    assert compressed_ctx1 is not None, "Compression should have triggered"
+    stored_summary = compressed_ctx1.content
     assert stored_summary, "Summary content should not be empty"
 
     # Create a new agent instance with same session
@@ -304,3 +307,64 @@ def test_cross_run_summary_injection(shared_db):
     assert response.content is not None, "Agent should respond"
     # The response should reference information from the compressed summary
     # (The summary was injected when loading history)
+
+
+def test_context_compression_sync_stream(shared_db):
+    """Test context compression works with sync streaming."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        compress_context=True,
+        compression_manager=CompressionManager(
+            compress_context=True,
+            compress_context_messages_limit=2,
+        ),
+        add_history_to_context=True,
+        num_history_runs=5,
+        telemetry=False,
+    )
+
+    # Use run with stream=True to test streaming path
+    agent.run("My favorite programming language is Python.", stream=True)
+    agent.run("I have been coding for 10 years.", stream=True)
+    response = agent.run("What do you know about my programming experience?", stream=True)
+
+    assert response.content is not None, "Agent should respond in sync stream mode"
+
+    # Verify compression occurred
+    session = agent.get_session(agent.session_id)
+    assert session is not None, "Session should exist"
+    compressed_ctx = session.get_compressed_context()
+    assert compressed_ctx is not None, "Compression should have triggered in streaming mode"
+    assert compressed_ctx.content, "Compressed context should have content"
+
+
+@pytest.mark.asyncio
+async def test_context_compression_async_stream(shared_db):
+    """Test context compression works with async streaming."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        compress_context=True,
+        compression_manager=CompressionManager(
+            compress_context=True,
+            compress_context_messages_limit=2,
+        ),
+        add_history_to_context=True,
+        num_history_runs=5,
+        telemetry=False,
+    )
+
+    # Use arun with stream=True to test async streaming path
+    await agent.arun("I work at a technology company.", stream=True)
+    await agent.arun("My role is a senior engineer.", stream=True)
+    response = await agent.arun("What is my job?", stream=True)
+
+    assert response.content is not None, "Agent should respond in async stream mode"
+
+    # Verify compression occurred
+    session = agent.get_session(agent.session_id)
+    assert session is not None, "Session should exist"
+    compressed_ctx = session.get_compressed_context()
+    assert compressed_ctx is not None, "Compression should have triggered in async streaming mode"
+    assert compressed_ctx.content, "Compressed context should have content"

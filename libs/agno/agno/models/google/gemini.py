@@ -317,8 +317,9 @@ class Gemini(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
-        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=compress_tool_results)
         schema_tokens = count_schema_tokens(response_format, self.id)
 
         if self.vertexai:
@@ -337,7 +338,8 @@ class Gemini(Model):
                 contents=contents,
                 config=config if config else None,  # type: ignore
             )
-            return (response.total_tokens or 0) + schema_tokens
+            total = (response.total_tokens or 0) + schema_tokens
+            return total
         else:
             # Google AI Studio: Use API for content tokens + local estimation for system/tools
             # The API doesn't support system_instruction or tools in config, so we use a hybrid approach:
@@ -351,7 +353,7 @@ class Gemini(Model):
                 total = response.total_tokens or 0
             except Exception as e:
                 log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
-                return super().count_tokens(messages, tools, response_format)
+                return super().count_tokens(messages, tools, response_format, compress_tool_results)
 
             # Add estimated tokens for system instruction (not supported by Google AI Studio API)
             if system_instruction:
@@ -373,8 +375,9 @@ class Gemini(Model):
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
-        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=compress_tool_results)
         schema_tokens = count_schema_tokens(response_format, self.id)
 
         # VertexAI supports full token counting with system_instruction and tools
@@ -393,7 +396,8 @@ class Gemini(Model):
                 contents=contents,
                 config=config if config else None,  # type: ignore
             )
-            return (response.total_tokens or 0) + schema_tokens
+            total = (response.total_tokens or 0) + schema_tokens
+            return total
         else:
             # Hybrid approach - Google AI Studio does not support system_instruction or tools in config
             try:
@@ -404,7 +408,7 @@ class Gemini(Model):
                 total = response.total_tokens or 0
             except Exception as e:
                 log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
-                return await super().acount_tokens(messages, tools, response_format)
+                return await super().acount_tokens(messages, tools, response_format, compress_tool_results)
 
             # Add estimated tokens for system instruction
             if system_instruction:

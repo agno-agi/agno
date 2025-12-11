@@ -155,3 +155,72 @@ def test_no_compression_below_threshold(shared_db):
     tool_messages = [m for m in response.messages if m.role == "tool"]
     for msg in tool_messages:
         assert msg.compressed_content is None, "No compression should occur below threshold"
+
+
+def test_compression_sync_stream(shared_db):
+    """Test tool compression works with sync streaming for Team."""
+    dummy_member = Agent(
+        name="Assistant",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You assist with general questions.",
+        telemetry=False,
+    )
+
+    team = Team(
+        name="StreamCompressionTeam",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[dummy_member],
+        tools=[search_tool, get_data],
+        db=shared_db,
+        compress_tool_results=True,
+        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        instructions="Use YOUR OWN search_tool and get_data tools. Do NOT delegate to members.",
+        telemetry=False,
+    )
+
+    response = team.run(
+        "Search for 'streaming test' and also search for 'async patterns'",
+        stream=True,
+    )
+
+    tool_messages = [m for m in response.messages if m.role == "tool"]
+    assert len(tool_messages) >= 2, "Expected at least 2 tool calls"
+
+    # ALL tool messages must be compressed
+    for msg in tool_messages:
+        assert msg.compressed_content is not None, "All tool messages should be compressed in stream mode"
+
+
+@pytest.mark.asyncio
+async def test_compression_async_stream(shared_db):
+    """Test tool compression works with async streaming for Team."""
+    dummy_member = Agent(
+        name="Assistant",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You assist with general questions.",
+        telemetry=False,
+    )
+
+    team = Team(
+        name="AsyncStreamCompressionTeam",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[dummy_member],
+        tools=[search_tool, get_data],
+        db=shared_db,
+        compress_tool_results=True,
+        compression_manager=CompressionManager(compress_tool_results_limit=1),
+        instructions="Use YOUR OWN search_tool and get_data tools. Do NOT delegate to members.",
+        telemetry=False,
+    )
+
+    response = await team.arun(
+        "Search for 'async streaming' and also search for 'event loops'",
+        stream=True,
+    )
+
+    tool_messages = [m for m in response.messages if m.role == "tool"]
+    assert len(tool_messages) >= 2, "Expected at least 2 tool calls"
+
+    # ALL tool messages must be compressed
+    for msg in tool_messages:
+        assert msg.compressed_content is not None, "All tool messages should be compressed in async stream mode"

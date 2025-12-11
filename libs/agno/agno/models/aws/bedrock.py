@@ -363,9 +363,12 @@ class AwsBedrock(Model):
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            formatted_messages, system_message = self._format_messages(
+                messages, compress_tool_results=compress_tool_results
+            )
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
@@ -386,16 +389,19 @@ class AwsBedrock(Model):
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return super().count_tokens(messages, tools, response_format)
+            return super().count_tokens(messages, tools, response_format, compress_tool_results)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        compress_tool_results: bool = False,
     ) -> int:
         try:
-            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            formatted_messages, system_message = self._format_messages(
+                messages, compress_tool_results=compress_tool_results
+            )
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
                 converse_input["system"] = system_message
@@ -417,7 +423,7 @@ class AwsBedrock(Model):
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return await super().acount_tokens(messages, tools, response_format)
+            return await super().acount_tokens(messages, tools, response_format, compress_tool_results)
 
     def invoke(
         self,

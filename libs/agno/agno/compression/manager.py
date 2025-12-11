@@ -34,23 +34,31 @@ class CompressionManager:
         if self.compress_tool_results and self.compress_context:
             log_warning("Both tool-based and context-based compression are enabled. Compressing full context.")
 
-    def should_compress(self, messages: List[Message], tools: Optional[List] = None) -> bool:
-        return self._should_compress_context(messages, tools) or self._should_compress_tools(messages, tools)
+    def should_compress(
+        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+    ) -> bool:
+        return self._should_compress_context(messages, tools, model) or self._should_compress_tools(
+            messages, tools, model
+        )
 
-    async def ashould_compress(self, messages: List[Message], tools: Optional[List] = None) -> bool:
+    async def ashould_compress(
+        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+    ) -> bool:
         """Async version of should_compress for token counting."""
-        return self._should_compress_context(messages, tools) or self._should_compress_tools(messages, tools)
+        return self._should_compress_context(messages, tools, model) or self._should_compress_tools(
+            messages, tools, model
+        )
 
     def compress(
         self,
         messages: List[Message],
         tools: Optional[List] = None,
         compressed_context: Optional[CompressedContext] = None,
+        model: Optional[Model] = None,
     ) -> Optional[CompressedContext]:
-        """Compress messages. Returns new CompressedContext if context compression occurred."""
-        if self._should_compress_context(messages, tools):
+        if self._should_compress_context(messages, tools, model):
             return self._compress_context(messages, compressed_context)
-        elif self._should_compress_tools(messages, tools):
+        elif self._should_compress_tools(messages, tools, model):
             self._compress_tools(messages)
         return None
 
@@ -59,28 +67,39 @@ class CompressionManager:
         messages: List[Message],
         tools: Optional[List] = None,
         compressed_context: Optional[CompressedContext] = None,
+        model: Optional[Model] = None,
     ) -> Optional[CompressedContext]:
-        """Async compress messages. Returns new CompressedContext if context compression occurred."""
-        if self._should_compress_context(messages, tools):
+        if self._should_compress_context(messages, tools, model):
             return await self._acompress_context(messages, compressed_context)
-        elif self._should_compress_tools(messages, tools):
+        elif self._should_compress_tools(messages, tools, model):
             await self._acompress_tools(messages)
         return None
 
-    def _should_compress_context(self, messages: List[Message], tools: Optional[List] = None) -> bool:
+    def _should_compress_context(
+        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+    ) -> bool:
         if not self.compress_context:
             return False
 
-        if self.compress_token_limit and self.model:
-            return self.model.count_tokens(messages, tools) >= self.compress_token_limit
+        # Use the Agent/Team's model for token counting
+        counting_model = model or self.model
+        if self.compress_token_limit and counting_model:
+            token_count = counting_model.count_tokens(messages, tools, compress_tool_results=self.compress_tool_results)
+            return token_count >= self.compress_token_limit
         msg_count = len([m for m in messages if m.role in ("user", "assistant", "tool")])
         return msg_count >= self.compress_context_messages_limit
 
-    def _should_compress_tools(self, messages: List[Message], tools: Optional[List] = None) -> bool:
+    def _should_compress_tools(
+        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+    ) -> bool:
         if not self.compress_tool_results:
             return False
-        if self.compress_token_limit and self.model:
-            return self.model.count_tokens(messages, tools) >= self.compress_token_limit
+
+        # Use the Agent/Team's model for token counting
+        counting_model = model or self.model
+        if self.compress_token_limit and counting_model:
+            token_count = counting_model.count_tokens(messages, tools, compress_tool_results=self.compress_tool_results)
+            return token_count >= self.compress_token_limit
         uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
         return uncompressed >= self.compress_tool_results_limit
 
@@ -89,11 +108,6 @@ class CompressionManager:
         messages: List[Message],
         compressed_context: Optional[CompressedContext] = None,
     ) -> Optional[CompressedContext]:
-        """Compress context messages. Returns new CompressedContext.
-
-        Keeps: system message (if present) + first user message (the intent)
-        Compresses: ALL messages after the first user message into a summary
-        """
         if len(messages) < 3:
             return None
 
@@ -101,24 +115,25 @@ class CompressionManager:
         system_msg = messages[0] if messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        # 2. Find first user message (the intent/task)
-        # Skip from_history=True messages (like injected summaries) to find actual user intent
-        first_user_msg = None
-        first_user_idx = None
-        for i, m in enumerate(messages[start_idx:], start_idx):
-            if m.role == "user" and not getattr(m, 'from_history', False):
-                first_user_msg = m
-                first_user_idx = i
+        # 2. Find LAST user message (the current run's input)
+        last_user_msg = None
+        last_user_idx = None
+        for i, m in reversed(list(enumerate(messages))):
+            if i < start_idx:
+                break
+            if m.role == "user" and not getattr(m, "from_history", False):
+                last_user_msg = m
+                last_user_idx = i
                 break
 
-        if first_user_msg is None:
-            return None  # No user message, can't compress
+        if last_user_msg is None or last_user_idx is None:
+            return None
 
-        # 3. Everything after first user gets compressed
-        msgs_to_compress = messages[first_user_idx + 1:]
+        # 3. Compress ALL messages except system and last user
+        msgs_to_compress = [m for i, m in enumerate(messages) if i >= start_idx and i != last_user_idx]
 
         if len(msgs_to_compress) < 2:
-            return None  # Need at least a couple messages to compress
+            return None
 
         # 4. Generate summary
         summary = self._compress_messages(msgs_to_compress)
@@ -126,24 +141,24 @@ class CompressionManager:
             return None
 
         # 5. Track message IDs - accumulate with existing IDs
-        # Include first_user_msg.id so it gets replaced by summary on subsequent runs
         existing_ids = compressed_context.message_ids if compressed_context else set()
         all_ids: Set[str] = set(existing_ids)
         new_ids = {m.id for m in msgs_to_compress}
-        new_ids.add(first_user_msg.id)  # Include the first user message in compressed set
         all_ids.update(new_ids)
 
-        # 6. Rebuild: [system (if present), first_user, context_summary]
-        # Keep first_user for this run, but it will be replaced by summary on next run
+        # 6. Rebuild: [system, summary, last_user]
+        # Clean slate - no current work preserved, summary contains everything
         messages.clear()
         if system_msg:
             messages.append(system_msg)
-        messages.append(first_user_msg)
-        messages.append(Message(
-            role="user",
-            content=f"Context summary:\n\n{summary}",
-            add_to_agent_memory=False,  # Don't store summary in run_response.messages
-        ))
+        messages.append(
+            Message(
+                role="user",
+                content=f"Context summary:\n\n{summary}",
+                add_to_agent_memory=False,  # Don't store summary in run_response.messages
+            )
+        )
+        messages.append(last_user_msg)
 
         new_context = CompressedContext(
             content=summary,
@@ -158,11 +173,6 @@ class CompressionManager:
         messages: List[Message],
         compressed_context: Optional[CompressedContext] = None,
     ) -> Optional[CompressedContext]:
-        """Async compress context messages. Returns new CompressedContext.
-
-        Keeps: system message (if present) + first user message (the intent)
-        Compresses: ALL messages after the first user message into a summary
-        """
         if len(messages) < 3:
             return None
 
@@ -170,24 +180,22 @@ class CompressionManager:
         system_msg = messages[0] if messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        # 2. Find first user message (the intent/task)
-        # Skip from_history=True messages (like injected summaries) to find actual user intent
-        first_user_msg = None
-        first_user_idx = None
-        for i, m in enumerate(messages[start_idx:], start_idx):
-            if m.role == "user" and not getattr(m, 'from_history', False):
-                first_user_msg = m
-                first_user_idx = i
+        # 2. Find LAST user message (the current run's input)
+        last_user_msg = None
+        last_user_idx = None
+        for i, m in reversed(list(enumerate(messages))):
+            if i < start_idx:
+                break
+            if m.role == "user" and not getattr(m, "from_history", False):
+                last_user_msg = m
+                last_user_idx = i
                 break
 
-        if first_user_msg is None:
-            return None  # No user message, can't compress
+        if last_user_msg is None or last_user_idx is None:
+            return None
 
-        # 3. Everything after first user gets compressed
-        msgs_to_compress = messages[first_user_idx + 1:]
-
-        if len(msgs_to_compress) < 2:
-            return None  # Need at least a couple messages to compress
+        # 3. Compress ALL messages except system and last user
+        msgs_to_compress = [m for i, m in enumerate(messages) if i >= start_idx and i != last_user_idx]
 
         # 4. Generate summary
         summary = await self._acompress_messages(msgs_to_compress)
@@ -195,24 +203,23 @@ class CompressionManager:
             return None
 
         # 5. Track message IDs - accumulate with existing IDs
-        # Include first_user_msg.id so it gets replaced by summary on subsequent runs
         existing_ids = compressed_context.message_ids if compressed_context else set()
         all_ids: Set[str] = set(existing_ids)
         new_ids = {m.id for m in msgs_to_compress}
-        new_ids.add(first_user_msg.id)  # Include the first user message in compressed set
         all_ids.update(new_ids)
 
-        # 6. Rebuild: [system (if present), first_user, context_summary]
-        # Keep first_user for this run, but it will be replaced by summary on next run
+        # 6. Rebuild: [system, summary, last_user]
         messages.clear()
         if system_msg:
             messages.append(system_msg)
-        messages.append(first_user_msg)
-        messages.append(Message(
-            role="user",
-            content=f"Context summary:\n\n{summary}",
-            add_to_agent_memory=False,  # Don't store summary in run_response.messages
-        ))
+        messages.append(
+            Message(
+                role="user",
+                content=f"Context summary:\n\n{summary}",
+                add_to_agent_memory=False,  # Don't store summary in run_response.messages
+            )
+        )
+        messages.append(last_user_msg)
 
         new_context = CompressedContext(
             content=summary,
