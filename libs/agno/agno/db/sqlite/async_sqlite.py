@@ -2188,7 +2188,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
             if table is None:
                 return
 
@@ -2196,10 +2196,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            from agno.utils.log import log_warning
-
-            log_warning(f"Exception deleting all cultural artifacts: {e}")
-            raise e
+            log_error(f"Exception deleting all cultural artifacts: {e}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete a cultural artifact from the database.
@@ -2211,7 +2208,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
             if table is None:
                 return
 
@@ -2227,7 +2224,6 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error deleting cultural artifact: {e}")
-            raise e
 
     async def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
@@ -2245,7 +2241,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
             if table is None:
                 return None
 
@@ -2263,7 +2259,6 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from cultural artifacts table: {e}")
-            raise e
 
     async def get_all_cultural_knowledge(
         self,
@@ -2297,7 +2292,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
             if table is None:
                 return [] if deserialize else ([], 0)
 
@@ -2337,7 +2332,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error reading from cultural artifacts table: {e}")
-            raise e
+            return [] if deserialize else ([], 0)
 
     async def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True

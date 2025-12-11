@@ -1089,13 +1089,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {e}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete cultural knowledge by ID.
@@ -1107,15 +1107,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_warning(f"Exception deleting cultural knowledge: {e}")
-            raise e
+            log_error(f"Exception deleting cultural knowledge: {e}")
 
     async def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
@@ -1133,7 +1132,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.id == id)
@@ -1151,8 +1150,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_warning(f"Exception reading cultural knowledge: {e}")
-            raise e
+            log_error(f"Exception reading cultural knowledge: {e}")
 
     async def get_all_cultural_knowledge(
         self,
@@ -1224,8 +1222,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
-            log_warning(f"Exception reading all cultural knowledge: {e}")
-            raise e
+            log_error(f"Exception reading all cultural knowledge: {e}")
+            return [] if deserialize else ([], 0)
 
     async def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
