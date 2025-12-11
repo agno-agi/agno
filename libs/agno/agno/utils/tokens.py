@@ -599,29 +599,15 @@ def count_tokens(
     response_format: Optional[Union[Dict, Type["BaseModel"]]] = None,
 ) -> int:
     total = 0
+    model_id = model_id.lower()
 
-    # Count message tokens with model-specific overhead
+    # Count message tokens
     if messages:
-        model_id_lower = model_id.lower()
-        # gpt-3.5-turbo-0301 uses different overhead values
-        if "gpt-3.5-turbo-0301" in model_id_lower:
-            tokens_per_message, tokens_per_name = 4, -1
-        else:
-            tokens_per_message, tokens_per_name = 3, 1
-
         for msg in messages:
-            total += tokens_per_message
             total += _count_message_tokens(msg, model_id)
-            if msg.name:
-                total += tokens_per_name
 
-    # Add 3 tokens for reply priming: <|start|>assistant<|message|>
-    # Every completion is primed with these tokens regardless of content
-    total += 3
-
-    # Tools are tokenized separately from messages.
+    # Add tool tokens
     if tools:
-        # Base tool definition tokens
         total += count_tool_tokens(tools, model_id)
 
     # Add response_format/output_schema tokens
