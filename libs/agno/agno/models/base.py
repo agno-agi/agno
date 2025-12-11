@@ -191,7 +191,7 @@ class Model(ABC):
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                return self._invoke_with_retry(**kwargs)
+                return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -220,7 +220,7 @@ class Model(ABC):
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                return await self._ainvoke_with_retry(**kwargs)
+                return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -251,7 +251,7 @@ class Model(ABC):
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                yield from self._invoke_stream_with_retry(**kwargs)
+                yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
                 return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
@@ -284,7 +284,7 @@ class Model(ABC):
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                async for response in self._ainvoke_stream_with_retry(**kwargs):
+                async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
 
