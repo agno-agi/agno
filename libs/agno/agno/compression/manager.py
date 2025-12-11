@@ -1,7 +1,9 @@
 import asyncio
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -66,20 +68,22 @@ class CompressionManager:
         messages: List[Message],
         tools: Optional[List] = None,
         model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         """Check if tool results should be compressed.
 
         Args:
             messages: List of messages to check.
-            tools: Optional list of tools for token counting.
+            tools: List of tools for token counting.
             model: The Agent / Team model.
+            response_format: Output schema for accurate token counting.
         """
         if not self.compress_tool_results:
             return False
 
         # Token-based threshold check
         if self.compress_token_limit is not None and model is not None:
-            tokens = model.count_tokens(messages, tools)
+            tokens = model.count_tokens(messages, tools, response_format)
             if tokens >= self.compress_token_limit:
                 log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
                 return True
@@ -153,20 +157,22 @@ class CompressionManager:
         messages: List[Message],
         tools: Optional[List] = None,
         model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         """Async check if tool results should be compressed.
 
         Args:
             messages: List of messages to check.
-            tools: Optional list of tools for token counting.
+            tools: List of tools for token counting.
             model: The Agent / Team model.
+            response_format: Output schema for accurate token counting.
         """
         if not self.compress_tool_results:
             return False
 
         # Token-based threshold check
         if self.compress_token_limit is not None and model is not None:
-            tokens = await model.acount_tokens(messages, tools)
+            tokens = await model.acount_tokens(messages, tools, response_format)
             if tokens >= self.compress_token_limit:
                 log_info(f"Token limit hit: {tokens} >= {self.compress_token_limit}")
                 return True

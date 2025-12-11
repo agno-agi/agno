@@ -120,15 +120,21 @@ class Message(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
-    def get_content_string(self) -> str:
+    def get_content_string(self, use_compressed_content: bool = False) -> str:
         """Returns the content as a string."""
+        if use_compressed_content and self.compressed_content is not None:
+            return self.compressed_content
+
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
-                return self.content[0].get("text", "")
-            else:
-                return json.dumps(self.content)
+            text_parts = []
+            for item in self.content:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    text_parts.append(item.get("text", ""))
+            return " ".join(text_parts) if text_parts else ""
         return ""
 
     def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:

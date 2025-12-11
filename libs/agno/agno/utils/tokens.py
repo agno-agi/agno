@@ -4,14 +4,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
+from pydantic import BaseModel
+
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
 # Default image dimensions used as fallback when actual dimensions cannot be determined.
-# These differ from LiteLLM's defaults (300x300) to provide a more conservative estimate
-# for high-detail image token counting.
+# These values provide a more conservative estimate for high-detail image token counting.
 DEFAULT_IMAGE_WIDTH = 1024
 DEFAULT_IMAGE_HEIGHT = 1024
 
@@ -355,7 +356,7 @@ def count_tool_tokens(
     # Convert Function objects to dict format for formatting
     tool_dicts = []
     for tool in tools:
-        if hasattr(tool, "to_dict"):
+        if isinstance(tool, Function):
             tool_dicts.append(tool.to_dict())
         else:
             tool_dicts.append(tool)
@@ -363,31 +364,11 @@ def count_tool_tokens(
     # Format tools in TypeScript namespace format and count tokens
     formatted = _format_function_definitions(tool_dicts)
     tokens = count_text_tokens(formatted, model_id)
-
-    # Add 9 tokens for tool definition overhead (OpenAI internal structure)
-    tokens += 9
-
-    # Subtract 4 tokens when system message is present with tools
-    # (OpenAI combines system message and tool definitions without
-    # the priming tokens <|start|>system<|message|>)
-    if includes_system_message:
-        tokens -= 4
-
-    # Handle tool_choice tokens
-    if tool_choice == "none":
-        # "none" adds 1 token for the choice indicator
-        tokens += 1
-    elif isinstance(tool_choice, dict):
-        # Specific function choice: 7 tokens overhead + function name tokens
-        tokens += 7
-        func_name = tool_choice.get("function", {}).get("name", "")
-        if func_name:
-            tokens += count_text_tokens(func_name, model_id)
     return tokens
 
 
 def count_schema_tokens(
-    response_format: Optional[Union[Dict, Type]],
+    response_format: Optional[Union[Dict, Type["BaseModel"]]],
     model_id: str = "gpt-4o",
 ) -> int:
     """Estimate tokens for output_schema/response_format."""
@@ -406,17 +387,7 @@ def count_schema_tokens(
             return 0
 
         schema_json = json.dumps(schema)
-        raw_tokens = count_text_tokens(schema_json, model_id)
-
-        # The ratio varies with schema size
-        if raw_tokens < 100:
-            ratio = 0.88
-        elif raw_tokens < 200:
-            ratio = 0.77
-        else:
-            ratio = 0.72
-
-        return int(raw_tokens * ratio)
+        return count_text_tokens(schema_json, model_id)
     except Exception:
         return 0
 
@@ -578,61 +549,31 @@ def _count_message_tokens(
     tokens_per_name: int = 1,
 ) -> int:
     tokens = tokens_per_message
+    message_dict: Dict[str, Any] = {}
 
-    # Count role tokens
-    if message.role:
-        tokens += count_text_tokens(message.role, model_id)
-
-    # Count content tokens (supports compressed content for context compression)
-    content = message.get_content(use_compressed_content=True)
+    content = message.get_content_string(use_compressed_content=True)
     if content:
-        if isinstance(content, str):
-            tokens += count_text_tokens(content, model_id)
-        elif isinstance(content, list):
-            # Handle multimodal content blocks (OpenAI format)
-            for item in content:
-                if isinstance(item, str):
-                    tokens += count_text_tokens(item, model_id)
-                elif isinstance(item, dict):
-                    item_type = item.get("type", "")
-                    if item_type == "text":
-                        tokens += count_text_tokens(item.get("text", ""), model_id)
-                    elif item_type == "image_url":
-                        # Quick estimate for inline image URLs
-                        image_url_data = item.get("image_url", {})
-                        detail = image_url_data.get("detail", "auto") if isinstance(image_url_data, dict) else "auto"
-                        # 85 for low detail, 765 for high/auto (assumes 1024x1024 default)
-                        tokens += 85 if detail == "low" else 765
-                    else:
-                        # Unknown content type: serialize and count
-                        tokens += count_text_tokens(json.dumps(item), model_id)
-        else:
-            tokens += count_text_tokens(str(content), model_id)
+        message_dict["content"] = content
 
-    # Count tool call tokens (assistant messages with function calls)
     if message.tool_calls:
-        for tool_call in message.tool_calls:
-            if isinstance(tool_call, dict) and "function" in tool_call:
-                args = tool_call["function"].get("arguments", "")
-                tokens += count_text_tokens(str(args), model_id)
+        message_dict["tool_calls"] = message.tool_calls
 
-    # Count tool response tokens
     if message.tool_call_id:
-        tokens += count_text_tokens(message.tool_call_id, model_id)
+        message_dict["tool_call_id"] = message.tool_call_id
 
-    # Count reasoning content (for models like o1 that expose reasoning)
     if message.reasoning_content:
-        tokens += count_text_tokens(message.reasoning_content, model_id)
+        message_dict["reasoning_content"] = message.reasoning_content
 
     if message.redacted_reasoning_content:
-        tokens += count_text_tokens(message.redacted_reasoning_content, model_id)
+        message_dict["redacted_reasoning_content"] = message.redacted_reasoning_content
 
-    # Count name field tokens (adds tokens_per_name overhead)
     if message.name:
-        tokens += count_text_tokens(message.name, model_id)
+        message_dict["name"] = message.name
         tokens += tokens_per_name
 
-    # Count all media attachments
+    if message_dict:
+        tokens += count_text_tokens(json.dumps(message_dict), model_id)
+
     tokens += _count_media_tokens(message)
 
     return tokens
@@ -643,7 +584,7 @@ def count_tokens(
     tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     model_id: str = "gpt-4o",
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    response_format: Optional[Union[Dict, Type]] = None,
+    response_format: Optional[Union[Dict, Type["BaseModel"]]] = None,
 ) -> int:
     total = 0
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Dict,
@@ -21,6 +22,9 @@ from typing import (
     Union,
     get_args,
 )
+
+if TYPE_CHECKING:
+    from agno.compression.manager import CompressionManager
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -475,8 +479,7 @@ class Model(ABC):
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        # Run in thread to avoid blocking the event loop.
-        return await asyncio.to_thread(self.count_tokens, messages, tools, response_format)
+        return self.count_tokens(messages, tools, response_format)
 
     def response(
         self,
@@ -487,7 +490,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -530,7 +533,7 @@ class Model(ABC):
             while True:
                 # Compress tool results if compression is enabled and threshold is met
                 if _compression_manager is not None and _compression_manager.should_compress(
-                    messages, tools, model=self
+                    messages, tools, model=self, response_format=response_format
                 ):
                     _compression_manager.compress(messages)
 
@@ -701,7 +704,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -734,7 +737,7 @@ class Model(ABC):
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
-                    messages, tools, model=self
+                    messages, tools, model=self, response_format=response_format
                 ):
                     await _compression_manager.acompress(messages)
 
@@ -1122,7 +1125,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1163,7 +1166,7 @@ class Model(ABC):
             while True:
                 # Compress existing tool results BEFORE invoke
                 if _compression_manager is not None and _compression_manager.should_compress(
-                    messages, tools, model=self
+                    messages, tools, model=self, response_format=response_format
                 ):
                     _compression_manager.compress(messages)
 
@@ -1342,7 +1345,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1383,7 +1386,7 @@ class Model(ABC):
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
-                    messages, tools, model=self
+                    messages, tools, model=self, response_format=response_format
                 ):
                     await _compression_manager.acompress(messages)
 

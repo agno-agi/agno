@@ -493,3 +493,11 @@ class LiteLLM(Model):
             tools=formatted_tools,  # type: ignore
         )
         return tokens + count_schema_tokens(response_format, self.id)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, response_format)
