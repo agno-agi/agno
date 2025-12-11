@@ -695,25 +695,24 @@ class PgVector(VectorDb):
         Update the metadata for a document.
 
         Args:
-            id (str): The ID of the document.
+            content_id (str): The ID of the document.
             metadata (Dict[str, Any]): The metadata to update.
         """
+        print("metadata is: ", metadata)
         try:
             with self.Session() as sess:
-                # Merge JSONB instead of overwriting: coalesce(existing, '{}') || :new
+                # Merge JSONB for metadata, but replace filters entirely (absolute value)
                 stmt = (
                     update(self.table)
                     .where(self.table.c.content_id == content_id)
                     .values(
                         meta_data=func.coalesce(self.table.c.meta_data, text("'{}'::jsonb")).op("||")(
-                            bindparam("md", metadata, type_=postgresql.JSONB)
+                            bindparam("md", type_=postgresql.JSONB)
                         ),
-                        filters=func.coalesce(self.table.c.filters, text("'{}'::jsonb")).op("||")(
-                            bindparam("ft", metadata, type_=postgresql.JSONB)
-                        ),
+                        filters=bindparam("ft", type_=postgresql.JSONB),
                     )
                 )
-                sess.execute(stmt)
+                sess.execute(stmt, {"md": metadata, "ft": metadata})
                 sess.commit()
         except Exception as e:
             log_error(f"Error updating metadata for document {content_id}: {e}")
@@ -1111,6 +1110,7 @@ class PgVector(VectorDb):
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
+
             return search_results
         except Exception as e:
             log_error(f"Error during hybrid search: {e}")

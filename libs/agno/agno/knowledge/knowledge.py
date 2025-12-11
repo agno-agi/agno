@@ -1960,8 +1960,8 @@ class Knowledge:
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-            if self.vector_db and content.metadata:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
+            if self.vector_db:
+                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
 
@@ -2006,8 +2006,8 @@ class Knowledge:
             else:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-            if self.vector_db and content.metadata:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
+            if self.vector_db:
+                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
 
@@ -2783,6 +2783,24 @@ class Knowledge:
         """Get all currently loaded readers (only returns readers that have been used)."""
         if self.readers is None:
             self.readers = {}
+        elif not isinstance(self.readers, dict):
+            # Defensive check: if readers is not a dict (e.g., was set to a list), convert it
+            if isinstance(self.readers, list):
+                readers_dict: Dict[str, Reader] = {}
+                for reader in self.readers:
+                    if isinstance(reader, Reader):
+                        reader_key = self._generate_reader_key(reader)
+                        # Handle potential duplicate keys by appending index if needed
+                        original_key = reader_key
+                        counter = 1
+                        while reader_key in readers_dict:
+                            reader_key = f"{original_key}_{counter}"
+                            counter += 1
+                        readers_dict[reader_key] = reader
+                self.readers = readers_dict
+            else:
+                # For any other unexpected type, reset to empty dict
+                self.readers = {}
 
         return self.readers
 
