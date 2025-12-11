@@ -1,3 +1,3 @@
-from agno.client.os_client import AgentOSClient
+from agno.client.os import AgentOSClient
 
 __all__ = ["AgentOSClient"]

@@ -11,8 +11,8 @@ Prerequisites:
 
 import asyncio
 
+from agno.client import AgentOSClient
 from agno.db.schemas.evals import EvalType
-from agno.os.client import AgentOSClient
 
 
 async def run_accuracy_eval():
@@ -22,7 +22,7 @@ async def run_accuracy_eval():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available agents
     config = await client.get_config()
     if not config.agents:
@@ -61,7 +61,7 @@ async def run_performance_eval():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available agents
     config = await client.get_config()
     if not config.agents:
@@ -100,7 +100,7 @@ async def list_eval_runs():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     try:
         evals = await client.list_eval_runs()
         print(f"\nFound {len(evals.data)} evaluation runs")
@@ -122,7 +122,7 @@ async def get_eval_details():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     try:
         # First list evals to get an ID
         evals = await client.list_eval_runs()

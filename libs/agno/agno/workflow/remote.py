@@ -19,21 +19,20 @@ except ImportError:
 class RemoteWorkflow(BaseRemote):
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
+        base_url: str,
+        workflow_id: str,
         timeout: float = 300.0,
-        workflow_id: Optional[str] = None,
     ):
         """Initialize AgentOSRunner for local or remote execution.
 
-        For local execution, provide agent/team/workflow instances.
-        For remote execution, provide base_url and agent_id/team_id/workflow_id.
+        For remote execution, provide base_url and workflow_id.
 
         Args:
             base_url: Base URL for remote AgentOS instance (e.g., "http://localhost:7777")
-            agent_id: ID of remote agent
+            workflow_id: ID of remote workflow
+            timeout: Request timeout in seconds (default: 300)
         """
-        super().__init__(base_url, api_key, timeout)
+        super().__init__(base_url, timeout)
         self.workflow_id = workflow_id
 
     @property
@@ -42,7 +41,7 @@ class RemoteWorkflow(BaseRemote):
 
     @property
     def db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
-        from agno.schema.os.os import ConfigResponse
+        from agno.os.schema import ConfigResponse
 
         config: ConfigResponse = self._get_config()
         for workflow in config.workflows:

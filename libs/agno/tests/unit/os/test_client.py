@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.os.client import AgentOSClient
+from agno.client.client import AgentOSClient
 
 
 def test_init_with_base_url():

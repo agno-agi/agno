@@ -52,13 +52,6 @@ class BaseRemote:
         with self.get_client() as client:
             return client.get_config()
 
-    def _get_headers(self) -> Dict[str, str]:
-        """Get HTTP headers for remote requests."""
-        headers: Dict[str, str] = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
-
     @abstractmethod
     def arun(  # type: ignore
         self,

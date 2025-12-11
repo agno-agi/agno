@@ -11,7 +11,7 @@ Run `agent_os_setup.py` first to start the remote AgentOS instance.
 
 import asyncio
 
-from agno.os import AgentOSClient
+from agno.client import AgentOSClient
 
 
 async def discovery_example():

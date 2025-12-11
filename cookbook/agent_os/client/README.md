@@ -70,15 +70,15 @@ Note: This minimal setup won't support all cookbook examples (e.g., memory, team
 
 ```python
 import asyncio
-from agno.os.client import AgentOSClient
+from agno.client.os import AgentOSClient
 
 async def main():
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Discover available agents
     config = await client.get_config()
     print(f"Agents: {[a.id for a in config.agents]}")
-    
+
     # Run an agent
     result = await client.run_agent(
         agent_id="assistant",
