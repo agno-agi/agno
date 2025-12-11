@@ -344,8 +344,6 @@ class PDFReader(BasePDFReader):
         self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
     ) -> List[Document]:
         doc_name = self._get_doc_name(pdf, name)
-        print(f"Reading: {doc_name}")
-        print(self.name)
         log_debug(f"Reading: {doc_name}")
 
         try:

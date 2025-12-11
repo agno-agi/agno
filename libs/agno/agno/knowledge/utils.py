@@ -96,10 +96,10 @@ def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
 
 def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]:
     """Get information about all available readers, including custom readers from a Knowledge instance.
-    
+
     Args:
         knowledge_instance: Optional Knowledge instance to include custom readers from.
-    
+
     Returns:
         List of reader info dictionaries.
     """
@@ -114,7 +114,7 @@ def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]
             # Log the error but don't fail the entire request
             log_debug(f"Skipping reader '{key}': {e}")
             continue
-    
+
     # Add custom readers from knowledge instance if provided
     if knowledge_instance is not None:
         custom_readers = knowledge_instance.get_readers()
@@ -128,7 +128,7 @@ def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]
                 except ValueError as e:
                     log_debug(f"Skipping custom reader '{reader_id}': {e}")
                     continue
-    
+
     return readers_info
 
 
@@ -143,7 +143,6 @@ def get_content_types_to_readers_mapping(knowledge_instance: Optional[Any] = Non
     """
     content_type_mapping: Dict[str, List[str]] = {}
     readers_info = get_all_readers_info(knowledge_instance)
-    print(f"all readers_info: {readers_info}")
     for reader_info in readers_info:
         reader_id = reader_info["id"]
         content_types = reader_info.get("content_types", [])

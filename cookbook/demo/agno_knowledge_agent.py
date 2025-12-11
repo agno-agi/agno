@@ -1,13 +1,14 @@
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.anthropic import Claude
 from agno.vectordb.pgvector import PgVector, SearchType
 from db import db_url, demo_db
-from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.knowledge.chunking.fixed import FixedSizeChunking
+
 # ============================================================================
 # Setup knowledge base for storing Agno documentation
 # ============================================================================
@@ -20,7 +21,12 @@ knowledge = Knowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     contents_db=demo_db,
-    readers=[PDFReader(name="custom_reader", chunking_strategy=FixedSizeChunking(chunk_size=10, overlap=9))],
+    readers=[
+        PDFReader(
+            name="custom_reader",
+            chunking_strategy=FixedSizeChunking(chunk_size=10, overlap=9),
+        )
+    ],
 )
 
 # ============================================================================

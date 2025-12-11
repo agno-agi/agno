@@ -256,7 +256,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             description=update_data.description,
             metadata=update_data.metadata,
         )
-        print("CONTENT METADATA: ", content.metadata)
 
         if update_data.reader_id:
             if knowledge.readers and update_data.reader_id in knowledge.readers:
@@ -967,7 +966,6 @@ async def process_content(
 
     try:
         if reader_id:
-            print(f"reader_id: {reader_id}")
             reader = None
             # Use get_readers() to ensure we get a dict (handles list conversion)
             custom_readers = knowledge.get_readers()
@@ -995,7 +993,6 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        print(f"Using reader: {content.reader.__class__.__name__}")
         await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:

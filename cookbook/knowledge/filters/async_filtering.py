@@ -4,7 +4,9 @@ import os
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.filters import IN, OR
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
@@ -12,8 +14,6 @@ from agno.utils.media import (
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.search import SearchType
 
-from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.knowledge.chunking.fixed import FixedSizeChunking
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.DOCX
@@ -128,7 +128,7 @@ custom_knowledge = Knowledge(
     name="Custom Knowledge",
     vector_db=vector_db,
     contents_db=db,
-    readers=[my_custom_reader]
+    readers=[my_custom_reader],
 )
 
 asyncio.run(
@@ -138,7 +138,8 @@ asyncio.run(
         metadata={"user_tag": "manuals", "type": "hobbies"},
         skip_if_exists=True,
         reader=my_custom_reader,
-    ))
+    )
+)
 
 print(custom_knowledge.readers)
 # Step 2: Query the knowledge base with different filter combinations
