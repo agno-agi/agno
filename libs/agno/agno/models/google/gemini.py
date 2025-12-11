@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model
+from agno.models.base import Model, RetryableModelProviderError
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -35,6 +36,7 @@ try:
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
+        GroundingMetadata,
         Operation,
         Part,
         Retrieval,
@@ -243,8 +245,8 @@ class Gemini(Model):
         builtin_tools = []
 
         if self.grounding:
-            log_info(
-                "Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
+            log_debug(
+                "Gemini Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
             )
             builtin_tools.append(
                 Tool(
@@ -257,15 +259,15 @@ class Gemini(Model):
             )
 
         if self.search:
-            log_info("Google Search enabled.")
+            log_debug("Gemini Google Search enabled.")
             builtin_tools.append(Tool(google_search=GoogleSearch()))
 
         if self.url_context:
-            log_info("URL context enabled.")
+            log_debug("Gemini URL context enabled.")
             builtin_tools.append(Tool(url_context=UrlContext()))
 
         if self.vertexai_search:
-            log_info("Vertex AI Search enabled.")
+            log_debug("Gemini Vertex AI Search enabled.")
             if not self.vertexai_search_datastore:
                 log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
                 raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
@@ -317,6 +319,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -337,7 +340,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -350,6 +359,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -363,6 +374,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -382,7 +394,11 @@ class Gemini(Model):
                 contents=formatted_messages,
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                yield self._parse_provider_response_delta(response, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -394,6 +410,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -407,6 +425,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -429,7 +448,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retrying_with_guidance=retrying_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             return model_response
 
@@ -441,6 +466,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -454,6 +481,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retrying_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -476,7 +504,11 @@ class Gemini(Model):
                 **request_kwargs,
             )
             async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk, retrying_with_guidance=retrying_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retrying_with_guidance is True:
+                self._remove_temporarys(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -488,6 +520,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -863,10 +897,10 @@ class Gemini(Model):
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelResponse.
+        Parse the Gemini response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Raw response from Gemini
 
         Returns:
             ModelResponse: Parsed response data
@@ -875,8 +909,20 @@ class Gemini(Model):
 
         # Get response message
         response_message = Content(role="model", parts=[])
-        if response.candidates and response.candidates[0].content:
-            response_message = response.candidates[0].content
+        if response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    # We only want to raise errors that trigger regeneration attempts once
+                    if kwargs.get("retrying_with_guidance") is True:
+                        pass
+                    if self.retry_with_guidance:
+                        raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
+
+            if candidate.content:
+                response_message = candidate.content
 
         # Add role
         if response_message.role is not None:
@@ -963,27 +1009,24 @@ class Gemini(Model):
             citations = Citations()
             citations_raw = {}
             citations_urls = []
+            web_search_queries: List[str] = []
 
             if response.candidates and response.candidates[0].grounding_metadata is not None:
-                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
-                citations_raw["grounding_metadata"] = grounding_metadata
+                grounding_metadata: GroundingMetadata = response.candidates[0].grounding_metadata
+                citations_raw["grounding_metadata"] = grounding_metadata.model_dump()
 
-                chunks = grounding_metadata.get("grounding_chunks", []) or []
-                citation_pairs = []
+                chunks = grounding_metadata.grounding_chunks or []
+                web_search_queries = grounding_metadata.web_search_queries or []
                 for chunk in chunks:
-                    if not isinstance(chunk, dict):
+                    if not chunk:
                         continue
-                    web = chunk.get("web")
-                    if not isinstance(web, dict):
+                    web = chunk.web
+                    if not web:
                         continue
-                    uri = web.get("uri")
-                    title = web.get("title")
+                    uri = web.uri
+                    title = web.title
                     if uri:
-                        citation_pairs.append((uri, title))
-
-                # Create citation objects from filtered pairs
-                grounding_urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
-                citations_urls.extend(grounding_urls)
+                        citations_urls.append(UrlCitation(url=uri, title=title))
 
             # Handle URLs from URL context tool
             if (
@@ -991,22 +1034,29 @@ class Gemini(Model):
                 and hasattr(response.candidates[0], "url_context_metadata")
                 and response.candidates[0].url_context_metadata is not None
             ):
-                url_context_metadata = response.candidates[0].url_context_metadata.model_dump()
-                citations_raw["url_context_metadata"] = url_context_metadata
+                url_context_metadata = response.candidates[0].url_context_metadata
+                citations_raw["url_context_metadata"] = url_context_metadata.model_dump()
 
-                url_metadata_list = url_context_metadata.get("url_metadata", [])
+                url_metadata_list = url_context_metadata.url_metadata or []
                 for url_meta in url_metadata_list:
-                    retrieved_url = url_meta.get("retrieved_url")
-                    status = url_meta.get("url_retrieval_status", "UNKNOWN")
+                    retrieved_url = url_meta.retrieved_url
+                    status = "UNKNOWN"
+                    if url_meta.url_retrieval_status:
+                        status = url_meta.url_retrieval_status.value
                     if retrieved_url and status == "URL_RETRIEVAL_STATUS_SUCCESS":
                         # Avoid duplicate URLs
                         existing_urls = [citation.url for citation in citations_urls]
                         if retrieved_url not in existing_urls:
                             citations_urls.append(UrlCitation(url=retrieved_url, title=retrieved_url))
 
+            if citations_raw:
+                citations.raw = citations_raw
+            if citations_urls:
+                citations.urls = citations_urls
+            if web_search_queries:
+                citations.search_queries = web_search_queries
+
             if citations_raw or citations_urls:
-                citations.raw = citations_raw if citations_raw else None
-                citations.urls = citations_urls if citations_urls else None
                 model_response.citations = citations
 
         # Extract usage metadata if present
@@ -1019,11 +1069,20 @@ class Gemini(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse, **kwargs) -> ModelResponse:
         model_response = ModelResponse()
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
-            candidate_content = response_delta.candidates[0].content
+            candidate = response_delta.candidates[0]
+            candidate_content = candidate.content
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    if kwargs.get("retrying_with_guidance") is True:
+                        pass
+                    raise RetryableModelProviderError(retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE)
+
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:
                 response_message = candidate_content
@@ -1096,28 +1155,52 @@ class Gemini(Model):
 
                         model_response.tool_calls.append(tool_call)
 
-            if response_delta.candidates[0].grounding_metadata is not None:
-                citations = Citations()
-                grounding_metadata = response_delta.candidates[0].grounding_metadata.model_dump()
-                citations.raw = grounding_metadata
+            citations = Citations()
+            citations.raw = {}
+            citations.urls = []
 
+            if (
+                hasattr(response_delta.candidates[0], "grounding_metadata")
+                and response_delta.candidates[0].grounding_metadata is not None
+            ):
+                grounding_metadata = response_delta.candidates[0].grounding_metadata
+                citations.raw["grounding_metadata"] = grounding_metadata.model_dump()
+                citations.search_queries = grounding_metadata.web_search_queries or []
                 # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = []
+                chunks = grounding_metadata.grounding_chunks or []
                 for chunk in chunks:
-                    if not isinstance(chunk, dict):
+                    if not chunk:
                         continue
-                    web = chunk.get("web")
-                    if not isinstance(web, dict):
+                    web = chunk.web
+                    if not web:
                         continue
-                    uri = web.get("uri")
-                    title = web.get("title")
+                    uri = web.uri
+                    title = web.title
                     if uri:
-                        citation_pairs.append((uri, title))
+                        citations.urls.append(UrlCitation(url=uri, title=title))
 
-                # Create citation objects from filtered pairs
-                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+            # Handle URLs from URL context tool
+            if (
+                hasattr(response_delta.candidates[0], "url_context_metadata")
+                and response_delta.candidates[0].url_context_metadata is not None
+            ):
+                url_context_metadata = response_delta.candidates[0].url_context_metadata
 
+                citations.raw["url_context_metadata"] = url_context_metadata.model_dump()
+
+                url_metadata_list = url_context_metadata.url_metadata or []
+                for url_meta in url_metadata_list:
+                    retrieved_url = url_meta.retrieved_url
+                    status = "UNKNOWN"
+                    if url_meta.url_retrieval_status:
+                        status = url_meta.url_retrieval_status.value
+                    if retrieved_url and status == "URL_RETRIEVAL_STATUS_SUCCESS":
+                        # Avoid duplicate URLs
+                        existing_urls = [citation.url for citation in citations.urls]
+                        if retrieved_url not in existing_urls:
+                            citations.urls.append(UrlCitation(url=retrieved_url, title=retrieved_url))
+
+            if citations.raw or citations.urls:
                 model_response.citations = citations
 
             # Extract usage metadata if present
