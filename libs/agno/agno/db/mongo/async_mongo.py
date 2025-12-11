@@ -2228,7 +2228,7 @@ class AsyncMongoDb(AsyncBaseDb):
     async def upsert_trace(self, trace: "Trace") -> None:
         """Create or update a single trace record in the database.
 
-        Uses MongoDB's update_one with upsert=True and $min/$max operators
+        Uses MongoDB's update_one with upsert=True and aggregation pipeline
         to handle concurrent inserts atomically and avoid race conditions.
 
         Args:
@@ -2243,40 +2243,134 @@ class AsyncMongoDb(AsyncBaseDb):
             trace_dict.pop("total_spans", None)
             trace_dict.pop("error_count", None)
 
-            # Atomic upsert using standard MongoDB update operators
-            # This is simpler and more readable than aggregation pipelines
-            update_doc: Dict[str, Any] = {
-                # $set: Always update these fields
-                "$set": {
-                    "status": trace.status,
-                    "duration_ms": trace_dict.get("duration_ms", 0),
-                    "name": trace.name,
-                },
-                # $min: Keep the earliest start_time
-                "$min": {
-                    "start_time": trace_dict.get("start_time"),
-                },
-                # $max: Keep the latest end_time
-                "$max": {
-                    "end_time": trace_dict.get("end_time"),
-                },
-                # $setOnInsert: Only set these on first insert (won't overwrite existing)
-                "$setOnInsert": {
-                    "trace_id": trace.trace_id,
-                    "created_at": trace_dict.get("created_at"),
-                    "run_id": trace.run_id,
-                    "session_id": trace.session_id,
-                    "user_id": trace.user_id,
-                    "agent_id": trace.agent_id,
-                    "team_id": trace.team_id,
-                    "workflow_id": trace.workflow_id,
-                },
-            }
+            # Calculate the component level for the new trace
+            new_level = self._get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
 
-            # Perform atomic upsert
+            # Use MongoDB aggregation pipeline update for atomic upsert
+            # This allows conditional logic within a single atomic operation
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$set": {
+                        # Always update these fields
+                        "status": trace.status,
+                        "created_at": {"$ifNull": ["$created_at", trace_dict.get("created_at")]},
+                        # Use $min for start_time (keep earliest)
+                        "start_time": {
+                            "$cond": {
+                                "if": {"$eq": [{"$type": "$start_time"}, "missing"]},
+                                "then": trace_dict.get("start_time"),
+                                "else": {"$min": ["$start_time", trace_dict.get("start_time")]},
+                            }
+                        },
+                        # Use $max for end_time (keep latest)
+                        "end_time": {
+                            "$cond": {
+                                "if": {"$eq": [{"$type": "$end_time"}, "missing"]},
+                                "then": trace_dict.get("end_time"),
+                                "else": {"$max": ["$end_time", trace_dict.get("end_time")]},
+                            }
+                        },
+                        # Preserve existing non-null context values using $ifNull
+                        "run_id": {"$ifNull": [trace.run_id, "$run_id"]},
+                        "session_id": {"$ifNull": [trace.session_id, "$session_id"]},
+                        "user_id": {"$ifNull": [trace.user_id, "$user_id"]},
+                        "agent_id": {"$ifNull": [trace.agent_id, "$agent_id"]},
+                        "team_id": {"$ifNull": [trace.team_id, "$team_id"]},
+                        "workflow_id": {"$ifNull": [trace.workflow_id, "$workflow_id"]},
+                    }
+                },
+                {
+                    "$set": {
+                        # Calculate duration_ms from the (potentially updated) start_time and end_time
+                        # MongoDB stores dates as strings in ISO format, so we need to parse them
+                        "duration_ms": {
+                            "$cond": {
+                                "if": {
+                                    "$and": [
+                                        {"$ne": [{"$type": "$start_time"}, "missing"]},
+                                        {"$ne": [{"$type": "$end_time"}, "missing"]},
+                                    ]
+                                },
+                                "then": {
+                                    "$subtract": [
+                                        {"$toLong": {"$toDate": "$end_time"}},
+                                        {"$toLong": {"$toDate": "$start_time"}},
+                                    ]
+                                },
+                                "else": trace_dict.get("duration_ms", 0),
+                            }
+                        },
+                        # Update name based on component level priority
+                        # Only update if new trace is from a higher-level component
+                        "name": {
+                            "$cond": {
+                                "if": {"$eq": [{"$type": "$name"}, "missing"]},
+                                "then": trace.name,
+                                "else": {
+                                    "$cond": {
+                                        "if": {
+                                            "$gt": [
+                                                new_level,
+                                                {
+                                                    "$switch": {
+                                                        "branches": [
+                                                            # Check if existing name is a root span
+                                                            {
+                                                                "case": {
+                                                                    "$not": {
+                                                                        "$or": [
+                                                                            {
+                                                                                "$regexMatch": {
+                                                                                    "input": {"$ifNull": ["$name", ""]},
+                                                                                    "regex": "\\.run",
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "$regexMatch": {
+                                                                                    "input": {"$ifNull": ["$name", ""]},
+                                                                                    "regex": "\\.arun",
+                                                                                }
+                                                                            },
+                                                                        ]
+                                                                    }
+                                                                },
+                                                                "then": 0,
+                                                            },
+                                                            # Workflow root (level 3)
+                                                            {
+                                                                "case": {"$ne": ["$workflow_id", None]},
+                                                                "then": 3,
+                                                            },
+                                                            # Team root (level 2)
+                                                            {
+                                                                "case": {"$ne": ["$team_id", None]},
+                                                                "then": 2,
+                                                            },
+                                                            # Agent root (level 1)
+                                                            {
+                                                                "case": {"$ne": ["$agent_id", None]},
+                                                                "then": 1,
+                                                            },
+                                                        ],
+                                                        "default": 0,
+                                                    }
+                                                },
+                                            ]
+                                        },
+                                        "then": trace.name,
+                                        "else": "$name",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                },
+            ]
+
+            # Perform atomic upsert using aggregation pipeline
             await collection.update_one(
                 {"trace_id": trace.trace_id},
-                update_doc,
+                pipeline,
                 upsert=True,
             )
 
