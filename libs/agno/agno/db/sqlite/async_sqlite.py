@@ -2259,6 +2259,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from cultural artifacts table: {e}")
+            return None
 
     async def get_all_cultural_knowledge(
         self,

@@ -1151,6 +1151,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading cultural knowledge: {e}")
+            return None
 
     async def get_all_cultural_knowledge(
         self,
