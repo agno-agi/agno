@@ -1083,7 +1083,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
@@ -1101,7 +1101,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
@@ -1127,7 +1127,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.id == id)
@@ -1180,7 +1180,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess:
                 # Build query with filters
@@ -1237,7 +1237,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             # Generate ID if not present
             if cultural_knowledge.id is None:
