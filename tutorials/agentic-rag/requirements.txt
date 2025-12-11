@@ -1,0 +1,12 @@
+agno[os]
+openai
+pgvector
+psycopg[binary]
+sqlalchemy
+uvicorn
+python-dotenv
+fastapi
+pyyaml
+chonkie[semantic,openai]
+tiktoken
+requests

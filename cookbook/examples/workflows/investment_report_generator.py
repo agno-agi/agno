@@ -352,8 +352,7 @@ if __name__ == "__main__":
 
         # Get companies from user with example suggestion
         companies = Prompt.ask(
-            "[bold]Enter company symbols (comma-separated)[/bold] "
-            "(or press Enter for a suggested portfolio)\n✨",
+            "[bold]Enter company symbols (comma-separated)[/bold] (or press Enter for a suggested portfolio)\n✨",
             default=random.choice(example_scenarios),
         )
 

@@ -1,0 +1,51 @@
+[project]
+name = "agentic-rag"
+version = "1.0.0"
+requires-python = ">=3.11,<4"
+readme = "README.md"
+authors = [{ name = "Agno", email = "hello@agno.com" }]
+description = "AI-powered documentation assistant using Agentic RAG"
+
+dependencies = [
+  "agno[os]",
+  "openai",
+  "pgvector",
+  "psycopg[binary]",
+  "sqlalchemy",
+  "uvicorn",
+  "python-dotenv",
+  "fastapi",
+  "pyyaml",
+  "chonkie[semantic,openai]",
+  "tiktoken",
+  "requests",
+]
+
+[project.optional-dependencies]
+dev = ["mypy", "ruff"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+
+[tool.ruff]
+line-length = 120
+exclude = [".venv*"]
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+
+[tool.mypy]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+exclude = [".venv*"]
+
+[[tool.mypy.overrides]]
+module = ["setuptools.*", "agno.*"]
+ignore_missing_imports = true
+
+[tool.uv.pip]
+no-annotate = true
