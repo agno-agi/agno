@@ -118,26 +118,25 @@ knowledge = Knowledge(
 #         skip_if_exists=True,
 #     ))
 
-my_custom_reader = PDFReader(
-    name="my_custom_reader",
-    chunk_size=15,
-    chunking_strategy=FixedSizeChunking(chunk_size=10, overlap=9),
+custom_reader = PDFReader(
+    name="Custom Reader",
+    chunking_strategy=FixedSizeChunking(chunk_size=500, overlap=0),
 )
 
 custom_knowledge = Knowledge(
     name="Custom Knowledge",
     vector_db=vector_db,
     contents_db=db,
-    readers=[my_custom_reader],
+    readers=[custom_reader],
 )
 
 asyncio.run(
     custom_knowledge.add_content_async(
-        name="Manual1",
-        path="cookbook/knowledge/testing_resources/manta_manual.pdf",
-        metadata={"user_tag": "manuals", "type": "hobbies"},
+        name="My File",
+        path="my_file.pdf",
+        metadata={"user_tag": "documents"},
         skip_if_exists=True,
-        reader=my_custom_reader,
+        reader=custom_reader,
     )
 )
 
