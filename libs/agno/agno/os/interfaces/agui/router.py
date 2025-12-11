@@ -36,6 +36,11 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
+        # Extract the last user message content as input
+        user_input = (
+            next((msg.content for msg in reversed(messages) if msg.role == "user" and msg.content), None) or messages
+        )
+
         # Look for user_id in run_input.forwarded_props
         user_id = None
         if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
@@ -46,7 +51,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         # Request streaming response from agent
         response_stream = agent.arun(
-            input=messages,
+            input=user_input,
             session_id=run_input.thread_id,
             stream=True,
             stream_events=True,
@@ -77,6 +82,11 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
+        # Extract the last user message content as input
+        user_input = (
+            next((msg.content for msg in reversed(messages) if msg.role == "user" and msg.content), None) or messages
+        )
+
         # Look for user_id in input.forwarded_props
         user_id = None
         if input.forwarded_props and isinstance(input.forwarded_props, dict):
@@ -87,7 +97,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
         # Request streaming response from team
         response_stream = team.arun(
-            input=messages,
+            input=user_input,
             session_id=input.thread_id,
             stream=True,
             stream_steps=True,
