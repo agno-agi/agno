@@ -820,6 +820,16 @@ class OpenAIChat(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+
+        if response.id:
+            model_response.provider_data["id"] = response.id
+        if response.system_fingerprint:
+            model_response.provider_data["system_fingerprint"] = response.system_fingerprint
+        if response.model_extra:
+            model_response.provider_data["model_extra"] = response.model_extra
+
         return model_response
 
     def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
@@ -896,6 +906,16 @@ class OpenAIChat(Model):
         # Add usage metrics if present
         if response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta.usage)
+
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+
+        if response_delta.id:
+            model_response.provider_data["id"] = response_delta.id
+        if response_delta.system_fingerprint:
+            model_response.provider_data["system_fingerprint"] = response_delta.system_fingerprint
+        if response_delta.model_extra:
+            model_response.provider_data["model_extra"] = response_delta.model_extra
 
         return model_response
 
