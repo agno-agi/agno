@@ -177,12 +177,42 @@ def test_count_tokens_with_images():
     assert result > 85
 
 
+def test_count_tokens_with_content_list_image_url_low():
+    messages = [
+        Message(
+            role="user",
+            content=[
+                {"type": "text", "text": "What is in this image?"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg", "detail": "low"}},
+            ],
+        )
+    ]
+    result = count_tokens(messages)
+    assert result >= 85
+    # Ensure image tokens are counted in addition to text
+    assert result > count_tokens([Message(role="user", content="What is in this image?")])
+
+
 def test_count_tokens_with_audio():
     audio = Audio(url="https://example.com/audio.mp3", duration=10.0)
     messages = [Message(role="user", content="Transcribe this audio", audio=[audio])]
     result = count_tokens(messages)
     # Should include text tokens + 250 for 10s audio
     assert result > 250
+
+
+def test_count_tokens_with_content_list_image_url_high_detail_default_dims():
+    messages = [
+        Message(
+            role="user",
+            content=[
+                {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}},
+            ],
+        )
+    ]
+    result = count_tokens(messages)
+    # Default dimensions (1024x1024) with auto/high detail -> 765 tokens for the image
+    assert result >= 765
 
 
 def test_count_tokens_multiple_messages():

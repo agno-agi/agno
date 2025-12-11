@@ -360,8 +360,7 @@ class Gemini(Model):
 
             # Add estimated tokens for tools (not supported by Google AI Studio API)
             if tools:
-                includes_system = system_instruction is not None
-                total += count_tool_tokens(tools, self.id, includes_system)
+                total += count_tool_tokens(tools, self.id)
 
             # Add estimated tokens for response_format/output_schema
             total += schema_tokens
@@ -413,8 +412,7 @@ class Gemini(Model):
 
             # Add estimated tokens for tools
             if tools:
-                includes_system = system_instruction is not None
-                total += count_tool_tokens(tools, self.id, includes_system)
+                total += count_tool_tokens(tools, self.id)
 
             # Add estimated tokens for response_format/output_schema
             total += schema_tokens

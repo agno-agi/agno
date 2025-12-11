@@ -377,8 +377,7 @@ class AwsBedrock(Model):
             if tools:
                 from agno.utils.tokens import count_tool_tokens
 
-                includes_system = any(m.role == "system" for m in messages)
-                tokens += count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id)
 
             # Count schema tokens
             tokens += count_schema_tokens(response_format, self.id)
@@ -408,8 +407,7 @@ class AwsBedrock(Model):
             if tools:
                 from agno.utils.tokens import count_tool_tokens
 
-                includes_system = any(m.role == "system" for m in messages)
-                tokens += count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id)
 
             # Count schema tokens
             tokens += count_schema_tokens(response_format, self.id)

@@ -25,10 +25,9 @@ def _get_tiktoken_encoding(model_id: str):
         import tiktoken
 
         try:
-            # Try to get the model-specific encoding
+            # Use model-specific encoding
             return tiktoken.encoding_for_model(model_id)
         except KeyError:
-            # Fall back to o200k_base for unknown models
             return tiktoken.get_encoding("o200k_base")
     except ImportError:
         log_warning("tiktoken not installed. Please install it using `pip install tiktoken`.")
@@ -341,15 +340,8 @@ def count_file_tokens(file: File) -> int:
 def count_tool_tokens(
     tools: Sequence[Union[Function, Dict[str, Any]]],
     model_id: str = "gpt-4o",
-    includes_system_message: bool = False,
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
 ) -> int:
-    """
-    Count tokens consumed by tool/function definitions.
-
-    Tools are converted to TypeScript namespace format and tokenized. Additional
-    overhead tokens are added based on OpenAI's internal handling of tools.
-    """
+    """Count tokens consumed by tool/function definitions"""
     if not tools:
         return 0
 
@@ -542,38 +534,59 @@ def _count_media_tokens(message: Message) -> int:
     return tokens
 
 
-def _count_message_tokens(
-    message: Message,
-    model_id: str = "gpt-4o",
-    tokens_per_message: int = 3,
-    tokens_per_name: int = 1,
-) -> int:
-    tokens = tokens_per_message
-    message_dict: Dict[str, Any] = {}
+def _count_message_tokens(message: Message, model_id: str = "gpt-4o") -> int:
+    tokens = 0
 
-    content = message.get_content_string(use_compressed_content=True)
+    # Count content tokens
+    content = message.get_content(use_compressed_content=True)
     if content:
-        message_dict["content"] = content
+        if isinstance(content, str):
+            tokens += count_text_tokens(content, model_id)
+        elif isinstance(content, list):
+            # Handle multimodal content blocks
+            for item in content:
+                if isinstance(item, str):
+                    tokens += count_text_tokens(item, model_id)
+                elif isinstance(item, dict):
+                    item_type = item.get("type", "")
+                    if item_type == "text":
+                        tokens += count_text_tokens(item.get("text", ""), model_id)
+                    elif item_type == "image_url":
+                        # Handle OpenAI-style content lists without populating message.images
+                        image_url_data = item.get("image_url", {})
+                        url = image_url_data.get("url") if isinstance(image_url_data, dict) else None
+                        detail = image_url_data.get("detail", "auto") if isinstance(image_url_data, dict) else "auto"
 
+                        temp_image = Image(url=url, detail=detail)
+                        tokens += count_image_tokens(temp_image)
+                    else:
+                        tokens += count_text_tokens(json.dumps(item), model_id)
+        else:
+            tokens += count_text_tokens(str(content), model_id)
+
+    # Count tool call tokens (assistant messages with function calls)
     if message.tool_calls:
-        message_dict["tool_calls"] = message.tool_calls
+        for tool_call in message.tool_calls:
+            if isinstance(tool_call, dict) and "function" in tool_call:
+                args = tool_call["function"].get("arguments", "")
+                tokens += count_text_tokens(str(args), model_id)
 
+    # Count tool response tokens
     if message.tool_call_id:
-        message_dict["tool_call_id"] = message.tool_call_id
+        tokens += count_text_tokens(message.tool_call_id, model_id)
 
+    # Count reasoning content
     if message.reasoning_content:
-        message_dict["reasoning_content"] = message.reasoning_content
+        tokens += count_text_tokens(message.reasoning_content, model_id)
 
     if message.redacted_reasoning_content:
-        message_dict["redacted_reasoning_content"] = message.redacted_reasoning_content
+        tokens += count_text_tokens(message.redacted_reasoning_content, model_id)
 
+    # Count name field tokens
     if message.name:
-        message_dict["name"] = message.name
-        tokens += tokens_per_name
+        tokens += count_text_tokens(message.name, model_id)
 
-    if message_dict:
-        tokens += count_text_tokens(json.dumps(message_dict), model_id)
-
+    # Count all media attachments
     tokens += _count_media_tokens(message)
 
     return tokens
@@ -583,7 +596,6 @@ def count_tokens(
     messages: List[Message],
     tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
     model_id: str = "gpt-4o",
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     response_format: Optional[Union[Dict, Type["BaseModel"]]] = None,
 ) -> int:
     total = 0
@@ -598,18 +610,19 @@ def count_tokens(
             tokens_per_message, tokens_per_name = 3, 1
 
         for msg in messages:
-            total += _count_message_tokens(msg, model_id, tokens_per_message, tokens_per_name)
+            total += tokens_per_message
+            total += _count_message_tokens(msg, model_id)
+            if msg.name:
+                total += tokens_per_name
 
     # Add 3 tokens for reply priming: <|start|>assistant<|message|>
     # Every completion is primed with these tokens regardless of content
     total += 3
 
-    # Tools are tokenized separately from messages. Also, OpenAI internally combines
-    # system message and tool definitions without the priming tokens <|start|>system<|message|>, resulting in 4 fewer tokens
-    # when both are present.
+    # Tools are tokenized separately from messages.
     if tools:
-        includes_system = any(msg.role == "system" for msg in messages)
-        total += count_tool_tokens(tools, model_id, includes_system, tool_choice)
+        # Base tool definition tokens
+        total += count_tool_tokens(tools, model_id)
 
     # Add response_format/output_schema tokens
     if response_format is not None:
