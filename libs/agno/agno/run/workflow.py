@@ -5,9 +5,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.requirement import RunRequirement, WorkflowRunRequirement
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -30,6 +31,8 @@ class WorkflowRunEvent(str, Enum):
     workflow_completed = "WorkflowCompleted"
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
+    workflow_paused = "WorkflowPaused"
+    workflow_continued = "WorkflowContinued"
 
     workflow_agent_started = "WorkflowAgentStarted"
     workflow_agent_completed = "WorkflowAgentCompleted"
@@ -37,6 +40,8 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_error = "StepError"
+    step_paused = "StepPaused"
+    step_continued = "StepContinued"
 
     loop_execution_started = "LoopExecutionStarted"
     loop_iteration_started = "LoopIterationStarted"
@@ -158,6 +163,27 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class WorkflowPausedEvent(BaseWorkflowRunOutputEvent):
+    event: str = WorkflowRunEvent.workflow_paused.value
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
+
+@dataclass
+class WorkflowContinuedEvent(BaseWorkflowRunOutputEvent):
+    event: str = WorkflowRunEvent.workflow_continued.value
+
+
+@dataclass
 class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution fails"""
 
@@ -220,6 +246,27 @@ class StepErrorEvent(BaseWorkflowRunOutputEvent):
     step_name: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
     error: Optional[str] = None
+
+
+@dataclass
+class StepPausedEvent(BaseWorkflowRunOutputEvent):
+    event: str = WorkflowRunEvent.step_paused.value
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
+
+@dataclass
+class StepContinuedEvent(BaseWorkflowRunOutputEvent):
+    event: str = WorkflowRunEvent.step_continued.value
 
 
 @dataclass
@@ -453,9 +500,13 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
     WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
+    WorkflowRunEvent.workflow_paused.value: WorkflowPausedEvent,
+    WorkflowRunEvent.workflow_continued.value: WorkflowContinuedEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
+    WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_continued.value: StepContinuedEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
     WorkflowRunEvent.loop_iteration_completed.value: LoopIterationCompletedEvent,
@@ -505,6 +556,7 @@ class WorkflowRunOutput:
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audio: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
     response_audio: Optional[Audio] = None
 
     # Store actual step execution results as StepOutput objects
@@ -527,6 +579,22 @@ class WorkflowRunOutput:
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
+
+    # -- User control flow (HITL) fields --
+    # Requirements to resolve before continuing a paused run
+    requirements: Optional[list[WorkflowRunRequirement]] = None
+    # Index of the paused step in the workflow steps list
+    paused_step_index: Optional[int] = None
+
+    @property
+    def active_requirements(self) -> list[WorkflowRunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
+    @property
+    def is_paused(self):
+        return self.status == RunStatus.paused
 
     @property
     def is_cancelled(self):

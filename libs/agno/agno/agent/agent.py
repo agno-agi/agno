@@ -2919,6 +2919,7 @@ class Agent:
             (deprecated) stream_intermediate_steps: Whether to stream all steps.
             (deprecated) updated_tools: Use 'requirements' instead.
         """
+
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
@@ -2945,8 +2946,10 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         # Read existing session from storage
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=agent_session)
+        # TODO: can be workflow_session now.
+        # revisit and clean _read_or_create_session()
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id, workflows=True)
+        # self._update_metadata(session=agent_session)
 
         # Initialize session state
         session_state = self._initialize_session_state(
@@ -3025,8 +3028,13 @@ class Agent:
                             "To continue a run from a given run_id, the requirements parameter must be provided."
                         )
 
-                    runs = agent_session.runs
+                    # TODO: handling workflow sessions. figure it out
+                    if hasattr(agent_session, "workflow_id") and agent_session.workflow_id is not None:
+                        runs = agent_session.runs[0].step_executor_runs  # type: ignore
+                    else:
+                        runs = agent_session.runs
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
 
@@ -6324,9 +6332,7 @@ class Agent:
             return Metrics()
 
     def _read_or_create_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
+        self, session_id: str, user_id: Optional[str] = None, workflows: bool = False
     ) -> AgentSession:
         from time import time
 
@@ -6349,29 +6355,37 @@ class Agent:
                 from copy import deepcopy
 
                 session_data["session_state"] = deepcopy(self.session_state)
-            agent_session = AgentSession(
-                session_id=session_id,
-                agent_id=self.id,
-                user_id=user_id,
-                agent_data=self._get_agent_data(),
-                session_data=session_data,
-                metadata=self.metadata,
-                created_at=int(time()),
-            )
-            if self.introduction is not None:
-                agent_session.upsert_run(
-                    RunOutput(
-                        run_id=str(uuid4()),
-                        session_id=session_id,
-                        agent_id=self.id,
-                        agent_name=self.name,
-                        user_id=user_id,
-                        content=self.introduction,
-                        messages=[
-                            Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
-                        ],
-                    )
+
+            # TODO: should be in a different func
+            if workflows and self.workflow_id is not None:
+                return cast(
+                    WorkflowSession, self._read_session(session_id=session_id, session_type=SessionType.WORKFLOW)
+                )  # type: ignore
+
+            else:
+                agent_session = AgentSession(
+                    session_id=session_id,
+                    agent_id=self.id,
+                    user_id=user_id,
+                    agent_data=self._get_agent_data(),
+                    session_data=session_data,
+                    metadata=self.metadata,
+                    created_at=int(time()),
                 )
+                if self.introduction is not None:
+                    agent_session.upsert_run(
+                        RunOutput(
+                            run_id=str(uuid4()),
+                            session_id=session_id,
+                            agent_id=self.id,
+                            agent_name=self.name,
+                            user_id=user_id,
+                            content=self.introduction,
+                            messages=[
+                                Message(role=self.model.assistant_message_role, content=self.introduction)  # type: ignore
+                            ],
+                        )
+                    )
 
         if self.cache_session:
             self._cached_session = agent_session

@@ -40,12 +40,14 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_run,
 )
+from agno.run.requirement import WorkflowRunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepOutputEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
+    WorkflowPausedEvent,
     WorkflowRunEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
@@ -1368,6 +1370,48 @@ class Workflow:
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # Check if step is paused (HITL flow)
+                    if step_output.is_paused:
+                        log_debug(f"Step '{step_name}' paused for human intervention")
+
+                        # Accumulate this paused step in results
+                        previous_step_outputs[step_name] = step_output
+                        collected_step_outputs.append(step_output)
+
+                        # Track information about the paused step
+                        paused_step_index = i + 1
+
+                        # Set workflow status to paused
+                        workflow_run_response.status = RunStatus.paused
+
+                        # Propagate requirements from the StepOutput to the WorkflowRunOutput
+                        if workflow_run_response.requirements is None:
+                            workflow_run_response.requirements = []
+                        if step_output.requirements:
+                            workflow_run_requirements = [
+                                requirement
+                                if isinstance(requirement, WorkflowRunRequirement)
+                                else WorkflowRunRequirement(
+                                    workflow_step_id=step_name,
+                                    paused_agent_run_id=step_output.step_run_id,
+                                    paused_agent_session_id=workflow_run_response.session_id,
+                                    **requirement.to_dict(),
+                                )
+                                for requirement in step_output.requirements
+                            ]
+                            workflow_run_response.requirements.extend(workflow_run_requirements)
+
+                        # Set current partial content and results
+                        workflow_run_response.content = step_output.content
+                        workflow_run_response.step_results = collected_step_outputs
+                        workflow_run_response.paused_step_index = paused_step_index
+                        workflow_run_response.images = output_images
+                        workflow_run_response.videos = output_videos
+                        workflow_run_response.audio = output_audio
+                        workflow_run_response.files = output_files
+
+                        break
+
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -1455,6 +1499,505 @@ class Workflow:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
+
+    def _continue_execute(
+        self,
+        workflow_run_response: WorkflowRunOutput,
+        session: WorkflowSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        requirements: Optional[List[WorkflowRunRequirement]] = None,
+        run_context: Optional[RunContext] = None,
+        background_tasks: Optional[Any] = None,
+        shared_images: Optional[List[Image]] = None,
+        shared_videos: Optional[List[Video]] = None,
+        shared_audio: Optional[List[Audio]] = None,
+        shared_files: Optional[List[File]] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Continue a paused workflow execution (non-streaming)"""
+        workflow_run_response.status = RunStatus.running
+
+        # Load session and state
+        session_id = session.session_id
+        run_id = workflow_run_response.run_id
+        user_id = kwargs.get("user_id")
+
+        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+        pending_steps = self.steps[workflow_run_response.paused_step_index :]  # type: ignore[arg-type]
+
+        try:
+            # Track outputs from each step for enhanced data flow
+            collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
+            previous_step_outputs: Dict[str, StepOutput] = {}
+
+            shared_images = shared_images or []
+            shared_videos = shared_videos or []
+            shared_audio = shared_audio or []
+            shared_files = shared_files or []
+            output_images: List[Image] = (shared_images or []).copy()  # Start with input images
+            output_videos: List[Video] = (shared_videos or []).copy()  # Start with input videos
+            output_audio: List[Audio] = (shared_audio or []).copy()  # Start with input audio
+            output_files: List[File] = (shared_files or []).copy()  # Start with input files
+
+            # Continuing the workflow run from the paused step
+            for i, step in enumerate(pending_steps):
+                step_name = getattr(step, "name", f"step_{i + 1}")
+                logger.info(f"Executing step {i + 1}/{len(pending_steps)}: {step_name}")
+
+                # Build step input
+                step_input = self._create_step_input(
+                    execution_input=WorkflowExecutionInput(input=workflow_run_response.input),
+                    previous_step_outputs=previous_step_outputs,
+                    shared_images=shared_images,
+                    shared_videos=shared_videos,
+                    shared_audio=shared_audio,
+                    shared_files=shared_files,
+                )
+
+                raise_if_cancelled(run_id)  # type: ignore
+
+                step_output = step.execute(
+                    step_input,
+                    requirements=requirements,  # type: ignore[arg-type]
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    store_executor_outputs=self.store_executor_outputs,
+                    workflow_session=session,
+                    add_workflow_history_to_steps=self.add_workflow_history_to_steps,
+                    num_history_runs=self.num_history_runs,
+                    background_tasks=background_tasks,
+                )
+
+                raise_if_cancelled(run_id)  # type: ignore
+
+                # Check if step is paused (HITL flow)
+                if step_output.is_paused:
+                    log_debug(f"Step '{step_name}' paused for human intervention")
+
+                    # Accumulate this paused step in results
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    paused_step_index = i + 1
+
+                    # Set workflow status to paused
+                    workflow_run_response.status = RunStatus.paused
+
+                    # Propagate requirements from the StepOutput to the WorkflowRunOutput
+                    if workflow_run_response.requirements is None:
+                        workflow_run_response.requirements = []
+                    if step_output.requirements:
+                        workflow_run_requirements = [
+                            requirement
+                            if isinstance(requirement, WorkflowRunRequirement)
+                            else WorkflowRunRequirement(
+                                workflow_step_id=step_name,
+                                paused_agent_run_id=step_output.step_run_id,
+                                paused_agent_session_id=workflow_run_response.session_id,
+                                **requirement.to_dict(),
+                            )
+                            for requirement in step_output.requirements
+                        ]
+                        workflow_run_response.requirements.extend(workflow_run_requirements)
+
+                    # Set current partial content and results
+                    workflow_run_response.content = step_output.content
+                    workflow_run_response.step_results = collected_step_outputs
+                    workflow_run_response.paused_step_index = paused_step_index
+                    workflow_run_response.images = output_images
+                    workflow_run_response.videos = output_videos
+                    workflow_run_response.audio = output_audio
+                    workflow_run_response.files = output_files
+
+                    break
+
+                # Update the workflow-level previous_step_outputs dictionary
+                previous_step_outputs[step_name] = step_output
+                collected_step_outputs.append(step_output)
+
+                # Update shared media for next step
+                shared_images.extend(step_output.images or [])
+                shared_videos.extend(step_output.videos or [])
+                shared_audio.extend(step_output.audio or [])
+                shared_files.extend(step_output.files or [])
+                output_images.extend(step_output.images or [])
+                output_videos.extend(step_output.videos or [])
+                output_audio.extend(step_output.audio or [])
+                output_files.extend(step_output.files or [])
+
+                if step_output.stop:
+                    logger.info(f"Early termination requested by step {step_name}")
+                    break
+
+            if collected_step_outputs:
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+                last_output = cast(StepOutput, collected_step_outputs[-1])
+
+                # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
+                if getattr(last_output, "steps", None):
+                    _cur = last_output
+                    while getattr(_cur, "steps", None):
+                        _steps = _cur.steps or []
+                        if not _steps:
+                            break
+                        _cur = _steps[-1]
+                    workflow_run_response.content = _cur.content
+                else:
+                    workflow_run_response.content = last_output.content
+            else:
+                workflow_run_response.content = "No steps executed"
+                workflow_run_response.step_results = collected_step_outputs
+                workflow_run_response.images = output_images
+                workflow_run_response.videos = output_videos
+                workflow_run_response.audio = output_audio
+                workflow_run_response.status = RunStatus.completed
+
+        except (InputCheckError, OutputCheckError) as e:
+            log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+            # Store error response
+            workflow_run_response.status = RunStatus.error
+            workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
+
+            raise e
+        except RunCancelledException as e:
+            logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+            workflow_run_response.status = RunStatus.cancelled
+            workflow_run_response.content = str(e)
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            logger.error(f"Workflow execution failed: {e}")
+            # Store error response
+            workflow_run_response.status = RunStatus.error
+            workflow_run_response.content = f"Workflow execution failed: {e}"
+            raise e
+
+        finally:
+            # Stop timer on error
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            session.upsert_run(run=workflow_run_response)
+            self.save_session(session=session)
+            # Always clean up the run tracking
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+
+        # Log Workflow Telemetry
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        return workflow_run_response
+
+    def _continue_execute_stream(
+        self,
+        workflow_run_response: WorkflowRunOutput,
+        requirements: Optional[List[WorkflowRunRequirement]] = None,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+        run_context: Optional[RunContext] = None,
+        **kwargs: Any,
+    ) -> Iterator[WorkflowRunOutputEvent]:
+        """Continue a paused workflow execution (streaming)"""
+
+        # Load session and state
+        session_id = workflow_run_response.session_id
+        run_id = workflow_run_response.run_id
+        user_id = kwargs.get("user_id")
+
+        # Register run for cancellation
+        register_run(workflow_run_response.run_id)  # type: ignore
+
+        try:
+            # Initialize
+            self._set_debug()
+            self.initialize_workflow()
+            session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+
+            # Emit WorkflowContinuedEvent
+            from agno.run.workflow import WorkflowContinuedEvent
+
+            continued_event = WorkflowContinuedEvent(
+                run_id=run_id or "",
+                workflow_id=self.id,
+                workflow_name=self.name,
+                session_id=session_id,
+            )
+            yield self._handle_event(continued_event, workflow_run_response)
+
+            # Initialize session state
+            session_state = self._initialize_session_state(
+                session_state={},
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_id,
+            )
+            session_state = self._load_session_state(session=workflow_session, session_state=session_state)
+
+            # Create run context
+            run_context = RunContext(
+                run_id=workflow_run_response.run_id,
+                session_id=session_id,
+                user_id=user_id,
+                session_state=session_state,
+            )
+
+            # Restore state from paused run
+            collected_step_outputs = list(workflow_run_response.step_results)
+            previous_step_outputs: Dict[str, StepOutput] = {}
+            for step_output in collected_step_outputs:
+                if hasattr(step_output, "step_name") and step_output.step_name:
+                    previous_step_outputs[step_output.step_name] = step_output
+
+            # Restore media accumulations
+            output_images = list(workflow_run_response.images or [])
+            output_videos = list(workflow_run_response.videos or [])
+            output_audio = list(workflow_run_response.audio or [])
+            output_files = []
+
+            shared_images = output_images.copy()
+            shared_videos = output_videos.copy()
+            shared_audio = output_audio.copy()
+            shared_files = []
+
+            # Prepare steps
+            self._prepare_steps()
+
+            # Find the paused step
+            paused_step_index = len(collected_step_outputs) - 1
+            paused_step_output = collected_step_outputs[paused_step_index]
+
+            # Get the step object
+            paused_step = self.steps[paused_step_index]
+            step_name = paused_step.name or f"step_{paused_step_index + 1}"
+
+            # Continue the paused step's executor (agent or team) with streaming
+            if paused_step._executor_type in ["agent", "team"]:
+                logger.info(f"Continuing paused step '{step_name}' with resolved requirements (streaming)")
+
+                # Call continue_run on the agent/team with streaming
+                for event in paused_step.active_executor.continue_run(
+                    run_id=paused_step_output.step_run_id,
+                    requirements=requirements,
+                    session_id=session_id,
+                    user_id=user_id,
+                    session_state=session_state,
+                    run_context=run_context,
+                    stream=True,
+                    stream_events=stream_events,
+                ):
+                    # Check if this is the final RunOutput
+                    if hasattr(event, "run_id") and hasattr(event, "content") and not hasattr(event, "event"):
+                        # This is the final RunOutput
+                        continued_response = event
+
+                        # Process the continued response
+                        step_output = paused_step._process_step_output(continued_response)
+
+                        # Update the step output in collected results
+                        collected_step_outputs[paused_step_index] = step_output
+                        previous_step_outputs[step_name] = step_output
+
+                        # Propagate media
+                        shared_images.extend(step_output.images or [])
+                        shared_videos.extend(step_output.videos or [])
+                        shared_audio.extend(step_output.audio or [])
+                        output_images.extend(step_output.images or [])
+                        output_videos.extend(step_output.videos or [])
+                        output_audio.extend(step_output.audio or [])
+                    else:
+                        # Stream the event
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, workflow_run_response, step_index=paused_step_index, step=paused_step
+                        )
+                        if self.stream_executor_events:
+                            yield self._handle_event(enriched_event, workflow_run_response)
+
+            # Continue with remaining steps
+            early_termination = False
+            for i in range(paused_step_index + 1, len(self.steps)):
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                step = self.steps[i]
+                step_name = getattr(step, "name", f"step_{i + 1}")
+                logger.info(f"Executing step {i + 1}/{len(self.steps)}: {step_name}")
+
+                # Build step input
+                step_input = self._create_step_input(
+                    execution_input=WorkflowExecutionInput(input=workflow_run_response.input),
+                    previous_step_outputs=previous_step_outputs,
+                    shared_images=shared_images,
+                    shared_videos=shared_videos,
+                    shared_audio=shared_audio,
+                    shared_files=shared_files,
+                )
+
+                # Execute step with streaming
+                for event in step.execute_stream(
+                    step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream_events=stream_events,
+                    stream_executor_events=self.stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    step_index=i,
+                    store_executor_outputs=self.store_executor_outputs,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=self.add_workflow_history_to_steps,
+                    num_history_runs=self.num_history_runs,
+                    background_tasks=background_tasks,
+                ):
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    # Handle StepOutput
+                    if isinstance(event, StepOutput):
+                        step_output = event
+                        collected_step_outputs.append(step_output)
+                        previous_step_outputs[step_name] = step_output
+
+                        # Check if step is paused again
+                        if step_output.is_paused:
+                            logger.info(f"Step '{step_name}' paused again")
+
+                            # Accumulate requirements
+                            if workflow_run_response.requirements is None:
+                                workflow_run_response.requirements = []
+                            if step_output.requirements:
+                                workflow_run_response.requirements.extend(step_output.requirements)
+
+                            # Set workflow status
+                            workflow_run_response.status = RunStatus.paused
+
+                            # Update media before pausing
+                            shared_images.extend(step_output.images or [])
+                            shared_videos.extend(step_output.videos or [])
+                            shared_audio.extend(step_output.audio or [])
+                            shared_files.extend(step_output.files or [])
+                            output_images.extend(step_output.images or [])
+                            output_videos.extend(step_output.videos or [])
+                            output_audio.extend(step_output.audio or [])
+                            output_files.extend(step_output.files or [])
+
+                            # Set partial content and results
+                            workflow_run_response.content = step_output.content
+                            workflow_run_response.step_results = collected_step_outputs
+                            workflow_run_response.images = output_images
+                            workflow_run_response.videos = output_videos
+                            workflow_run_response.audio = output_audio
+
+                            # Emit paused event
+                            paused_event = WorkflowPausedEvent(
+                                run_id=run_id or "",
+                                workflow_id=self.id,
+                                workflow_name=self.name,
+                                session_id=session_id,
+                                requirements=requirements,
+                            )
+                            yield self._handle_event(paused_event, workflow_run_response)
+
+                            # Break - don't continue to next steps
+                            early_termination = True
+                            break
+
+                        # Check for early termination
+                        if step_output.stop:
+                            logger.info(f"Early termination by step {step_name}")
+                            early_termination = True
+
+                            # Update media
+                            shared_images.extend(step_output.images or [])
+                            shared_videos.extend(step_output.videos or [])
+                            shared_audio.extend(step_output.audio or [])
+                            shared_files.extend(step_output.files or [])
+                            output_images.extend(step_output.images or [])
+                            output_videos.extend(step_output.videos or [])
+                            output_audio.extend(step_output.audio or [])
+                            output_files.extend(step_output.files or [])
+                            break
+
+                        # Update shared media
+                        shared_images.extend(step_output.images or [])
+                        shared_videos.extend(step_output.videos or [])
+                        shared_audio.extend(step_output.audio or [])
+                        shared_files.extend(step_output.files or [])
+                        output_images.extend(step_output.images or [])
+                        output_videos.extend(step_output.videos or [])
+                        output_audio.extend(step_output.audio or [])
+                        output_files.extend(step_output.files or [])
+
+                    elif isinstance(event, WorkflowRunOutputEvent):
+                        # Enrich and yield workflow events
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, run_response, step_index=i, step=step
+                        )
+                        yield self._handle_event(enriched_event, run_response)
+                    else:
+                        # Enrich other events
+                        enriched_event = self._enrich_event_with_workflow_context(
+                            event, run_response, step_index=i, step=step
+                        )
+                        if self.stream_executor_events:
+                            yield self._handle_event(enriched_event, run_response)
+
+                # Break if early termination or paused
+                if early_termination:
+                    break
+
+            # Finalize if not paused again
+            if run_response.status != RunStatus.paused:
+                run_response.status = RunStatus.completed
+
+                # Aggregate final content
+                if collected_step_outputs:
+                    last_output = collected_step_outputs[-1]
+                    if getattr(last_output, "steps", None):
+                        _cur = last_output
+                        while getattr(_cur, "steps", None):
+                            _steps = _cur.steps or []
+                            if not _steps:
+                                break
+                            _cur = _steps[-1]
+                        run_response.content = _cur.content
+                    else:
+                        run_response.content = last_output.content
+
+                # Emit completed event
+                from agno.run.workflow import WorkflowCompletedEvent
+
+                completed_event = WorkflowCompletedEvent(
+                    run_id=run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session_id,
+                    content=run_response.content,
+                    step_results=collected_step_outputs,
+                )
+                yield self._handle_event(completed_event, run_response)
+
+            # Update response
+            run_response.step_results = collected_step_outputs
+            run_response.images = output_images
+            run_response.videos = output_videos
+            run_response.audio = output_audio
+
+            # Save to session
+            workflow_session.upsert_run(run=run_response)
+            self.save_session(session=workflow_session)
+
+        finally:
+            cleanup_run(run_id)
 
     def _execute_stream(
         self,
@@ -1576,6 +2119,50 @@ class Workflow:
                             step_output_event = self._transform_step_output_to_event(
                                 step_output, workflow_run_response, step_index=i
                             )
+
+                            # Check if step is paused (HITL)
+                            if step_output.is_paused:
+                                log_debug(f"Step '{step_name}' paused for human intervention")
+
+                                # Propagate requirements from the StepOutput to the WorkflowRunOutput
+                                if workflow_run_response.requirements is None:
+                                    workflow_run_response.requirements = []
+                                if step_output.requirements:
+                                    workflow_run_response.requirements.extend(step_output.requirements)
+
+                                # Set workflow status
+                                workflow_run_response.status = RunStatus.paused
+
+                                # Update shared media before pausing
+                                shared_images.extend(step_output.images or [])
+                                shared_videos.extend(step_output.videos or [])
+                                shared_audio.extend(step_output.audio or [])
+                                shared_files.extend(step_output.files or [])
+                                output_images.extend(step_output.images or [])
+                                output_videos.extend(step_output.videos or [])
+                                output_audio.extend(step_output.audio or [])
+                                output_files.extend(step_output.files or [])
+
+                                # Set partial content and results
+                                workflow_run_response.content = step_output.content
+                                workflow_run_response.step_results = collected_step_outputs
+                                workflow_run_response.images = output_images
+                                workflow_run_response.videos = output_videos
+                                workflow_run_response.audio = output_audio
+                                workflow_run_response.files = output_files
+
+                                # Emit paused event
+                                paused_event = WorkflowPausedEvent(
+                                    run_id=workflow_run_response.run_id or "",
+                                    workflow_id=self.id,
+                                    workflow_name=self.name,
+                                    session_id=session.session_id,
+                                    requirements=workflow_run_response.requirements,
+                                )
+                                yield self._handle_event(paused_event, workflow_run_response)
+
+                                early_termination = True
+                                break
 
                             if step_output.stop:
                                 logger.info(f"Early termination requested by step {step_name}")
@@ -3834,6 +4421,181 @@ class Workflow:
                 background_tasks=background_tasks,
                 **kwargs,
             )
+
+    @overload
+    def continue_run(
+        self,
+        run_id: str,
+        requirements: list[WorkflowRunRequirement],
+        *,
+        stream: bool = False,
+        stream_events: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput: ...
+
+    @overload
+    def continue_run(
+        self,
+        run_id: str,
+        requirements: list[WorkflowRunRequirement],
+        *,
+        stream: bool = False,
+        stream_events: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Iterator[WorkflowRunOutputEvent]: ...
+
+    def continue_run(
+        self,
+        run_id: str,
+        requirements: list[WorkflowRunRequirement],
+        *,
+        stream: bool = False,
+        stream_events: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
+        """
+        Continue a previously paused workflow run.
+
+        Args:
+            run_id: The ID of the run to continue
+            requirements: Solved run requirements
+            stream: Whether to stream the response
+            stream_events: Whether to stream all events
+            background: Whether to run in background # TODO
+            websocket: Optional websocket for streaming # TODO
+            background_tasks: Optional FastAPI background tasks
+            **kwargs: Additional parameters passed to step execution
+
+        Returns:
+            WorkflowRunOutput or AsyncIterator[WorkflowRunOutputEvent]
+        """
+        if self._has_async_db():
+            raise Exception("`continue_run()` is not supported with an async DB. Please use `acontinue_run()`.")
+
+        if not run_id:
+            raise ValueError("A valid run_id must be provided")
+
+        # Initialize and load session
+        self._set_debug()
+        self.initialize_workflow()
+
+        # We need to extract session_id from kwargs or find it from the run
+        session_id = kwargs.get("session_id")
+        user_id = kwargs.get("user_id")
+
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+        workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        self._update_metadata(session=workflow_session)
+
+        # Initialize session state
+        session_state = self._initialize_session_state(
+            session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
+        )
+        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
+
+        # Use simple defaults
+        stream = stream or self.stream or False
+        stream_events = stream_events or self.stream_events or False
+
+        # Can't stream events if streaming is disabled
+        if stream is False:
+            stream_events = False
+
+        # Initialize run context
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+        )
+
+        # Find the paused run in session
+        runs = workflow_session.runs
+        run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+        if run_response is None:
+            raise RuntimeError(f"No workflow run found for run_id: {run_id}")
+
+        # Update with new requirements
+        run_response.requirements = requirements
+
+        if stream:
+            return self._continue_execute_stream(
+                workflow_run_response=run_response,
+                shared_images=run_response.images,
+                shared_videos=run_response.videos,
+                shared_audio=run_response.audio,
+                shared_files=run_response.files,
+                requirements=requirements,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                run_context=run_context,
+                **kwargs,
+            )
+        else:
+            return self._continue_execute(
+                workflow_run_response=run_response,
+                shared_images=run_response.images,
+                shared_videos=run_response.videos,
+                shared_audio=run_response.audio,
+                shared_files=run_response.files,
+                requirements=requirements,
+                background_tasks=background_tasks,
+                run_context=run_context,
+                session=workflow_session,
+                **kwargs,
+            )
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput: ...
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: Optional[list[WorkflowRunRequirement]] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_events: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        pass
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""
