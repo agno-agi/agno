@@ -256,9 +256,6 @@ def test_document_existence(vector_db: MongoVectorDb, mock_mongodb_client: Magic
     """Test document existence checking methods."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
 
-    # Create test documents
-    docs = create_test_documents(1)
-
     # Setup mock responses for find_one
     def mock_find_one(query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # For name_exists

@@ -1,10 +1,5 @@
 """Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
 
-<<<<<<< HEAD
-import pytest
-
-=======
->>>>>>> 9945c4d5c (fix: Include content name and description fields for hash generation)
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb

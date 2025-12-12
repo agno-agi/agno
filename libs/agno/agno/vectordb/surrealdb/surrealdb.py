@@ -31,7 +31,6 @@ class SurrealDb(VectorDb):
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
-
     NAME_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
         WHERE meta_data.name = $name
@@ -470,7 +469,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             ),
         )
-
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously.
