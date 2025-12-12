@@ -1080,9 +1080,26 @@ class Knowledge:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+                extracted_meta = {}
+                for read_document in read_documents:
+                    if content.metadata:
+                        read_document.meta_data.update(content.metadata)
+                    if isinstance(read_document.meta_data, dict):
+                        read_document.meta_data["content_id"] = content.id
+                        extracted_meta.update(read_document.meta_data)
+                    read_document.content_id = content.id
+
+                if extracted_meta:
+                    log_debug(f"[Knowledge] Aggregated metadata from reader for content {content.id}: {extracted_meta}")
+                    content.metadata = {**(content.metadata or {}), **extracted_meta}
+                    for read_document in read_documents:
+                        read_document.meta_data.update(content.metadata)
+
+                    # Immediately update ContentDB with extracted metadata before vector insert
+                    log_debug(f"[Knowledge] Updating ContentDB with extracted metadata for {content.id}")
+                    await self._aupdate_content(content)
+
+                log_debug(f"[Knowledge] Post-merge content.metadata for {content.id}: {content.metadata}")
 
                 if len(read_documents) == 0:
                     content.status = ContentStatus.FAILED
@@ -1992,6 +2009,7 @@ class Knowledge:
             if content.description is not None:
                 content_row.description = content.description
             if content.metadata is not None:
+                log_debug(f"[_aupdate_content] Updating metadata for {content.id}: {content.metadata}")
                 content_row.metadata = content.metadata
             if content.status is not None:
                 content_row.status = content.status
@@ -2001,6 +2019,7 @@ class Knowledge:
                 content_row.external_id = content.external_id
 
             content_row.updated_at = int(time.time())
+            log_debug(f"[_aupdate_content] About to upsert content_row with metadata: {content_row.metadata}")
             if isinstance(self.contents_db, AsyncBaseDb):
                 await self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
             else:

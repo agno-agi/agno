@@ -1,9 +1,21 @@
 import json
 import logging
 import math
-from typing import Any, Dict, List, Optional
+from pathlib import Path as FilePath
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path as FastAPIPath,
+    Query,
+    UploadFile,
+)
+from fastapi.responses import FileResponse
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
@@ -39,6 +51,87 @@ from agno.utils.log import log_debug, log_info
 from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
+
+
+async def _async_extract_and_update_metadata(knowledge: Knowledge, content_id: str) -> None:
+    """Background task: extract metadata from existing chunks and update ContentDB + vector DB."""
+    try:
+        from agno.knowledge.content import Content
+        from agno.agent import Agent
+        from agno.models.vllm import VLLM
+    except Exception as e:
+        log_info(f"[MetadataExtraction] Required modules not available: {e}")
+        return
+
+    # Try to import the schema; if missing, skip
+    DocumentMetadata = None
+    # Try to import the schema from the app source
+    try:
+        from experiments.rag_api.src.document_metadata import DocumentMetadata  # type: ignore
+    except Exception:
+        # Attempt to add repo src to path and retry
+        try:
+            import sys
+
+            repo_root = FilePath(__file__).resolve().parents[8]
+            src_path = repo_root / "experiments" / "rag_api" / "src"
+            sys.path.append(str(src_path))
+            from document_metadata import DocumentMetadata  # type: ignore
+        except Exception:
+            log_info("[MetadataExtraction] DocumentMetadata schema not available; skipping extraction")
+            return
+
+    try:
+        log_info(f"[MetadataExtraction] Starting async metadata extraction for {content_id}")
+        # Use a non-empty query and vector search to avoid hybrid empty-text errors
+        # Use filter-only search to fetch chunks by content_id without needing a real query
+        docs = knowledge.search(
+            query="*",
+            filters={"content_id": content_id},
+            max_results=50,
+            search_type="filter",
+        )
+        markdown_chunks = [doc.content for doc in docs if doc.content]
+        full_markdown = "\n\n".join(markdown_chunks)
+        if not full_markdown:
+            log_info(f"[MetadataExtraction] No content found for {content_id}")
+            return
+
+        model = VLLM(id=getattr(knowledge, "metadata_model_id", "cpatonn/Qwen3-30B-A3B-Thinking-2507-AWQ-4bit"),
+                     base_url=getattr(knowledge, "metadata_model_url", "http://localhost:44649/v1"))
+        metadata_agent = Agent(
+            model=model,
+            description="Extract document metadata",
+            instructions=(
+                "Extract document metadata from the provided markdown. "
+                "Return a JSON object matching the DocumentMetadata schema only."
+            ),
+            output_schema=DocumentMetadata,
+            structured_outputs=True,
+        )
+        log_debug(f"[MetadataExtraction] Running vLLM extraction for {content_id}")
+        response = metadata_agent.run(full_markdown[:10000])
+        extracted = {}
+        content = getattr(response, "content", None)
+        if hasattr(content, "model_dump"):
+            extracted = content.model_dump()
+        elif isinstance(content, dict):
+            extracted = content
+        if not extracted:
+            log_info(f"[MetadataExtraction] No metadata extracted for {content_id}")
+            return
+
+        content_info = await knowledge.aget_content_by_id(content_id)
+        existing = content_info.get("metadata", {}) if content_info else {}
+        merged = {**(existing or {}), **extracted}
+
+        content_update = Content(id=content_id, metadata=merged)
+        await knowledge.apatch_content(content_update)
+        if knowledge.vector_db:
+            knowledge.vector_db.update_metadata(content_id=content_id, metadata=merged)
+        log_info(f"[MetadataExtraction] ✅ Updated metadata for {content_id}")
+    except Exception as e:
+        log_info(f"[MetadataExtraction] Failed for {content_id}: {e}")
 
 
 def get_knowledge_router(
@@ -147,9 +240,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 type="manual",
             )
         elif file:
+            detected_type = file.content_type if file.content_type else None
+            if (not detected_type or detected_type.strip() == "") and file.filename and file.filename.lower().endswith(".pdf"):
+                detected_type = "application/pdf"
             file_data = FileData(
                 content=content_bytes,
-                type=file.content_type if file.content_type else None,
+                type=detected_type,
                 filename=file.filename,
                 size=file.size,
             )
@@ -173,6 +269,41 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         content_hash = knowledge._build_content_hash(content)
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
+        # Prefer a custom PDF reader if registered
+        if file_data:
+            log_debug(
+                f"[upload_content] file type={file_data.type}, filename={file_data.filename}, reader_id={reader_id}"
+            )
+            if file_data.type and "pdf" in file_data.type.lower():
+                if knowledge.readers and "pdf" in knowledge.readers:
+                    content.reader = knowledge.readers["pdf"]
+                    log_debug("[upload_content] Assigned reader from knowledge.readers['pdf']")
+                elif knowledge.readers and "ocr_reader" in knowledge.readers:
+                    content.reader = knowledge.readers["ocr_reader"]
+                    log_debug("[upload_content] Assigned reader from knowledge.readers['ocr_reader']")
+                elif knowledge.readers and len(knowledge.readers) > 0:
+                    # Fallback to first custom reader if defined
+                    first_reader_key = next(iter(knowledge.readers.keys()))
+                    content.reader = knowledge.readers[first_reader_key]
+                    log_debug(f"[upload_content] Assigned reader fallback from knowledge.readers[{first_reader_key!r}]")
+            else:
+                log_debug("[upload_content] No PDF-type detected; reader not forced")
+
+        # Persist uploaded file to disk for future download
+        if file_data and file_data.content and file_data.filename:
+            file_dir = FilePath("data/uploaded_files") / content.id
+            file_dir.mkdir(parents=True, exist_ok=True)
+            file_path = file_dir / file_data.filename
+            try:
+                if isinstance(file_data.content, bytes):
+                    file_path.write_bytes(file_data.content)
+                else:
+                    file_path.write_bytes(str(file_data.content).encode("utf-8"))
+                parsed_metadata = parsed_metadata or {}
+                parsed_metadata.update({"file_path": str(file_path), "original_filename": file_data.filename})
+                content.metadata = parsed_metadata
+            except Exception as e:
+                log_info(f"Failed to persist uploaded file for content {content.id}: {e}")
 
         background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
 
@@ -180,7 +311,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             id=content.id,
             name=name,
             description=description,
-            metadata=parsed_metadata,
+            metadata=content.metadata,
             status=ContentStatus.PROCESSING,
         )
         return response
@@ -225,7 +356,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def update_content(
-        content_id: str = Path(..., description="Content ID"),
+        content_id: str = FastAPIPath(..., description="Content ID"),
         name: Optional[str] = Form(None, description="Content name"),
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
@@ -401,6 +532,38 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         )
 
         return response
+
+    @router.get(
+        "/knowledge/content/{content_id}/download",
+        response_class=FileResponse,
+        status_code=200,
+        operation_id="download_content",
+        summary="Download original uploaded file",
+        description="Stream the original uploaded file associated with the given content ID.",
+        responses={
+            200: {"description": "File download initiated"},
+            404: {"description": "File not found", "model": NotFoundResponse},
+        },
+    )
+    async def download_content_file(
+        content_id: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ):
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        content = await knowledge.aget_content_by_id(content_id=content_id)
+
+        file_path_value = content.metadata.get("file_path") if content and content.metadata else None
+        if not file_path_value:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        file_path = FilePath(file_path_value)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on disk")
+
+        return FileResponse(
+            path=file_path,
+            filename=content.metadata.get("original_filename", file_path.name) if content and content.metadata else None,
+        )
 
     @router.delete(
         "/knowledge/content/{content_id}",
@@ -874,8 +1037,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
     ) -> ConfigResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
-        # Get factory readers info (including custom readers from this knowledge instance)
-        readers_info = get_all_readers_info(knowledge)
+        # Get factory readers info
+        readers_info = get_all_readers_info()
         reader_schemas = {}
         # Add factory readers
         for reader_info in readers_info:
@@ -887,13 +1050,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             )
 
         # Add custom readers from knowledge.readers
-        readers_result: Any = knowledge.get_readers() or {}
-        print(f"readers_result: {readers_result}")
-        # Ensure readers_dict is a dictionary (defensive check)
-        if not isinstance(readers_result, dict):
-            readers_dict: Dict[str, Reader] = {}
-        else:
-            readers_dict = readers_result
+        readers_dict: Dict[str, Reader] = knowledge.get_readers() or {}
         if readers_dict:
             for reader_id, reader in readers_dict.items():
                 # Get chunking strategies from the reader
@@ -913,8 +1070,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                         chunkers=chunking_strategies,
                     )
 
-        # Get content types to readers mapping (including custom readers from this knowledge instance)
-        types_of_readers = get_content_types_to_readers_mapping(knowledge)
+        # Get content types to readers mapping
+        types_of_readers = get_content_types_to_readers_mapping()
         chunkers_list = get_all_chunkers_info()
 
         # Convert chunkers list to dictionary format expected by schema
@@ -967,34 +1124,53 @@ async def process_content(
     try:
         if reader_id:
             reader = None
-            # Use get_readers() to ensure we get a dict (handles list conversion)
-            custom_readers = knowledge.get_readers()
-            if custom_readers and reader_id in custom_readers:
-                reader = custom_readers[reader_id]
-                log_debug(f"Found custom reader: {reader.__class__.__name__}")
+            if knowledge.readers and reader_id in knowledge.readers:
+                reader = knowledge.readers[reader_id]
             else:
-                # Try to resolve from factory readers
                 key = reader_id.lower().strip().replace("-", "_").replace(" ", "_")
                 candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
                 for cand in candidates:
                     try:
                         reader = ReaderFactory.create_reader(cand)
-                        log_debug(f"Resolved reader from factory: {reader.__class__.__name__}")
+                        log_debug(f"Resolved reader: {reader.__class__.__name__}")
                         break
                     except Exception:
                         continue
             if reader:
                 content.reader = reader
-            else:
-                log_debug(f"Could not resolve reader with id: {reader_id}")
+        # If no reader explicitly set, try to pick a PDF reader from custom mapping
+        if content.reader is None and content.file_data:
+            file_type_lower = content.file_data.type.lower() if content.file_data.type else ""
+            filename_lower = content.file_data.filename.lower() if content.file_data.filename else ""
+            is_pdf = "pdf" in file_type_lower or filename_lower.endswith(".pdf")
+            if is_pdf:
+                if knowledge.readers and "pdf" in knowledge.readers:
+                    content.reader = knowledge.readers["pdf"]
+                    log_debug("Assigned custom PDF reader from knowledge.readers['pdf']")
+                elif knowledge.readers and "ocr_reader" in knowledge.readers:
+                    content.reader = knowledge.readers["ocr_reader"]
+                    log_debug("Assigned custom OCR reader from knowledge.readers['ocr_reader']")
         if chunker and content.reader:
             # Set the chunker name on the reader - let the reader handle it internally
             content.reader.set_chunking_strategy_from_string(chunker, chunk_size=chunk_size, overlap=chunk_overlap)
             log_debug(f"Set chunking strategy: {chunker}")
 
-        log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
+        log_debug(f"Using reader: {content.reader.__class__.__name__ if content.reader else 'None'} for content {content.id}")
+        await knowledge._load_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
+
+        # Trigger async metadata extraction if reader supports it
+        if content.reader and hasattr(content.reader, 'extract_metadata_inline'):
+            if not content.reader.extract_metadata_inline:
+                log_info(f"Queueing async metadata extraction for {content.id}")
+                # Import and queue the async metadata extraction
+                try:
+                    import asyncio
+                    asyncio.create_task(_async_extract_and_update_metadata(knowledge, content.id))
+                    log_info(f"Async metadata extraction task created for {content.id}")
+                except Exception as meta_e:
+                    log_info(f"Could not queue metadata extraction for {content.id}: {meta_e}")
+
     except Exception as e:
         log_info(f"Error processing content: {e}")
         # Mark content as failed in the contents DB
