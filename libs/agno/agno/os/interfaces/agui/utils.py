@@ -1,10 +1,13 @@
 """Logic used by the AG-UI router."""
 
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
+
+logger = logging.getLogger(__name__)
 
 from ag_ui.core import (
     BaseEvent,
@@ -341,7 +344,7 @@ def _create_events_from_chunk(
         workflow_name = getattr(chunk, "workflow_name", "workflow")
         workflow_started_event = CustomEvent(
             name="WorkflowStarted",
-            value={"workflow_name": workflow_name, "message": f"Starting workflow: {workflow_name}"}
+            value={"workflow_name": workflow_name, "message": f"Starting workflow: {workflow_name}"},
         )
         events_to_emit.append(workflow_started_event)
 
@@ -349,7 +352,7 @@ def _create_events_from_chunk(
         workflow_name = getattr(chunk, "workflow_name", "workflow")
         workflow_completed_event = CustomEvent(
             name="WorkflowCompleted",
-            value={"workflow_name": workflow_name, "message": f"Workflow completed: {workflow_name}"}
+            value={"workflow_name": workflow_name, "message": f"Workflow completed: {workflow_name}"},
         )
         events_to_emit.append(workflow_completed_event)
 
