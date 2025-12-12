@@ -46,7 +46,7 @@ class WikipediaReader(Reader):
 
         except wikipedia.exceptions.PageError:
             summary = None
-            log_info("PageError: Page not found.")
+            log_info("Wikipedia Error: Page not found.")
 
         # Only create Document if we successfully got a summary
         if summary:
@@ -77,7 +77,7 @@ class WikipediaReader(Reader):
 
         except wikipedia.exceptions.PageError:
             summary = None
-            log_info("PageError: Page not found.")
+            log_info("Wikipedia Error: Page not found.")
 
         # Only create Document if we successfully got a summary
         if summary:

@@ -44,7 +44,7 @@ class TextReader(Reader):
                 # Handle BytesIO and other file-like objects that may not have a name attribute
                 if name:
                     file_name = name
-                elif hasattr(file, "name") and file.name:
+                elif hasattr(file, "name") and file.name is not None:
                     file_name = file.name.split(".")[0]
                 else:
                     file_name = "text_file"
@@ -90,7 +90,7 @@ class TextReader(Reader):
                 # Handle BytesIO and other file-like objects that may not have a name attribute
                 if name:
                     file_name = name
-                elif hasattr(file, "name") and file.name:
+                elif hasattr(file, "name") and file.name is not None:
                     file_name = file.name.split(".")[0]
                 else:
                     file_name = "text_file"

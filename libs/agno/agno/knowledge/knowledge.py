@@ -604,10 +604,7 @@ class Knowledge:
 
         read_signature = inspect.signature(reader.async_read)
         if password and "password" in read_signature.parameters:
-            if isinstance(source, BytesIO):
-                return await reader.async_read(source, name=name, password=password)
-            else:
-                return await reader.async_read(source, name=name, password=password)
+            return await reader.async_read(source, name=name, password=password)
         else:
             if isinstance(source, BytesIO):
                 return await reader.async_read(source, name=name)
