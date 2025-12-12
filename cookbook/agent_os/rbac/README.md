@@ -10,10 +10,10 @@ AgentOS RBAC provides fine-grained access control using JWT tokens with scopes.
 
 The system supports:
 
-1. **Audience Verification** - JWT `aud` claim must match the AgentOS ID
-2. **Global Resource Scopes** - Permissions for all resources of a type
-3. **Per-Resource Scopes** - Granular agent/team/workflow permissions
-4. **Wildcard Support** - Flexible permission patterns
+1. **Global Resource Scopes** - Permissions for all resources of a type
+2. **Per-Resource Scopes** - Granular agent/team/workflow permissions
+3. **Wildcard Support** - Flexible permission patterns
+4. **Audience Verification** - JWT `aud` claim must match the AgentOS ID
 
 ## AgentOS Control Plane
 
@@ -53,7 +53,7 @@ payload = {
 }
 ```
 
-When `verify_audience=True` (default when authorization is enabled), tokens with a mismatched `aud` claim will be rejected with a 401 error.
+When `verify_audience=True`, tokens with a mismatched `aud` claim will be rejected with a 401 error.
 
 ## Scope Format
 
@@ -141,16 +141,16 @@ Run endpoints check for matching scopes with resource context:
 ## Examples
 
 ### Basic RBAC (Symmetric)
-See `basic_symmetric.py` for a simple example using HS256 symmetric keys.
+See `symmetric/basic.py` for a simple example using HS256 symmetric keys.
 
 ### Basic RBAC (Asymmetric) 
-See `basic_asymmetric.py` for RS256 asymmetric key example (recommended for production).
+See `asymmetric/basic.py` for RS256 asymmetric key example (recommended for production).
 
 ### Per-Agent Permissions
-See `agent_permissions.py` for custom scope mappings per agent.
+See `symmetric/agent_permissions.py` for custom scope mappings per agent.
 
 ### Advanced Scopes
-See `advanced_scopes.py` for comprehensive examples of:
+See `symmetric/advanced_scopes.py` for comprehensive examples of:
 - Global and per-resource scopes
 - Wildcard patterns
 - Multiple permission levels
@@ -167,7 +167,7 @@ There are two ways to enable RBAC:
 from agno.os import AgentOS
 
 agent_os = AgentOS(
-    id="my-agent-os",  # Important: Set ID for audience verification
+    id="my-agent-os",
     agents=[agent1, agent2],
     authorization=True,  # Enable RBAC
     authorization_config=AuthorizationConfig(
@@ -196,7 +196,6 @@ app.add_middleware(
     verification_keys=["your-public-key-or-secret"],
     algorithm="RS256",
     authorization=True,  # Enable RBAC - without this, scopes are NOT enforced
-    verify_audience=True,  # Verify aud claim matches AgentOS ID
 )
 ```
 
@@ -211,7 +210,7 @@ from datetime import datetime, timedelta, UTC
 # Admin user
 admin_token = jwt.encode({
     "sub": "admin_user",
-    "aud": "my-agent-os",  # Must match AgentOS ID
+    "aud": "my-agent-os",
     "scopes": ["agent_os:admin"],
     "exp": datetime.now(UTC) + timedelta(hours=24),
 }, "your-secret", algorithm="HS256")
@@ -219,7 +218,7 @@ admin_token = jwt.encode({
 # Power user (global access to all agents)
 power_user_token = jwt.encode({
     "sub": "power_user",
-    "aud": "my-agent-os",  # Must match AgentOS ID
+    "aud": "my-agent-os",
     "scopes": [
         "agents:read",     # List all agents
         "agents:*:run",    # Run any agent
@@ -230,7 +229,7 @@ power_user_token = jwt.encode({
 # Limited user (specific agents only)
 limited_token = jwt.encode({
     "sub": "limited_user",
-    "aud": "my-agent-os",  # Must match AgentOS ID
+    "aud": "my-agent-os",
     "scopes": [
         "agents:agent-1:read",
         "agents:agent-1:run",
@@ -344,6 +343,5 @@ app.add_middleware(
 
 ## Additional Resources
 
-- [AgentOS Documentation](https://docs.agno.com)
+- [AgentOS Documentation](https://docs.agno.com/agent-os/security/overview)
 - [JWT.io](https://jwt.io) - JWT debugging tool
-- [RFC 7519](https://tools.ietf.org/html/rfc7519) - JWT specification

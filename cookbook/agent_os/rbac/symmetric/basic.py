@@ -117,4 +117,4 @@ if __name__ == "__main__":
     )
     print("\n" + "=" * 60 + "\n")
 
-    agent_os.serve(app="basic_symmetric:app", port=7777, reload=True)
+    agent_os.serve(app="basic:app", port=7777, reload=True)

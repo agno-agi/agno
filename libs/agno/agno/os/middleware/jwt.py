@@ -197,6 +197,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
         self.verify_audience = verify_audience
+        self.leeway = 10  # Default leeway for clock skew tolerance
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 
@@ -346,6 +347,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         decode_options: Dict[str, Any] = {}
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [self.algorithm],
+            "leeway": self.leeway,
         }
 
         # Configure audience verification
@@ -357,10 +359,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # If validation is disabled, decode without signature verification
         if not self.validate:
             decode_options["verify_signature"] = False
-            if decode_options:
-                decode_kwargs["options"] = decode_options
+            decode_kwargs["options"] = decode_options
             # Decode without verification - no key needed
-            payload = jwt.decode(token, options=decode_kwargs.get("options", {}), algorithms=[self.algorithm])
+            payload = jwt.decode(token, **decode_kwargs)
             return payload
 
         if decode_options:
@@ -569,9 +570,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 401, "Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )
 
-        except jwt.ExpiredSignatureError:
+        except jwt.ExpiredSignatureError as e:
             if self.validate:
-                log_warning("Token has expired")
+                log_warning(f"Token has expired: {str(e)}")
                 return self._create_error_response(401, "Token has expired", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
