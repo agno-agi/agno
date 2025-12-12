@@ -103,8 +103,7 @@ class AgentSummaryResponse(BaseModel):
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
-        db_id = agent.db_id if hasattr(agent, "db_id") and agent.db_id else agent.db.id if agent.db else None
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=db_id)
+        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
 class TeamSummaryResponse(BaseModel):
@@ -115,7 +114,7 @@ class TeamSummaryResponse(BaseModel):
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        db_id = team.db_id if hasattr(team, "db_id") and team.db_id else team.db.id if team.db else None
+        db_id = team.db.id if team.db else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 
 
@@ -127,7 +126,7 @@ class WorkflowSummaryResponse(BaseModel):
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
-        db_id = workflow.db_id if hasattr(workflow, "db_id") and workflow.db_id else workflow.db.id if workflow.db else None
+        db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
@@ -187,16 +186,35 @@ class SessionSchema(BaseModel):
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
+
+        created_at = session.get("created_at", 0)
+        updated_at = session.get("updated_at", 0)
+
+        # Handle created_at and updated_at as either ISO 8601 string or timestamp
+        def parse_datetime(val):
+            if isinstance(val, str):
+                try:
+                    # Accept both with and without Z
+                    if val.endswith("Z"):
+                        val = val[:-1] + "+00:00"
+                    return datetime.fromisoformat(val)
+                except Exception:
+                    return None
+            elif isinstance(val, (int, float)):
+                try:
+                    return datetime.fromtimestamp(val, tz=timezone.utc)
+                except Exception:
+                    return None
+            return None
+
+        created_at = parse_datetime(session.get("created_at", 0))
+        updated_at = parse_datetime(session.get("updated_at", 0))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
-            created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
-            if session.get("created_at")
-            else None,
-            updated_at=datetime.fromtimestamp(session.get("updated_at", 0), tz=timezone.utc)
-            if session.get("updated_at")
-            else None,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 

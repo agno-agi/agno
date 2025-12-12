@@ -1,11 +1,15 @@
 import json
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
+from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
+
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
+from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.evals.schemas import EvalSchema
 from agno.os.routers.knowledge.schemas import (
     ConfigResponseSchema as KnowledgeConfigResponse,
@@ -19,7 +23,6 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
@@ -28,6 +31,7 @@ from agno.os.schema import (
     ConfigResponse,
     Model,
     PaginatedResponse,
+    PaginationInfo,
     RunSchema,
     SessionSchema,
     TeamRunSchema,
@@ -38,13 +42,9 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.team import BaseTeamRunEvent, team_run_output_event_from_dict
+from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
-
-from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
-
-from agno.exceptions import RemoteServerUnavailableError
 
 
 class AgentOSClient:
@@ -168,6 +168,7 @@ class AgentOSClient:
             kwargs["params"] = params
 
         async_client = get_default_async_client()
+        async_client.timeout = self.timeout
 
         try:
             async with async_client as client:
@@ -399,12 +400,12 @@ class AgentOSClient:
 
         Returns:
             ConfigResponse: Complete OS configuration
-            
+
         We need this sync version so it can be used for other sync use-cases upstream
         """
         data = self._get("/config", headers=headers)
         return ConfigResponse.model_validate(data)
-    
+
     async def aget_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
         """Get AgentOS configuration and metadata.
 
@@ -443,6 +444,20 @@ class AgentOSClient:
         data = await self._aget("/models", headers=headers)
         return [Model.model_validate(item) for item in data]
 
+    async def migrate_database(
+        self, db_id: str, target_version: Optional[str] = None, headers: Optional[Dict[str, str]] = None
+    ) -> None:
+        """Migrate a database to a target version.
+
+        Args:
+            db_id: ID of the database to migrate
+            target_version: Target version to migrate to
+            headers: HTTP headers to include in the request (optional)
+        """
+        return await self._apost(
+            f"/databases/{db_id}/migrate", data={"target_version": target_version}, headers=headers
+        )
+
     async def list_agents(self, headers: Optional[Dict[str, str]] = None) -> List[AgentSummaryResponse]:
         """List all agents configured in the AgentOS instance.
 
@@ -478,7 +493,7 @@ class AgentOSClient:
         """
         data = self._get(f"/agents/{agent_id}", headers=headers)
         return AgentResponse.model_validate(data)
-    
+
     async def aget_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
         """Get detailed configuration for a specific agent.
 
@@ -555,6 +570,8 @@ class AgentOSClient:
             else:
                 data[key] = value
 
+        data = {k: v for k, v in data.items() if v is not None}
+
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return RunOutput.from_dict(response_data)
 
@@ -612,6 +629,8 @@ class AgentOSClient:
             else:
                 data[key] = value
 
+        data = {k: v for k, v in data.items() if v is not None}
+
         # Get raw SSE stream and parse into typed events
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
@@ -622,7 +641,6 @@ class AgentOSClient:
         agent_id: str,
         run_id: str,
         tools: List[ToolExecution],
-        stream: bool = False,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
@@ -645,7 +663,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": str(stream).lower()}
+        data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "false"}
         if session_id:
             data["session_id"] = session_id
         if user_id:
@@ -767,7 +785,7 @@ class AgentOSClient:
         files: Optional[List[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
-    ) -> TeamRunSchema:
+    ) -> TeamRunOutput:
         """Execute a team run.
 
         Args:
@@ -783,7 +801,7 @@ class AgentOSClient:
             **kwargs: Additional parameters passed to the team run
 
         Returns:
-            TeamRunSchema: The team run response
+            TeamRunOutput: The team run response
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -810,8 +828,10 @@ class AgentOSClient:
             else:
                 data[key] = value
 
+        data = {k: v for k, v in data.items() if v is not None}
+
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
-        return TeamRunSchema.model_validate(response_data)
+        return TeamRunOutput.from_dict(response_data)
 
     async def run_team_stream(
         self,
@@ -825,7 +845,7 @@ class AgentOSClient:
         files: Optional[List[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[BaseTeamRunEvent]:
+    ) -> AsyncIterator[TeamRunOutputEvent]:
         """Stream a team run response.
 
         Args:
@@ -841,7 +861,7 @@ class AgentOSClient:
             **kwargs: Additional parameters passed to the team run
 
         Yields:
-            BaseTeamRunEvent: Typed event objects (team and agent events)
+            TeamRunOutputEvent: Typed event objects (team and agent events)
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -867,6 +887,8 @@ class AgentOSClient:
                 data[key] = json.dumps(value)
             else:
                 data[key] = value
+
+        data = {k: v for k, v in data.items() if v is not None}
 
         # Get raw SSE stream and parse into typed events
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
@@ -905,7 +927,23 @@ class AgentOSClient:
         data = await self._aget("/workflows", headers=headers)
         return [WorkflowSummaryResponse.model_validate(item) for item in data]
 
-    async def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+    def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
+        """Get detailed configuration for a specific workflow.
+
+        Args:
+            workflow_id: ID of the workflow to retrieve
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            WorkflowResponse: Detailed workflow configuration
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if workflow not found)
+        """
+        data = self._get(f"/workflows/{workflow_id}", headers=headers)
+        return WorkflowResponse.model_validate(data)
+
+    async def aget_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.
 
         Args:
@@ -975,6 +1013,8 @@ class AgentOSClient:
             else:
                 data[key] = value
 
+        data = {k: v for k, v in data.items() if v is not None}
+
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return WorkflowRunSchema.model_validate(response_data)
 
@@ -1032,6 +1072,8 @@ class AgentOSClient:
                 data[key] = json.dumps(value)
             else:
                 data[key] = value
+
+        data = {k: v for k, v in data.items() if v is not None}
 
         # Get raw SSE stream and parse into typed events
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
@@ -1465,6 +1507,61 @@ class AgentOSClient:
         else:
             return WorkflowSessionDetailSchema.model_validate(data)
 
+    async def get_sessions(
+        self,
+        session_type: Optional[SessionType] = None,
+        component_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> PaginatedResponse[SessionSchema]:
+        """Get a specific session by ID.
+
+        Args:
+            session_type: Type of session (agent, team, or workflow)
+            component_id: Optional component ID filter
+            user_id: Optional user ID filter
+            session_name: Optional session name filter
+            limit: Number of sessions per page
+            page: Page number
+            sort_by: Field to sort by
+            sort_order: Sort order (asc or desc)
+            db_id: Optional database ID to use
+            table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[SessionSchema]
+        """
+        params: Dict[str, Any] = {
+            "type": session_type.value,
+            "limit": str(limit),
+            "page": str(page),
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "db_id": db_id,
+            "table": table,
+            "user_id": user_id,
+            "session_name": session_name,
+            "component_id": component_id,
+        }
+
+        params = {k: v for k, v in params.items() if v is not None}
+
+        response = await self._aget("/sessions", params=params, headers=headers)
+        data = response.get("data", [])
+        pagination_info = PaginationInfo.model_validate(response.get("meta", {}))
+        return PaginatedResponse[SessionSchema](
+            data=[SessionSchema.from_dict(session) for session in data],
+            meta=pagination_info,
+        )
+
     async def get_session(
         self,
         session_id: str,
@@ -1490,13 +1587,13 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params: Dict[str, Any] = {"type": session_type.value}
-        if user_id:
-            params["user_id"] = user_id
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "type": session_type.value,
+            "user_id": user_id,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/sessions/{session_id}", params=params, headers=headers)
 
@@ -1536,17 +1633,15 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"type": session_type.value}
-        if user_id:
-            params["user_id"] = user_id
-        if created_after:
-            params["created_after"] = created_after
-        if created_before:
-            params["created_before"] = created_before
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "type": session_type.value,
+            "user_id": user_id,
+            "created_after": created_after,
+            "created_before": created_before,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
@@ -1568,6 +1663,7 @@ class AgentOSClient:
         session_type: SessionType = SessionType.AGENT,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
         """Get a specific run from a session.
@@ -1578,6 +1674,7 @@ class AgentOSClient:
             session_type: Type of session (agent, team, or workflow)
             user_id: Optional user ID filter
             db_id: Optional database ID to use
+            table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -1586,11 +1683,13 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params: Dict[str, Any] = {"type": session_type.value}
-        if user_id:
-            params["user_id"] = user_id
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {
+            "type": session_type.value,
+            "user_id": user_id,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/sessions/{session_id}/runs/{run_id}", params=params, headers=headers)
 

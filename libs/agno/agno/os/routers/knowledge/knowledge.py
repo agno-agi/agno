@@ -23,8 +23,6 @@ from agno.os.routers.knowledge.schemas import (
     VectorSearchRequestSchema,
     VectorSearchResult,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -35,6 +33,8 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
 from agno.utils.string import generate_id
 

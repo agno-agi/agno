@@ -246,6 +246,7 @@ class TeamResponse(BaseModel):
             id=team.id,
             name=team.name,
             db_id=team.db.id if team.db else None,
+            description=team.description,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),

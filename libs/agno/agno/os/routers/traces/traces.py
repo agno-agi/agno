@@ -12,8 +12,6 @@ from agno.os.routers.traces.schemas import (
     TraceSessionStats,
     TraceSummary,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db, parse_datetime_to_utc
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -23,6 +21,8 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db, parse_datetime_to_utc
 from agno.utils.log import log_error
 
 logger = logging.getLogger(__name__)

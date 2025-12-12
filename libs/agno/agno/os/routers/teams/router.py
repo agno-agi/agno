@@ -36,6 +36,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_warning, logger
 
@@ -61,6 +62,11 @@ async def team_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
         run_response = team.arun(
             input=message,
             session_id=session_id,
@@ -70,7 +76,7 @@ async def team_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -397,8 +403,11 @@ def get_team_router(
 
         teams = []
         for team in os.teams:
-            team_response = await TeamResponse.from_team(team=team)
-            teams.append(team_response)
+            if isinstance(team, RemoteTeam):
+                teams.append(await team.get_team_config())
+            else:
+                team_response = await TeamResponse.from_team(team=team)
+                teams.append(team_response)
 
         return teams
 
@@ -491,6 +500,9 @@ def get_team_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return await TeamResponse.from_team(team)
+        if isinstance(team, RemoteTeam):
+            return await team.get_team_config()
+        else:
+            return await TeamResponse.from_team(team=team)
 
     return router

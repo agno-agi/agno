@@ -43,6 +43,7 @@ knowledge = Knowledge(
 assistant = Agent(
     name="Assistant",
     id="assistant-agent",
+    description="You are a helpful AI assistant.",
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     instructions=[
@@ -61,7 +62,7 @@ assistant = Agent(
 researcher = Agent(
     name="Researcher",
     id="researcher-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5"),
     db=db,
     instructions=[
         "You are a research assistant.",
@@ -79,7 +80,7 @@ researcher = Agent(
 research_team = Team(
     name="Research Team",
     id="research-team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5-mini"),
     members=[assistant, researcher],
     instructions=[
         "You are a research team that coordinates multiple specialists.",

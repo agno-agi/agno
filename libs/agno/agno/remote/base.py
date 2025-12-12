@@ -1,5 +1,6 @@
 from abc import abstractmethod
-from functools import lru_cache
+from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
@@ -13,8 +14,67 @@ from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 
 if TYPE_CHECKING:
     from agno.client import AgentOSClient
+    from agno.os.schema import (
+        AgentSessionDetailSchema,
+        ConfigResponse,
+        PaginatedResponse,
+        RunSchema,
+        SessionSchema,
+        TeamRunSchema,
+        TeamSessionDetailSchema,
+        WorkflowRunSchema,
+        WorkflowSessionDetailSchema,
+    )
 
 
+@dataclass
+class RemoteDb:
+    id: str
+    client: "AgentOSClient"
+    session_table_name: Optional[str] = None
+    knowledge_table_name: Optional[str] = None
+    memory_table_name: Optional[str] = None
+    metrics_table_name: Optional[str] = None
+    eval_table_name: Optional[str] = None
+    traces_table_name: Optional[str] = None
+    spans_table_name: Optional[str] = None
+    culture_table_name: Optional[str] = None
+
+    async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
+        return await self.client.get_sessions(**kwargs)
+
+    async def get_session(
+        self, session_id: str, **kwargs: Any
+    ) -> Union["AgentSessionDetailSchema", "TeamSessionDetailSchema", "WorkflowSessionDetailSchema"]:
+        return await self.client.get_session(session_id, **kwargs)
+
+    async def get_session_runs(
+        self, session_id: str, **kwargs: Any
+    ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
+        return await self.client.get_session_runs(session_id, **kwargs)
+
+    async def get_session_run(
+        self, session_id: str, run_id: str, **kwargs: Any
+    ) -> Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]:
+        return await self.client.get_session_run(session_id, run_id, **kwargs)
+
+    async def migrate_database(self, target_version: Optional[str] = None) -> None:
+        """Migrate the database to a target version.
+
+        Args:
+            target_version: Target version to migrate to
+        """
+
+        return await self.client.migrate_database(self.id, target_version)
+
+
+@dataclass
+class RemoteKnowledge:
+    id: str
+    contents_db: Optional[RemoteDb] = None
+
+
+@dataclass
 class BaseRemote:
     def __init__(
         self,
@@ -32,7 +92,7 @@ class BaseRemote:
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
-        
+
         self.client = self.get_client()
 
     def get_client(self) -> "AgentOSClient":
@@ -45,10 +105,19 @@ class BaseRemote:
             AgentOSClient: Client configured for this remote resource's base URL
         """
         from agno.client import AgentOSClient
+
         return AgentOSClient(
             base_url=self.base_url,
             timeout=self.timeout,
         )
+
+    @cached_property
+    def _config(self) -> "ConfigResponse":
+        """Get the agent config from remote, cached after first access."""
+        from agno.os.schema import ConfigResponse
+
+        config: ConfigResponse = self.client.get_config()
+        return config
 
     def _get_headers(self) -> Dict[str, str]:
         """Get default headers for HTTP requests.

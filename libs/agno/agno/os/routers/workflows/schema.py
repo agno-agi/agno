@@ -7,6 +7,7 @@ from agno.os.routers.teams.schema import TeamResponse
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
+
 def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Convert function parameters to JSON schema"""
     properties: Dict[str, Any] = {}
@@ -71,6 +72,7 @@ def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any
     # Priority 3: No schema (expects string message)
     return None
 
+
 class WorkflowResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the workflow")
     name: Optional[str] = Field(None, description="Name of the workflow")
@@ -124,7 +126,7 @@ class WorkflowResponse(BaseModel):
 
         if steps:
             steps = await cls._resolve_agents_and_teams_recursively(steps)
-        
+
         return cls(
             id=workflow.id,
             name=workflow.name,

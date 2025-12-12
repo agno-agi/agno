@@ -12,21 +12,16 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.remote.base import RemoteDb
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team
+from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
-
-from pydantic import BaseModel
-
-from agno.models.message import Message
-from agno.tools import Function, Toolkit
-from agno.utils.log import logger
-
-
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -188,6 +183,10 @@ async def get_db(
 
         if not is_configured:
             return False
+
+        if isinstance(db, RemoteDb):
+            # We have to assume remote DBs are always configured and exist
+            return True
 
         # Then check if table actually exists in the database
         try:

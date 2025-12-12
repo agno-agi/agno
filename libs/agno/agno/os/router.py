@@ -8,9 +8,9 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from packaging import version
 
-from agno.agent import RemoteAgent
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
+from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSummaryResponse,
@@ -29,10 +29,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_db,
 )
-from agno.team.remote import RemoteTeam
-from agno.utils.log import log_warning
-from agno.workflow.remote import RemoteWorkflow
-from agno.exceptions import RemoteServerUnavailableError
+from agno.remote.base import RemoteDb
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -265,6 +262,9 @@ def get_base_router(
         db = await get_db(os.dbs, db_id)
         if not db:
             raise HTTPException(status_code=404, detail="Database not found")
+
+        if isinstance(db, RemoteDb):
+            return await db.migrate_database(target_version)
 
         if target_version:
             # Use the session table as proxy for the database schema version

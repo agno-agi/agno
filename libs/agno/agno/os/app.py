@@ -52,6 +52,7 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
+from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
@@ -661,27 +662,18 @@ class AgentOS:
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
-            if isinstance(agent, RemoteAgent):
-                # TODO: Fetch config from remote AgentOS
-                continue
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
             if agent.knowledge and agent.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
 
         for team in self.teams or []:
-            if isinstance(team, RemoteTeam):
-                # TODO: Fetch config from remote AgentOS
-                continue
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             if team.knowledge and team.knowledge.contents_db:
                 self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
 
         for workflow in self.workflows or []:
-            if isinstance(workflow, RemoteWorkflow):
-                # TODO: Fetch config from remote AgentOS
-                continue
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
@@ -766,7 +758,9 @@ class AgentOS:
         return {k: v for k, v in table_names.items() if v is not None}
 
     def _register_db_with_validation(
-        self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: Union[BaseDb, AsyncBaseDb]
+        self,
+        registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        db: Union[BaseDb, AsyncBaseDb, RemoteDb],
     ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
@@ -779,7 +773,7 @@ class AgentOS:
         seen_ids = set()
         knowledge_instances: List[Knowledge] = []
 
-        def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
+        def _add_knowledge_if_not_duplicate(knowledge: Union["Knowledge", RemoteKnowledge]) -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
             # Use database ID if available, otherwise use object ID as fallback
             if not knowledge.contents_db:
@@ -790,16 +784,10 @@ class AgentOS:
             knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
-            if isinstance(agent, RemoteAgent):
-                # TODO: Fetch config from remote AgentOS
-                continue
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
-            if isinstance(team, RemoteTeam):
-                # TODO: Fetch config from remote AgentOS
-                continue
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
 

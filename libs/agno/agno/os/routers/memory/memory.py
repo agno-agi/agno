@@ -18,8 +18,6 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -30,6 +28,8 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db
 
 logger = logging.getLogger(__name__)
 

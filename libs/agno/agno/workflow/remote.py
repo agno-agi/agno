@@ -1,20 +1,17 @@
-import json
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
-
 from functools import cached_property
-from pydantic import BaseModel
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Union, overload
 
-from agno.db.base import AsyncBaseDb, BaseDb
+from pydantic import BaseModel
+from websocket import WebSocket
+
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.response import ToolExecution
-from agno.remote.base import BaseRemote
-from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
+from agno.remote.base import BaseRemote, RemoteDb
+from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
+from agno.utils.agent import validate_input
 
-try:
-    from httpx import AsyncClient
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+if TYPE_CHECKING:
+    from agno.os.routers.workflows.schema import WorkflowResponse
 
 
 class RemoteWorkflow(BaseRemote):
@@ -40,15 +37,17 @@ class RemoteWorkflow(BaseRemote):
     def id(self) -> str:
         return self.workflow_id
 
+    async def get_workflow_config(self) -> "WorkflowResponse":
+        """Get the agent config from remote, cached after first access."""
+        return await self.client.aget_team(self.team_id)
+
     @cached_property
     def _workflow_config(self) -> Optional[Any]:
         """Get the agent config from remote, cached after first access."""
-        from agno.os.schema import ConfigResponse
-        config: ConfigResponse = self._get_config()
-        for workflow in config.workflows:
-            if workflow.id == self.workflow_id:
-                return workflow
-        return None
+        from agno.os.routers.workflows.schema import WorkflowResponse
+
+        config: WorkflowResponse = self.client.get_workflow(self.workflow_id)
+        return config
 
     @cached_property
     def name(self) -> str:
@@ -63,320 +62,131 @@ class RemoteWorkflow(BaseRemote):
         return ""
 
     @cached_property
-    def db_id(self) -> Optional[str]:
-        return self._workflow_config.db_id if self._workflow_config else None
-
-    def _get_runs_endpoint(self) -> str:
-        """Get the API endpoint for the configured resource."""
-        return f"{self.base_url}/workflows/{self.workflow_id}/runs"
-
-    def _get_continue_run_endpoint(self, run_id: str) -> str:
-        """Get the API endpoint for the configured resource."""
-        return f"{self.base_url}/workflows/{self.workflow_id}/runs/{run_id}/continue"
-
-    def _get_cancel_run_endpoint(self, run_id: str) -> str:
-        """Get the API endpoint for the configured resource."""
-        return f"{self.base_url}/workflows/{self.workflow_id}/runs/{run_id}/cancel"
-
-    def _prepare_runs_request_body(
-        self,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
-        stream: Optional[bool] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        stream_events: Optional[bool] = None,
-        retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """Prepare request body for remote API call as URL-encoded form data."""
-
-        body: Dict[str, Any] = {}
-
-        # Handle input - convert to string
-        if isinstance(input, str):
-            body["message"] = input
-        elif isinstance(input, Message):
-            # Convert Message to JSON string for form data
-            body["message"] = json.dumps(input.model_dump())
-        elif isinstance(input, BaseModel):
-            body["message"] = json.dumps(input.model_dump())
-        elif isinstance(input, (list, dict)):
-            # Convert complex types to JSON string
-            body["message"] = json.dumps(input)
-        else:
-            body["message"] = str(input)
-
-        # Add optional parameters
-        # Booleans and strings can be passed directly
-        if stream is not None:
-            body["stream"] = str(stream).lower()
-        if user_id is not None:
-            body["user_id"] = user_id
-        if session_id is not None:
-            body["session_id"] = session_id
-
-        # JSON parameters must be serialized to strings for form data
-        if session_state is not None:
-            body["session_state"] = json.dumps(session_state)
-        if stream_events is not None:
-            body["stream_events"] = str(stream_events).lower()
-        if retries is not None:
-            body["retries"] = str(retries)
-        if knowledge_filters is not None:
-            body["knowledge_filters"] = json.dumps(knowledge_filters)
-        if add_history_to_context is not None:
-            body["add_history_to_context"] = str(add_history_to_context).lower()
-        if add_dependencies_to_context is not None:
-            body["add_dependencies_to_context"] = str(add_dependencies_to_context).lower()
-        if add_session_state_to_context is not None:
-            body["add_session_state_to_context"] = str(add_session_state_to_context).lower()
-        if dependencies is not None:
-            body["dependencies"] = json.dumps(dependencies)
-        if metadata is not None:
-            body["metadata"] = json.dumps(metadata)
-
-        # Add any additional kwargs, converting complex types to JSON strings
-        for key, value in kwargs.items():
-            if isinstance(value, (dict, list)):
-                body[key] = json.dumps(value)
-            elif isinstance(value, bool):
-                body[key] = str(value).lower()
-            elif value is not None:
-                body[key] = str(value)
-
-        return body
-
-    def _prepare_continue_runs_request_body(
-        self,
-        run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        stream: Optional[bool] = None,
-    ) -> Dict[str, Any]:
-        """Prepare request body for remote API call as URL-encoded form data."""
-
-        body: Dict[str, Any] = {}
-
-        if run_id is not None:
-            body["run_id"] = run_id
-        if updated_tools is not None:
-            body["tools"] = json.dumps([tool.to_dict() for tool in updated_tools])
-        if session_id is not None:
-            body["session_id"] = session_id
-        if user_id is not None:
-            body["user_id"] = user_id
-        if stream is not None:
-            body["stream"] = str(stream).lower()
-        return body
-
-    async def _remote_arun(
-        self,
-        endpoint: str,
-        body: Dict[str, Any],
-    ) -> WorkflowRunOutput:
-        """Execute remote agent/team/workflow via HTTP API."""
-        headers = self._get_headers()
-
-        async with AsyncClient(timeout=self.timeout) as client:
-            # Handle non-streaming response - use data for URL-encoded form
-            response = await client.post(endpoint, data=body, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            return WorkflowRunOutput.from_dict(data)
-
-    async def _stream_remote_arun(
-        self,
-        endpoint: str,
-        body: Dict[str, Any],
-    ) -> AsyncIterator[WorkflowRunOutputEvent]:
-        """Stream response from remote API."""
-        headers = self._get_headers()
-
-        async with AsyncClient(timeout=self.timeout) as client:
-            # Use data instead of json for URL-encoded form data
-            async with client.stream("POST", endpoint, data=body, headers=headers) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        # Parse SSE format if used
-                        if line.startswith("data: "):
-                            line = line[6:]
-                        try:
-                            data = json.loads(line)
-                            yield workflow_run_output_event_from_dict(data)  # type: ignore
-                        except Exception:
-                            # Skip unparseable lines
-                            continue
+    def db(self) -> Optional[RemoteDb]:
+        if self._workflow_config is not None and self._workflow_config.db_id is not None:
+            config = self._config
+            db_id = self._workflow_config.db_id
+            session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
+            session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
+            knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
+            knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
+            memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
+            memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+            metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
+            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+            eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
+            eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
+            traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
+            traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
+            return RemoteDb(
+                id=db_id,
+                client=self.client,
+                session_table_name=session_table_name,
+                knowledge_table_name=knowledge_table_name,
+                memory_table_name=memory_table_name,
+                metrics_table_name=metrics_table_name,
+                eval_table_name=eval_table_name,
+                traces_table_name=traces_table_name,
+            )
 
     @overload
     async def arun(
         self,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
-        *,
-        stream: Literal[False] = False,
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
+        stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
     def arun(
         self,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
-        *,
-        stream: Literal[True] = True,
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
+        stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
+        stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
         self,
-        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
-        *,
-        stream: Optional[bool] = None,
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
+        stream: bool = False,
         stream_events: Optional[bool] = None,
-        retries: Optional[int] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
-    ) -> Union[
-        WorkflowRunOutput,
-        AsyncIterator[WorkflowRunOutputEvent],
-    ]:
-        endpoint = self._get_runs_endpoint()
-        body = self._prepare_runs_request_body(
-            input,
-            stream=stream,
-            user_id=user_id,
-            session_id=session_id,
-            session_state=session_state,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            stream_events=stream_events,
-            retries=retries,
-            knowledge_filters=knowledge_filters,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            dependencies=dependencies,
-            metadata=metadata,
-            **kwargs,
-        )
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        validated_input = validate_input(input)
 
         if stream:
             # Handle streaming response
-            return self._stream_remote_arun(
-                endpoint=endpoint,
-                body=body,
+            return self.get_client().run_workflow_stream(
+                workflow_id=self.workflow_id,
+                message=validated_input,
+                additional_data=additional_data,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                session_state=session_state,
+                stream_events=stream_events,
+                **kwargs,
             )
         else:
-            return self._remote_arun(  # type: ignore
-                endpoint=endpoint,
-                body=body,
-            )
-
-    @overload
-    async def acontinue_run(
-        self,
-        run_id: str,
-        stream: Literal[False] = False,
-        stream_events: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> WorkflowRunOutput: ...
-
-    @overload
-    def acontinue_run(
-        self,
-        run_id: str,
-        stream: Literal[True] = True,
-        stream_events: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
-
-    def acontinue_run(  # type: ignore
-        self,
-        run_id: str,  # type: ignore
-        stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> Union[
-        WorkflowRunOutput,
-        AsyncIterator[WorkflowRunOutputEvent],
-    ]:
-        endpoint = self._get_continue_run_endpoint(run_id)
-        body = self._prepare_continue_runs_request_body(run_id, updated_tools, session_id, user_id, stream)
-
-        if stream:
-            # Handle streaming response
-            return self._stream_remote_arun(
-                endpoint=endpoint,
-                body=body,
-            )
-        else:
-            return self._remote_arun(  # type: ignore
-                endpoint=endpoint,
-                body=body,
+            return self.get_client().run_workflow(
+                workflow_id=self.workflow_id,
+                message=validated_input,
+                additional_data=additional_data,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                session_state=session_state,
+                **kwargs,
             )
 
     async def cancel_run(self, run_id: str) -> bool:
-        """Cancel a running agent execution.
+        """Cancel a running workflow execution.
 
         Args:
             run_id (str): The run_id to cancel.
@@ -384,10 +194,7 @@ class RemoteWorkflow(BaseRemote):
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        endpoint = self._get_cancel_run_endpoint(run_id)
-        headers = self._get_headers()
-        async with AsyncClient(timeout=self.timeout) as client:
-            # Use data instead of json for URL-encoded form data
-            async with client.stream("POST", endpoint, headers=headers) as response:
-                response.raise_for_status()
-                return True
+        return await self.get_client().cancel_workflow_run(
+            workflow_id=self.workflow_id,
+            run_id=run_id,
+        )

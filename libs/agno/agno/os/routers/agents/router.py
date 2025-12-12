@@ -15,6 +15,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -61,6 +62,11 @@ async def agent_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
         run_response = agent.arun(
             input=message,
             session_id=session_id,
@@ -70,7 +76,7 @@ async def agent_response_streamer(
             videos=videos,
             files=files,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
         async for run_response_chunk in run_response:
@@ -528,8 +534,11 @@ def get_agent_router(
 
         agents = []
         for agent in os.agents:
-            agent_response = await AgentResponse.from_agent(agent=agent)
-            agents.append(agent_response)
+            if isinstance(agent, RemoteAgent):
+                agents.append(await agent.get_agent_config())
+            else:
+                agent_response = await AgentResponse.from_agent(agent=agent)
+                agents.append(agent_response)
 
         return agents
 
@@ -576,6 +585,9 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return await AgentResponse.from_agent(agent)
+        if isinstance(agent, RemoteAgent):
+            return await agent.get_agent_config()
+        else:
+            return await AgentResponse.from_agent(agent=agent)
 
     return router

@@ -8,7 +8,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.team import RemoteTeam, Team
+from agno.team import RemoteTeam
 from agno.workflow import RemoteWorkflow, Workflow
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
@@ -99,7 +99,10 @@ advanced_workflow = Workflow(
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example app for basic agent, team and workflow",
-    agents=[RemoteAgent(base_url="http://localhost:7778", agent_id="assistant-agent")],
+    agents=[
+        RemoteAgent(base_url="http://localhost:7778", agent_id="assistant-agent"),
+        RemoteAgent(base_url="http://localhost:7778", agent_id="researcher-agent"),
+    ],
     teams=[RemoteTeam(base_url="http://localhost:7778", team_id="research-team")],
     workflows=[
         RemoteWorkflow(base_url="http://localhost:7778", workflow_id="qa-workflow"),
