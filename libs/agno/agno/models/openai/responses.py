@@ -525,7 +525,7 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
             formatted_input = self._format_messages(messages, compress_tool_results=True)
@@ -537,16 +537,16 @@ class OpenAIResponses(Model):
                 instructions=self.instructions,  # type: ignore
                 tools=formatted_tools,  # type: ignore
             )
-            return response.input_tokens + count_schema_tokens(response_format, self.id)
+            return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
             log_warning(f"Failed to count tokens via API: {e}")
-            return super().count_tokens(messages, tools, response_format)
+            return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
@@ -559,10 +559,10 @@ class OpenAIResponses(Model):
                 instructions=self.instructions,  # type: ignore
                 tools=formatted_tools,  # type: ignore
             )
-            return response.input_tokens + count_schema_tokens(response_format, self.id)
+            return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
             log_warning(f"Failed to count tokens via API: {e}")
-            return await super().acount_tokens(messages, tools, response_format)
+            return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
         self,
