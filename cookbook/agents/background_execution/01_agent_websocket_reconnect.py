@@ -9,7 +9,7 @@ This script tests:
 
 Usage:
     1. Start the AgentOS server with an agent with id 'basic-agent'
-    2. Run this test: python libs/agno/agno/cookbook.py
+    2. Run this test: python cookbook/agents/background_execution/01_agent_websocket_reconnect.py
 """
 
 import asyncio
