@@ -196,7 +196,8 @@ class Model(ABC):
                     )
                     sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -238,7 +239,8 @@ class Model(ABC):
                     )
                     await asyncio.sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -283,7 +285,8 @@ class Model(ABC):
                     )
                     sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -330,7 +333,8 @@ class Model(ABC):
                     )
                     await asyncio.sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:

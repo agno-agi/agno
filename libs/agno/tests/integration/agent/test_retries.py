@@ -93,27 +93,26 @@ def test_agent_keyboard_interrupt_stops_retries():
 @pytest.mark.asyncio
 async def test_agent_async_retry():
     """Test that async agent retries on failure and eventually succeeds."""
-    import types
-
+    model = OpenAIChat(id="gpt-4o-mini")
     agent = Agent(
         name="Async Retry Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=model,
         retries=2,
         delay_between_retries=0,
     )
 
     attempt_count = {"count": 0}
-    original_arun = agent._arun
+    original_aresponse = model.aresponse
 
-    def mock_arun(self, *args, **kwargs):
+    async def mock_aresponse(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return original_arun(*args, **kwargs)
+        return await original_aresponse(*args, **kwargs)
 
-    # Properly bind the async method
-    agent._arun = types.MethodType(mock_arun, agent)
-    response = await agent.arun("Test message")
+    # Mock the model's aresponse method so _arun's retry logic can still work
+    with patch.object(model, "aresponse", side_effect=mock_aresponse):
+        response = await agent.arun("Test message")
 
     # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2
