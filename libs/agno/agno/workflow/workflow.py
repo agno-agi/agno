@@ -2767,8 +2767,8 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunContentEvent
-        from agno.run.team import RunContentEvent as TeamRunContentEvent
+        from agno.run.agent import RunContentEvent, RunOutputEvent
+        from agno.run.team import RunContentEvent as TeamRunContentEvent, TeamRunOutputEvent
         from agno.run.workflow import WorkflowAgentCompletedEvent, WorkflowAgentStartedEvent
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
@@ -2818,6 +2818,14 @@ class Workflow:
 
                     # workflow_agent field is used by consumers of the events to distinguish between workflow agent and regular agent
                     event.workflow_agent = True  # type: ignore
+                yield event  # type: ignore[misc]
+            elif isinstance(event, tuple(get_args(RunOutputEvent))):
+                if hasattr(event, "step_name") and event.step_name is not None:
+                    continue  # Skip - already yielded via WorkflowRunOutputEvent
+                yield event  # type: ignore[misc]
+            elif isinstance(event, tuple(get_args(TeamRunOutputEvent))):
+                if hasattr(event, "step_name") and event.step_name is not None:
+                    continue  # Skip - already yielded via WorkflowRunOutputEvent
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
@@ -3150,8 +3158,8 @@ class Workflow:
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
 
-        from agno.run.agent import RunContentEvent
-        from agno.run.team import RunContentEvent as TeamRunContentEvent
+        from agno.run.agent import RunContentEvent, RunOutputEvent
+        from agno.run.team import RunContentEvent as TeamRunContentEvent, TeamRunOutputEvent
         from agno.run.workflow import WorkflowAgentCompletedEvent, WorkflowAgentStartedEvent
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
@@ -3207,6 +3215,16 @@ class Workflow:
                     # Broadcast to WebSocket if available (async context only)
                     self._broadcast_to_websocket(event, websocket_handler)
 
+                yield event  # type: ignore[misc]
+            elif isinstance(event, tuple(get_args(RunOutputEvent))):
+                if hasattr(event, "step_name") and event.step_name is not None:
+                    continue  # Skip - already yielded via WorkflowRunOutputEvent
+                self._broadcast_to_websocket(event, websocket_handler)
+                yield event  # type: ignore[misc]
+            elif isinstance(event, tuple(get_args(TeamRunOutputEvent))):
+                if hasattr(event, "step_name") and event.step_name is not None:
+                    continue  # Skip - already yielded via WorkflowRunOutputEvent
+                self._broadcast_to_websocket(event, websocket_handler)
                 yield event  # type: ignore[misc]
 
             # Capture the final RunOutput (but don't yield it)
