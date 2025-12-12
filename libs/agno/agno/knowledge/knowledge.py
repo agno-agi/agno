@@ -1803,6 +1803,8 @@ class Knowledge:
         - Same logic applies to paths
         """
         hash_parts = []
+        if self.name:
+            hash_parts.append(self.name)
         if content.name:
             hash_parts.append(content.name)
         if content.description:
