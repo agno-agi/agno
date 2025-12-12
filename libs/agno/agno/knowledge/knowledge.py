@@ -1762,11 +1762,11 @@ class Knowledge:
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
-        
+
         For URLs and paths, includes the name and description in the hash if provided
         to ensure unique content with the same URL/path but different names/descriptions
         get different hashes.
-        
+
         Hash format:
         - URL with name and description: hash("{url}:{name}:{description}")
         - URL with name only: hash("{url}:{name}")

@@ -1,7 +1,5 @@
 """Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
 
-import pytest
-
 from agno.knowledge.content import Content
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
@@ -131,18 +129,10 @@ def test_url_hash_with_different_descriptions():
 def test_url_hash_with_name_and_description():
     """Test that URL hash includes both name and description."""
     knowledge = Knowledge(vector_db=FakeVectorDb())
-    content1 = Content(
-        url="https://example.com/doc.pdf", name="Document 1", description="Description 1"
-    )
-    content2 = Content(
-        url="https://example.com/doc.pdf", name="Document 1", description="Description 2"
-    )
-    content3 = Content(
-        url="https://example.com/doc.pdf", name="Document 2", description="Description 1"
-    )
-    content4 = Content(
-        url="https://example.com/doc.pdf", name="Document 1", description="Description 1"
-    )
+    content1 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 1")
+    content2 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 2")
+    content3 = Content(url="https://example.com/doc.pdf", name="Document 2", description="Description 1")
+    content4 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 1")
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
@@ -194,12 +184,8 @@ def test_path_hash_backward_compatibility():
 def test_same_url_name_description_produces_same_hash():
     """Test that identical URL, name, and description produce the same hash."""
     knowledge = Knowledge(vector_db=FakeVectorDb())
-    content1 = Content(
-        url="https://example.com/doc.pdf", name="Document", description="Description"
-    )
-    content2 = Content(
-        url="https://example.com/doc.pdf", name="Document", description="Description"
-    )
+    content1 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
+    content2 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
@@ -211,9 +197,7 @@ def test_hash_order_matters():
     """Test that the order of name and description in hash is consistent."""
     knowledge = Knowledge(vector_db=FakeVectorDb())
     # Same URL, name, description should always produce same hash
-    content = Content(
-        url="https://example.com/doc.pdf", name="Document", description="Description"
-    )
+    content = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
 
     hash1 = knowledge._build_content_hash(content)
     hash2 = knowledge._build_content_hash(content)
@@ -253,4 +237,3 @@ def test_hash_with_only_description():
     assert hash1 != hash2
     assert hash1 != hash3
     assert hash2 != hash3
-
