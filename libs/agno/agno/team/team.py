@@ -1541,6 +1541,8 @@ class Team:
             add_history_to_context=add_history_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
+            stream=False,
+            stream_events=False,
         )
 
         # 3. Prepare run messages
@@ -1753,6 +1755,8 @@ class Team:
             add_history_to_context=add_history_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
+            stream=True,
+            stream_events=stream_events,
         )
 
         # 3. Prepare run messages
@@ -2182,9 +2186,6 @@ class Team:
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
 
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
         self.model = cast(Model, self.model)
 
         if self.metadata is not None:
@@ -2394,6 +2395,8 @@ class Team:
             add_history_to_context=add_history_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
+            stream=False,
+            stream_events=False,
         )
 
         # 5. Prepare run messages
@@ -2638,6 +2641,10 @@ class Team:
             files=run_input.files,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            stream=True,
+            stream_events=stream_events,
         )
 
         # 6. Prepare run messages
@@ -3045,9 +3052,6 @@ class Team:
 
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
 
         self.model = cast(Model, self.model)
 
@@ -5397,6 +5401,8 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         check_mcp_tools: bool = True,
     ) -> List[Union[Function, dict]]:
         # Connect tools that require connection management
@@ -5491,8 +5497,8 @@ class Team:
                 team_run_context=team_run_context,
                 input=user_message_content,
                 user_id=user_id,
-                stream=self.stream or False,
-                stream_events=self.stream_events or False,
+                stream=stream or False,
+                stream_events=stream_events or False,
                 async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
