@@ -325,7 +325,7 @@ async def stream_a2a_response(
                 final=False,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # 2. Send all content and secondary events
 
@@ -341,7 +341,7 @@ async def stream_a2a_response(
                 metadata={"agno_content_category": "content"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=message)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: Message\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send tool call events
         elif isinstance(event, (ToolCallStartedEvent, TeamToolCallStartedEvent)):
@@ -361,7 +361,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (ToolCallCompletedEvent, TeamToolCallCompletedEvent)):
             metadata = {"agno_event_type": "tool_call_completed"}
@@ -380,7 +380,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send reasoning events
         elif isinstance(event, (ReasoningStartedEvent, TeamReasoningStartedEvent)):
@@ -392,7 +392,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "reasoning_started"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (ReasoningStepEvent, TeamReasoningStepEvent)):
             if event.reasoning_content:
@@ -415,7 +415,7 @@ async def stream_a2a_response(
                     metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_step"},
                 )
                 response = SendStreamingMessageSuccessResponse(id=request_id, result=reasoning_message)
-                yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+                yield f"event: Message\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (ReasoningCompletedEvent, TeamReasoningCompletedEvent)):
             status_event = TaskStatusUpdateEvent(
@@ -426,7 +426,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "reasoning_completed"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send memory update events
         elif isinstance(event, (MemoryUpdateStartedEvent, TeamMemoryUpdateStartedEvent)):
@@ -438,7 +438,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "memory_update_started"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (MemoryUpdateCompletedEvent, TeamMemoryUpdateCompletedEvent)):
             status_event = TaskStatusUpdateEvent(
@@ -449,7 +449,7 @@ async def stream_a2a_response(
                 metadata={"agno_event_type": "memory_update_completed"},
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send workflow events
         elif isinstance(event, WorkflowStepStartedEvent):
@@ -465,7 +465,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, WorkflowStepCompletedEvent):
             metadata = {"agno_event_type": "workflow_step_completed"}
@@ -480,7 +480,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, WorkflowStepErrorEvent):
             metadata = {"agno_event_type": "workflow_step_error"}
@@ -497,7 +497,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send loop events
         elif isinstance(event, LoopExecutionStartedEvent):
@@ -515,7 +515,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, LoopIterationStartedEvent):
             metadata = {"agno_event_type": "loop_iteration_started"}
@@ -534,7 +534,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, LoopIterationCompletedEvent):
             metadata = {"agno_event_type": "loop_iteration_completed"}
@@ -553,7 +553,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, LoopExecutionCompletedEvent):
             metadata = {"agno_event_type": "loop_execution_completed"}
@@ -570,7 +570,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send parallel events
         elif isinstance(event, ParallelExecutionStartedEvent):
@@ -588,7 +588,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, ParallelExecutionCompletedEvent):
             metadata = {"agno_event_type": "parallel_execution_completed"}
@@ -605,7 +605,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send condition events
         elif isinstance(event, ConditionExecutionStartedEvent):
@@ -623,7 +623,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, ConditionExecutionCompletedEvent):
             metadata = {"agno_event_type": "condition_execution_completed"}
@@ -642,7 +642,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send router events
         elif isinstance(event, RouterExecutionStartedEvent):
@@ -660,7 +660,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, RouterExecutionCompletedEvent):
             metadata = {"agno_event_type": "router_execution_completed"}
@@ -679,7 +679,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send steps events
         elif isinstance(event, StepsExecutionStartedEvent):
@@ -697,7 +697,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, StepsExecutionCompletedEvent):
             metadata = {"agno_event_type": "steps_execution_completed"}
@@ -716,7 +716,7 @@ async def stream_a2a_response(
                 metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Capture completion event for final task construction
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):
@@ -748,7 +748,7 @@ async def stream_a2a_response(
             final=True,
         )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
-    yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+    yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
     # 4. Send final task
     # Handle cancelled case
@@ -778,7 +778,7 @@ async def stream_a2a_response(
             history=[final_message],
         )
         response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
-        yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+        yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
         return
 
     # Build from completion_event if available, otherwise use accumulated content
@@ -880,7 +880,7 @@ async def stream_a2a_response(
         artifacts=artifacts if artifacts else None,
     )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
-    yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+    yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
 
 async def stream_a2a_response_with_error_handling(
@@ -904,7 +904,7 @@ async def stream_a2a_response_with_error_handling(
             final=True,
         )
         response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_status_event)
-        yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+        yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         # Send failed Task
         error_message = A2AMessage(
@@ -921,4 +921,4 @@ async def stream_a2a_response_with_error_handling(
         )
 
         response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_task)
-        yield json.dumps(response.model_dump(exclude_none=True)) + "\n"
+        yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
