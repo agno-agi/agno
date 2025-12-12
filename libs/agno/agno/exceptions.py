@@ -177,3 +177,5 @@ class OutputCheckError(Exception):
 class RetryableModelProviderError(Exception):
     # Guidance message to retry a model invocation after an error
     retry_guidance_message: Optional[str] = None
+    # Error code identifying the type of error
+    error_code: Optional[str] = None
