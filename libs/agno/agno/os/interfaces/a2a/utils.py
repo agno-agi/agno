@@ -95,7 +95,6 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
         ```json
         {
             "jsonrpc": "2.0",
-            "method": "message/send",
             "id": "id",
             "params": {
                 "message": {

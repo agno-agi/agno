@@ -9,7 +9,15 @@ from fastapi.routing import APIRouter
 from typing_extensions import List
 
 try:
-    from a2a.types import SendMessageSuccessResponse, Task, TaskState, TaskStatus,AgentCapabilities,AgentCard,AgentSkill
+    from a2a.types import (
+        AgentCapabilities,
+        AgentCard,
+        AgentSkill,
+        SendMessageSuccessResponse,
+        Task,
+        TaskState,
+        TaskStatus,
+    )
 except ImportError as e:
     raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
 
@@ -21,10 +29,10 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import Team
 from agno.workflow import Workflow
+
 
 def attach_routes(
     router: APIRouter,
@@ -34,80 +42,36 @@ def attach_routes(
 ) -> APIRouter:
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
-    
+
+    # ============= AGENTS =============
     @router.get("/agents/{id}/.well-known/agent-card.json")
     async def get_agent_card(request: Request, id: str):
         agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
         base_url = str(request.base_url).rstrip("/")
         skill = AgentSkill(
-        id=agent.id,
-        name=agent.name,
-        description=agent.description,
-        tags=['agno'],
-        examples=['search', 'ok'],
-        output_modes=["application/json"]
+            id=agent.id or "",
+            name=agent.name or "",
+            description=agent.description or "",
+            tags=["agno"],
+            examples=["search", "ok"],
+            output_modes=["application/json"],
         )
+
         return AgentCard(
-            name=agent.name,
+            name=agent.name or "",
             version="1.0.0",
-            description=agent.description,
+            description=agent.description or "",
             url=f"{base_url}/a2a/agents/{agent.id}/v1/message:stream",
-            default_input_modes=['text'],
-            default_output_modes=['text'],
-            capabilities=AgentCapabilities(streaming=True),
-            skills=[skill], 
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            capabilities=AgentCapabilities(streaming=True, push_notifications=False, state_transition_history=False),
+            skills=[skill],
             supports_authenticated_extended_card=False,
         )
-    
-    @router.get("/teams/{id}/.well-known/agent-card.json")
-    async def get_team_card(request: Request, id:str):
-        team = get_team_by_id(id, teams)
-        base_url = str(request.base_url).rstrip("/")
-        skill = AgentSkill(
-        id=team.id,
-        name=team.name,
-        description=team.description,
-        tags=['agno'],
-        examples=['search', 'ok'],
-        output_modes=["application/json"]
-        )
-        return AgentCard(
-            name=team.name,
-            version="1.0.0",
-            description=team.description,
-            url=f"{base_url}/a2a/teams/{team.id}/v1/message:stream",
-            default_input_modes=['text'],
-            default_output_modes=['text'],
-            capabilities=AgentCapabilities(streaming=True),
-            skills=[skill], 
-            supports_authenticated_extended_card=False,
-        )
-    
-    @router.get("/workflows/{id}/.well-known/agent-card.json")
-    async def get_workflow_card(request: Request, id: str):
-        workflow = get_workflow_by_id(id, workflows)
-        base_url = str(request.base_url).rstrip("/")
-        skill = AgentSkill(
-        id=workflow.id,
-        name=workflow.name,
-        description=workflow.description,
-        tags=['agno'],
-        examples=['search', 'ok'],
-        output_modes=["application/json"]
-        )
-        return AgentCard(
-            name=workflow.name,
-            version="1.0.0",
-            description=workflow.description,
-            url=f"{base_url}/a2a/agents/{workflow.id}/v1/message:stream",
-            default_input_modes=['text'],
-            default_output_modes=['text'],
-            capabilities=AgentCapabilities(streaming=False),
-            skills=[skill], 
-            supports_authenticated_extended_card=False,
-        )
-    
-    # ============= AGENTS =============
+
     @router.post(
         "/agents/{id}/v1/message:send",
         operation_id="run_message_agent",
@@ -173,7 +137,7 @@ def attach_routes(
                 images=run_input.images,
                 videos=run_input.videos,
                 audio=run_input.audios,
-                files=run_input.files,                   
+                files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
                 **kwargs,
@@ -276,6 +240,33 @@ def attach_routes(
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
     # ============= TEAMS =============
+    @router.get("/teams/{id}/.well-known/agent-card.json")
+    async def get_team_card(request: Request, id: str):
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        base_url = str(request.base_url).rstrip("/")
+        skill = AgentSkill(
+            id=team.id or "",
+            name=team.name or "",
+            description=team.description or "",
+            tags=["agno"],
+            examples=["search", "ok"],
+            output_modes=["application/json"],
+        )
+        return AgentCard(
+            name=team.name or "",
+            version="1.0.0",
+            description=team.description or "",
+            url=f"{base_url}/a2a/teams/{team.id}/v1/message:stream",
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            capabilities=AgentCapabilities(streaming=True, push_notifications=False, state_transition_history=False),
+            skills=[skill],
+            supports_authenticated_extended_card=False,
+        )
+
     @router.post(
         "/teams/{id}/v1/message:send",
         operation_id="run_message_team",
@@ -341,7 +332,7 @@ def attach_routes(
                 images=run_input.images,
                 videos=run_input.videos,
                 audio=run_input.audios,
-                files=run_input.files,                  
+                files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
                 **kwargs,
@@ -427,7 +418,7 @@ def attach_routes(
                 videos=run_input.videos,
                 audio=run_input.audios,
                 files=run_input.files,
-                session_id=context_id,                    
+                session_id=context_id,
                 user_id=user_id,
                 stream=True,
                 stream_events=True,
@@ -444,6 +435,33 @@ def attach_routes(
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
     # ============= WORKFLOWS =============
+    @router.get("/workflows/{id}/.well-known/agent-card.json")
+    async def get_workflow_card(request: Request, id: str):
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        base_url = str(request.base_url).rstrip("/")
+        skill = AgentSkill(
+            id=workflow.id or "",
+            name=workflow.name or "",
+            description=workflow.description or "",
+            tags=["agno"],
+            examples=["search", "ok"],
+            output_modes=["application/json"],
+        )
+        return AgentCard(
+            name=workflow.name or "",
+            version="1.0.0",
+            description=workflow.description or "",
+            url=f"{base_url}/a2a/workflows/{workflow.id}/v1/message:stream",
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            capabilities=AgentCapabilities(streaming=False, push_notifications=False, state_transition_history=False),
+            skills=[skill],
+            supports_authenticated_extended_card=False,
+        )
+
     @router.post(
         "/workflows/{id}/v1/message:send",
         operation_id="run_message_workflow",
@@ -612,6 +630,7 @@ def attach_routes(
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
     # ============= DEPRECATED ENDPOINTS =============
+
     @router.post(
         "/message/send",
         operation_id="send_message",
@@ -688,7 +707,7 @@ def attach_routes(
         # 3. Run the agent, team, or workflow
         try:
             if isinstance(entity, Workflow):
-                response =  entity.arun(
+                response = entity.arun(
                     input=run_input.input_content,
                     images=list(run_input.images) if run_input.images else None,
                     videos=list(run_input.videos) if run_input.videos else None,
@@ -699,7 +718,7 @@ def attach_routes(
                     **kwargs,
                 )
             else:
-                response =  entity.arun(
+                response = entity.arun(
                     input=run_input.input_content,
                     images=run_input.images,
                     videos=run_input.videos,
