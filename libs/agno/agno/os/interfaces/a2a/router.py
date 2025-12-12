@@ -168,7 +168,7 @@ def attach_routes(
 
         # 3. Run the Agent
         try:
-            response = agent.arun(
+            response = await agent.arun(
                 input=run_input.input_content,
                 images=run_input.images,
                 videos=run_input.videos,
@@ -336,7 +336,7 @@ def attach_routes(
 
         # 3. Run the Team
         try:
-            response =  team.arun(
+            response = await team.arun(
                 input=run_input.input_content,
                 images=run_input.images,
                 videos=run_input.videos,
@@ -504,7 +504,7 @@ def attach_routes(
 
         # 3. Run the Workflow
         try:
-            response =  workflow.arun(
+            response = await workflow.arun(
                 input=run_input.input_content,
                 images=list(run_input.images) if run_input.images else None,
                 videos=list(run_input.videos) if run_input.videos else None,
