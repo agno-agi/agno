@@ -698,7 +698,6 @@ class PgVector(VectorDb):
             content_id (str): The ID of the document.
             metadata (Dict[str, Any]): The metadata to update.
         """
-        print("metadata is: ", metadata)
         try:
             with self.Session() as sess:
                 # Merge JSONB for metadata, but replace filters entirely (absolute value)
