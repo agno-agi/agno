@@ -15,7 +15,8 @@ class SimpleToolkit(Toolkit):
 
     def __init__(self):
         self.counter = 0
-        super().__init__(
+        Toolkit.__init__(
+            self,
             name="simple_toolkit",
             tools=[
                 self.increment_and_stop,
