@@ -588,36 +588,30 @@ class AgentOS:
         return fastapi_app
 
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
-        from agno.os.middleware.jwt import JWTMiddleware
+        from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
 
-        algorithm = "RS256"
-        verification_keys = None
-        jwks_file = None
         verify_audience = False
+        jwks_file = None
+        verification_keys = None
+        algorithm = "RS256"
+
         if self.authorization_config:
-            algorithm = (
-                self.authorization_config.algorithm
-                if self.authorization_config and self.authorization_config.algorithm
-                else "RS256"
-            )
-            verification_keys = (
-                self.authorization_config.verification_keys
-                if self.authorization_config and self.authorization_config.verification_keys
-                else None
-            )
-            jwks_file = (
-                self.authorization_config.jwks_file
-                if self.authorization_config and self.authorization_config.jwks_file
-                else None
-            )
-            verify_audience = (
-                self.authorization_config.verify_audience
-                if self.authorization_config and self.authorization_config.verify_audience
-                else False
-            )
+            algorithm = self.authorization_config.algorithm or "RS256"
+            verification_keys = self.authorization_config.verification_keys
+            jwks_file = self.authorization_config.jwks_file
+            verify_audience = self.authorization_config.verify_audience or False
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
+        # Create validator and store on app.state for WebSocket access
+        jwt_validator = JWTValidator(
+            verification_keys=verification_keys,
+            jwks_file=jwks_file,
+            algorithm=algorithm,
+        )
+        fastapi_app.state.jwt_validator = jwt_validator
+
+        # Add middleware to stack
         fastapi_app.add_middleware(
             JWTMiddleware,
             verification_keys=verification_keys,

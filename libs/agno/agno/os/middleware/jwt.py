@@ -30,6 +30,248 @@ class TokenSource(str, Enum):
     BOTH = "both"  # Try header first, then cookie
 
 
+class JWTValidator:
+    """
+    JWT token validator that can be used standalone or within JWTMiddleware.
+
+    This class handles:
+    - Loading verification keys (static keys or JWKS files)
+    - Validating JWT signatures
+    - Extracting claims from tokens
+
+    It can be stored on app.state for use by WebSocket handlers or other
+    components that need JWT validation outside of the HTTP middleware chain.
+
+    Example:
+        # Create validator
+        validator = JWTValidator(
+            verification_keys=["your-public-key"],
+            algorithm="RS256",
+        )
+
+        # Validate a token
+        try:
+            payload = validator.validate(token)
+            user_id = payload.get("sub")
+            scopes = payload.get("scopes", [])
+        except jwt.InvalidTokenError as e:
+            print(f"Invalid token: {e}")
+
+        # Store on app.state for WebSocket access
+        app.state.jwt_validator = validator
+    """
+
+    def __init__(
+        self,
+        verification_keys: Optional[List[str]] = None,
+        jwks_file: Optional[str] = None,
+        algorithm: str = "RS256",
+        validate: bool = True,
+        scopes_claim: str = "scopes",
+        user_id_claim: str = "sub",
+        session_id_claim: str = "session_id",
+        audience_claim: str = "aud",
+        leeway: int = 10,
+    ):
+        """
+        Initialize the JWT validator.
+
+        Args:
+            verification_keys: List of keys for verifying JWT signatures.
+                              For asymmetric algorithms (RS256, ES256), these should be public keys.
+                              For symmetric algorithms (HS256), these are shared secrets.
+            jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
+            algorithm: JWT algorithm (default: RS256).
+            validate: Whether to validate the JWT token (default: True).
+            scopes_claim: JWT claim name for scopes (default: "scopes").
+            user_id_claim: JWT claim name for user ID (default: "sub").
+            session_id_claim: JWT claim name for session ID (default: "session_id").
+            audience_claim: JWT claim name for audience (default: "aud").
+            leeway: Seconds of leeway for clock skew tolerance (default: 10).
+        """
+        self.algorithm = algorithm
+        self.validate = validate
+        self.scopes_claim = scopes_claim
+        self.user_id_claim = user_id_claim
+        self.session_id_claim = session_id_claim
+        self.audience_claim = audience_claim
+        self.leeway = leeway
+
+        # Build list of verification keys
+        self.verification_keys: List[str] = []
+        if verification_keys:
+            self.verification_keys.extend(verification_keys)
+
+        # Add key from environment variable if not already provided
+        env_key = getenv("JWT_VERIFICATION_KEY", "")
+        if env_key and env_key not in self.verification_keys:
+            self.verification_keys.append(env_key)
+
+        # JWKS configuration - load keys from JWKS file or environment variable
+        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
+
+        # Try jwks_file parameter first
+        if jwks_file:
+            self._load_jwks_file(jwks_file)
+        else:
+            # Try JWT_JWKS_FILE env var (path to file)
+            jwks_file_env = getenv("JWT_JWKS_FILE", "")
+            if jwks_file_env:
+                self._load_jwks_file(jwks_file_env)
+
+        # Validate that at least one key source is provided if validate=True
+        if self.validate and not self.verification_keys and not self.jwks_keys:
+            raise ValueError(
+                "At least one JWT verification key or JWKS file is required when validate=True. "
+                "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
+                "jwks_file parameter or JWT_JWKS_FILE environment variable."
+            )
+
+    def _load_jwks_file(self, file_path: str) -> None:
+        """
+        Load keys from a static JWKS file.
+
+        Args:
+            file_path: Path to the JWKS JSON file
+        """
+        try:
+            with open(file_path) as f:
+                jwks_data = json.load(f)
+            self._parse_jwks_data(jwks_data)
+            log_debug(f"Loaded {len(self.jwks_keys)} key(s) from JWKS file: {file_path}")
+        except FileNotFoundError:
+            raise ValueError(f"JWKS file not found: {file_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in JWKS file {file_path}: {e}")
+
+    def _parse_jwks_data(self, jwks_data: Dict[str, Any]) -> None:
+        """
+        Parse JWKS data and populate self.jwks_keys.
+
+        Args:
+            jwks_data: Parsed JWKS dictionary with "keys" array
+        """
+        keys = jwks_data.get("keys", [])
+        if not keys:
+            log_warning("JWKS contains no keys")
+            return
+
+        for key_data in keys:
+            try:
+                kid = key_data.get("kid")
+                jwk = PyJWK.from_dict(key_data)
+                if kid:
+                    self.jwks_keys[kid] = jwk
+                else:
+                    # If no kid, use a default key (for single-key JWKS)
+                    self.jwks_keys["_default"] = jwk
+            except Exception as e:
+                log_warning(f"Failed to parse JWKS key: {e}")
+
+    def validate_token(self, token: str, expected_audience: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Validate JWT token and extract claims.
+
+        Args:
+            token: The JWT token to validate
+            expected_audience: The expected audience to verify (optional)
+
+        Returns:
+            Dictionary of claims if valid
+
+        Raises:
+            jwt.InvalidAudienceError: If audience claim doesn't match expected
+            jwt.ExpiredSignatureError: If token has expired
+            jwt.InvalidTokenError: If token is invalid
+        """
+        decode_options: Dict[str, Any] = {}
+        decode_kwargs: Dict[str, Any] = {
+            "algorithms": [self.algorithm],
+            "leeway": self.leeway,
+        }
+
+        # Configure audience verification
+        if expected_audience:
+            decode_kwargs["audience"] = expected_audience
+        else:
+            decode_options["verify_aud"] = False
+
+        # If validation is disabled, decode without signature verification
+        if not self.validate:
+            decode_options["verify_signature"] = False
+            decode_kwargs["options"] = decode_options
+            return jwt.decode(token, **decode_kwargs)
+
+        if decode_options:
+            decode_kwargs["options"] = decode_options
+
+        last_exception: Optional[Exception] = None
+
+        # Try JWKS keys first if configured
+        if self.jwks_keys:
+            try:
+                # Get the kid from the token header to find the right key
+                unverified_header = jwt.get_unverified_header(token)
+                kid = unverified_header.get("kid")
+
+                jwk = None
+                if kid and kid in self.jwks_keys:
+                    jwk = self.jwks_keys[kid]
+                elif "_default" in self.jwks_keys:
+                    # Fall back to default key if no kid match
+                    jwk = self.jwks_keys["_default"]
+
+                if jwk:
+                    return jwt.decode(token, jwk.key, **decode_kwargs)
+            except jwt.InvalidAudienceError:
+                raise
+            except jwt.ExpiredSignatureError:
+                raise
+            except jwt.InvalidTokenError as e:
+                if not self.verification_keys:
+                    raise
+                last_exception = e
+
+        # Try each static verification key until one succeeds
+        for key in self.verification_keys:
+            try:
+                return jwt.decode(token, key, **decode_kwargs)
+            except jwt.InvalidAudienceError:
+                raise
+            except jwt.ExpiredSignatureError:
+                raise
+            except jwt.InvalidTokenError as e:
+                last_exception = e
+                continue
+
+        if last_exception:
+            raise last_exception
+        raise jwt.InvalidTokenError("No verification keys configured")
+
+    def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract standard claims from a JWT payload.
+
+        Args:
+            payload: The decoded JWT payload
+
+        Returns:
+            Dictionary with user_id, session_id, scopes, and audience
+        """
+        scopes = payload.get(self.scopes_claim, [])
+        if isinstance(scopes, str):
+            scopes = [scopes]
+        elif not isinstance(scopes, list):
+            scopes = []
+
+        return {
+            "user_id": payload.get(self.user_id_claim),
+            "session_id": payload.get(self.session_id_claim),
+            "scopes": scopes,
+            "audience": payload.get(self.audience_claim),
+        }
+
+
 class JWTMiddleware(BaseHTTPMiddleware):
     """
     JWT Authentication Middleware with optional RBAC (Role-Based Access Control).
@@ -177,47 +419,28 @@ class JWTMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
 
-        # JWT configuration
-        self.validate = validate
-        self.algorithm = algorithm
-
-        # Build list of verification keys
-        self.verification_keys: List[str] = []
-
-        # Add keys from parameter if provided
-        if verification_keys:
-            self.verification_keys.extend(verification_keys)
-
         # Handle deprecated secret_key parameter
+        all_verification_keys = list(verification_keys) if verification_keys else []
         if secret_key:
             log_warning("secret_key is deprecated. Use verification_keys instead.")
-            if secret_key not in self.verification_keys:
-                self.verification_keys.append(secret_key)
+            if secret_key not in all_verification_keys:
+                all_verification_keys.append(secret_key)
 
-        # Add key from environment variable if not already provided
-        env_key = getenv("JWT_VERIFICATION_KEY", "")
-        if env_key and env_key not in self.verification_keys:
-            self.verification_keys.append(env_key)
+        # Create the JWT validator (handles key loading and token validation)
+        self.validator = JWTValidator(
+            verification_keys=all_verification_keys if all_verification_keys else None,
+            jwks_file=jwks_file,
+            algorithm=algorithm,
+            validate=validate,
+            scopes_claim=scopes_claim,
+            user_id_claim=user_id_claim,
+            session_id_claim=session_id_claim,
+            audience_claim=audience_claim,
+        )
 
-        # JWKS configuration - load keys from JWKS file or environment variable
-        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
-
-        # Try jwks_file parameter first
-        if jwks_file:
-            self._load_jwks_file(jwks_file)
-        else:
-            # Try JWT_JWKS_FILE env var (path to file)
-            jwks_file_env = getenv("JWT_JWKS_FILE", "")
-            if jwks_file_env:
-                self._load_jwks_file(jwks_file_env)
-
-        # Validate that at least one key source is provided if validate=True
-        if self.validate and not self.verification_keys and not self.jwks_keys:
-            raise ValueError(
-                "At least one JWT verification key or JWKS file is required when validate=True. "
-                "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
-                "jwks_file parameter or JWT_JWKS_FILE environment variable."
-            )
+        # Store config for easy access
+        self.validate = validate
+        self.algorithm = algorithm
         self.token_source = token_source
         self.token_header_key = token_header_key
         self.cookie_name = cookie_name
@@ -226,7 +449,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
         self.verify_audience = verify_audience
-        self.leeway = 10  # Default leeway for clock skew tolerance
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 
@@ -263,61 +485,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             "/openapi.json",
             "/docs/oauth2-redirect",
         ]
-
-    def _load_jwks_file(self, file_path: str) -> None:
-        """
-        Load keys from a static JWKS file.
-
-        Args:
-            file_path: Path to the JWKS JSON file
-
-        The JWKS file should have the format:
-        {
-            "keys": [
-                {
-                    "kty": "RSA",
-                    "kid": "my-key-id",
-                    "use": "sig",
-                    "alg": "RS256",
-                    "n": "...",
-                    "e": "AQAB"
-                }
-            ]
-        }
-        """
-        try:
-            with open(file_path) as f:
-                jwks_data = json.load(f)
-            self._parse_jwks_data(jwks_data)
-            log_debug(f"Loaded {len(self.jwks_keys)} key(s) from JWKS file: {file_path}")
-        except FileNotFoundError:
-            raise ValueError(f"JWKS file not found: {file_path}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in JWKS file {file_path}: {e}")
-
-    def _parse_jwks_data(self, jwks_data: Dict[str, Any]) -> None:
-        """
-        Parse JWKS data and populate self.jwks_keys.
-
-        Args:
-            jwks_data: Parsed JWKS dictionary with "keys" array
-        """
-        keys = jwks_data.get("keys", [])
-        if not keys:
-            log_warning("JWKS contains no keys")
-            return
-
-        for key_data in keys:
-            try:
-                kid = key_data.get("kid")
-                jwk = PyJWK.from_dict(key_data)
-                if kid:
-                    self.jwks_keys[kid] = jwk
-                else:
-                    # If no kid, use a default key (for single-key JWKS)
-                    self.jwks_keys["_default"] = jwk
-            except Exception as e:
-                log_warning(f"Failed to parse JWKS key: {e}")
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
@@ -412,98 +579,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             return cookie_value.strip()
         return None
 
-    def _validate(self, token: str, expected_audience: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Validate JWT token and extract claims.
-
-        Args:
-            token: The JWT token to validate
-            expected_audience: The expected audience (AgentOS ID) to verify
-
-        Returns:
-            Dictionary of claims if valid
-
-        Raises:
-            jwt.InvalidAudienceError: If audience claim doesn't match expected
-            jwt.ExpiredSignatureError: If token has expired
-            jwt.InvalidTokenError: If token is invalid
-        """
-        decode_options: Dict[str, Any] = {}
-        decode_kwargs: Dict[str, Any] = {
-            "algorithms": [self.algorithm],
-            "leeway": self.leeway,
-        }
-
-        # Configure audience verification
-        if self.verify_audience and expected_audience:
-            decode_kwargs["audience"] = expected_audience
-        else:
-            decode_options["verify_aud"] = False
-
-        # If validation is disabled, decode without signature verification
-        if not self.validate:
-            decode_options["verify_signature"] = False
-            decode_kwargs["options"] = decode_options
-            # Decode without verification - no key needed
-            payload = jwt.decode(token, **decode_kwargs)
-            return payload
-
-        if decode_options:
-            decode_kwargs["options"] = decode_options
-
-        last_exception: Optional[Exception] = None
-
-        # Try JWKS keys first if configured
-        if self.jwks_keys:
-            try:
-                # Get the kid from the token header to find the right key
-                unverified_header = jwt.get_unverified_header(token)
-                kid = unverified_header.get("kid")
-
-                jwk = None
-                if kid and kid in self.jwks_keys:
-                    jwk = self.jwks_keys[kid]
-                elif "_default" in self.jwks_keys:
-                    # Fall back to default key if no kid match
-                    jwk = self.jwks_keys["_default"]
-
-                if jwk:
-                    payload = jwt.decode(token, jwk.key, **decode_kwargs)
-                    return payload
-            except jwt.InvalidAudienceError:
-                # Audience errors should not be retried with different keys
-                raise
-            except jwt.ExpiredSignatureError:
-                # Expiration errors should not be retried with different keys
-                raise
-            except jwt.InvalidTokenError as e:
-                # If JWKS fails and we have static keys, try those
-                if not self.verification_keys:
-                    raise
-                last_exception = e
-                # Fall through to try static verification keys
-
-        # Try each static verification key until one succeeds
-        for key in self.verification_keys:
-            try:
-                payload = jwt.decode(token, key, **decode_kwargs)
-                return payload
-            except jwt.InvalidAudienceError:
-                # Audience errors should not be retried with different keys
-                raise
-            except jwt.ExpiredSignatureError:
-                # Expiration errors should not be retried with different keys
-                raise
-            except jwt.InvalidTokenError as e:
-                # Token may be signed with a different key, try the next one
-                last_exception = e
-                continue
-
-        # All keys failed, raise the last exception
-        if last_exception:
-            raise last_exception
-        raise jwt.InvalidTokenError("No verification keys configured")
-
     def _get_missing_token_error_message(self) -> str:
         """Get appropriate error message for missing token based on token source."""
         if self.token_source == TokenSource.HEADER:
@@ -574,7 +649,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         try:
             # Validate token and extract claims (with audience verification if configured)
             expected_audience = agent_os_id if self.verify_audience else None
-            payload: Dict[str, Any] = self._validate(token, expected_audience)  # type: ignore
+            payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
             user_id = payload.get(self.user_id_claim)

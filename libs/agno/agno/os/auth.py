@@ -43,7 +43,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
 def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     """
-    Validate a bearer token for WebSocket authentication.
+    Validate a bearer token for WebSocket authentication (legacy os_security_key method).
 
     Args:
         token: The bearer token to validate
