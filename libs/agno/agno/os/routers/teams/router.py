@@ -39,7 +39,7 @@ from agno.os.utils import (
 )
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.team.team import Team
-from agno.utils.log import log_warning, logger, log_debug
+from agno.utils.log import log_warning, logger
 from agno.run.base import RunStatus
 from agno.os.managers import websocket_manager, event_buffer
 from agno.utils.serialize import json_serializer

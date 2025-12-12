@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -31,7 +31,7 @@ from agno.os.utils import (
     get_request_kwargs,
     get_workflow_by_id,
 )
-from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
+from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_warning, logger, log_debug
 from agno.workflow.workflow import Workflow
 from agno.run.base import RunStatus
