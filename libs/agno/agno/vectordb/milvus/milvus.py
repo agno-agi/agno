@@ -229,7 +229,9 @@ class Milvus(VectorDb):
         """
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
         # Convert dictionary fields to JSON strings
         meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
@@ -316,36 +318,6 @@ class Milvus(VectorDb):
                     id_type="string",
                     max_length=65_535,
                 )
-
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validating if the document exists or not
-
-        Args:
-            document (Document): Document to validate
-        """
-        if self.client:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            collection_points = self.client.get(
-                collection_name=self.collection,
-                ids=[doc_id],
-            )
-            return len(collection_points) > 0
-        return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Check if document exists asynchronously.
-        AsyncMilvusClient supports get().
-        """
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
-        collection_points = await self.async_client.get(
-            collection_name=self.collection,
-            ids=[doc_id],
-        )
-        return len(collection_points) > 0
 
     def name_exists(self, name: str) -> bool:
         """
@@ -528,7 +500,9 @@ class Milvus(VectorDb):
                     log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
                     return None
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                 meta_data = document.meta_data or {}
                 if filters:
