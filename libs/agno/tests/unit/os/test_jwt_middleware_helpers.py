@@ -13,7 +13,7 @@ def middleware():
     """Create middleware instance for testing."""
     return JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     )
 
@@ -23,7 +23,7 @@ def middleware_with_auth():
     """Create middleware instance with authorization enabled."""
     return JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization=True,
     )
@@ -33,7 +33,7 @@ def test_returns_expected_default_routes():
     """Test that default excluded routes include standard paths."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     )
 
@@ -51,7 +51,7 @@ def test_returns_list():
     """Test that method returns a list."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     )
 
@@ -134,7 +134,7 @@ def test_excludes_default_routes():
     """Test that default routes are excluded."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     )
 
@@ -149,7 +149,7 @@ def test_does_not_exclude_protected_routes():
     """Test that protected routes are not excluded."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     )
 
@@ -163,7 +163,7 @@ def test_custom_excluded_routes():
     """Test with custom excluded routes."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         excluded_route_paths=["/custom", "/public/*"],
     )
@@ -177,7 +177,7 @@ def test_wildcard_pattern_matching():
     """Test wildcard pattern matching."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         excluded_route_paths=["/api/public/*"],
     )
@@ -191,7 +191,7 @@ def test_handles_trailing_slash():
     """Test that trailing slashes are handled."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         excluded_route_paths=["/health"],
     )
@@ -204,7 +204,7 @@ def test_empty_excluded_routes():
     """Test with empty excluded routes list."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         excluded_route_paths=[],
     )
@@ -289,7 +289,7 @@ def test_custom_scope_mappings():
     """Test with custom scope mappings."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization=True,
         scope_mappings={
@@ -309,7 +309,7 @@ def test_empty_scopes_for_explicitly_allowed_route():
     """Test that explicitly allowed routes return empty scopes."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization=True,
         scope_mappings={
@@ -325,7 +325,7 @@ def test_header_source_message():
     """Test error message for header token source."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         token_source=TokenSource.HEADER,
     )
@@ -338,7 +338,7 @@ def test_cookie_source_message():
     """Test error message for cookie token source."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="my_token",
@@ -353,7 +353,7 @@ def test_both_source_message():
     """Test error message for both token sources."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
@@ -369,7 +369,7 @@ def test_custom_cookie_name_in_message():
     """Test that custom cookie name appears in error message."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="custom_auth_token",
@@ -420,7 +420,7 @@ def test_raises_error_without_verification_key():
     with pytest.raises(ValueError) as exc_info:
         JWTMiddleware(
             app=None,
-            verification_key=None,
+            verification_keys=None,
             algorithm="HS256",
         )
 
@@ -431,7 +431,7 @@ def test_authorization_enabled_implicitly_with_scope_mappings():
     """Test that authorization is enabled when scope_mappings provided."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         scope_mappings={"GET /test": ["test:read"]},
     )
@@ -443,7 +443,7 @@ def test_authorization_stays_false_when_explicit():
     """Test that authorization=False is respected even with scope_mappings."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization=False,
         scope_mappings={"GET /test": ["test:read"]},
@@ -456,7 +456,7 @@ def test_default_scope_mappings_merged_with_custom():
     """Test that custom scope mappings are merged with defaults."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization=True,
         scope_mappings={"GET /custom": ["custom:read"]},
@@ -472,7 +472,7 @@ def test_custom_scope_mappings_override_defaults():
     """Test that custom scope mappings can override defaults."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         authorization=True,
         scope_mappings={"GET /agents": ["custom:agents:read"]},
@@ -485,7 +485,7 @@ def test_custom_admin_scope():
     """Test that custom admin scope is used."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         admin_scope="custom:admin",
     )
@@ -497,7 +497,7 @@ def test_default_admin_scope():
     """Test that default admin scope is used when not specified."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     )
 
@@ -508,7 +508,7 @@ def test_custom_claims_configuration():
     """Test custom claims configuration."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         user_id_claim="custom_user",
         session_id_claim="custom_session",
@@ -526,7 +526,7 @@ def test_dependencies_and_session_state_claims():
     """Test dependencies and session state claims configuration."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         dependencies_claims=["org_id", "tenant_id"],
         session_state_claims=["theme", "language"],
@@ -540,7 +540,7 @@ def test_token_source_configuration():
     """Test token source configuration."""
     middleware = JWTMiddleware(
         app=None,
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
         token_source=TokenSource.COOKIE,
         cookie_name="my_jwt",

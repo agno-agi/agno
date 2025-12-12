@@ -78,7 +78,7 @@ agent_os = AgentOS(
     agents=[research_agent],
     authorization=True,
     authorization_config=AuthorizationConfig(
-        verification_key=PUBLIC_KEY,
+        verification_keys=[PUBLIC_KEY],
         algorithm="RS256",
     ),
 )

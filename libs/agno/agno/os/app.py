@@ -591,7 +591,7 @@ class AgentOS:
         from agno.os.middleware.jwt import JWTMiddleware
 
         algorithm = "RS256"
-        verification_key = None
+        verification_keys = None
         verify_audience = False
         if self.authorization_config:
             algorithm = (
@@ -599,9 +599,9 @@ class AgentOS:
                 if self.authorization_config and self.authorization_config.algorithm
                 else "RS256"
             )
-            verification_key = (
-                self.authorization_config.verification_key
-                if self.authorization_config and self.authorization_config.verification_key
+            verification_keys = (
+                self.authorization_config.verification_keys
+                if self.authorization_config and self.authorization_config.verification_keys
                 else None
             )
             verify_audience = (
@@ -614,7 +614,7 @@ class AgentOS:
 
         fastapi_app.add_middleware(
             JWTMiddleware,
-            verification_key=verification_key,
+            verification_keys=verification_keys,
             algorithm=algorithm,
             authorization=self.authorization,
             verify_audience=verify_audience,

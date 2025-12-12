@@ -64,9 +64,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
         from agno.os.middleware import JWTMiddleware
         from agno.os.scopes import AgentOSScope
 
+        # Single verification key
         app.add_middleware(
             JWTMiddleware,
-            verification_key="your-secret",
+            verification_keys=["your-public-key"],
             authorization=True,
             verify_audience=True,  # Verify aud claim matches AgentOS ID
             scope_mappings={
@@ -78,13 +79,29 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 "GET /public/stats": [],
             }
         )
+
+        # Multiple verification keys (accept tokens from multiple issuers)
+        app.add_middleware(
+            JWTMiddleware,
+            verification_keys=[
+                "public-key-from-issuer-1",
+                "public-key-from-issuer-2",
+            ],
+            authorization=True,
+        )
+
+        # No validation (extract claims only, useful for development)
+        app.add_middleware(
+            JWTMiddleware,
+            validate=False,  # No verification key needed
+        )
     """
 
     def __init__(
         self,
         app,
-        verification_key: Optional[str] = None,
-        secret_key: Optional[str] = None,  # Deprecated
+        verification_keys: Optional[List[str]] = None,
+        secret_key: Optional[str] = None,  # Deprecated: Use verification_keys instead
         algorithm: str = "RS256",
         validate: bool = True,
         authorization: Optional[bool] = None,
@@ -107,12 +124,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         Args:
             app: The FastAPI app instance
-            verification_key: Key used to verify JWT signatures (will use JWT_VERIFICATION_KEY env var if not provided).
-                             For asymmetric algorithms (RS256, ES256), this should be the public key.
-                             For symmetric algorithms (HS256), this is the shared secret.
-            secret_key: (deprecated) Use verification_key instead.
+            verification_keys: List of keys for verifying JWT signatures.
+                              For asymmetric algorithms (RS256, ES256), these should be public keys.
+                              For symmetric algorithms (HS256), these are shared secrets.
+                              Each key will be tried in order until one successfully validates the token.
+                              Useful when accepting tokens signed by different private keys.
+                              If not provided, will use JWT_VERIFICATION_KEY env var (as a single-item list).
+            secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
-            validate: Whether to validate the JWT token (default: True)
+            validate: Whether to validate the JWT token (default: True). If False, tokens are decoded
+                     without signature verification and no verification key is required.
             authorization: Whether to add authorization checks to the request (i.e. validation of scopes)
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
@@ -133,25 +154,44 @@ class JWTMiddleware(BaseHTTPMiddleware):
             admin_scope: The scope that grants admin access (default: "agent_os:admin")
 
         Note:
-            CORS allowed origins are read from app.state.cors_allowed_origins (set by AgentOS).
-            This allows error responses to include proper CORS headers.
+            - At least one verification key must be provided if validate=True
+            - If validate=False, no verification key is needed (claims are extracted without verification)
+            - CORS allowed origins are read from app.state.cors_allowed_origins (set by AgentOS).
+              This allows error responses to include proper CORS headers.
         """
         super().__init__(app)
 
         # JWT configuration
-        self.verification_key = verification_key or getenv("JWT_VERIFICATION_KEY", "")
-        if not self.verification_key and secret_key:
-            log_warning("secret_key is deprecated. Use verification_key instead.")
-            self.verification_key = secret_key
-        if not self.verification_key:
-            raise ValueError(
-                "JWT verification key is required. Set via verification_key parameter or JWT_VERIFICATION_KEY environment variable."
-            )
+        self.validate = validate
         self.algorithm = algorithm
+
+        # Build list of verification keys
+        self.verification_keys: List[str] = []
+
+        # Add keys from parameter if provided
+        if verification_keys:
+            self.verification_keys.extend(verification_keys)
+
+        # Handle deprecated secret_key parameter
+        if secret_key:
+            log_warning("secret_key is deprecated. Use verification_keys instead.")
+            if secret_key not in self.verification_keys:
+                self.verification_keys.append(secret_key)
+
+        # Add key from environment variable if not already provided
+        env_key = getenv("JWT_VERIFICATION_KEY", "")
+        if env_key and env_key not in self.verification_keys:
+            self.verification_keys.append(env_key)
+
+        # Validate that at least one key is provided if validate=True
+        if self.validate and not self.verification_keys:
+            raise ValueError(
+                "At least one JWT verification key is required when validate=True. "
+                "Set via verification_keys parameter or JWT_VERIFICATION_KEY environment variable."
+            )
         self.token_source = token_source
         self.token_header_key = token_header_key
         self.cookie_name = cookie_name
-        self.validate = validate
         self.scopes_claim = scopes_claim
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
@@ -303,7 +343,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             jwt.ExpiredSignatureError: If token has expired
             jwt.InvalidTokenError: If token is invalid
         """
-        decode_options = {}
+        decode_options: Dict[str, Any] = {}
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [self.algorithm],
         }
@@ -314,11 +354,39 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             decode_options["verify_aud"] = False
 
+        # If validation is disabled, decode without signature verification
+        if not self.validate:
+            decode_options["verify_signature"] = False
+            if decode_options:
+                decode_kwargs["options"] = decode_options
+            # Decode without verification - no key needed
+            payload = jwt.decode(token, options=decode_kwargs.get("options", {}), algorithms=[self.algorithm])
+            return payload
+
         if decode_options:
             decode_kwargs["options"] = decode_options
 
-        payload = jwt.decode(token, self.verification_key, **decode_kwargs)  # type: ignore
-        return payload
+        # Try each verification key until one succeeds
+        last_exception: Optional[Exception] = None
+        for key in self.verification_keys:
+            try:
+                payload = jwt.decode(token, key, **decode_kwargs)
+                return payload
+            except jwt.InvalidAudienceError:
+                # Audience errors should not be retried with different keys
+                raise
+            except jwt.ExpiredSignatureError:
+                # Expiration errors should not be retried with different keys
+                raise
+            except jwt.InvalidTokenError as e:
+                # Token may be signed with a different key, try the next one
+                last_exception = e
+                continue
+
+        # All keys failed, raise the last exception
+        if last_exception:
+            raise last_exception
+        raise jwt.InvalidTokenError("No verification keys configured")
 
     def _get_missing_token_error_message(self) -> str:
         """Get appropriate error message for missing token based on token source."""

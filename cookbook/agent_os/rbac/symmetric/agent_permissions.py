@@ -56,7 +56,7 @@ agent_os = AgentOS(
     agents=[web_search_agent, agno_agent],
     authorization=True,
     authorization_config=AuthorizationConfig(
-        verification_key=JWT_SECRET,
+        verification_keys=[JWT_SECRET],
         algorithm="HS256",
     ),
 )

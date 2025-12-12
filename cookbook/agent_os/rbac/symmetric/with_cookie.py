@@ -90,7 +90,7 @@ async def clear_auth_cookie(response: Response):
 # Add RBAC middleware configured for cookie-based authentication
 app.add_middleware(
     JWTMiddleware,
-    verification_key=JWT_SECRET,
+    verification_keys=[JWT_SECRET],
     algorithm="HS256",
     authorization=True,
     excluded_route_paths=[

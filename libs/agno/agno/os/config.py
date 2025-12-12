@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator
 class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
-    verification_key: Optional[str] = None
+    verification_keys: Optional[List[str]] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
 

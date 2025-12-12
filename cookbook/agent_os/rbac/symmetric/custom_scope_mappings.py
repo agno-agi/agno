@@ -64,7 +64,7 @@ app = agent_os.get_app()
 # Add JWT middleware with RBAC enabled using custom scope mappings
 app.add_middleware(
     JWTMiddleware,
-    verification_key=JWT_SECRET,
+    verification_keys=[JWT_SECRET],
     algorithm="HS256",  # Use HS256 for symmetric key
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="agent_os:admin",  # Admin can bypass all checks

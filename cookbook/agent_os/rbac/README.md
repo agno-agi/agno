@@ -171,7 +171,7 @@ agent_os = AgentOS(
     agents=[agent1, agent2],
     authorization=True,  # Enable RBAC
     authorization_config=AuthorizationConfig(
-        verification_key="your-public-key-or-secret",  # Or set JWT_VERIFICATION_KEY env var
+        verification_keys=["your-public-key-or-secret"],  # Or set JWT_VERIFICATION_KEY env var
         algorithm="RS256",  # Default; use "HS256" for symmetric keys
     ),
 )
@@ -193,7 +193,7 @@ app = agent_os.get_app()
 
 app.add_middleware(
     JWTMiddleware,
-    verification_key="your-public-key-or-secret",
+    verification_keys=["your-public-key-or-secret"],
     algorithm="RS256",
     authorization=True,  # Enable RBAC - without this, scopes are NOT enforced
     verify_audience=True,  # Verify aud claim matches AgentOS ID
@@ -296,7 +296,7 @@ from agno.os.middleware import JWTMiddleware
 
 app.add_middleware(
     JWTMiddleware,
-    verification_key="your-public-key-or-secret",
+    verification_keys=["your-public-key-or-secret"],
     algorithm="RS256",  # Default; use "HS256" for symmetric keys
     authorization=True,
     verify_audience=True,  # Verify aud claim matches AgentOS ID
