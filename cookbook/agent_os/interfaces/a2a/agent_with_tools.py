@@ -8,7 +8,7 @@ agent = Agent(
     id="tools_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
-    description="agent to search info using duckduckgo",
+    description="A versatile AI assistant with real-time web search capabilities powered by DuckDuckGo, providing current information and context-aware responses with access to datetime, history, and location data",
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 

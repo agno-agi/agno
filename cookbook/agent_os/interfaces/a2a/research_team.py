@@ -6,6 +6,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 researcher = Agent(
     name="researcher",
+    id="researcher",
     role="Research Assistant",
     model=OpenAIChat(id="gpt-4o"),
     instructions="You are a research assistant. Find information and provide detailed analysis.",
@@ -15,6 +16,7 @@ researcher = Agent(
 
 writer = Agent(
     name="writer",
+    id="writer",
     role="Content Writer",
     model=OpenAIChat(id="o4-mini"),
     instructions="You are a content writer. Create well-structured content based on research.",
@@ -26,6 +28,7 @@ research_team = Team(
     members=[researcher, writer],
     id="research_team",
     name="Research Team",
+    description="A collaborative research and content creation team combining deep research capabilities with professional writing to deliver comprehensive, well-researched content",
     instructions="""
     You are a research team that helps users with research and content creation.
     First, use the researcher to gather information, then use the writer to create content.

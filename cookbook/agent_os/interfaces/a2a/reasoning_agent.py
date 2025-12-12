@@ -5,7 +5,9 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 reasoning_agent = Agent(
     name="reasoning-agent",
+    id="reasoning_agent",
     model=OpenAIChat(id="o4-mini"),
+    description="An advanced AI assistant with deep reasoning and analytical capabilities, enhanced with real-time web search to deliver thorough, well-thought-out responses with contextual awareness",
     instructions="You are a helpful AI assistant with reasoning capabilities.",
     add_datetime_to_context=True,
     add_history_to_context=True,

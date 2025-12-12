@@ -6,6 +6,7 @@ chat_agent = Agent(
     name="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     id="basic_agent",
+    description="A helpful and responsive AI assistant that provides thoughtful answers and assistance with a wide range of topics",
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
     markdown=True,

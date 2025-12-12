@@ -27,8 +27,9 @@ class MovieScript(BaseModel):
 
 structured_agent = Agent(
     name="structured-output-agent",
+    id="structured_output_agent",
     model=OpenAIChat(id="gpt-4o"),
-    description="You write movie scripts.",
+    description="A creative AI screenwriter that generates detailed, well-structured movie scripts with compelling settings, characters, storylines, and complete plot arcs in a standardized format",
     markdown=True,
     output_schema=MovieScript,
 )
