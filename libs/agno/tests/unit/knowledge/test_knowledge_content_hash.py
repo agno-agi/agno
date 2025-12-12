@@ -1,11 +1,21 @@
 """Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
 
+<<<<<<< HEAD
 from agno.knowledge.content import Content, FileData
+=======
+import pytest
+
+from agno.knowledge.content import Content
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
 
+<<<<<<< HEAD
 class MockVectorDb(VectorDb):
+=======
+class FakeVectorDb(VectorDb):
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     """Minimal VectorDb stub for testing."""
 
     def create(self) -> None:
@@ -80,7 +90,11 @@ class MockVectorDb(VectorDb):
 
 def test_url_hash_without_name_or_description():
     """Test that URL hash without name/description is backward compatible."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(url="https://example.com/doc.pdf")
     content2 = Content(url="https://example.com/doc.pdf")
 
@@ -94,7 +108,11 @@ def test_url_hash_without_name_or_description():
 
 def test_url_hash_with_different_names():
     """Test that same URL with different names produces different hashes."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No name
@@ -111,7 +129,11 @@ def test_url_hash_with_different_names():
 
 def test_url_hash_with_different_descriptions():
     """Test that same URL with different descriptions produces different hashes."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(url="https://example.com/doc.pdf", description="First description")
     content2 = Content(url="https://example.com/doc.pdf", description="Second description")
     content3 = Content(url="https://example.com/doc.pdf")  # No description
@@ -128,11 +150,27 @@ def test_url_hash_with_different_descriptions():
 
 def test_url_hash_with_name_and_description():
     """Test that URL hash includes both name and description."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 2")
     content3 = Content(url="https://example.com/doc.pdf", name="Document 2", description="Description 1")
     content4 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 1")
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+    content1 = Content(
+        url="https://example.com/doc.pdf", name="Document 1", description="Description 1"
+    )
+    content2 = Content(
+        url="https://example.com/doc.pdf", name="Document 1", description="Description 2"
+    )
+    content3 = Content(
+        url="https://example.com/doc.pdf", name="Document 2", description="Description 1"
+    )
+    content4 = Content(
+        url="https://example.com/doc.pdf", name="Document 1", description="Description 1"
+    )
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
@@ -149,7 +187,11 @@ def test_url_hash_with_name_and_description():
 
 def test_path_hash_with_name_and_description():
     """Test that path hash includes both name and description."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(path="/path/to/file.pdf", name="File 1", description="Desc 1")
     content2 = Content(path="/path/to/file.pdf", name="File 1", description="Desc 2")
     content3 = Content(path="/path/to/file.pdf", name="File 2", description="Desc 1")
@@ -171,7 +213,11 @@ def test_path_hash_with_name_and_description():
 
 def test_path_hash_backward_compatibility():
     """Test that path hash without name/description is backward compatible."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(path="/path/to/file.pdf")
     content2 = Content(path="/path/to/file.pdf")
 
@@ -183,9 +229,19 @@ def test_path_hash_backward_compatibility():
 
 def test_same_url_name_description_produces_same_hash():
     """Test that identical URL, name, and description produce the same hash."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
     content2 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+    content1 = Content(
+        url="https://example.com/doc.pdf", name="Document", description="Description"
+    )
+    content2 = Content(
+        url="https://example.com/doc.pdf", name="Document", description="Description"
+    )
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
 
     hash1 = knowledge._build_content_hash(content1)
     hash2 = knowledge._build_content_hash(content2)
@@ -195,9 +251,17 @@ def test_same_url_name_description_produces_same_hash():
 
 def test_hash_order_matters():
     """Test that the order of name and description in hash is consistent."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
     # Same URL, name, description should always produce same hash
     content = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+    # Same URL, name, description should always produce same hash
+    content = Content(
+        url="https://example.com/doc.pdf", name="Document", description="Description"
+    )
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
 
     hash1 = knowledge._build_content_hash(content)
     hash2 = knowledge._build_content_hash(content)
@@ -209,7 +273,11 @@ def test_hash_order_matters():
 
 def test_hash_with_only_name():
     """Test hash with URL and name but no description."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No name
@@ -225,7 +293,11 @@ def test_hash_with_only_name():
 
 def test_hash_with_only_description():
     """Test hash with URL and description but no name."""
+<<<<<<< HEAD
     knowledge = Knowledge(vector_db=MockVectorDb())
+=======
+    knowledge = Knowledge(vector_db=FakeVectorDb())
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
     content1 = Content(url="https://example.com/doc.pdf", description="Description 1")
     content2 = Content(url="https://example.com/doc.pdf", description="Description 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No description
@@ -238,6 +310,7 @@ def test_hash_with_only_description():
     assert hash1 != hash3
     assert hash2 != hash3
 
+<<<<<<< HEAD
 
 # ============================================================================
 # FileData Hash Tests
@@ -487,3 +560,5 @@ def test_file_data_hash_empty_hash_parts_fallback():
     # Verify hash is valid SHA256
     assert isinstance(hash1, str)
     assert len(hash1) == 64
+=======
+>>>>>>> 71e76ffa8 (fix: Include content name and description fields for hash generation)
