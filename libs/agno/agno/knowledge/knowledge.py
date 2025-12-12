@@ -1762,12 +1762,29 @@ class Knowledge:
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
+        
+        For URLs and paths, includes the name and description in the hash if provided
+        to ensure unique content with the same URL/path but different names/descriptions
+        get different hashes.
         """
         if content.path:
-            return hashlib.sha256(str(content.path).encode()).hexdigest()
+            # Include name and description in hash if provided to ensure uniqueness
+            hash_parts = [str(content.path)]
+            if content.name:
+                hash_parts.append(content.name)
+            if content.description:
+                hash_parts.append(content.description)
+            hash_input = ":".join(hash_parts)
+            return hashlib.sha256(hash_input.encode()).hexdigest()
         elif content.url:
-            hash = hashlib.sha256(content.url.encode()).hexdigest()
-            return hash
+            # Include name and description in hash if provided to ensure uniqueness
+            hash_parts = [content.url]
+            if content.name:
+                hash_parts.append(content.name)
+            if content.description:
+                hash_parts.append(content.description)
+            hash_input = ":".join(hash_parts)
+            return hashlib.sha256(hash_input.encode()).hexdigest()
         elif content.file_data and content.file_data.content:
             name = content.name or "content"
             return hashlib.sha256(name.encode()).hexdigest()
