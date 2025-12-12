@@ -12,6 +12,7 @@ class Metrics:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cost: Optional[float] = None
 
     # Audio token usage
     audio_input_tokens: int = 0
