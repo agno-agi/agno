@@ -110,9 +110,9 @@ class CSVReader(Reader):
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
             else:
-                log_debug(f"Reading retrieved file async: {file.name}")
+                log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
+                file_content_io = io.StringIO(file.read().decode("utf-8"))
 
             csv_name = name or (
                 Path(file.name).stem
