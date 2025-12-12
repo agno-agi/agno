@@ -180,6 +180,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = e
@@ -192,10 +193,10 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                current_count = kwargs.get("retries_with_guidance_count", 0)
+                current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
                     raise ModelProviderError(
-                        message=f"Max retries with guidance reached. Error: {e.error_code}",
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
                     )
@@ -221,6 +222,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = e
@@ -233,10 +235,10 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                current_count = kwargs.get("retries_with_guidance_count", 0)
+                current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
                     raise ModelProviderError(
-                        message=f"Max retries with guidance reached. Error: {e.error_code}",
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
                     )
@@ -263,6 +265,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
@@ -277,10 +280,10 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                current_count = kwargs.get("retries_with_guidance_count", 0)
+                current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
                     raise ModelProviderError(
-                        message=f"Max retries with guidance reached. Error: {e.error_code}",
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
                     )
@@ -308,6 +311,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 async for response in self.ainvoke_stream(**kwargs):
                     yield response
                 return  # Success, exit the retry loop
@@ -323,10 +327,10 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
-                current_count = kwargs.get("retries_with_guidance_count", 0)
+                current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
                     raise ModelProviderError(
-                        message=f"Max retries with guidance reached. Error: {e.error_code}",
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
                     )

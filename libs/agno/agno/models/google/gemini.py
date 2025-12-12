@@ -320,7 +320,6 @@ class Gemini(Model):
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
         retry_with_guidance: bool = False,
-        retries_with_guidance_count: Optional[int] = None,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -376,7 +375,6 @@ class Gemini(Model):
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
         retry_with_guidance: bool = False,
-        retries_with_guidance_count: Optional[int] = None,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -428,7 +426,6 @@ class Gemini(Model):
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
         retry_with_guidance: bool = False,
-        retries_with_guidance_count: Optional[int] = None,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -485,7 +482,6 @@ class Gemini(Model):
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
         retry_with_guidance: bool = False,
-        retries_with_guidance_count: Optional[int] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -922,7 +918,7 @@ class Gemini(Model):
                     if self.retry_with_guidance:
                         raise RetryableModelProviderError(
                             retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
-                            error_code=candidate.finish_reason,
+                            original_error=f"Generation ended with finish reason: {candidate.finish_reason}",
                         )
 
             if candidate.content:
@@ -1086,7 +1082,7 @@ class Gemini(Model):
                     if self.retry_with_guidance:
                         raise RetryableModelProviderError(
                             retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
-                            error_code=candidate.finish_reason,
+                            original_error=f"Generation ended with finish reason: {candidate.finish_reason}",
                         )
 
             response_message: Content = Content(role="model", parts=[])
