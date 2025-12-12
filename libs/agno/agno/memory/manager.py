@@ -369,7 +369,7 @@ class MemoryManager:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
 
@@ -1040,7 +1040,7 @@ class MemoryManager:
         team_id: Optional[str] = None,
         update_memories: bool = True,
         add_memories: bool = True,
-    ) -> str:
+    ) -> Dict[str, Any]:
         if self.model is None:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
@@ -1090,7 +1090,10 @@ class MemoryManager:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
-        return response.content or "No response from model"
+        return {
+            "content": response.content or "No response from model",
+            "metrics": get_metrics_for_memory_manager(messages_for_model),
+        }
 
     async def acreate_or_update_memories(
         self,
@@ -1167,7 +1170,10 @@ class MemoryManager:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
-        return response.content or "No response from model"
+        return {
+            "content": response.content or "No response from model",
+            "metrics": get_metrics_for_memory_manager(messages_for_model),
+        }
 
     def run_memory_task(
         self,
@@ -1540,3 +1546,12 @@ class MemoryManager:
         if enable_clear_memory:
             functions.append(clear_memory)
         return functions
+
+
+def get_metrics_for_memory_manager(messages: List[Message]) -> Dict[str, Any]:
+    from agno.models.metrics import Metrics
+
+    metrics = Metrics()
+    for message in messages:
+        metrics += message.metrics
+    return metrics.to_dict()

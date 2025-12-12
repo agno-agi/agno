@@ -27,7 +27,7 @@ class AgentSession:
     # ID of the workflow that this session is associated with
     workflow_id: Optional[str] = None
 
-    # Session Data: session_name, session_state, images, videos, audio
+    # Session Data: session_name, session_state, session_metrics, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None

@@ -1,7 +1,32 @@
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.utils.timer import Timer
+
+
+@dataclass
+class ModelMetrics:
+    """Metrics for a specific model instance - used in Metrics.details."""
+
+    id: str
+    provider: str
+    type: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    time_to_first_token: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        metrics_dict = asdict(self)
+        # Only include valid fields (filter out any old fields like provider_metrics, additional_metrics)
+        valid_fields = {"id", "provider", "input_tokens", "output_tokens", "total_tokens", "time_to_first_token"}
+        metrics_dict = {k: v for k, v in metrics_dict.items() if k in valid_fields}
+        metrics_dict = {
+            k: v
+            for k, v in metrics_dict.items()
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+        }
+        return metrics_dict
 
 
 @dataclass
@@ -38,6 +63,9 @@ class Metrics:
 
     # Any additional metrics
     additional_metrics: Optional[dict] = None
+
+    # Model metrics
+    details: Optional[List[ModelMetrics]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
