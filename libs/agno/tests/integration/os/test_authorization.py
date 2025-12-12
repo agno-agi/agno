@@ -322,6 +322,187 @@ def test_per_resource_scope(test_agent, second_agent):
     assert response.status_code == 403
 
 
+def test_get_agent_by_id_with_specific_scope(test_agent, second_agent):
+    """Test that GET /agents/{id} works with specific resource-level scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for only test-agent
+    token = create_jwt_token(scopes=["agents:test-agent:read"])
+
+    # Should be able to get test-agent
+    response = client.get(
+        "/agents/test-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-agent"
+
+    # Should NOT be able to get second-agent
+    response = client.get(
+        "/agents/second-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_get_agent_by_id_with_global_scope(test_agent, second_agent):
+    """Test that GET /agents/{id} works with global agents:read scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global agents scope
+    token = create_jwt_token(scopes=["agents:read"])
+
+    # Should be able to get any agent
+    response = client.get(
+        "/agents/test-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-agent"
+
+    response = client.get(
+        "/agents/second-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-agent"
+
+
+def test_get_agent_by_id_with_wildcard_scope(test_agent, second_agent):
+    """Test that GET /agents/{id} works with wildcard agents:*:read scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard agents scope
+    token = create_jwt_token(scopes=["agents:*:read"])
+
+    # Should be able to get any agent
+    response = client.get(
+        "/agents/test-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-agent"
+
+    response = client.get(
+        "/agents/second-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-agent"
+
+
+def test_get_agent_by_id_with_admin_scope(test_agent, second_agent):
+    """Test that GET /agents/{id} works with admin scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with admin scope
+    token = create_jwt_token(scopes=["agent_os:admin"])
+
+    # Should be able to get any agent
+    response = client.get(
+        "/agents/test-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-agent"
+
+    response = client.get(
+        "/agents/second-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-agent"
+
+
+def test_get_agent_by_id_without_scope(test_agent):
+    """Test that GET /agents/{id} is denied without proper scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token without any agents scope
+    token = create_jwt_token(scopes=["sessions:read"])
+
+    # Should NOT be able to get agent
+    response = client.get(
+        "/agents/test-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_get_agent_by_id_with_wrong_specific_scope(test_agent, second_agent):
+    """Test that GET /agents/{id} is denied with scope for different agent."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent, second_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for second-agent only
+    token = create_jwt_token(scopes=["agents:second-agent:read"])
+
+    # Should NOT be able to get test-agent
+    response = client.get(
+        "/agents/test-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+    # Should be able to get second-agent
+    response = client.get(
+        "/agents/second-agent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-agent"
+
+
 def test_global_resource_scope(test_agent, second_agent):
     """Test that global resource scope grants access to all resources of that type."""
     agent_os = AgentOS(
@@ -928,6 +1109,187 @@ def test_team_filtering_with_specific_scope(test_team, second_team):
     assert teams[0]["id"] == "test-team"
 
 
+def test_get_team_by_id_with_specific_scope(test_team, second_team):
+    """Test that GET /teams/{id} works with specific resource-level scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for only test-team
+    token = create_jwt_token(scopes=["teams:test-team:read"])
+
+    # Should be able to get test-team
+    response = client.get(
+        "/teams/test-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-team"
+
+    # Should NOT be able to get second-team
+    response = client.get(
+        "/teams/second-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_get_team_by_id_with_global_scope(test_team, second_team):
+    """Test that GET /teams/{id} works with global teams:read scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global teams scope
+    token = create_jwt_token(scopes=["teams:read"])
+
+    # Should be able to get any team
+    response = client.get(
+        "/teams/test-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-team"
+
+    response = client.get(
+        "/teams/second-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-team"
+
+
+def test_get_team_by_id_with_wildcard_scope(test_team, second_team):
+    """Test that GET /teams/{id} works with wildcard teams:*:read scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard teams scope
+    token = create_jwt_token(scopes=["teams:*:read"])
+
+    # Should be able to get any team
+    response = client.get(
+        "/teams/test-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-team"
+
+    response = client.get(
+        "/teams/second-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-team"
+
+
+def test_get_team_by_id_with_admin_scope(test_team, second_team):
+    """Test that GET /teams/{id} works with admin scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with admin scope
+    token = create_jwt_token(scopes=["agent_os:admin"])
+
+    # Should be able to get any team
+    response = client.get(
+        "/teams/test-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-team"
+
+    response = client.get(
+        "/teams/second-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-team"
+
+
+def test_get_team_by_id_without_scope(test_team):
+    """Test that GET /teams/{id} is denied without proper scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token without any teams scope
+    token = create_jwt_token(scopes=["agents:read"])
+
+    # Should NOT be able to get team
+    response = client.get(
+        "/teams/test-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_get_team_by_id_with_wrong_specific_scope(test_team, second_team):
+    """Test that GET /teams/{id} is denied with scope for different team."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team, second_team],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for second-team only
+    token = create_jwt_token(scopes=["teams:second-team:read"])
+
+    # Should NOT be able to get test-team
+    response = client.get(
+        "/teams/test-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+    # Should be able to get second-team
+    response = client.get(
+        "/teams/second-team",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-team"
+
+
 def test_team_run_blocked_without_specific_scope(test_team, second_team):
     """Test that running a team is blocked without specific run scope."""
     agent_os = AgentOS(
@@ -1122,6 +1484,187 @@ def test_workflow_filtering_with_specific_scope(test_workflow, second_workflow):
     workflows = response.json()
     assert len(workflows) == 1
     assert workflows[0]["id"] == "test-workflow"
+
+
+def test_get_workflow_by_id_with_specific_scope(test_workflow, second_workflow):
+    """Test that GET /workflows/{id} works with specific resource-level scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for only test-workflow
+    token = create_jwt_token(scopes=["workflows:test-workflow:read"])
+
+    # Should be able to get test-workflow
+    response = client.get(
+        "/workflows/test-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-workflow"
+
+    # Should NOT be able to get second-workflow
+    response = client.get(
+        "/workflows/second-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_get_workflow_by_id_with_global_scope(test_workflow, second_workflow):
+    """Test that GET /workflows/{id} works with global workflows:read scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with global workflows scope
+    token = create_jwt_token(scopes=["workflows:read"])
+
+    # Should be able to get any workflow
+    response = client.get(
+        "/workflows/test-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-workflow"
+
+    response = client.get(
+        "/workflows/second-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-workflow"
+
+
+def test_get_workflow_by_id_with_wildcard_scope(test_workflow, second_workflow):
+    """Test that GET /workflows/{id} works with wildcard workflows:*:read scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with wildcard workflows scope
+    token = create_jwt_token(scopes=["workflows:*:read"])
+
+    # Should be able to get any workflow
+    response = client.get(
+        "/workflows/test-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-workflow"
+
+    response = client.get(
+        "/workflows/second-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-workflow"
+
+
+def test_get_workflow_by_id_with_admin_scope(test_workflow, second_workflow):
+    """Test that GET /workflows/{id} works with admin scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with admin scope
+    token = create_jwt_token(scopes=["agent_os:admin"])
+
+    # Should be able to get any workflow
+    response = client.get(
+        "/workflows/test-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "test-workflow"
+
+    response = client.get(
+        "/workflows/second-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-workflow"
+
+
+def test_get_workflow_by_id_without_scope(test_workflow):
+    """Test that GET /workflows/{id} is denied without proper scope."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token without any workflows scope
+    token = create_jwt_token(scopes=["agents:read"])
+
+    # Should NOT be able to get workflow
+    response = client.get(
+        "/workflows/test-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+
+def test_get_workflow_by_id_with_wrong_specific_scope(test_workflow, second_workflow):
+    """Test that GET /workflows/{id} is denied with scope for different workflow."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow, second_workflow],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Token with scope for second-workflow only
+    token = create_jwt_token(scopes=["workflows:second-workflow:read"])
+
+    # Should NOT be able to get test-workflow
+    response = client.get(
+        "/workflows/test-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert "permissions" in response.json()["detail"].lower()
+
+    # Should be able to get second-workflow
+    response = client.get(
+        "/workflows/second-workflow",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "second-workflow"
 
 
 def test_workflow_run_blocked_without_specific_scope(test_workflow, second_workflow):
