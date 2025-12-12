@@ -20,6 +20,12 @@ class SessionType(str, Enum):
     WORKFLOW = "workflow"
 
 
+class ConfigType(str, Enum):
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+
+
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
@@ -37,6 +43,7 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        config_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -49,6 +56,44 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.config_table_name = config_table or "agno_configs"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialize common DB fields (table names + id). Subclasses may extend this.
+        """
+        return {
+            "id": self.id,
+            "session_table": self.session_table_name,
+            "culture_table": self.culture_table_name,
+            "memory_table": self.memory_table_name,
+            "metrics_table": self.metrics_table_name,
+            "eval_table": self.eval_table_name,
+            "knowledge_table": self.knowledge_table_name,
+            "traces_table": self.trace_table_name,
+            "spans_table": self.span_table_name,
+            "versions_table": self.versions_table_name,
+            "config_table": self.config_table_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BaseDb":
+        """
+        Reconstruct using only fields defined in BaseDb. Subclasses should override this.
+        """
+        return cls(
+            session_table=data.get("session_table"),
+            culture_table=data.get("culture_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            config_table=data.get("config_table"),
+            id=data.get("id"),
+        )
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -487,6 +532,45 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+        raise NotImplementedError
+
+    # --- Config ---
+    @abstractmethod
+    def get_config(
+        self, config_id: str, version: Optional[str] = None, config_type: Optional[ConfigType] = None
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_config(
+        self,
+        config_id: str,
+        version: str,
+        config_type: ConfigType,
+        config: Dict[str, Any],
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        notes: Optional[str] = None,
+        is_current: bool = True,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_config(self, config_id: str, version: Optional[str] = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_config_versions(self, config_id: str, include_deleted: bool = False) -> Optional[List[Dict[str, Any]]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_configs_by_type(
+        self, config_type: ConfigType, current_only: bool = True, include_deleted: bool = False
+    ) -> Optional[List[Dict[str, Any]]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_current_version(self, config_id: str, version: str) -> bool:
         raise NotImplementedError
 
 
