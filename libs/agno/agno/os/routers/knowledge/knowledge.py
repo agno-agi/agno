@@ -888,7 +888,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         # Add custom readers from knowledge.readers
         readers_result: Any = knowledge.get_readers() or {}
-        print(f"readers_result: {readers_result}")
         # Ensure readers_dict is a dictionary (defensive check)
         if not isinstance(readers_result, dict):
             readers_dict: Dict[str, Reader] = {}
