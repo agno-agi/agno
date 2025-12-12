@@ -1,14 +1,11 @@
 """
-This example shows how to customize the compression prompt for domain-specific
-use cases. Here we optimize compression for competitive intelligence gathering.
-
-Run: `python cookbook/agents/context_compression/tool_call_compression_with_manager.py`
+This example shows how to set a context token based limit for tool call compression.
+Run: `python cookbook/agents/context_compression/token_based_tool_call_compression.py`
 """
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
-from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -43,23 +40,26 @@ compression_prompt = """
 """
 
 compression_manager = CompressionManager(
-    model=OpenAIChat(id="gpt-4o-mini"),
-    compress_tool_results_limit=4,
+    model=OpenAIChat(id="gpt-5-mini"),
+    compress_token_limit=5000,
     compress_tool_call_instructions=compression_prompt,
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-2.5-pro", vertexai=True),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
-    db=SqliteDb(db_file="tmp/dbs/tool_call_compression_with_manager.db"),
+    db=SqliteDb(db_file="tmp/token_based_tool_call_compression.db"),
     compression_manager=compression_manager,
+    add_history_to_context=True,  # Add history to context
+    num_history_runs=3,
+    session_id="token_based_tool_call_compression",
 )
 
 agent.print_response(
     """
-    Use the search tools and alwayd for the latest information and data.
+    Use the search tools and always use the latest information and data.
     Research recent activities (last 3 months) for these AI companies:
     
     1. OpenAI - product launches, partnerships, pricing
