@@ -184,32 +184,6 @@ class RedisDB(VectorDb):
                 log_error(f"Error creating Redis index: {e}")
                 raise
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index."""
-        try:
-            doc_id = document.id or hash_string_sha256(document.content)
-            return self.id_exists(doc_id)
-        except Exception as e:
-            log_error(f"Error checking if document exists: {e}")
-            return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Async version of doc_exists method."""
-        try:
-            doc_id = document.id or hash_string_sha256(document.content)
-            async_index = await self._get_async_index()
-            id_filter = Tag("id") == doc_id
-            query = FilterQuery(
-                filter_expression=id_filter,
-                return_fields=["id"],
-                num_results=1,
-            )
-            results = await async_index.query(query)
-            return len(results) > 0
-        except Exception as e:
-            log_error(f"Error checking if document exists: {e}")
-            return False
-
     def name_exists(self, name: str) -> bool:
         """Check if a document with the given name exists."""
         try:
