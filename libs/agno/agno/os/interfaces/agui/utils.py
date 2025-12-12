@@ -30,7 +30,7 @@ from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.run.workflow import WorkflowRunEvent
+from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutputEvent
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
 
@@ -198,7 +198,7 @@ def extract_response_chunk_content(response: RunContentEvent) -> str:
 
 
 def _create_events_from_chunk(
-    chunk: Union[RunOutputEvent, TeamRunOutputEvent],
+    chunk: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
@@ -416,7 +416,7 @@ def _create_events_from_chunk(
 
 
 def _create_completion_events(
-    chunk: Union[RunOutputEvent, TeamRunOutputEvent],
+    chunk: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
     event_buffer: EventBuffer,
     message_started: bool,
     message_id: str,
@@ -577,7 +577,7 @@ def stream_agno_response_as_agui_events(
 
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
-    response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
+    response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]],
     thread_id: str,
     run_id: str,
 ) -> AsyncIterator[BaseEvent]:

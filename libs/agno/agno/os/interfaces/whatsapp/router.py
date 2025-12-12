@@ -145,7 +145,7 @@ def attach_routes(
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
             elif workflow:
-                response = await workflow.arun(
+                response = await workflow.arun(  # type: ignore
                     message_text,
                     user_id=phone_number,
                     session_id=f"wa:{phone_number}",
