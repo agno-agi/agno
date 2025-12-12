@@ -156,6 +156,8 @@ class Model(ABC):
     # Enable retrying a model invocation once with a guidance message.
     # This is useful for known errors avoidable with extra instructions.
     retry_with_guidance: bool = True
+    # Set the number of times to retry the model invocation with guidance.
+    retry_with_guidance_limit: int = 1
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
@@ -178,6 +180,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = e
@@ -190,8 +193,20 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
+
+                return self._invoke_with_retry(**kwargs, retry_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -207,6 +222,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = e
@@ -219,8 +235,21 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
+
+                return await self._ainvoke_with_retry(**kwargs, retry_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -236,6 +265,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
@@ -250,8 +280,21 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
+
+                yield from self._invoke_stream_with_retry(**kwargs, retry_with_guidance=True)
                 return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
@@ -268,6 +311,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 async for response in self.ainvoke_stream(**kwargs):
                     yield response
                 return  # Success, exit the retry loop
@@ -283,8 +327,21 @@ class Model(ABC):
                 else:
                     log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
+
+                async for response in self._ainvoke_stream_with_retry(**kwargs, retry_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
 
@@ -296,8 +353,8 @@ class Model(ABC):
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
-    def _remove_temporarys(self, messages: List[Message]) -> None:
-        """Remove temporal messages from the given list.
+    def _remove_temporary_messages(self, messages: List[Message]) -> None:
+        """Remove temporary messages from the given list.
 
         Args:
             messages: The list of messages to filter (modified in place).
