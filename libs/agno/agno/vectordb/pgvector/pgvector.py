@@ -367,7 +367,10 @@ class PgVector(VectorDb):
                         for doc in batch_docs:
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = doc.id or content_hash
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
@@ -456,7 +459,9 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                batch_records_dict[doc.id] = self._get_document_record(doc, filters, content_hash)  # type: ignore
+                                record = self._get_document_record(doc, filters, content_hash)
+                                # Use the generated record ID (which includes content_hash) for deduplication
+                                batch_records_dict[record["id"]] = record
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {e}")
 
@@ -497,7 +502,10 @@ class PgVector(VectorDb):
     ) -> Dict[str, Any]:
         doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
-        record_id = doc.id or content_hash
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        # This allows the same URL/content to be inserted with different descriptions
+        base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
         meta_data = doc.meta_data or {}
         if filters:
@@ -630,7 +638,10 @@ class PgVector(VectorDb):
                         for idx, doc in enumerate(batch_docs):
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = md5(cleaned_content.encode()).hexdigest()
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                                 if (
                                     doc.embedding is not None
