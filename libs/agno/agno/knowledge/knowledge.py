@@ -1796,11 +1796,12 @@ class Knowledge:
         get different hashes.
 
         Hash format:
-        - URL with name and description: hash("{knowledge.name}:{content.name}:{content.description}:{url}")
-        - URL with name only: hash("{knowledge.name}:{content.name}:{url}")
-        - URL with description only: hash("{knowledge.name}:{content.description}:{url}")
-        - URL without name/description: hash("{knowledge.name}:{content.url}")
+        - URL with name and description: hash("{name}:{description}:{url}")
+        - URL with name only: hash("{name}:{url}")
+        - URL with description only: hash("{description}:{url}")
+        - URL without name/description: hash("{url}") (backward compatible)
         - Same logic applies to paths
+        - If Knowledge name is provided, it is also appended to the hash
         """
         hash_parts = []
         if self.name:
