@@ -17,6 +17,7 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
@@ -519,6 +520,49 @@ class OpenAIResponses(Model):
                         )
                         formatted_messages.append(reasoning_output)
         return formatted_messages
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_tools = self._format_tool_params(messages, tools) if tools else None
+
+            response = self.get_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,  # type: ignore
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens + count_schema_tokens(response_format, self.id)
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return super().count_tokens(messages, tools, response_format)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        """Async version of count_tokens using the async client."""
+        try:
+            formatted_input = self._format_messages(messages, compress_tool_results=True)
+            formatted_tools = self._format_tool_params(messages, tools) if tools else None
+
+            response = await self.get_async_client().responses.input_tokens.count(
+                model=self.id,
+                input=formatted_input,  # type: ignore
+                instructions=self.instructions,  # type: ignore
+                tools=formatted_tools,  # type: ignore
+            )
+            return response.input_tokens + count_schema_tokens(response_format, self.id)
+        except Exception as e:
+            log_warning(f"Failed to count tokens via API: {e}")
+            return await super().acount_tokens(messages, tools, response_format)
 
     def invoke(
         self,
