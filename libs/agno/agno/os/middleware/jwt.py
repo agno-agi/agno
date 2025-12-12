@@ -1,6 +1,7 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
+import json
 import re
 from enum import Enum
 from os import getenv
@@ -9,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
+from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.scopes import (
@@ -90,6 +92,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
             authorization=True,
         )
 
+        # Using a static JWKS file
+        app.add_middleware(
+            JWTMiddleware,
+            jwks_file="/path/to/jwks.json",
+            authorization=True,
+        )
+
         # No validation (extract claims only, useful for development)
         app.add_middleware(
             JWTMiddleware,
@@ -101,6 +110,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self,
         app,
         verification_keys: Optional[List[str]] = None,
+        jwks_file: Optional[str] = None,
         secret_key: Optional[str] = None,  # Deprecated: Use verification_keys instead
         algorithm: str = "RS256",
         validate: bool = True,
@@ -130,6 +140,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
                               Each key will be tried in order until one successfully validates the token.
                               Useful when accepting tokens signed by different private keys.
                               If not provided, will use JWT_VERIFICATION_KEY env var (as a single-item list).
+            jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
+                      The file should contain a JSON object with a "keys" array.
+                      Keys are looked up by the "kid" (key ID) claim in the JWT header.
+                      If not provided, will check JWT_JWKS_FILE env var for a file path,
+                      or JWT_JWKS env var for inline JWKS JSON content.
             secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
             validate: Whether to validate the JWT token (default: True). If False, tokens are decoded
@@ -154,8 +169,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
             admin_scope: The scope that grants admin access (default: "agent_os:admin")
 
         Note:
-            - At least one verification key must be provided if validate=True
+            - At least one verification key or JWKS file must be provided if validate=True
             - If validate=False, no verification key is needed (claims are extracted without verification)
+            - JWKS keys are tried first (by kid), then static verification_keys as fallback
             - CORS allowed origins are read from app.state.cors_allowed_origins (set by AgentOS).
               This allows error responses to include proper CORS headers.
         """
@@ -183,11 +199,24 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
-        # Validate that at least one key is provided if validate=True
-        if self.validate and not self.verification_keys:
+        # JWKS configuration - load keys from JWKS file or environment variable
+        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
+
+        # Try jwks_file parameter first
+        if jwks_file:
+            self._load_jwks_file(jwks_file)
+        else:
+            # Try JWT_JWKS_FILE env var (path to file)
+            jwks_file_env = getenv("JWT_JWKS_FILE", "")
+            if jwks_file_env:
+                self._load_jwks_file(jwks_file_env)
+
+        # Validate that at least one key source is provided if validate=True
+        if self.validate and not self.verification_keys and not self.jwks_keys:
             raise ValueError(
-                "At least one JWT verification key is required when validate=True. "
-                "Set via verification_keys parameter or JWT_VERIFICATION_KEY environment variable."
+                "At least one JWT verification key or JWKS file is required when validate=True. "
+                "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
+                "jwks_file parameter or JWT_JWKS_FILE environment variable."
             )
         self.token_source = token_source
         self.token_header_key = token_header_key
@@ -234,6 +263,61 @@ class JWTMiddleware(BaseHTTPMiddleware):
             "/openapi.json",
             "/docs/oauth2-redirect",
         ]
+
+    def _load_jwks_file(self, file_path: str) -> None:
+        """
+        Load keys from a static JWKS file.
+
+        Args:
+            file_path: Path to the JWKS JSON file
+
+        The JWKS file should have the format:
+        {
+            "keys": [
+                {
+                    "kty": "RSA",
+                    "kid": "my-key-id",
+                    "use": "sig",
+                    "alg": "RS256",
+                    "n": "...",
+                    "e": "AQAB"
+                }
+            ]
+        }
+        """
+        try:
+            with open(file_path) as f:
+                jwks_data = json.load(f)
+            self._parse_jwks_data(jwks_data)
+            log_debug(f"Loaded {len(self.jwks_keys)} key(s) from JWKS file: {file_path}")
+        except FileNotFoundError:
+            raise ValueError(f"JWKS file not found: {file_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in JWKS file {file_path}: {e}")
+
+    def _parse_jwks_data(self, jwks_data: Dict[str, Any]) -> None:
+        """
+        Parse JWKS data and populate self.jwks_keys.
+
+        Args:
+            jwks_data: Parsed JWKS dictionary with "keys" array
+        """
+        keys = jwks_data.get("keys", [])
+        if not keys:
+            log_warning("JWKS contains no keys")
+            return
+
+        for key_data in keys:
+            try:
+                kid = key_data.get("kid")
+                jwk = PyJWK.from_dict(key_data)
+                if kid:
+                    self.jwks_keys[kid] = jwk
+                else:
+                    # If no kid, use a default key (for single-key JWKS)
+                    self.jwks_keys["_default"] = jwk
+            except Exception as e:
+                log_warning(f"Failed to parse JWKS key: {e}")
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
@@ -367,8 +451,39 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if decode_options:
             decode_kwargs["options"] = decode_options
 
-        # Try each verification key until one succeeds
         last_exception: Optional[Exception] = None
+
+        # Try JWKS keys first if configured
+        if self.jwks_keys:
+            try:
+                # Get the kid from the token header to find the right key
+                unverified_header = jwt.get_unverified_header(token)
+                kid = unverified_header.get("kid")
+
+                jwk = None
+                if kid and kid in self.jwks_keys:
+                    jwk = self.jwks_keys[kid]
+                elif "_default" in self.jwks_keys:
+                    # Fall back to default key if no kid match
+                    jwk = self.jwks_keys["_default"]
+
+                if jwk:
+                    payload = jwt.decode(token, jwk.key, **decode_kwargs)
+                    return payload
+            except jwt.InvalidAudienceError:
+                # Audience errors should not be retried with different keys
+                raise
+            except jwt.ExpiredSignatureError:
+                # Expiration errors should not be retried with different keys
+                raise
+            except jwt.InvalidTokenError as e:
+                # If JWKS fails and we have static keys, try those
+                if not self.verification_keys:
+                    raise
+                last_exception = e
+                # Fall through to try static verification keys
+
+        # Try each static verification key until one succeeds
         for key in self.verification_keys:
             try:
                 payload = jwt.decode(token, key, **decode_kwargs)

@@ -2479,3 +2479,462 @@ def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 500  # Auth passed
+
+
+# ============================================================================
+# JWKS File Tests
+# ============================================================================
+
+
+@pytest.fixture
+def rsa_key_pair():
+    """Generate an RSA key pair for JWKS testing."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    # Generate RSA key pair
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    # Get private key in PEM format
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+
+    # Get public key in PEM format
+    public_key = private_key.public_key()
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+    return {
+        "private_key": private_key,
+        "public_key": public_key,
+        "private_pem": private_pem,
+        "public_pem": public_pem,
+    }
+
+
+@pytest.fixture
+def jwks_file(rsa_key_pair, tmp_path):
+    """Create a temporary JWKS file with the RSA public key."""
+    import base64
+    import json
+
+    public_key = rsa_key_pair["public_key"]
+    public_numbers = public_key.public_numbers()
+
+    # Convert to base64url encoding (no padding)
+    def int_to_base64url(value: int, length: int) -> str:
+        data = value.to_bytes(length, byteorder="big")
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    # RSA modulus (n) - 256 bytes for 2048-bit key
+    n = int_to_base64url(public_numbers.n, 256)
+    # RSA exponent (e) - 3 bytes for 65537
+    e = int_to_base64url(public_numbers.e, 3)
+
+    jwks_data = {
+        "keys": [
+            {
+                "kty": "RSA",
+                "kid": "test-key-1",
+                "use": "sig",
+                "alg": "RS256",
+                "n": n,
+                "e": e,
+            }
+        ]
+    }
+
+    jwks_path = tmp_path / "jwks.json"
+    jwks_path.write_text(json.dumps(jwks_data))
+
+    return str(jwks_path)
+
+
+@pytest.fixture
+def jwks_file_no_kid(rsa_key_pair, tmp_path):
+    """Create a JWKS file without kid (for single-key scenarios)."""
+    import base64
+    import json
+
+    public_key = rsa_key_pair["public_key"]
+    public_numbers = public_key.public_numbers()
+
+    def int_to_base64url(value: int, length: int) -> str:
+        data = value.to_bytes(length, byteorder="big")
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    n = int_to_base64url(public_numbers.n, 256)
+    e = int_to_base64url(public_numbers.e, 3)
+
+    jwks_data = {
+        "keys": [
+            {
+                "kty": "RSA",
+                "use": "sig",
+                "alg": "RS256",
+                "n": n,
+                "e": e,
+            }
+        ]
+    }
+
+    jwks_path = tmp_path / "jwks_no_kid.json"
+    jwks_path.write_text(json.dumps(jwks_data))
+
+    return str(jwks_path)
+
+
+def create_rs256_token(
+    private_key,
+    scopes: list[str],
+    user_id: str = "test_user",
+    kid: str | None = "test-key-1",
+    audience: str = TEST_OS_ID,
+) -> str:
+    """Create an RS256 JWT token signed with the given private key."""
+    payload = {
+        "sub": user_id,
+        "session_id": f"session_{user_id}",
+        "aud": audience,
+        "scopes": scopes,
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+
+    headers = {}
+    if kid:
+        headers["kid"] = kid
+
+    return jwt.encode(payload, private_key, algorithm="RS256", headers=headers if headers else None)
+
+
+def test_jwks_file_authentication(test_agent, rsa_key_pair, jwks_file):
+    """Test JWT authentication using JWKS file."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file,
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token signed with the RSA private key
+    token = create_rs256_token(
+        rsa_key_pair["private_pem"],
+        scopes=["agents:read"],
+        kid="test-key-1",
+    )
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_jwks_file_with_run_scope(test_agent, rsa_key_pair, jwks_file):
+    """Test that JWKS-authenticated tokens work with run scopes."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file,
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with run scope
+    token = create_rs256_token(
+        rsa_key_pair["private_pem"],
+        scopes=["agents:read", "agents:run"],
+        kid="test-key-1",
+    )
+
+    response = client.post(
+        "/agents/test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "test"},
+    )
+
+    assert response.status_code in [200, 201]
+
+
+def test_jwks_file_without_kid(test_agent, rsa_key_pair, jwks_file_no_kid):
+    """Test JWKS file with keys that don't have kid (uses _default)."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file_no_kid,
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token without kid header (should use _default key)
+    token = create_rs256_token(
+        rsa_key_pair["private_pem"],
+        scopes=["agents:read"],
+        kid=None,
+    )
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_jwks_file_wrong_kid_denied(test_agent, rsa_key_pair, jwks_file):
+    """Test that tokens with non-matching kid are rejected."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file,
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create token with wrong kid
+    token = create_rs256_token(
+        rsa_key_pair["private_pem"],
+        scopes=["agents:read"],
+        kid="wrong-key-id",
+    )
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Should fail because kid doesn't match any key in JWKS
+    assert response.status_code == 401
+
+
+def test_jwks_file_invalid_signature_denied(test_agent, rsa_key_pair, jwks_file):
+    """Test that tokens signed with wrong key are rejected."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file,
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Generate a different RSA key pair
+    different_private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    different_private_pem = different_private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+
+    # Create token signed with different key (but correct kid)
+    token = create_rs256_token(
+        different_private_pem,
+        scopes=["agents:read"],
+        kid="test-key-1",
+    )
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Should fail because signature doesn't match
+    assert response.status_code == 401
+
+
+def test_jwks_file_not_found_raises_error(test_agent):
+    """Test that non-existent JWKS file raises ValueError."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    # Directly instantiate middleware to test error handling
+    # (app.add_middleware doesn't instantiate until first request)
+    with pytest.raises(ValueError, match="JWKS file not found"):
+        JWTMiddleware(
+            app=app,
+            jwks_file="/non/existent/jwks.json",
+            algorithm="RS256",
+            authorization=True,
+        )
+
+
+def test_jwks_file_invalid_json_raises_error(test_agent, tmp_path):
+    """Test that invalid JSON in JWKS file raises ValueError."""
+    # Create a file with invalid JSON
+    invalid_jwks = tmp_path / "invalid.json"
+    invalid_jwks.write_text("not valid json {{{")
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    # Directly instantiate middleware to test error handling
+    # (app.add_middleware doesn't instantiate until first request)
+    with pytest.raises(ValueError, match="Invalid JSON in JWKS file"):
+        JWTMiddleware(
+            app=app,
+            jwks_file=str(invalid_jwks),
+            algorithm="RS256",
+            authorization=True,
+        )
+
+
+def test_jwks_with_fallback_to_verification_keys(test_agent, rsa_key_pair, jwks_file):
+    """Test that verification_keys are used as fallback when JWKS doesn't match."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    # Add middleware with both JWKS file and static HS256 key
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",  # Note: different algorithm
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Create HS256 token (should use fallback verification_keys)
+    token = create_jwt_token(scopes=["agents:read"])
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_jwks_env_variable(test_agent, rsa_key_pair, jwks_file, monkeypatch):
+    """Test JWKS file loading from JWT_JWKS_FILE environment variable."""
+    # Set environment variable
+    monkeypatch.setenv("JWT_JWKS_FILE", jwks_file)
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    # Don't pass jwks_file parameter - should load from env var
+    app.add_middleware(
+        JWTMiddleware,
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    token = create_rs256_token(
+        rsa_key_pair["private_pem"],
+        scopes=["agents:read"],
+        kid="test-key-1",
+    )
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_jwks_parameter_takes_precedence_over_env(test_agent, rsa_key_pair, jwks_file, tmp_path, monkeypatch):
+    """Test that jwks_file parameter takes precedence over JWT_JWKS_FILE env var."""
+    import json
+
+    # Create a different JWKS file for env var (with different kid)
+    env_jwks = tmp_path / "env_jwks.json"
+    env_jwks.write_text(json.dumps({"keys": []}))  # Empty keys
+
+    monkeypatch.setenv("JWT_JWKS_FILE", str(env_jwks))
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+    )
+    app = agent_os.get_app()
+
+    # Pass jwks_file parameter - should take precedence over env var
+    app.add_middleware(
+        JWTMiddleware,
+        jwks_file=jwks_file,  # This has the actual key
+        algorithm="RS256",
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    token = create_rs256_token(
+        rsa_key_pair["private_pem"],
+        scopes=["agents:read"],
+        kid="test-key-1",
+    )
+
+    response = client.get(
+        "/agents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Should work because jwks_file parameter has the correct key
+    assert response.status_code == 200

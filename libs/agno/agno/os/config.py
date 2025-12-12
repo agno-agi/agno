@@ -9,6 +9,7 @@ class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
     verification_keys: Optional[List[str]] = None
+    jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
 

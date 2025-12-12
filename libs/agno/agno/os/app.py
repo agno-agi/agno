@@ -592,6 +592,7 @@ class AgentOS:
 
         algorithm = "RS256"
         verification_keys = None
+        jwks_file = None
         verify_audience = False
         if self.authorization_config:
             algorithm = (
@@ -602,6 +603,11 @@ class AgentOS:
             verification_keys = (
                 self.authorization_config.verification_keys
                 if self.authorization_config and self.authorization_config.verification_keys
+                else None
+            )
+            jwks_file = (
+                self.authorization_config.jwks_file
+                if self.authorization_config and self.authorization_config.jwks_file
                 else None
             )
             verify_audience = (
@@ -615,6 +621,7 @@ class AgentOS:
         fastapi_app.add_middleware(
             JWTMiddleware,
             verification_keys=verification_keys,
+            jwks_file=jwks_file,
             algorithm=algorithm,
             authorization=self.authorization,
             verify_audience=verify_audience,
