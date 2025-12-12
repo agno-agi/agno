@@ -32,6 +32,8 @@ class BaseRemote:
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
+        
+        self.client = self.get_client()
 
     def get_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.
@@ -48,10 +50,13 @@ class BaseRemote:
             timeout=self.timeout,
         )
 
-    @lru_cache(maxsize=1)
-    def _get_config(self) -> Any:
-        client = self.get_client()
-        return client.get_config()
+    def _get_headers(self) -> Dict[str, str]:
+        """Get default headers for HTTP requests.
+
+        Returns:
+            Dict[str, str]: Default headers including Content-Type
+        """
+        return {"Content-Type": "application/x-www-form-urlencoded"}
 
     @abstractmethod
     def arun(  # type: ignore

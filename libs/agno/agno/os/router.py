@@ -32,6 +32,7 @@ from agno.os.utils import (
 from agno.team.remote import RemoteTeam
 from agno.utils.log import log_warning
 from agno.workflow.remote import RemoteWorkflow
+from agno.exceptions import RemoteServerUnavailableError
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -145,64 +146,26 @@ def get_base_router(
         },
     )
     async def config() -> ConfigResponse:
-        agent_summaries = []
-        if os.agents:
-            for agent in os.agents:
-                agent_summaries.append(AgentSummaryResponse.from_agent(agent))
+        try:
+            agent_summaries = []
+            if os.agents:
+                for agent in os.agents:
+                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
 
-        team_summaries = []
-        if os.teams:
-            for team in os.teams:
-                if isinstance(team, RemoteTeam):
-                    # Fetch config from remote AgentOS
-                    try:
-                        async with team.get_client() as client:
-                            remote_team = await client.get_team(team.id)
-                            team_summaries.append(
-                                TeamSummaryResponse(
-                                    id=remote_team.id,
-                                    name=remote_team.name,
-                                    description=None,
-                                )
-                            )
-                    except Exception as e:
-                        log_warning(f"Failed to fetch remote team {team.id}: {e}")
-                        team_summaries.append(
-                            TeamSummaryResponse(
-                                id=team.id,
-                                name=f"Remote Team: {team.id}",
-                                description="(unavailable)",
-                            )
-                        )
-                else:
+            team_summaries = []
+            if os.teams:
+                for team in os.teams:
                     team_summaries.append(TeamSummaryResponse.from_team(team))
 
-        workflow_summaries = []
-        if os.workflows:
-            for workflow in os.workflows:
-                if isinstance(workflow, RemoteWorkflow):
-                    # Fetch config from remote AgentOS
-                    try:
-                        async with workflow.get_client() as client:
-                            remote_workflow = await client.get_workflow(workflow.id)
-                            workflow_summaries.append(
-                                WorkflowSummaryResponse(
-                                    id=remote_workflow.id,
-                                    name=remote_workflow.name,
-                                    description=remote_workflow.description,
-                                )
-                            )
-                    except Exception as e:
-                        log_warning(f"Failed to fetch remote workflow {workflow.id}: {e}")
-                        workflow_summaries.append(
-                            WorkflowSummaryResponse(
-                                id=workflow.id,
-                                name=f"Remote Workflow: {workflow.id}",
-                                description="(unavailable)",
-                            )
-                        )
-                else:
+            workflow_summaries = []
+            if os.workflows:
+                for workflow in os.workflows:
                     workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+        except RemoteServerUnavailableError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch config from remote AgentOS: {e}",
+            )
 
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
@@ -257,48 +220,20 @@ def get_base_router(
         # Collect models from local agents
         if os.agents:
             for agent in os.agents:
-                if isinstance(agent, RemoteAgent):
-                    # Fetch models from remote AgentOS
-                    try:
-                        async with agent.get_client() as client:
-                            remote_models = await client.get_models()
-                            for model in remote_models:
-                                if model.id is not None and model.provider is not None:
-                                    key = (model.id, model.provider)
-                                    if key not in unique_models:
-                                        unique_models[key] = model
-                    except Exception as e:
-                        log_warning(f"Failed to fetch models from remote agent {agent.id}: {e}")
-                else:
-                    # Local agent
-                    model = cast(Model, agent.model)
-                    if model.id is not None and model.provider is not None:
-                        key = (model.id, model.provider)
-                        if key not in unique_models:
-                            unique_models[key] = Model(id=model.id, provider=model.provider)
+                model = cast(Model, agent.model)
+                if model.id is not None and model.provider is not None:
+                    key = (model.id, model.provider)
+                    if key not in unique_models:
+                        unique_models[key] = Model(id=model.id, provider=model.provider)
 
         # Collect models from local teams
         if os.teams:
             for team in os.teams:
-                if isinstance(team, RemoteTeam):
-                    # Fetch models from remote AgentOS
-                    try:
-                        async with team.get_client() as client:
-                            remote_models = await client.get_models()
-                            for model in remote_models:
-                                if model.id is not None and model.provider is not None:
-                                    key = (model.id, model.provider)
-                                    if key not in unique_models:
-                                        unique_models[key] = model
-                    except Exception as e:
-                        log_warning(f"Failed to fetch models from remote team {team.id}: {e}")
-                else:
-                    # Local team
-                    model = cast(Model, team.model)
-                    if model.id is not None and model.provider is not None:
-                        key = (model.id, model.provider)
-                        if key not in unique_models:
-                            unique_models[key] = Model(id=model.id, provider=model.provider)
+                model = cast(Model, team.model)
+                if model.id is not None and model.provider is not None:
+                    key = (model.id, model.provider)
+                    if key not in unique_models:
+                        unique_models[key] = Model(id=model.id, provider=model.provider)
 
         return list(unique_models.values())
 

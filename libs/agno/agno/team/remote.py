@@ -1,4 +1,5 @@
 import json
+from functools import cached_property
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
 
 from pydantic import BaseModel
@@ -11,10 +12,9 @@ from agno.remote.base import BaseRemote
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 
-try:
-    from httpx import AsyncClient
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
+
+from agno.exceptions import RemoteServerUnavailableError
 
 
 class RemoteTeam(BaseRemote):
@@ -40,15 +40,28 @@ class RemoteTeam(BaseRemote):
     def id(self) -> str:
         return self.team_id
 
-    @property
-    def db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
-        from agno.os.schema import ConfigResponse
+    @cached_property
+    def _team_config(self) -> Optional[Any]:
+        """Get the agent config from remote, cached after first access."""
+        from agno.os.routers.teams.schema import TeamResponse
+        config: TeamResponse = self.client.get_team(self.team_id)
+        return config
 
-        config: ConfigResponse = self._get_config()
-        for team in config.teams:
-            if team.id == self.team_id:
-                return team.db
-        return None
+    @cached_property
+    def name(self) -> str:
+        if self._team_config is not None:
+            return self._team_config.name
+        return self.team_id
+
+    @cached_property
+    def description(self) -> str:
+        if self._team_config is not None:
+            return self._team_config.description
+        return ""
+
+    @cached_property
+    def db_id(self) -> Optional[str]:
+        return self._team_config.db_id if self._team_config else None
 
     def _get_runs_endpoint(self) -> str:
         """Get the API endpoint for the configured resource."""

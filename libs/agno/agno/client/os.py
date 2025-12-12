@@ -42,10 +42,9 @@ from agno.run.team import BaseTeamRunEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
 
-try:
-    from httpx import AsyncClient, Client
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
+
+from agno.exceptions import RemoteServerUnavailableError
 
 
 class AgentOSClient:
@@ -93,6 +92,7 @@ class AgentOSClient:
             Parsed JSON response, or None for empty responses
 
         Raises:
+            RemoteServerUnavailableError: When the remote server is unavailable
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
         url = f"{self.base_url}{endpoint}"
@@ -108,14 +108,27 @@ class AgentOSClient:
 
         sync_client = get_default_sync_client()
 
-        with sync_client as client:
-            response = client.request(method, url, **kwargs)
-            response.raise_for_status()
+        try:
+            with sync_client as client:
+                response = client.request(method, url, **kwargs)
+                response.raise_for_status()
 
-            # Return None for empty responses (204 No Content, etc.)
-            if not response.content:
-                return None
-            return response.json()
+                # Return None for empty responses (204 No Content, etc.)
+                if not response.content:
+                    return None
+                return response.json()
+        except (ConnectError, ConnectTimeout) as e:
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to remote server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+        except TimeoutException as e:
+            raise RemoteServerUnavailableError(
+                message=f"Request to remote server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
 
     async def _arequest(
         self,
@@ -140,6 +153,7 @@ class AgentOSClient:
             Parsed JSON response, or None for empty responses
 
         Raises:
+            RemoteServerUnavailableError: When the remote server is unavailable
             HTTPStatusError: On HTTP errors (4xx, 5xx)
         """
         url = f"{self.base_url}{endpoint}"
@@ -152,17 +166,30 @@ class AgentOSClient:
                 kwargs["json"] = data
         if params is not None:
             kwargs["params"] = params
-            
+
         async_client = get_default_async_client()
 
-        async with async_client as client:
-            response = await client.request(method, url, **kwargs)
-            response.raise_for_status()
+        try:
+            async with async_client as client:
+                response = await client.request(method, url, **kwargs)
+                response.raise_for_status()
 
-            # Return None for empty responses (204 No Content, etc.)
-            if not response.content:
-                return None
-            return response.json()
+                # Return None for empty responses (204 No Content, etc.)
+                if not response.content:
+                    return None
+                return response.json()
+        except (ConnectError, ConnectTimeout) as e:
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to remote server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+        except TimeoutException as e:
+            raise RemoteServerUnavailableError(
+                message=f"Request to remote server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
 
     def _get(
         self,
@@ -289,14 +316,30 @@ class AgentOSClient:
 
         Yields:
             str: Lines from the streaming response
+
+        Raises:
+            RemoteServerUnavailableError: When the remote server is unavailable
         """
         url = f"{self.base_url}{endpoint}"
 
-        async with AsyncClient(timeout=self.timeout) as client:
-            async with client.stream("POST", url, data=data, headers=headers or {}) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    yield line
+        try:
+            async with AsyncClient(timeout=self.timeout) as client:
+                async with client.stream("POST", url, data=data, headers=headers or {}) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        yield line
+        except (ConnectError, ConnectTimeout) as e:
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to remote server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+        except TimeoutException as e:
+            raise RemoteServerUnavailableError(
+                message=f"Request to remote server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
 
     async def _parse_sse_events(
         self,
@@ -420,7 +463,23 @@ class AgentOSClient:
         data = await self._aget("/agents", headers=headers)
         return [AgentSummaryResponse.model_validate(item) for item in data]
 
-    async def get_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
+    def get_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
+        """Get detailed configuration for a specific agent.
+
+        Args:
+            agent_id: ID of the agent to retrieve
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            AgentResponse: Detailed agent configuration
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if agent not found)
+        """
+        data = self._get(f"/agents/{agent_id}", headers=headers)
+        return AgentResponse.model_validate(data)
+    
+    async def aget_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
         """Get detailed configuration for a specific agent.
 
         Args:
@@ -664,7 +723,23 @@ class AgentOSClient:
         data = await self._aget("/teams", headers=headers)
         return [TeamSummaryResponse.model_validate(item) for item in data]
 
-    async def get_team(self, team_id: str, headers: Optional[Dict[str, str]] = None) -> TeamResponse:
+    def get_team(self, team_id: str, headers: Optional[Dict[str, str]] = None) -> TeamResponse:
+        """Get detailed configuration for a specific team.
+
+        Args:
+            team_id: ID of the team to retrieve
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            TeamResponse: Detailed team configuration
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if team not found)
+        """
+        data = self._get(f"/teams/{team_id}", headers=headers)
+        return TeamResponse.model_validate(data)
+
+    async def aget_team(self, team_id: str, headers: Optional[Dict[str, str]] = None) -> TeamResponse:
         """Get detailed configuration for a specific team.
 
         Args:
@@ -1905,6 +1980,51 @@ class AgentOSClient:
 
     # Knowledge Operations
 
+    async def _apost_multipart(
+        self,
+        endpoint: str,
+        form_data: Dict[str, Any],
+        files: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        """Execute asynchronous POST request with multipart form data and optional files.
+
+        Args:
+            endpoint: API endpoint path (without base URL)
+            form_data: Form data dictionary
+            files: Optional files dictionary for multipart upload
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            RemoteServerUnavailableError: When the remote server is unavailable
+            HTTPStatusError: On HTTP errors (4xx, 5xx)
+        """
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            async with AsyncClient(timeout=self.timeout) as client:
+                if files:
+                    response = await client.post(url, data=form_data, files=files, headers=headers or {})
+                else:
+                    response = await client.post(url, data=form_data, headers=headers or {})
+                response.raise_for_status()
+                return response.json()
+        except (ConnectError, ConnectTimeout) as e:
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to remote server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+        except TimeoutException as e:
+            raise RemoteServerUnavailableError(
+                message=f"Request to remote server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+
     async def upload_content(
         self,
         name: Optional[str] = None,
@@ -1954,11 +2074,9 @@ class AgentOSClient:
         if params:
             endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        url_full = f"{self.base_url}{endpoint}"
-
         # Build multipart form data
         form_data: Dict[str, Any] = {}
-        files: Dict[str, Any] = {}
+        files: Optional[Dict[str, Any]] = None
 
         if name:
             form_data["name"] = name
@@ -1980,16 +2098,10 @@ class AgentOSClient:
             form_data["chunk_overlap"] = str(chunk_overlap)
 
         if file_content:
-            files["file"] = (file_name or "upload", file_content, file_content_type or "application/octet-stream")
+            files = {"file": (file_name or "upload", file_content, file_content_type or "application/octet-stream")}
 
-        async with AsyncClient(timeout=self.timeout) as client:
-            if files:
-                response = await client.post(url_full, data=form_data, files=files, headers=headers or {})
-            else:
-                response = await client.post(url_full, data=form_data, headers=headers or {})
-
-            response.raise_for_status()
-            return ContentResponseSchema.model_validate(response.json())
+        data = await self._apost_multipart(endpoint, form_data, files=files, headers=headers)
+        return ContentResponseSchema.model_validate(data)
 
     async def update_content(
         self,
@@ -2023,10 +2135,6 @@ class AgentOSClient:
             params["db_id"] = db_id
 
         endpoint = f"/knowledge/content/{content_id}"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-
-        url_str = f"{self.base_url}{endpoint}"
 
         form_data: Dict[str, Any] = {}
         if name:
@@ -2038,10 +2146,8 @@ class AgentOSClient:
         if reader_id:
             form_data["reader_id"] = reader_id
 
-        async with AsyncClient(timeout=self.timeout) as client:
-            response = await client.patch(url_str, data=form_data, headers=headers or {})
-            response.raise_for_status()
-            return ContentResponseSchema.model_validate(response.json())
+        data = await self._arequest("PATCH", endpoint, data=form_data, params=params, headers=headers, as_form=True)
+        return ContentResponseSchema.model_validate(data)
 
     async def list_content(
         self,
@@ -2135,15 +2241,9 @@ class AgentOSClient:
             params["db_id"] = db_id
 
         endpoint = f"/knowledge/content/{content_id}"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        url_str = f"{self.base_url}{endpoint}"
-
-        async with AsyncClient(timeout=self.timeout) as client:
-            response = await client.delete(url_str, headers=headers or {})
-            response.raise_for_status()
-            return ContentResponseSchema.model_validate(response.json())
+        data = await self._arequest("DELETE", endpoint, params=params, headers=headers)
+        return ContentResponseSchema.model_validate(data)
 
     async def delete_all_content(
         self,
@@ -2169,15 +2269,8 @@ class AgentOSClient:
             params["db_id"] = db_id
 
         endpoint = "/knowledge/content"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
 
-        url_str = f"{self.base_url}{endpoint}"
-
-        async with AsyncClient(timeout=self.timeout) as client:
-            response = await client.delete(url_str, headers=headers or {})
-            response.raise_for_status()
-            return response.json()
+        return await self._arequest("DELETE", endpoint, params=params, headers=headers)
 
     async def get_content_status(
         self,

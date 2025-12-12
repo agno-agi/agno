@@ -20,7 +20,7 @@ from agno.workflow.workflow import Workflow
 # =============================================================================
 
 # SQLite database for sessions, memory, and content metadata
-db = SqliteDb(db_file="tmp/cookbook_client.db")
+db = SqliteDb(id="cookbook-client-db", db_file="tmp/cookbook_client.db")
 
 # =============================================================================
 # Knowledge Base Configuration

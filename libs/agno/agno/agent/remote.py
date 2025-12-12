@@ -11,10 +11,9 @@ from agno.models.response import ToolExecution
 from agno.remote.base import BaseRemote
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 
-try:
-    from httpx import AsyncClient
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
+from agno.models.base import Model
+from agno.exceptions import RemoteServerUnavailableError
 
 
 class RemoteAgent(BaseRemote):
@@ -41,14 +40,11 @@ class RemoteAgent(BaseRemote):
         return self.agent_id
 
     @cached_property
-    def _agent_config(self) -> Optional[Any]:
+    def _agent_config(self) -> "AgentResponse":
         """Get the agent config from remote, cached after first access."""
-        from agno.os.schema import ConfigResponse
-        config: ConfigResponse = self._get_config()
-        for agent in config.agents:
-            if agent.id == self.agent_id:
-                return agent
-        return None
+        from agno.os.routers.agents.schema import AgentResponse
+        config: AgentResponse = self.client.get_agent(self.agent_id)
+        return config
 
     @cached_property
     def name(self) -> str:
@@ -65,6 +61,12 @@ class RemoteAgent(BaseRemote):
     @cached_property
     def db_id(self) -> Optional[str]:
         return self._agent_config.db_id if self._agent_config else None
+    
+    @cached_property
+    def model(self) -> Model:
+        model_response = self._agent_config.model
+        return Model(id=model_response.id, provider=model_response.provider)
+        
 
     def _get_runs_endpoint(self) -> str:
         """Get the API endpoint for the configured resource."""

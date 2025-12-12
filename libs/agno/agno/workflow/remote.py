@@ -1,6 +1,7 @@
 import json
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
 
+from functools import cached_property
 from pydantic import BaseModel
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -39,15 +40,31 @@ class RemoteWorkflow(BaseRemote):
     def id(self) -> str:
         return self.workflow_id
 
-    @property
-    def db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
+    @cached_property
+    def _workflow_config(self) -> Optional[Any]:
+        """Get the agent config from remote, cached after first access."""
         from agno.os.schema import ConfigResponse
-
         config: ConfigResponse = self._get_config()
         for workflow in config.workflows:
             if workflow.id == self.workflow_id:
-                return workflow.db
+                return workflow
         return None
+
+    @cached_property
+    def name(self) -> str:
+        if self._workflow_config is not None:
+            return self._workflow_config.name
+        return self.workflow_id
+
+    @cached_property
+    def description(self) -> str:
+        if self._workflow_config is not None:
+            return self._workflow_config.description
+        return ""
+
+    @cached_property
+    def db_id(self) -> Optional[str]:
+        return self._workflow_config.db_id if self._workflow_config else None
 
     def _get_runs_endpoint(self) -> str:
         """Get the API endpoint for the configured resource."""

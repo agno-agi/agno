@@ -115,7 +115,8 @@ class TeamSummaryResponse(BaseModel):
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+        db_id = team.db_id if hasattr(team, "db_id") and team.db_id else team.db.id if team.db else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -126,11 +127,12 @@ class WorkflowSummaryResponse(BaseModel):
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
+        db_id = workflow.db_id if hasattr(workflow, "db_id") and workflow.db_id else workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
-            db_id=workflow.db.id if workflow.db else None,
+            db_id=db_id,
         )
 
 
