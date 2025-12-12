@@ -8,6 +8,7 @@ from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Dict,
@@ -21,6 +22,9 @@ from typing import (
     Union,
     get_args,
 )
+
+if TYPE_CHECKING:
+    from agno.compression.manager import CompressionManager
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -458,8 +462,7 @@ class Model(ABC):
         self,
         messages: List[Message],
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        compress_tool_results: bool = False,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         from agno.utils.tokens import count_tokens
 
@@ -467,19 +470,16 @@ class Model(ABC):
             messages,
             tools=list(tools) if tools else None,
             model_id=self.id,
-            response_format=response_format,
-            compress_tool_results=compress_tool_results,
+            output_schema=output_schema,
         )
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        compress_tool_results: bool = False,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        # Run in thread to avoid blocking the event loop.
-        return await asyncio.to_thread(self.count_tokens, messages, tools, response_format, compress_tool_results)
+        return self.count_tokens(messages, tools, output_schema=output_schema)
 
     def response(
         self,
@@ -490,7 +490,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
         compressed_context: Optional[Any] = None,
     ) -> ModelResponse:
         """
@@ -533,7 +533,9 @@ class Model(ABC):
             while True:
                 # Compress context or tool results BEFORE making API call
                 if compression_manager:
-                    new_context = compression_manager.compress(messages, tools, compressed_context, model=self)
+                    new_context = compression_manager.compress(
+                        messages, tools, compressed_context, model=self, response_format=response_format
+                    )
                     if new_context is not None:
                         model_response.compressed_context = new_context
                         compressed_context = new_context  # Update for subsequent iterations
@@ -705,12 +707,13 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
         compressed_context: Optional[Any] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
         """
+
         try:
             # Check cache if enabled
             if self.cache_response:
@@ -738,7 +741,9 @@ class Model(ABC):
             while True:
                 # Compress context or tool results BEFORE making API call
                 if compression_manager:
-                    new_context = await compression_manager.acompress(messages, tools, compressed_context, model=self)
+                    new_context = await compression_manager.acompress(
+                        messages, tools, compressed_context, model=self, response_format=response_format
+                    )
                     if new_context is not None:
                         model_response.compressed_context = new_context
                         compressed_context = new_context  # Update for next model loop
@@ -1127,7 +1132,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
         compressed_context: Optional[Any] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1169,7 +1174,9 @@ class Model(ABC):
                 # Compress context or tool results BEFORE invoke
                 pending_compressed_context = None
                 if compression_manager:
-                    new_context = compression_manager.compress(messages, tools, compressed_context, model=self)
+                    new_context = compression_manager.compress(
+                        messages, tools, compressed_context, model=self, response_format=response_format
+                    )
                     if new_context is not None:
                         compressed_context = new_context  # Update for subsequent iterations
                         pending_compressed_context = new_context  # Save for yielded response
@@ -1356,7 +1363,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
         compressed_context: Optional[Any] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1398,7 +1405,9 @@ class Model(ABC):
                 # Compress context or tool results BEFORE making API call
                 pending_compressed_context = None
                 if compression_manager:
-                    new_context = await compression_manager.acompress(messages, tools, compressed_context, model=self)
+                    new_context = await compression_manager.acompress(
+                        messages, tools, compressed_context, model=self, response_format=response_format
+                    )
                     if new_context is not None:
                         compressed_context = new_context  # Update for subsequent iterations
                         pending_compressed_context = new_context  # Save for yielded response

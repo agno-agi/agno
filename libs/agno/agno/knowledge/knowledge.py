@@ -1762,19 +1762,51 @@ class Knowledge:
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
+
+        For URLs and paths, includes the name and description in the hash if provided
+        to ensure unique content with the same URL/path but different names/descriptions
+        get different hashes.
+
+        Hash format:
+        - URL with name and description: hash("{name}:{description}:{url}")
+        - URL with name only: hash("{name}:{url}")
+        - URL with description only: hash("{description}:{url}")
+        - URL without name/description: hash("{url}") (backward compatible)
+        - Same logic applies to paths
         """
+        hash_parts = []
+        if content.name:
+            hash_parts.append(content.name)
+        if content.description:
+            hash_parts.append(content.description)
+
         if content.path:
-            return hashlib.sha256(str(content.path).encode()).hexdigest()
+            hash_parts.append(str(content.path))
         elif content.url:
-            hash = hashlib.sha256(content.url.encode()).hexdigest()
-            return hash
+            hash_parts.append(content.url)
         elif content.file_data and content.file_data.content:
-            name = content.name or "content"
-            return hashlib.sha256(name.encode()).hexdigest()
+            # For file_data, always add filename, type, size, or content for uniqueness
+            if content.file_data.filename:
+                hash_parts.append(content.file_data.filename)
+            elif content.file_data.type:
+                hash_parts.append(content.file_data.type)
+            elif content.file_data.size is not None:
+                hash_parts.append(str(content.file_data.size))
+            else:
+                # Fallback: use the content for uniqueness
+                # Include type information to distinguish str vs bytes
+                content_type = "str" if isinstance(content.file_data.content, str) else "bytes"
+                content_bytes = (
+                    content.file_data.content.encode()
+                    if isinstance(content.file_data.content, str)
+                    else content.file_data.content
+                )
+                content_hash = hashlib.sha256(content_bytes).hexdigest()[:16]  # Use first 16 chars
+                hash_parts.append(f"{content_type}:{content_hash}")
         elif content.topics and len(content.topics) > 0:
             topic = content.topics[0]
             reader = type(content.reader).__name__ if content.reader else "unknown"
-            return hashlib.sha256(f"{topic}-{reader}".encode()).hexdigest()
+            hash_parts.append(f"{topic}-{reader}")
         else:
             # Fallback for edge cases
             import random
@@ -1785,7 +1817,10 @@ class Knowledge:
                 or content.id
                 or ("unknown_content" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6)))
             )
-            return hashlib.sha256(fallback.encode()).hexdigest()
+            hash_parts.append(fallback)
+
+        hash_input = ":".join(hash_parts)
+        return hashlib.sha256(hash_input.encode()).hexdigest()
 
     def _ensure_string_field(self, value: Any, field_name: str, default: str = "") -> str:
         """

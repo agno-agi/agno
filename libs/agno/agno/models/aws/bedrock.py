@@ -362,12 +362,12 @@ class AwsBedrock(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        compress_tool_results: bool = False,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
+            # Always use compressed content for accurate token counting
             formatted_messages, system_message = self._format_messages(
-                messages, compress_tool_results=compress_tool_results
+                messages, compress_tool_results=True
             )
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
@@ -380,27 +380,26 @@ class AwsBedrock(Model):
             if tools:
                 from agno.utils.tokens import count_tool_tokens
 
-                includes_system = any(m.role == "system" for m in messages)
-                tokens += count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id)
 
             # Count schema tokens
-            tokens += count_schema_tokens(response_format, self.id)
+            tokens += count_schema_tokens(output_schema, self.id)
 
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return super().count_tokens(messages, tools, response_format, compress_tool_results)
+            return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        compress_tool_results: bool = False,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
+            # Always use compressed content for accurate token counting
             formatted_messages, system_message = self._format_messages(
-                messages, compress_tool_results=compress_tool_results
+                messages, compress_tool_results=True
             )
             converse_input: Dict[str, Any] = {"messages": formatted_messages}
             if system_message:
@@ -414,16 +413,15 @@ class AwsBedrock(Model):
             if tools:
                 from agno.utils.tokens import count_tool_tokens
 
-                includes_system = any(m.role == "system" for m in messages)
-                tokens += count_tool_tokens(tools, self.id, includes_system)
+                tokens += count_tool_tokens(tools, self.id)
 
             # Count schema tokens
-            tokens += count_schema_tokens(response_format, self.id)
+            tokens += count_schema_tokens(output_schema, self.id)
 
             return tokens
         except Exception as e:
             log_warning(f"Failed to count tokens via Bedrock API: {e}")
-            return await super().acount_tokens(messages, tools, response_format, compress_tool_results)
+            return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
         self,

@@ -483,18 +483,26 @@ class LiteLLM(Model):
         self,
         messages: List[Message],
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        compress_tool_results: bool = False,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_messages = self._format_messages(messages, compress_tool_results=compress_tool_results)
+            # Always use compressed content for accurate token counting
+            formatted_messages = self._format_messages(messages, compress_tool_results=True)
             formatted_tools = self._format_tools(tools) if tools else None
             tokens = litellm.token_counter(
                 model=self.id,
                 messages=formatted_messages,
                 tools=formatted_tools,  # type: ignore
             )
-            return tokens + count_schema_tokens(response_format, self.id)
+            return tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
             log_warning(f"Failed to count tokens: {e}")
-            return super().count_tokens(messages, tools, response_format, compress_tool_results)
+            return super().count_tokens(messages, tools, output_schema)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, output_schema)

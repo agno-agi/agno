@@ -50,7 +50,7 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
-    db=SqliteDb(db_file="tmp/dbs/token_based_tool_call_compression.db"),
+    db=SqliteDb(db_file="tmp/token_based_tool_call_compression.db"),
     compression_manager=compression_manager,
     add_history_to_context=True,  # Add history to context
     num_history_runs=3,

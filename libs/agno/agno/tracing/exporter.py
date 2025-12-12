@@ -90,7 +90,7 @@ class DatabaseSpanExporter(SpanExporter):
                 # Create trace record (aggregate of all spans)
                 trace = create_trace_from_spans(spans)
                 if trace:
-                    self.db.create_trace(trace)
+                    self.db.upsert_trace(trace)
 
                 # Create span records
                 self.db.create_spans(spans)
@@ -124,7 +124,7 @@ class DatabaseSpanExporter(SpanExporter):
                 # Create trace record (aggregate of all spans)
                 trace = create_trace_from_spans(spans)
                 if trace:
-                    create_trace_result = self.db.create_trace(trace)
+                    create_trace_result = self.db.upsert_trace(trace)
                     if create_trace_result is not None:
                         await create_trace_result
 

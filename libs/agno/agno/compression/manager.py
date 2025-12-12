@@ -1,7 +1,9 @@
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Type, Union
+
+from pydantic import BaseModel
 
 from agno.compression.context import CompressedContext
 from agno.compression.prompts import CONTEXT_COMPRESSION_PROMPT, TOOL_COMPRESSION_PROMPT
@@ -35,18 +37,26 @@ class CompressionManager:
             log_warning("Both tool-based and context-based compression are enabled. Compressing full context.")
 
     def should_compress(
-        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
-        return self._should_compress_context(messages, tools, model) or self._should_compress_tools(
-            messages, tools, model
+        return self._should_compress_context(messages, tools, model, response_format) or self._should_compress_tools(
+            messages, tools, model, response_format
         )
 
     async def ashould_compress(
-        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         """Async version of should_compress for token counting."""
-        return self._should_compress_context(messages, tools, model) or self._should_compress_tools(
-            messages, tools, model
+        return self._should_compress_context(messages, tools, model, response_format) or self._should_compress_tools(
+            messages, tools, model, response_format
         )
 
     def compress(
@@ -55,10 +65,11 @@ class CompressionManager:
         tools: Optional[List] = None,
         compressed_context: Optional[CompressedContext] = None,
         model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Optional[CompressedContext]:
-        if self._should_compress_context(messages, tools, model):
+        if self._should_compress_context(messages, tools, model, response_format):
             return self._compress_context(messages, compressed_context)
-        elif self._should_compress_tools(messages, tools, model):
+        elif self._should_compress_tools(messages, tools, model, response_format):
             self._compress_tools(messages)
         return None
 
@@ -68,15 +79,20 @@ class CompressionManager:
         tools: Optional[List] = None,
         compressed_context: Optional[CompressedContext] = None,
         model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Optional[CompressedContext]:
-        if self._should_compress_context(messages, tools, model):
+        if self._should_compress_context(messages, tools, model, response_format):
             return await self._acompress_context(messages, compressed_context)
-        elif self._should_compress_tools(messages, tools, model):
+        elif self._should_compress_tools(messages, tools, model, response_format):
             await self._acompress_tools(messages)
         return None
 
     def _should_compress_context(
-        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         if not self.compress_context:
             return False
@@ -84,13 +100,22 @@ class CompressionManager:
         # Use the Agent/Team's model for token counting
         counting_model = model or self.model
         if self.compress_token_limit and counting_model:
-            token_count = counting_model.count_tokens(messages, tools, compress_tool_results=self.compress_tool_results)
-            return token_count >= self.compress_token_limit
+            token_count = counting_model.count_tokens(
+                messages, tools, output_schema=response_format
+            )
+            if token_count >= self.compress_token_limit:
+                log_info(f"Context compression token limit hit: {token_count} >= {self.compress_token_limit}")
+                return True
+        # Count-based fallback when no token limit set
         msg_count = len([m for m in messages if m.role in ("user", "assistant", "tool")])
         return msg_count >= self.compress_context_messages_limit
 
     def _should_compress_tools(
-        self, messages: List[Message], tools: Optional[List] = None, model: Optional[Model] = None
+        self,
+        messages: List[Message],
+        tools: Optional[List] = None,
+        model: Optional[Model] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         if not self.compress_tool_results:
             return False
@@ -98,8 +123,13 @@ class CompressionManager:
         # Use the Agent/Team's model for token counting
         counting_model = model or self.model
         if self.compress_token_limit and counting_model:
-            token_count = counting_model.count_tokens(messages, tools, compress_tool_results=self.compress_tool_results)
-            return token_count >= self.compress_token_limit
+            token_count = counting_model.count_tokens(
+                messages, tools, output_schema=response_format
+            )
+            if token_count >= self.compress_token_limit:
+                log_info(f"Tool compression token limit hit: {token_count} >= {self.compress_token_limit}")
+                return True
+        # Count-based fallback when no token limit set
         uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
         return uncompressed >= self.compress_tool_results_limit
 
