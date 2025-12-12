@@ -5,8 +5,10 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     name="Agent with Tools",
+    id="tools_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
+    description="A versatile AI assistant with real-time web search capabilities powered by DuckDuckGo, providing current information and context-aware responses with access to datetime, history, and location data",
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 
