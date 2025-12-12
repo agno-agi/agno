@@ -74,7 +74,7 @@ async def test_replay():
                 data = parse_sse_message(message)
                 event_type = data.get("event")
 
-                if data.get("run_id"):
+                if data.get("run_id") and not run_id:
                     run_id = data["run_id"]
 
                 if data.get("event_index") is not None:

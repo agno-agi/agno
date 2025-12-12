@@ -78,7 +78,7 @@ async def test_full_catchup():
                 event_type = data.get("event")
                 event_index = data.get("event_index", "N/A")
 
-                if data.get("run_id"):
+                if data.get("run_id") and not run_id:
                     run_id = data["run_id"]
 
                 event_count += 1

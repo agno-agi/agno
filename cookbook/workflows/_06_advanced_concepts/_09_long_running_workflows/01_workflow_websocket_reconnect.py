@@ -111,7 +111,7 @@ class WorkflowWebSocketTester:
                     event_type = data.get("event")
 
                     # Track run_id and event_index
-                    if "run_id" in data:
+                    if "run_id" in data and not self.run_id:
                         self.run_id = data["run_id"]
                     if "event_index" in data:
                         self.last_event_index = data["event_index"]
