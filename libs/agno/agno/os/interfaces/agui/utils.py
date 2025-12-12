@@ -7,8 +7,6 @@ from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
-logger = logging.getLogger(__name__)
-
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
@@ -35,6 +33,8 @@ from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunEvent
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
+
+logger = logging.getLogger(__name__)
 
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
