@@ -1766,6 +1766,12 @@ class Knowledge:
         For URLs and paths, includes the name and description in the hash if provided
         to ensure unique content with the same URL/path but different names/descriptions
         get different hashes.
+        
+        Hash format:
+        - URL with name and description: hash("{url}:{name}:{description}")
+        - URL with name only: hash("{url}:{name}")
+        - URL without name/description: hash("{url}") (backward compatible)
+        - Same logic applies to paths
         """
         if content.path:
             # Include name and description in hash if provided to ensure uniqueness
