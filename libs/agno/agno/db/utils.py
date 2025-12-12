@@ -4,8 +4,8 @@ import json
 from datetime import date, datetime
 from uuid import UUID
 
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -18,7 +18,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.isoformat()
         elif isinstance(obj, Message):
             return obj.to_dict()
-        elif isinstance(obj, Metrics):
+        elif isinstance(obj, RunMetrics):
             return obj.to_dict()
         elif isinstance(obj, type):
             return str(obj)

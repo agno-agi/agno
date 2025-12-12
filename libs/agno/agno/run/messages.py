@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.models.message import Message
 
@@ -13,12 +13,14 @@ class RunMessages:
         system_message: The system message for this run
         user_message: The user message for this run
         extra_messages: Extra messages added after the system and user messages
+        run_response: Reference to the RunOutput for this run (used for metrics accumulation)
     """
 
     messages: List[Message] = field(default_factory=list)
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
+    run_response: Optional[Any] = None  # RunOutput reference for metrics accumulation
 
     def get_input_messages(self) -> List[Message]:
         """Get the input messages for the model."""

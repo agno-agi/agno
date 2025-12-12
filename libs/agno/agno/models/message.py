@@ -6,7 +6,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import Metrics
+from agno.metrics import MessageMetrics, RunMetrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
@@ -109,8 +109,8 @@ class Message(BaseModel):
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
-    # Metrics for the message.
-    metrics: Metrics = Field(default_factory=Metrics)
+    # Metrics for the message. Only set on assistant messages from model responses.
+    metrics: Optional[MessageMetrics] = None
     # The references added to the message for RAG
     references: Optional[MessageReferences] = None
     # The Unix timestamp the message was created.
@@ -271,6 +271,10 @@ class Message(BaseModel):
                 else:
                     data["video_output"] = Video(**vid_data)
 
+        # Handle metrics deserialization - convert dict to MessageMetrics
+        if "metrics" in data and data["metrics"] is not None:
+            data["metrics"] = MessageMetrics(**data["metrics"])
+
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -408,7 +412,7 @@ class Message(BaseModel):
             _logger(f"Files added: {len(self.files)}")
 
         metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
-        if metrics and self.metrics is not None and self.metrics != Metrics():
+        if metrics and self.metrics is not None and self.metrics != RunMetrics():
             _logger(metrics_header, center=True, symbol="*")
 
             # Token metrics
@@ -431,20 +435,15 @@ class Message(BaseModel):
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
 
             # Time related metrics
-            if self.metrics.duration is not None and self.metrics.duration > 0:
-                _logger(f"* Duration:                    {self.metrics.duration:.4f}s")
-            if self.metrics.output_tokens and self.metrics.duration and self.metrics.duration > 0:
-                _logger(
-                    f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.duration:.4f} tokens/s"
-                )
+            duration = None
+            if self.metrics.timer is not None and self.metrics.timer.elapsed is not None:
+                duration = self.metrics.timer.elapsed
+            if duration is not None and duration > 0:
+                _logger(f"* Duration:                    {duration:.4f}s")
+            if self.metrics.output_tokens and duration and duration > 0:
+                _logger(f"* Tokens per second:           {self.metrics.output_tokens / duration:.4f} tokens/s")
             if self.metrics.time_to_first_token is not None and self.metrics.time_to_first_token > 0:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
-
-            # Non-generic metrics
-            if self.metrics.provider_metrics:
-                _logger(f"* Provider metrics:            {self.metrics.provider_metrics}")
-            if self.metrics.additional_metrics:
-                _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
 
             _logger(metrics_header, center=True, symbol="*")
 
