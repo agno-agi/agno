@@ -548,7 +548,7 @@ class Knowledge:
         else:
             return self.text_reader
 
-    def _read_with_reader(
+    def _read(
         self,
         reader: Reader,
         source: Union[Path, str, BytesIO],
@@ -580,6 +580,36 @@ class Knowledge:
                 return reader.read(source, name=name)
             else:
                 return reader.read(source, name=name)
+
+    async def _read_async(
+        self,
+        reader: Reader,
+        source: Union[Path, str, BytesIO],
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[Document]:
+        """
+        Read content using a reader's async_read method with optional password handling.
+
+        Args:
+            reader: Reader to use
+            source: Source to read from (Path, URL string, or BytesIO)
+            name: Optional name for the document
+            password: Optional password for protected files
+
+        Returns:
+            List of documents read
+        """
+        import inspect
+
+        read_signature = inspect.signature(reader.async_read)
+        if password and "password" in read_signature.parameters:
+            return await reader.async_read(source, name=name, password=password)
+        else:
+            if isinstance(source, BytesIO):
+                return await reader.async_read(source, name=name)
+            else:
+                return await reader.async_read(source, name=name)
 
     def _prepare_documents_for_insert(
         self,
@@ -665,7 +695,7 @@ class Knowledge:
 
                 if reader:
                     password = content.auth.password if content.auth and content.auth.password else None
-                    read_documents = self._read_with_reader(
+                    read_documents = await self._read_async(
                         reader, path, name=content.name or path.name, password=password
                     )
                 else:
@@ -855,7 +885,6 @@ class Knowledge:
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
-
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -874,18 +903,17 @@ class Knowledge:
                 name = basename(parsed_url.path) or default_name
         else:
             reader = content.reader or self.website_reader
-
         # 5. Read content
         try:
             read_documents = []
             if reader is not None:
                 # Special handling for YouTubeReader
                 if reader.__class__.__name__ == "YouTubeReader":
-                    read_documents = reader.read(content.url, name=name)
+                    read_documents = await reader.async_read(content.url, name=name)
                 else:
                     password = content.auth.password if content.auth and content.auth.password else None
                     source = bytes_content if bytes_content else content.url
-                    read_documents = self._read_with_reader(reader, source, name=name, password=password)
+                    read_documents = await self._read_async(reader, source, name=name, password=password)
 
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
@@ -983,7 +1011,7 @@ class Knowledge:
                 else:
                     password = content.auth.password if content.auth and content.auth.password else None
                     source = bytes_content if bytes_content else content.url
-                    read_documents = self._read_with_reader(reader, source, name=name, password=password)
+                    read_documents = self._read(reader, source, name=name, password=password)
 
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
@@ -1051,11 +1079,11 @@ class Knowledge:
 
             if content.reader:
                 log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
-                read_documents = content.reader.read(content_io, name=name)
+                read_documents = await content.reader.async_read(content_io, name=name)
             else:
                 text_reader = self.text_reader
                 if text_reader:
-                    read_documents = text_reader.read(content_io, name=name)
+                    read_documents = await text_reader.async_read(content_io, name=name)
                 else:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Text reader not available"
@@ -1079,7 +1107,7 @@ class Knowledge:
                 else:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = reader.read(content_io, name=name)
+                read_documents = await reader.async_read(content_io, name=name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
@@ -1246,7 +1274,7 @@ class Knowledge:
                 await self._aupdate_content(content)
                 continue
 
-            read_documents = content.reader.read(topic)
+            read_documents = await content.reader.async_read(topic)
             if len(read_documents) > 0:
                 self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
             else:
@@ -1405,7 +1433,7 @@ class Knowledge:
                 s3_object.download(readable_content)  # type: ignore
 
             # 6. Read the content
-            read_documents = reader.read(readable_content, name=obj_name)
+            read_documents = await reader.async_read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
             if not content.id:
@@ -1467,7 +1495,7 @@ class Knowledge:
             readable_content = BytesIO(gcs_object.download_as_bytes())
 
             # 6. Read the content
-            read_documents = reader.read(readable_content, name=name)
+            read_documents = await reader.async_read(readable_content, name=name)
 
             # 7. Prepare and insert the content in the vector database
             if not content.id:
