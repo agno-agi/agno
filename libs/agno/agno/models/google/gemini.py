@@ -13,13 +13,16 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
-from agno.models.base import Model
+from agno.models.base import Model, RetryableModelProviderError
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
     from google import genai
@@ -35,6 +38,7 @@ try:
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
+        GroundingMetadata,
         Operation,
         Part,
         Retrieval,
@@ -243,8 +247,8 @@ class Gemini(Model):
         builtin_tools = []
 
         if self.grounding:
-            log_info(
-                "Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
+            log_debug(
+                "Gemini Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
             )
             builtin_tools.append(
                 Tool(
@@ -257,15 +261,15 @@ class Gemini(Model):
             )
 
         if self.search:
-            log_info("Google Search enabled.")
+            log_debug("Gemini Google Search enabled.")
             builtin_tools.append(Tool(google_search=GoogleSearch()))
 
         if self.url_context:
-            log_info("URL context enabled.")
+            log_debug("Gemini URL context enabled.")
             builtin_tools.append(Tool(url_context=UrlContext()))
 
         if self.vertexai_search:
-            log_info("Vertex AI Search enabled.")
+            log_debug("Gemini Vertex AI Search enabled.")
             if not self.vertexai_search_datastore:
                 log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
                 raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
@@ -308,6 +312,113 @@ class Gemini(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(output_schema, self.id)
+
+        if self.vertexai:
+            # VertexAI supports full token counting with system_instruction and tools
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
+
+            response = self.get_client().models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return (response.total_tokens or 0) + schema_tokens
+        else:
+            # Google AI Studio: Use API for content tokens + local estimation for system/tools
+            # The API doesn't support system_instruction or tools in config, so we use a hybrid approach:
+            # 1. Get accurate token count for contents (text + multimodal) from API
+            # 2. Add estimated tokens for system_instruction and tools locally
+            try:
+                response = self.get_client().models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return super().count_tokens(messages, tools, output_schema)
+
+            # Add estimated tokens for system instruction (not supported by Google AI Studio API)
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools (not supported by Google AI Studio API)
+            if tools:
+                total += count_tool_tokens(tools, self.id)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
+            return total
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(output_schema, self.id)
+
+        # VertexAI supports full token counting with system_instruction and tools
+        if self.vertexai:
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
+
+            response = await self.get_client().aio.models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return (response.total_tokens or 0) + schema_tokens
+        else:
+            # Hybrid approach - Google AI Studio does not support system_instruction or tools in config
+            try:
+                response = await self.get_client().aio.models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return await super().acount_tokens(messages, tools, output_schema)
+
+            # Add estimated tokens for system instruction
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools
+            if tools:
+                total += count_tool_tokens(tools, self.id)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
+            return total
+
     def invoke(
         self,
         messages: List[Message],
@@ -317,6 +428,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retry_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -337,7 +449,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retry_with_guidance=retry_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retry_with_guidance is True:
+                self._remove_temporary_messages(messages)
 
             return model_response
 
@@ -350,6 +468,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -363,6 +483,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retry_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -382,7 +503,11 @@ class Gemini(Model):
                 contents=formatted_messages,
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                yield self._parse_provider_response_delta(response, retry_with_guidance=retry_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retry_with_guidance is True:
+                self._remove_temporary_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -394,6 +519,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -407,6 +534,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retry_with_guidance: bool = False,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -429,7 +557,13 @@ class Gemini(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format, retry_with_guidance=retry_with_guidance
+            )
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retry_with_guidance is True:
+                self._remove_temporary_messages(messages)
 
             return model_response
 
@@ -441,6 +575,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -454,6 +590,7 @@ class Gemini(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
         compress_tool_results: bool = False,
+        retry_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -476,7 +613,11 @@ class Gemini(Model):
                 **request_kwargs,
             )
             async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk, retry_with_guidance=retry_with_guidance)
+
+            # If we were retrying the invoke with guidance, remove the guidance message
+            if retry_with_guidance is True:
+                self._remove_temporary_messages(messages)
 
             assistant_message.metrics.stop_timer()
 
@@ -488,6 +629,8 @@ class Gemini(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except RetryableModelProviderError:
+            raise
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -840,6 +983,8 @@ class Gemini(Model):
         """
         combined_original_content: List = []
         combined_function_result: List = []
+        tool_names: List[str] = []
+
         message_metrics = Metrics()
 
         if len(function_call_results) > 0:
@@ -849,13 +994,18 @@ class Gemini(Model):
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
+                if result.tool_name:
+                    tool_names.append(result.tool_name)
                 message_metrics += result.metrics
+
+        tool_name = ", ".join(tool_names) if tool_names else None
 
         if combined_original_content:
             messages.append(
                 Message(
                     role="tool",
                     content=combined_original_content,
+                    tool_name=tool_name,
                     tool_calls=combined_function_result,
                     metrics=message_metrics,
                 )
@@ -863,10 +1013,10 @@ class Gemini(Model):
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelResponse.
+        Parse the Gemini response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Raw response from Gemini
 
         Returns:
             ModelResponse: Parsed response data
@@ -875,8 +1025,20 @@ class Gemini(Model):
 
         # Get response message
         response_message = Content(role="model", parts=[])
-        if response.candidates and response.candidates[0].content:
-            response_message = response.candidates[0].content
+        if response.candidates and len(response.candidates) > 0:
+            candidate = response.candidates[0]
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    if self.retry_with_guidance:
+                        raise RetryableModelProviderError(
+                            retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
+                            original_error=f"Generation ended with finish reason: {candidate.finish_reason}",
+                        )
+
+            if candidate.content:
+                response_message = candidate.content
 
         # Add role
         if response_message.role is not None:
@@ -963,27 +1125,24 @@ class Gemini(Model):
             citations = Citations()
             citations_raw = {}
             citations_urls = []
+            web_search_queries: List[str] = []
 
             if response.candidates and response.candidates[0].grounding_metadata is not None:
-                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
-                citations_raw["grounding_metadata"] = grounding_metadata
+                grounding_metadata: GroundingMetadata = response.candidates[0].grounding_metadata
+                citations_raw["grounding_metadata"] = grounding_metadata.model_dump()
 
-                chunks = grounding_metadata.get("grounding_chunks", []) or []
-                citation_pairs = []
+                chunks = grounding_metadata.grounding_chunks or []
+                web_search_queries = grounding_metadata.web_search_queries or []
                 for chunk in chunks:
-                    if not isinstance(chunk, dict):
+                    if not chunk:
                         continue
-                    web = chunk.get("web")
-                    if not isinstance(web, dict):
+                    web = chunk.web
+                    if not web:
                         continue
-                    uri = web.get("uri")
-                    title = web.get("title")
+                    uri = web.uri
+                    title = web.title
                     if uri:
-                        citation_pairs.append((uri, title))
-
-                # Create citation objects from filtered pairs
-                grounding_urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
-                citations_urls.extend(grounding_urls)
+                        citations_urls.append(UrlCitation(url=uri, title=title))
 
             # Handle URLs from URL context tool
             if (
@@ -991,22 +1150,29 @@ class Gemini(Model):
                 and hasattr(response.candidates[0], "url_context_metadata")
                 and response.candidates[0].url_context_metadata is not None
             ):
-                url_context_metadata = response.candidates[0].url_context_metadata.model_dump()
-                citations_raw["url_context_metadata"] = url_context_metadata
+                url_context_metadata = response.candidates[0].url_context_metadata
+                citations_raw["url_context_metadata"] = url_context_metadata.model_dump()
 
-                url_metadata_list = url_context_metadata.get("url_metadata", [])
+                url_metadata_list = url_context_metadata.url_metadata or []
                 for url_meta in url_metadata_list:
-                    retrieved_url = url_meta.get("retrieved_url")
-                    status = url_meta.get("url_retrieval_status", "UNKNOWN")
+                    retrieved_url = url_meta.retrieved_url
+                    status = "UNKNOWN"
+                    if url_meta.url_retrieval_status:
+                        status = url_meta.url_retrieval_status.value
                     if retrieved_url and status == "URL_RETRIEVAL_STATUS_SUCCESS":
                         # Avoid duplicate URLs
                         existing_urls = [citation.url for citation in citations_urls]
                         if retrieved_url not in existing_urls:
                             citations_urls.append(UrlCitation(url=retrieved_url, title=retrieved_url))
 
+            if citations_raw:
+                citations.raw = citations_raw
+            if citations_urls:
+                citations.urls = citations_urls
+            if web_search_queries:
+                citations.search_queries = web_search_queries
+
             if citations_raw or citations_urls:
-                citations.raw = citations_raw if citations_raw else None
-                citations.urls = citations_urls if citations_urls else None
                 model_response.citations = citations
 
         # Extract usage metadata if present
@@ -1019,11 +1185,22 @@ class Gemini(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: GenerateContentResponse, **kwargs) -> ModelResponse:
         model_response = ModelResponse()
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
-            candidate_content = response_delta.candidates[0].content
+            candidate = response_delta.candidates[0]
+            candidate_content = candidate.content
+
+            # Raise if the request failed because of a malformed function call
+            if hasattr(candidate, "finish_reason") and candidate.finish_reason:
+                if candidate.finish_reason == GeminiFinishReason.MALFORMED_FUNCTION_CALL.value:
+                    if self.retry_with_guidance:
+                        raise RetryableModelProviderError(
+                            retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
+                            original_error=f"Generation ended with finish reason: {candidate.finish_reason}",
+                        )
+
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:
                 response_message = candidate_content
@@ -1096,28 +1273,52 @@ class Gemini(Model):
 
                         model_response.tool_calls.append(tool_call)
 
-            if response_delta.candidates[0].grounding_metadata is not None:
-                citations = Citations()
-                grounding_metadata = response_delta.candidates[0].grounding_metadata.model_dump()
-                citations.raw = grounding_metadata
+            citations = Citations()
+            citations.raw = {}
+            citations.urls = []
 
+            if (
+                hasattr(response_delta.candidates[0], "grounding_metadata")
+                and response_delta.candidates[0].grounding_metadata is not None
+            ):
+                grounding_metadata = response_delta.candidates[0].grounding_metadata
+                citations.raw["grounding_metadata"] = grounding_metadata.model_dump()
+                citations.search_queries = grounding_metadata.web_search_queries or []
                 # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = []
+                chunks = grounding_metadata.grounding_chunks or []
                 for chunk in chunks:
-                    if not isinstance(chunk, dict):
+                    if not chunk:
                         continue
-                    web = chunk.get("web")
-                    if not isinstance(web, dict):
+                    web = chunk.web
+                    if not web:
                         continue
-                    uri = web.get("uri")
-                    title = web.get("title")
+                    uri = web.uri
+                    title = web.title
                     if uri:
-                        citation_pairs.append((uri, title))
+                        citations.urls.append(UrlCitation(url=uri, title=title))
 
-                # Create citation objects from filtered pairs
-                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+            # Handle URLs from URL context tool
+            if (
+                hasattr(response_delta.candidates[0], "url_context_metadata")
+                and response_delta.candidates[0].url_context_metadata is not None
+            ):
+                url_context_metadata = response_delta.candidates[0].url_context_metadata
 
+                citations.raw["url_context_metadata"] = url_context_metadata.model_dump()
+
+                url_metadata_list = url_context_metadata.url_metadata or []
+                for url_meta in url_metadata_list:
+                    retrieved_url = url_meta.retrieved_url
+                    status = "UNKNOWN"
+                    if url_meta.url_retrieval_status:
+                        status = url_meta.url_retrieval_status.value
+                    if retrieved_url and status == "URL_RETRIEVAL_STATUS_SUCCESS":
+                        # Avoid duplicate URLs
+                        existing_urls = [citation.url for citation in citations.urls]
+                        if retrieved_url not in existing_urls:
+                            citations.urls.append(UrlCitation(url=retrieved_url, title=retrieved_url))
+
+            if citations.raw or citations.urls:
                 model_response.citations = citations
 
             # Extract usage metadata if present

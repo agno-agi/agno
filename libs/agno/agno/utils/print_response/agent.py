@@ -31,6 +31,7 @@ def print_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -86,6 +87,7 @@ def print_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
@@ -222,6 +224,7 @@ async def aprint_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -275,6 +278,7 @@ async def aprint_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
@@ -465,8 +469,8 @@ def build_panels_stream(
             stats = compression_manager.stats
             saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
             orig = stats.get("original_size", 1)
-            if stats.get("messages_compressed", 0) > 0:
-                tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+            if stats.get("tool_results_compressed", 0) > 0:
+                tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
         tool_calls_panel = create_panel(
             content=tool_calls_text,
@@ -512,6 +516,7 @@ def print_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -571,6 +576,7 @@ def print_response(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
@@ -645,6 +651,7 @@ async def aprint_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -704,6 +711,7 @@ async def aprint_response(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
@@ -839,8 +847,8 @@ def build_panels(
             stats = compression_manager.stats
             saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
             orig = stats.get("original_size", 1)
-            if stats.get("messages_compressed", 0) > 0:
-                tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+            if stats.get("tool_results_compressed", 0) > 0:
+                tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
             compression_manager.stats.clear()
 
         tool_calls_panel = create_panel(
