@@ -6,7 +6,7 @@ from agno.knowledge.reader.text_reader import TextReader
 from agno.vectordb.base import VectorDb
 
 
-class FakeVectorDb(VectorDb):
+class MockVectorDb(VectorDb):
     """Minimal VectorDb stub for testing."""
 
     def create(self) -> None:
@@ -103,7 +103,7 @@ class CustomReader(Reader):
 
 def test_get_readers_with_none():
     """Test that get_readers() initializes empty dict when readers is None."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     knowledge.readers = None
 
     result = knowledge.get_readers()
@@ -115,7 +115,7 @@ def test_get_readers_with_none():
 
 def test_get_readers_with_empty_dict():
     """Test that get_readers() returns existing empty dict."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     knowledge.readers = {}
 
     result = knowledge.get_readers()
@@ -127,7 +127,7 @@ def test_get_readers_with_empty_dict():
 
 def test_get_readers_with_existing_dict():
     """Test that get_readers() returns existing dict unchanged."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     reader1 = TextReader(name="reader1")
     reader2 = TextReader(name="reader2")
     knowledge.readers = {"reader1": reader1, "reader2": reader2}
@@ -142,7 +142,7 @@ def test_get_readers_with_existing_dict():
 
 def test_get_readers_converts_list_to_dict():
     """Test that get_readers() converts a list of readers to a dict."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     reader1 = TextReader(name="Custom Reader 1")
     reader2 = TextReader(name="Custom Reader 2")
     knowledge.readers = [reader1, reader2]
@@ -162,7 +162,7 @@ def test_get_readers_converts_list_to_dict():
 
 def test_get_readers_handles_duplicate_keys():
     """Test that get_readers() handles duplicate keys by appending counter."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     # Create readers with same name to force duplicate keys
     reader1 = TextReader(name="custom_reader")
     reader2 = TextReader(name="custom_reader")
@@ -184,7 +184,7 @@ def test_get_readers_handles_duplicate_keys():
 
 def test_get_readers_skips_non_reader_objects():
     """Test that get_readers() skips non-Reader objects in the list."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     reader1 = TextReader(name="reader1")
     non_reader = "not a reader"
     reader2 = TextReader(name="reader2")
@@ -201,7 +201,7 @@ def test_get_readers_skips_non_reader_objects():
 
 def test_get_readers_handles_empty_list():
     """Test that get_readers() handles empty list."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     knowledge.readers = []
 
     result = knowledge.get_readers()
@@ -212,7 +212,7 @@ def test_get_readers_handles_empty_list():
 
 def test_get_readers_resets_unexpected_types():
     """Test that get_readers() resets to empty dict for unexpected types."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     knowledge.readers = "not a list or dict"
 
     result = knowledge.get_readers()
@@ -224,7 +224,7 @@ def test_get_readers_resets_unexpected_types():
 
 def test_get_readers_with_readers_without_names():
     """Test that get_readers() generates keys from class name when reader has no name."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     reader1 = TextReader()  # No name
     reader2 = CustomReader()  # No name
     knowledge.readers = [reader1, reader2]
@@ -241,7 +241,7 @@ def test_get_readers_with_readers_without_names():
 
 def test_get_readers_preserves_existing_dict_on_multiple_calls():
     """Test that get_readers() preserves the dict on multiple calls."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     reader1 = TextReader(name="reader1")
     reader2 = TextReader(name="reader2")
     knowledge.readers = {"reader1": reader1, "reader2": reader2}

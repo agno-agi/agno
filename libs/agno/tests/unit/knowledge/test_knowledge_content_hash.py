@@ -5,7 +5,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
 
-class FakeVectorDb(VectorDb):
+class MockVectorDb(VectorDb):
     """Minimal VectorDb stub for testing."""
 
     def create(self) -> None:
@@ -80,7 +80,7 @@ class FakeVectorDb(VectorDb):
 
 def test_url_hash_without_name_or_description():
     """Test that URL hash without name/description is backward compatible."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf")
     content2 = Content(url="https://example.com/doc.pdf")
 
@@ -94,7 +94,7 @@ def test_url_hash_without_name_or_description():
 
 def test_url_hash_with_different_names():
     """Test that same URL with different names produces different hashes."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No name
@@ -111,7 +111,7 @@ def test_url_hash_with_different_names():
 
 def test_url_hash_with_different_descriptions():
     """Test that same URL with different descriptions produces different hashes."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", description="First description")
     content2 = Content(url="https://example.com/doc.pdf", description="Second description")
     content3 = Content(url="https://example.com/doc.pdf")  # No description
@@ -128,7 +128,7 @@ def test_url_hash_with_different_descriptions():
 
 def test_url_hash_with_name_and_description():
     """Test that URL hash includes both name and description."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 2")
     content3 = Content(url="https://example.com/doc.pdf", name="Document 2", description="Description 1")
@@ -149,7 +149,7 @@ def test_url_hash_with_name_and_description():
 
 def test_path_hash_with_name_and_description():
     """Test that path hash includes both name and description."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(path="/path/to/file.pdf", name="File 1", description="Desc 1")
     content2 = Content(path="/path/to/file.pdf", name="File 1", description="Desc 2")
     content3 = Content(path="/path/to/file.pdf", name="File 2", description="Desc 1")
@@ -171,7 +171,7 @@ def test_path_hash_with_name_and_description():
 
 def test_path_hash_backward_compatibility():
     """Test that path hash without name/description is backward compatible."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(path="/path/to/file.pdf")
     content2 = Content(path="/path/to/file.pdf")
 
@@ -183,7 +183,7 @@ def test_path_hash_backward_compatibility():
 
 def test_same_url_name_description_produces_same_hash():
     """Test that identical URL, name, and description produce the same hash."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
     content2 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
 
@@ -195,7 +195,7 @@ def test_same_url_name_description_produces_same_hash():
 
 def test_hash_order_matters():
     """Test that the order of name and description in hash is consistent."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     # Same URL, name, description should always produce same hash
     content = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
 
@@ -209,7 +209,7 @@ def test_hash_order_matters():
 
 def test_hash_with_only_name():
     """Test hash with URL and name but no description."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No name
@@ -225,7 +225,7 @@ def test_hash_with_only_name():
 
 def test_hash_with_only_description():
     """Test hash with URL and description but no name."""
-    knowledge = Knowledge(vector_db=FakeVectorDb())
+    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", description="Description 1")
     content2 = Content(url="https://example.com/doc.pdf", description="Description 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No description
