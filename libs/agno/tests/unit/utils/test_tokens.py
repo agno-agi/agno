@@ -378,7 +378,7 @@ def test_count_tokens_with_schema():
     tokens_no_schema = count_tokens(messages, model_id="gpt-4o-mini")
 
     # Count with schema
-    tokens_with_schema = count_tokens(messages, model_id="gpt-4o-mini", response_format=SimpleSchema)
+    tokens_with_schema = count_tokens(messages, model_id="gpt-4o-mini", output_schema=SimpleSchema)
 
     # Schema should add tokens
     assert tokens_with_schema > tokens_no_schema
@@ -400,7 +400,7 @@ def test_model_count_tokens_with_schema():
     tokens_no_schema = model.count_tokens(messages)
 
     # Count with schema
-    tokens_with_schema = model.count_tokens(messages, response_format=SimpleSchema)
+    tokens_with_schema = model.count_tokens(messages, output_schema=SimpleSchema)
 
     # Schema should add tokens
     assert tokens_with_schema > tokens_no_schema
@@ -423,7 +423,7 @@ async def test_model_acount_tokens_with_schema():
     tokens_no_schema = await model.acount_tokens(messages)
 
     # Count with schema
-    tokens_with_schema = await model.acount_tokens(messages, response_format=SimpleSchema)
+    tokens_with_schema = await model.acount_tokens(messages, output_schema=SimpleSchema)
 
     # Schema should add tokens
     assert tokens_with_schema > tokens_no_schema
