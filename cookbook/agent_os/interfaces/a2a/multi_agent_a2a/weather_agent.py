@@ -12,7 +12,7 @@ weather_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         OpenWeatherTools(
-            units="standard",api_key="a564bf9ddb4749c98ec1db202c2326a7"  # Can be 'standard', 'metric', 'imperial'
+            units="standard",api_key=""  # Can be 'standard', 'metric', 'imperial'
         )
     ],
     instructions=dedent("""
