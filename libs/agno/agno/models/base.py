@@ -8,6 +8,7 @@ from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Dict,
@@ -15,11 +16,15 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
     get_args,
 )
+
+if TYPE_CHECKING:
+    from agno.compression.manager import CompressionManager
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -510,6 +515,29 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        from agno.utils.tokens import count_tokens
+
+        return count_tokens(
+            messages,
+            tools=list(tools) if tools else None,
+            model_id=self.id,
+            output_schema=output_schema,
+        )
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, output_schema=output_schema)
+
     def response(
         self,
         messages: List[Message],
@@ -519,7 +547,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -557,8 +585,15 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             while True:
+                # Compress tool results if compression is enabled and threshold is met
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    _compression_manager.compress(messages)
+
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 self._process_model_response(
@@ -657,11 +692,6 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        compression_manager.compress(all_messages)
-
                     # Format and add results to messages
                     self.format_function_call_results(
                         messages=messages,
@@ -731,11 +761,12 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
         """
+
         try:
             # Check cache if enabled
             if self.cache_response:
@@ -757,10 +788,17 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    await _compression_manager.acompress(messages)
+
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 await self._aprocess_model_response(
@@ -857,11 +895,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -1150,7 +1183,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1184,10 +1217,17 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE invoke
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    _compression_manager.compress(messages)
+
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
@@ -1248,11 +1288,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1368,7 +1403,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1402,10 +1437,17 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    await _compression_manager.acompress(messages)
+
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
                 stream_data = MessageData()
@@ -1466,11 +1508,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:

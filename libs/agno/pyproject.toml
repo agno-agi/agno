@@ -77,6 +77,9 @@ ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
 
+# Dependencies for Token Counting
+tokenizers = ["tiktoken", "tokenizers"]
+
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]
@@ -476,6 +479,7 @@ module = [
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
+  "tokenizers.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",
