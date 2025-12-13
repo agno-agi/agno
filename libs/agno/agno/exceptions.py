@@ -175,6 +175,7 @@ class OutputCheckError(Exception):
 
 @dataclass
 class RetryableModelProviderError(Exception):
+    original_error: Optional[str] = None
     # Guidance message to retry a model invocation after an error
     retry_guidance_message: Optional[str] = None
 

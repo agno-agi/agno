@@ -53,5 +53,8 @@ class FixedSizeChunking(ChunkingStrategy):
                 )
             )
             chunk_number += 1
-            start = end - self.overlap
+            # Ensure start always advances by at least 1 to prevent infinite loops
+            # when overlap is large relative to chunk_size
+            new_start = max(start + 1, end - self.overlap)
+            start = new_start
         return chunked_documents
