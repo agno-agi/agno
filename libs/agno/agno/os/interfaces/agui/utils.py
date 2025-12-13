@@ -1,6 +1,7 @@
 """Logic used by the AG-UI router."""
 
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
@@ -10,6 +11,7 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
+    RunErrorEvent,
     RunFinishedEvent,
     StepFinishedEvent,
     StepStartedEvent,
@@ -28,8 +30,11 @@ from agno.models.message import Message
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutputEvent
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
+
+logger = logging.getLogger(__name__)
 
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -193,7 +198,7 @@ def extract_response_chunk_content(response: RunContentEvent) -> str:
 
 
 def _create_events_from_chunk(
-    chunk: Union[RunOutputEvent, TeamRunOutputEvent],
+    chunk: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
@@ -334,6 +339,59 @@ def _create_events_from_chunk(
         step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
         events_to_emit.append(step_finished_event)
 
+    # Handle workflow-level events
+    elif chunk.event == WorkflowRunEvent.workflow_started:
+        workflow_name = getattr(chunk, "workflow_name", "workflow")
+        workflow_started_event = CustomEvent(
+            name="WorkflowStarted",
+            value={"workflow_name": workflow_name, "message": f"Starting workflow: {workflow_name}"},
+        )
+        events_to_emit.append(workflow_started_event)
+
+    elif chunk.event == WorkflowRunEvent.workflow_completed:
+        workflow_name = getattr(chunk, "workflow_name", "workflow")
+        workflow_completed_event = CustomEvent(
+            name="WorkflowCompleted",
+            value={"workflow_name": workflow_name, "message": f"Workflow completed: {workflow_name}"},
+        )
+        events_to_emit.append(workflow_completed_event)
+
+    elif chunk.event == WorkflowRunEvent.workflow_error:
+        error_message = getattr(chunk, "error", "Workflow error occurred")
+        workflow_name = getattr(chunk, "workflow_name", "workflow")
+        logger.error(f"Workflow error in {workflow_name}: {error_message}")
+        error_event = RunErrorEvent(type=EventType.RUN_ERROR, message=f"Workflow error: {error_message}")
+        events_to_emit.append(error_event)
+
+    elif chunk.event == WorkflowRunEvent.step_error:
+        error_message = getattr(chunk, "error", "Step error occurred")
+        step_name = getattr(chunk, "step_name", "unknown_step")
+        logger.error(f"Step error in {step_name}: {error_message}")
+        error_event = RunErrorEvent(type=EventType.RUN_ERROR, message=f"Step error in {step_name}: {error_message}")
+        events_to_emit.append(error_event)
+
+    # Handle workflow step events
+    elif chunk.event == WorkflowRunEvent.step_started:
+        step_name = getattr(chunk, "step_name", "workflow_step")
+        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name=step_name)
+        events_to_emit.append(step_started_event)
+
+    elif chunk.event == WorkflowRunEvent.step_completed:
+        step_name = getattr(chunk, "step_name", "workflow_step")
+        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name)
+        events_to_emit.append(step_finished_event)
+
+    # Handle workflow agent events
+    elif chunk.event == WorkflowRunEvent.workflow_agent_started:
+        agent_name = getattr(chunk, "agent_name", "workflow_agent")
+        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name=f"agent:{agent_name}")
+        events_to_emit.append(step_started_event)
+
+    elif chunk.event == WorkflowRunEvent.workflow_agent_completed:
+        agent_name = getattr(chunk, "agent_name", "workflow_agent")
+        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=f"agent:{agent_name}")
+        events_to_emit.append(step_finished_event)
+
     # Handle custom events
     elif chunk.event == RunEvent.custom_event:
         # Use the name of the event class if available, otherwise default to the CustomEvent
@@ -350,12 +408,15 @@ def _create_events_from_chunk(
 
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
+    else:
+        # Log unhandled events for debugging
+        logger.warning(f"Unhandled event type: {chunk.event} (type: {type(chunk.event).__name__})")
 
     return events_to_emit, message_started, message_id
 
 
 def _create_completion_events(
-    chunk: Union[RunOutputEvent, TeamRunOutputEvent],
+    chunk: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
     event_buffer: EventBuffer,
     message_started: bool,
     message_id: str,
@@ -516,7 +577,7 @@ def stream_agno_response_as_agui_events(
 
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
-    response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
+    response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]],
     thread_id: str,
     run_id: str,
 ) -> AsyncIterator[BaseEvent]:
@@ -534,6 +595,7 @@ async def async_stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == WorkflowRunEvent.workflow_completed
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
