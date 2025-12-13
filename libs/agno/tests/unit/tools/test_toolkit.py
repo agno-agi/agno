@@ -2,7 +2,8 @@
 
 import pytest
 
-from agno.tools import Toolkit
+from agno.tools import Toolkit, tool
+from agno.tools.function import Function
 
 
 def example_func(a: int, b: int) -> int:
@@ -251,3 +252,216 @@ def test_toolkit_with_none_instructions():
 
     assert toolkit.instructions is None
     assert toolkit.add_instructions is True
+
+
+# =============================================================================
+# Tests for @tool decorator on class methods
+# =============================================================================
+
+
+class TestToolDecoratorOnClassMethods:
+    """Tests for using @tool decorator on class methods within a Toolkit."""
+
+    def test_tool_decorator_basic_registration(self):
+        """Test that @tool decorated methods are registered correctly."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                self.multiplier = 2
+                super().__init__(name="test_toolkit", tools=[self.multiply])
+
+            @tool()
+            def multiply(self, x: int) -> int:
+                """Multiply x by the multiplier."""
+                return x * self.multiplier
+
+        toolkit = MyToolkit()
+
+        assert len(toolkit.functions) == 1
+        assert "multiply" in toolkit.functions
+        assert isinstance(toolkit.functions["multiply"], Function)
+
+    def test_tool_decorator_stop_after_tool_call(self):
+        """Test that stop_after_tool_call is preserved from decorator."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", tools=[self.my_tool])
+
+            @tool(stop_after_tool_call=True)
+            def my_tool(self, x: int) -> int:
+                """A tool that stops after call."""
+                return x * 2
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["my_tool"]
+
+        assert func.stop_after_tool_call is True
+        assert func.show_result is True  # Automatically set when stop_after_tool_call=True
+
+    def test_tool_decorator_show_result(self):
+        """Test that show_result is preserved from decorator."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", tools=[self.my_tool])
+
+            @tool(show_result=True)
+            def my_tool(self, x: int) -> int:
+                """A tool that shows result."""
+                return x * 2
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["my_tool"]
+
+        assert func.show_result is True
+
+    def test_tool_decorator_self_binding(self):
+        """Test that self is properly bound to the method."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self, value: int):
+                self.value = value
+                super().__init__(name="test_toolkit", tools=[self.get_value])
+
+            @tool()
+            def get_value(self) -> int:
+                """Get the stored value."""
+                return self.value
+
+        toolkit = MyToolkit(value=42)
+        func = toolkit.functions["get_value"]
+
+        # Call the entrypoint directly - self should be bound
+        result = func.entrypoint()
+        assert result == 42
+
+    def test_tool_decorator_with_parameters(self):
+        """Test that method parameters are correctly processed."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                self.base = 10
+                super().__init__(name="test_toolkit", tools=[self.add_to_base])
+
+            @tool()
+            def add_to_base(self, x: int, y: int = 5) -> int:
+                """Add x and y to the base value."""
+                return self.base + x + y
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["add_to_base"]
+
+        # Check parameters - self should be excluded
+        assert "self" not in func.parameters.get("properties", {})
+        assert "x" in func.parameters.get("properties", {})
+
+        # Call the function
+        result = func.entrypoint(x=3, y=2)
+        assert result == 15  # 10 + 3 + 2
+
+    def test_tool_decorator_with_session_state(self):
+        """Test that session_state parameter is handled correctly."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", tools=[self.update_state])
+
+            @tool()
+            def update_state(self, key: str, value: str, session_state) -> str:
+                """Update session state."""
+                session_state[key] = value
+                return f"Set {key}={value}"
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["update_state"]
+
+        # session_state should be excluded from parameters
+        assert "session_state" not in func.parameters.get("properties", {})
+        assert "key" in func.parameters.get("properties", {})
+        assert "value" in func.parameters.get("properties", {})
+
+    def test_tool_decorator_multiple_methods(self):
+        """Test multiple @tool decorated methods in same toolkit."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                self.counter = 0
+                super().__init__(
+                    name="test_toolkit",
+                    tools=[self.increment, self.decrement, self.get_count],
+                )
+
+            @tool()
+            def increment(self) -> int:
+                """Increment counter."""
+                self.counter += 1
+                return self.counter
+
+            @tool()
+            def decrement(self) -> int:
+                """Decrement counter."""
+                self.counter -= 1
+                return self.counter
+
+            @tool(stop_after_tool_call=True)
+            def get_count(self) -> int:
+                """Get current count."""
+                return self.counter
+
+        toolkit = MyToolkit()
+
+        assert len(toolkit.functions) == 3
+        assert "increment" in toolkit.functions
+        assert "decrement" in toolkit.functions
+        assert "get_count" in toolkit.functions
+
+        # Only get_count should have stop_after_tool_call
+        assert toolkit.functions["increment"].stop_after_tool_call is False
+        assert toolkit.functions["decrement"].stop_after_tool_call is False
+        assert toolkit.functions["get_count"].stop_after_tool_call is True
+
+    def test_tool_decorator_mixed_with_regular_methods(self):
+        """Test toolkit with both @tool decorated and regular methods."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(
+                    name="test_toolkit",
+                    tools=[self.decorated_tool, self.regular_method],
+                )
+
+            @tool(show_result=True)
+            def decorated_tool(self, x: int) -> int:
+                """A decorated tool."""
+                return x * 2
+
+            def regular_method(self, x: int) -> int:
+                """A regular method registered as tool."""
+                return x * 3
+
+        toolkit = MyToolkit()
+
+        assert len(toolkit.functions) == 2
+        assert "decorated_tool" in toolkit.functions
+        assert "regular_method" in toolkit.functions
+
+        # Decorated tool should have show_result from decorator
+        assert toolkit.functions["decorated_tool"].show_result is True
+        # Regular method should have default show_result
+        assert toolkit.functions["regular_method"].show_result is False
+
+    def test_get_tool_name_with_function_object(self):
+        """Test _get_tool_name helper with Function objects."""
+
+        @tool(name="custom_name")
+        def standalone_func() -> str:
+            """A standalone function."""
+            return "result"
+
+        toolkit = Toolkit(name="test_toolkit")
+
+        # Test with Function object
+        assert toolkit._get_tool_name(standalone_func) == "custom_name"
+        # Test with regular callable
+        assert toolkit._get_tool_name(example_func) == "example_func"
